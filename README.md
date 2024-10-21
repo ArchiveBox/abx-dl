@@ -1,38 +1,54 @@
 # abx-dl [COMING SOON]
 
+> [!IMPORTANT]  
+> *Coming Soon...*  read the [Plugin Ecosystem Announcement (2024-10)](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement#%F0%9F%94%A2-For-the-minimalists-who-just-want-something-simple)  
+> <sub>Release ETA: after `archivebox` `v0.9.0`</sub>
 
-A CLI tool to download *everything* from a given URL (similar to youtube-dl/yt-dlp, forum-dl, gallery-dl, etc.).
 
-Uses headless chrome to get HTML, JS, CSS, images/video/audio/subs, pdf, screenshot, article text, gits src, [and more](https://github.com/ArchiveBox/ArchiveBox#output-formats)...
+A CLI tool to download *everything* from a given URL (works like `wget`, `curl`, `yt-dlp`, `gallery-dl`, etc.).
 
-## Coming Soon
+Uses headless chrome to get HTML, JS, CSS, images/video/audio/subs, pdf, screenshot, article text, gits src, [and more](https://github.com/ArchiveBox/abx-dl#All-Outputs)...
+
+### ~~Install~~
 
 ```bash
 pip install abx-dl[all]
 abx-dl --version
 ```
+
+---
+
+### Usage
 ```bash
 mkdir ~/Downloads/example.com && cd ~/Downloads/example.com
 ```
+
+#### Download everything
 ```bash
-# download everything
+# 
 abx-dl 'https://example.com'
+ls ./
+# <see All Outputs below>
 ```
+
+#### Download just title + screenshot
 ```bash
-# download just title + screenshot
 abx-dl --extract=title,screenshot 'https://example.com'
 ls ./
 # index.json  title.txt  screenshot.png
 ```
+
+#### Download title + screenshot + html + media
 ```bash
-# download a few more things
+# 
 abx-dl --extract=title,favicon,screenshot,singlefile,media 'https://example.com'
 ls ./
 # index.json  index.html  title.txt  favicon.ico  screenshot.png  singlefile.html  media/Some_video.mp4
 ```
 
+---
 
-#### All Outputs
+### All Outputs
 
 - `index.json`, `index.html`
 - `title.txt`, `title.json`, `headers.json`, `favicon.ico`
