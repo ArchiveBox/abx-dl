@@ -68,7 +68,7 @@ Pass `--exctract=<methods>` to get only what you need, and set other config via 
 
 ```bash
 pip install abx-dl[all]
-abx-dl install   # optional: install any system packages needed
+abx-dl install           # optional: install any system packages needed
 ```
 
 <details>
