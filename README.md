@@ -18,7 +18,7 @@ It takes URLS, renders them in a headless browser, auto-detects a wide variety o
  
 It's useful for scraping, downloading, OSINT, digital preservation, and more.
 
-🍜 `abx-dl` can save all of this and more:
+🍜 `abx-dl` can download and extract:
 - HTML, JS, CSS, images, etc. rendered with a headless browser
 - title, favicon, headers, outlinks, and other metadata
 - audio, video, subtitles, playlists, comments
