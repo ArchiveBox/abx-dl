@@ -12,8 +12,9 @@
 
 *Ever wish you could `yt-dlp`, `gallery-dl`, `wget`, `curl`, `puppeteer`, etc. all in one command?.*
 
-`abx-dl` is an all-in-one CLI tool for downloading URLs "by any means necessary" (or by means you specify).  
-It takes URLS in, renders in a headless browser, auto-detects a wide variety of embedded resources, and extracts all content out to raw files (mp4, png, txt, pdf, etc.).
+`abx-dl` is an all-in-one CLI tool for downloading URLs "by any means necessary".  
+
+It takes URLS, renders them in a headless browser, auto-detects a wide variety of embedded resources, and extracts all the content out to raw files (mp4, png, txt, pdf, etc.).
  
 It's useful for scraping, downloading, OSINT, digital preservation, and more.
 
