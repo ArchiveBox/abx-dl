@@ -33,12 +33,13 @@ abx-dl --extract=title,favicon,headers,wget,media,singlefile,screenshot,pdf,dom,
 
 #### How does it work?
 
-It takes URLS, renders them in a headless browser, auto-detects a wide variety of embedded resources, and extracts all the content out to raw files (mp4, png, txt, pdf, etc.).
+It takes in URLS via stdin/args, and first renders them in a headless chrome browser with puppeteer (to execute JS).  
+It then auto-detects a wide variety of embedded resources, and extracts all the content out to raw files (mp4, png, txt, pdf, etc.).
 
-> `abx-dl` automatically interaces with all of your favorite powerful scraping and downloading tools, including: `wget`, `wget-lua`, `curl`, `puppeteer`, `playwright`, `singlefile`, `readability`, `yt-dlp`, `forum-dl`, and many more through the **[ABX Plugin Library](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement)**...  
+> `abx-dl` collects all of your favorite powerful scraping and downloading tools, including: `wget`, `wget-lua`, `curl`, `puppeteer`, `playwright`, `singlefile`, `readability`, `yt-dlp`, `forum-dl`, and many more through the **[ABX Plugin Library](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement)**...  
 
 Now you don't have to think about about installing and configuring a bunch of tools individually.  
-Forget the pain of setting up janky crawler scripts with a mixture of `JS`+`Python`+`Bash`, just use one tool!  
+Forget the pain of setting up janky manual crawling scripts with a mixture of `JS`+`Python`+`Bash`!  
 
 #### What options does it provide?
 
