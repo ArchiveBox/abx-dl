@@ -12,7 +12,7 @@
 
 *It's inspired by great tools like `wget`, `curl`, `yt-dlp`, and `gallery-dl` that take a URL write output to the current dir.*
 
-`abx-dl` abstracts away many subtools like `wget-lua`, `puppeteer`, `yt-dlp` and provides a unified interface for downloading:
+`abx-dl` provides a unified interface on top a whole library of scraping and downloading tools, including: `wget-lua`, `puppeteer`, `playwright`, `singlefile`, `readability`, `yt-dlp` and more...
 
 - page HTML, JS, CSS
 - images/video/audio/subs, PDF, screenshot, article text
