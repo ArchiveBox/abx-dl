@@ -1,0 +1,141 @@
+[project]
+name = "abx-dl"
+version = "0.0.1rc1"
+requires-python = ">=3.10"
+description = "All-in-one CLI tool to download and extract content from URLs"
+authors = [{name = "Nick Sweeting", email = "pyproject.toml@archivebox.io"}]
+license = {text = "MIT"}
+readme = "README.md"
+keywords = ["scraping", "crawling", "downloading", "internet archiving", "web archiving", "digipres", "warc", "preservation", "backups", "archiving", "web", "bookmarks", "puppeteer", "browser", "download"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Environment :: Web Environment",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "Intended Audience :: End Users/Desktop",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: Legal Industry",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: MIT License",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
+    "Topic :: Internet :: WWW/HTTP :: WSGI :: Application",
+    "Topic :: Sociology :: History",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Archiving",
+    "Topic :: System :: Archiving :: Backup",
+    "Topic :: System :: Recovery Tools",
+    "Topic :: Utilities",
+    "Typing :: Typed",
+]
+
+
+dependencies = [
+    "click==8.1.7",
+    "archivebox==0.8.5rc50",
+]
+
+[project.optional-dependencies]
+npm = ["abx-plugin-pip"]
+npm = ["abx-plugin-npm"]
+wget = ["abx-plugin-wget"]
+curl = ["abx-plugin-curl"]
+puppeteer = ["abx-plugin-puppeteer"]
+playwright = ["abx-plugin-playwright"]
+chrome = ["abx-plugin-chrome"]
+all = [
+    "archivebox[wget,curl]"
+]
+
+[tool.uv]
+dev-dependencies = [
+    ### BUILD
+    "uv",
+    "pip>=24.2",
+    "setuptools>=75.1.0",
+    "wheel>=0.44.0",
+    ### DEBUGGING
+    "ipdb>=0.13.13",
+    "viztracer",                                     # usage: viztracer ../.venv/bin/archivebox manage check
+    ### LINTING
+    "ruff>=0.6.6",
+    "flake8>=7.1.1",
+    "mypy>=1.11.2",
+]
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+# https://github.com/astral-sh/uv/issues/3957
+
+[tool.setuptools]
+packages = ["abx_dl"]
+package-dir = {"abx_dl" = "abx_dl"}
+
+[tool.ruff]
+line-length = 140
+target-version = "py310"
+src = ["abx_dl"]
+exclude = ["*.pyi", "typings/", "migrations/", "vendor/"]
+
+# https://docs.astral.sh/ruff/rules/
+[tool.ruff.lint]
+ignore = ["E731", "E303", "E266", "E241", "E222"]
+
+[tool.pytest.ini_options]
+testpaths = [ "tests" ]
+
+[tool.mypy]
+mypy_path = "abx_dl,abx_dl/typings"
+namespace_packages = true
+explicit_package_bases = true
+# follow_imports = "silent"
+# ignore_missing_imports = true
+# disallow_incomplete_defs = true
+# disallow_untyped_defs = true
+# disallow_untyped_decorators = true
+# exclude = "tests/.*"
+plugins = ["mypy_django_plugin.main"]
+
+[tool.pyright]
+include = [
+    "abx_dl",
+]
+exclude = [
+    ".venv",
+    "**/*.pyi",
+    "**/__init__.pyi",
+    "**/node_modules",
+    "**/__pycache__",
+    "**/migrations",
+    "abx_dl/vendor",
+]
+stubPath = "./abx_dl/typings"
+venvPath = "."
+venv = ".venv"
+# ignore = ["src/oldstuff"]
+# defineConstant = { DEBUG = true }
+reportMissingImports = true
+reportMissingTypeStubs = false
+pythonVersion = "3.10"
+pythonPlatform = "Linux"
+
+
+[project.scripts]
+archivebox = "abx_dl:main"
+
+[project.urls]
+Homepage = "https://github.com/ArchiveBox/abx-dl"
+Source = "https://github.com/ArchiveBox/abx-dl"
+Documentation = "https://github.com/ArchiveBox/abx-dl"
+"Bug Tracker" = "https://github.com/ArchiveBox/abx-dl/issues"
+Changelog = "https://github.com/ArchiveBox/abx-dl/releases"
+Community = "https://github.com/ArchiveBox/ArchiveBox/wiki/Web-Archiving-Community"
+Donate = "https://github.com/ArchiveBox/ArchiveBox/wiki/Donations"
