@@ -58,7 +58,11 @@ Pass `--exctract=<methods>` to get only what you need, and set other config via 
 
 <sup>Configuration options apply seamlessly across all methods.</sup> 
 
+<br/>
+
 ---
+
+<br/>
 
 ### ~~📦 Install~~
 
