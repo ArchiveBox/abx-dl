@@ -24,14 +24,8 @@ When passed a URL, `abx-dl` downloads content using all configured methods to th
 
 ```bash
 pip install abx-dl[all]
-
-# OR Install only the components you need:
-pip install abx-dl abx-plugin-wget abx-plugin-singlefile ...
-
-# Optional: Install any needed system packages
-abx-dl install  
-# installs wget, curl, puppeteer, singlefile, etc.
-# ...any other apt/brew/pip/npm pkgs needed...
+abx-dl install
+abx-dl 'https://example.com'
 ```
 
 ### 🪶 Lite Install
