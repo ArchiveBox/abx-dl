@@ -80,7 +80,7 @@ ls ./
 
 Config can be persisted via file, set via env vars, or passed via CLI args.
 ```bash
-# persist host-wide config to ~/.config/abx-dl/abx-dl.conf
+# set per-user config in ~/.config/abx-dl/abx-dl.conf
 abx-dl config --set CHECK_SSL_VALIDITY=True
 
 # environment variables work too and are equivalent
