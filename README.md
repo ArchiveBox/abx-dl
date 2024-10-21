@@ -24,14 +24,12 @@ It's useful for scraping, downloading, OSINT, digital preservation, and more.
 abx-dl --extract=title,favicon,headers,wget,media,singlefile,screenshot,pdf,dom,readability,git,... 'https://example.com'`
 ```
 
-🍜 `abx-dl` can download and extract:
+🍜 `abx-dl` gets everything by default, or you can tell it to only extract:
 - HTML, JS, CSS, images, etc. rendered with a headless browser
 - title, favicon, headers, outlinks, and other metadata
 - audio, video, subtitles, playlists, comments
 - snapshot of the page as a PDF, screenshot, and [Singlefile](https://github.com/gildas-lormeau/single-file-cli) HTML
 - article text, `git` source code, [and much more](https://github.com/ArchiveBox/abx-dl#All-Outputs)...
-
-<sup>It gets everything by default, or you can pass <code>--extract=title,screenshot,media...</code> to select specific methods.</sup>
 
 #### How does it work?
 
