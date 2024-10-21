@@ -49,7 +49,6 @@ abx-dl version
 abx-dl help
 
 # Basic example usage:
-abx-dl 'https://example.com'
 abx-dl --extract=title,singlefile,screenshot,media 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
 
 # Config can be persisted via file, set via env vars, or passed via CLI args:
