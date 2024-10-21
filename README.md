@@ -24,14 +24,15 @@ mkdir ~/Downloads/example.com && cd ~/Downloads/example.com
 ```
 
 #### Download everything
+
 ```bash
-# 
 abx-dl 'https://example.com'
 ls ./
 # <see All Outputs below>
 ```
 
 #### Download just title + screenshot
+
 ```bash
 abx-dl --extract=title,screenshot 'https://example.com'
 ls ./
@@ -39,8 +40,8 @@ ls ./
 ```
 
 #### Download title + screenshot + html + media
+
 ```bash
-# 
 abx-dl --extract=title,favicon,screenshot,singlefile,media 'https://example.com'
 ls ./
 # index.json  index.html  title.txt  favicon.ico  screenshot.png  singlefile.html  media/Some_video.mp4
@@ -59,3 +60,7 @@ ls ./
 - `git/` (source code)
 - ... [and more](https://github.com/ArchiveBox/ArchiveBox#output-formats) ...
 
+---
+
+For more advanced use with collections, parallel downloading, a Web UI + REST API, etc.  
+See: [`ArchiveBox/ArchiveBox`](https://github.com/ArchiveBox/ArchiveBox)
