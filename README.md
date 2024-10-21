@@ -54,7 +54,7 @@ abx-dl install   # optional: install any system packages needed
 abx-dl 'https://example.com'
 ```
 
-### ~~🪶 Lite Install~~
+#### ~~🪶 Lightweight Install~~
 
 If you don't need everything in `abx-dl[all]`, you can pick and choose individual pieces:
 ```python
