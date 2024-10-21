@@ -149,4 +149,6 @@ See: [`ArchiveBox/ArchiveBox`](https://github.com/ArchiveBox/ArchiveBox)
 
 ---
 
-<center><i>Created by the <a href="https://github.com/ArchiveBox">ArchiveBox</a> team.</i></center>
+<center>
+<i>Created by the <a href="https://github.com/ArchiveBox">ArchiveBox</a> team.</i>
+</center>
