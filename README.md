@@ -114,7 +114,7 @@ Config can be persisted via file, set via env vars, or passed via CLI args.
 abx-dl config --set CHECK_SSL_VALIDITY=True
 
 # environment variables work too and are equivalent
-env CHROME_USER_DATA_DIR=./personas/Default/chrome_profile
+env CHROME_USER_DATA_DIR=~/.config/abx-dl/personas/Default/chrome_profile
 
 # pass per-run config as CLI args
 abx-dl -c MAX_MEDIA_SIZE=250m --extract=title,singlefile,screenshot,media 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
