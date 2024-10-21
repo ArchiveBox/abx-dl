@@ -85,7 +85,7 @@ abx-dl --extract=wget,singlefile,... 'https://example.com'
 
 ```bash
 # Basic usage:
-abx-dl [--help|--version] [--config|-c] [--extract=methods] [urls...]
+abx-dl [--help|--version] [--config|-c] [--extract=methods] [url]
 ```
 
 #### Download everything
