@@ -10,10 +10,12 @@
 
 ---
 
-`abx-dl` is a CLI tool for downloading URLs. It can autodetect and fetch a wide variety of content using a wide variety of [extractors](#all-outputs).  
-It's useful for scraping, downloading, OSINT, digital preservation, and more.
-
 *Ever wish you could `yt-dlp`, `gallery-dl`, `wget`, `curl`, `chrome --screenshot/--pdf`, etc. all in one command?.*
+
+`abx-dl` is an all-in-one CLI tool for downloading URLs "by any means necessary".  
+It intelligently autodetects and pulls a wide variety of content types from any URLs you feed it.
+ 
+It's useful for scraping, downloading, OSINT, digital preservation, and more.
 
 🍜 `abx-dl` can save all of this and more:
 - HTML, JS, CSS, images, etc. rendered with a headless browser
