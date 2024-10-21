@@ -63,17 +63,16 @@ abx-dl 'https://example.com'
 
 <details>
 <summary>If you don't need everything in <code>abx-dl[all]</code>, you can pick and choose individual pieces...</summary>
-
 <h4>🪶 Lightweight Install</h4>
-
 <pre><code>pip install abx-dl[favicon,wget,singlefile,readability,git]
 abx-dl install wget,singlefile,readability
 abx-dl --extract=wget,singlefile,... 'https://example.com'
 </code></pre>
 </details>
----
+<br/
 
 ### Usage
+
 ```bash
 mkdir ~/Downloads/example.com && cd ~/Downloads/example.com
 abx-dl version
