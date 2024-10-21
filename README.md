@@ -24,7 +24,7 @@ It's useful for scraping, downloading, OSINT, digital preservation, and more.
 abx-dl --extract=title,favicon,headers,wget,media,singlefile,screenshot,pdf,dom,readability,git,... 'https://example.com'`
 ```
 
-`abx-dl` gets everything by default, or you can tell it to only extract:
+`abx-dl` gets everything by default, or you can tell it to `--extract=...` specific methods:
 - HTML, JS, CSS, images, etc. rendered with a headless browser
 - title, favicon, headers, outlinks, and other metadata
 - audio, video, subtitles, playlists, comments
