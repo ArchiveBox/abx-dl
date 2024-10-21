@@ -64,7 +64,7 @@ Pass `--exctract=<methods>` to get only what you need, and set other config via 
 
 <br/>
 
-### 📦 Install
+### 📦 ~~Install~~ `Coming Soon...`
 
 ```bash
 pip install abx-dl[all]
