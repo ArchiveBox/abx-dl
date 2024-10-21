@@ -10,18 +10,21 @@
 
 ---
 
-`abx-dl` is a CLI tool for downloading web content. It's a simple and quick way to use all the power of ArchiveBox without any of the fuss.
+`abx-dl` is a CLI tool for downloading web content. It's designed to autodetect and fetch *all available content* on URLs you pass it.  
+It's useful for scraping, downloading, OSINT, digital preservation, and more.
 
-*It's inspired by great tools like `wget`, `curl`, `yt-dlp`, and `gallery-dl` that take a URL and download files.*
+*It's inspired by other great download CLI tools like `yt-dlp`, `gallery-dl`, `wget`, and `curl`.*
 
-When passed a URL, `abx-dl` downloads content using all configured methods to the current dir:
+🍜 `abx-dl` can save all of this and more:
+- HTML, JS, CSS, images, etc. rendered with a headless browser
+- title, favicon, headers, and other metadata
+- audio, video, subtitles, playlists, comments
+- snapshot of the page as a PDF, screenshot, and [Singlefile](https://github.com/gildas-lormeau/single-file-cli) HTML
+- article text, `git` source code, [and much more](https://github.com/ArchiveBox/abx-dl#All-Outputs)...
 
-- page HTML, JS, CSS
-- images/video/audio/subs, PDF, screenshot, article text
-- source code, [and much more](https://github.com/ArchiveBox/abx-dl#All-Outputs)...
+<sup>It gets everything by default, or you can pass <code>--extract=title,screenshot,media...</code> to select specific methods.</sup>
 
-> `abx-dl` abstracts away common, powerful scraping and downloading tools, including: `wget`, `wget-lua`, `curl`, `puppeteer`, `playwright`, `singlefile`, `readability`, `yt-dlp`, `forum-dl`, and many more through the [plugin library](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement)...  
-> It replaces the old `archivebox oneshot` command and stands alone as its own tool.
+> `abx-dl` bundles all of your favorite powerful scraping and downloading tools, including: `wget`, `wget-lua`, `curl`, `puppeteer`, `playwright`, `singlefile`, `readability`, `yt-dlp`, `forum-dl`, and many more through the [plugin library](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement)...  
 
 ---
 
