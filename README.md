@@ -1,7 +1,8 @@
 # ⬇️ `abx-dl`
 
 > A CLI tool to auto-detect and download *everything* available from a URL.  
-> `pip install abx-dl[all]`
+> `pip install abx-dl[all]`  
+> `abx-dl 'https://example.com'`
 
 > [!IMPORTANT]  
 > ❈ *Coming Soon...*  read the [Plugin Ecosystem Announcement (2024-10)](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement#%F0%9F%94%A2-For-the-minimalists-who-just-want-something-simple)  
