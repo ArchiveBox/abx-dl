@@ -13,8 +13,9 @@ Uses headless chrome to get HTML, JS, CSS, images/video/audio/subs, pdf, screens
 
 ```bash
 pip install abx-dl[all]
+
 # OR Install only the components you need:
-# pip install abx-dl abx-plugin-wget abx-plugin-singlefile ...
+pip install abx-dl abx-plugin-wget abx-plugin-singlefile ...
 
 # Optional: Install any needed system packages
 abx-dl install  
