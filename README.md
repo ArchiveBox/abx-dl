@@ -9,7 +9,7 @@ Uses headless chrome to get HTML, JS, CSS, images/video/audio/subs, pdf, screens
 
 ```bash
 pip install abx-dl[all]
-abx-dl version
+abx-dl --version
 ```
 ```bash
 mkdir ~/Downloads/example.com && cd ~/Downloads/example.com
