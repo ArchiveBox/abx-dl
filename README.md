@@ -12,7 +12,7 @@
 
 *It's inspired by great tools like `wget`, `curl`, `yt-dlp`, and `gallery-dl` that take a URL write output to the current dir.*
 
-When passed a URL, it saves everything it can download on it to the current dir:
+When passed a URL, it downloads using all available methods to the current dir:
 
 - page HTML, JS, CSS
 - images/video/audio/subs, PDF, screenshot, article text
