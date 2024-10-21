@@ -19,7 +19,8 @@ When passed a URL, `abx-dl` downloads content using all configured methods to th
 - images/video/audio/subs, PDF, screenshot, article text
 - source code, [and much more](https://github.com/ArchiveBox/abx-dl#All-Outputs)...
 
-> `abx-dl` abstracts away common, powerful scraping and downloading tools, including: `wget`, `wget-lua`, `curl`, `puppeteer`, `playwright`, `singlefile`, `readability`, `yt-dlp`, `forum-dl`, and many more through the [plugin library](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement)...
+> `abx-dl` abstracts away common, powerful scraping and downloading tools, including: `wget`, `wget-lua`, `curl`, `puppeteer`, `playwright`, `singlefile`, `readability`, `yt-dlp`, `forum-dl`, and many more through the [plugin library](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement)...  
+> It replaces the old `archivebox oneshot` command and stands alone as its own tool.
 
 ---
 
