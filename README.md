@@ -15,22 +15,22 @@ abx-dl --version
 mkdir ~/Downloads/example.com && cd ~/Downloads/example.com
 ```
 ```bash
+# download everything
+abx-dl 'https://example.com'
+```
+```bash
 # download just title + screenshot
 abx-dl --extract=title,screenshot 'https://example.com'
 ls ./
 # index.json  title.txt  screenshot.png
 ```
 ```bash
-# download some more things
+# download a few more things
 abx-dl --extract=title,favicon,screenshot,singlefile,media 'https://example.com'
 ls ./
 # index.json  index.html  title.txt  favicon.ico  screenshot.png  singlefile.html  media/Some_video.mp4
 ```
-```bash
-# download everything
-abx-dl 'https://example.com'
-ls ./
-```
+
 
 #### All Outputs
 
