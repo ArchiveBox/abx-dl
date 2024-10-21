@@ -1,6 +1,7 @@
 # ⬇️ `abx-dl`
 
-> A CLI tool to auto-detect and download *everything* available from a URL.
+> A CLI tool to auto-detect and download *everything* available from a URL.  
+> `pip install abx-dl[all]`
 
 > [!IMPORTANT]  
 > ❈ *Coming Soon...*  read the [Plugin Ecosystem Announcement (2024-10)](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement#%F0%9F%94%A2-For-the-minimalists-who-just-want-something-simple)  
@@ -20,15 +21,17 @@ When passed a URL, `abx-dl` downloads content using all configured methods to th
 
 > `abx-dl` abstracts away common, powerful scraping and downloading tools, including: `wget`, `wget-lua`, `curl`, `puppeteer`, `playwright`, `singlefile`, `readability`, `yt-dlp`, `forum-dl`, and many more through the [plugin library](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement)...
 
-### ~~Install~~
+---
+
+### ~~📦 Install~~
 
 ```bash
 pip install abx-dl[all]
-abx-dl install
+abx-dl install   # optional: install any system packages needed
 abx-dl 'https://example.com'
 ```
 
-### 🪶 Lite Install
+### ~~🪶 Lite Install~~
 
 If you don't need everything in `abx-dl[all]`, you can pick and choose individual pieces:
 ```python
@@ -45,8 +48,14 @@ mkdir ~/Downloads/example.com && cd ~/Downloads/example.com
 abx-dl version
 abx-dl help
 
-# Example Usage:
-abx-dl -c MAX_MEDIA_SIZE=250m --extract=title,singlefile,screenshot,media 'https://youtube.com/watch?v=123abc
+# Basic example usage:
+abx-dl 'https://example.com'
+abx-dl --extract=title,singlefile,screenshot,media 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+
+# Config can be persisted via file, set via env vars, or passed via CLI args:
+abx-dl config --set CHECK_SSL_VALIDITY=True
+env CHROME_USER_DATA_DIR=./personas/Default/chrome_profile
+abx-dl -c MAX_MEDIA_SIZE=250m --extract=title,singlefile,screenshot,media 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
 ```
 
 #### Download everything
