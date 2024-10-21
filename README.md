@@ -8,15 +8,17 @@
 
 ---
 
-`abx-dl` is a CLI tool for downloading URL, aiming to be simple, powerful, and composable.
+`abx-dl` is a CLI tool for downloading web content. It tries to be simple, quick, and powerful.
 
 *It's inspired by great tools like `wget`, `curl`, `yt-dlp`, and `gallery-dl` that take a URL write output to the current dir.*
 
-`abx-dl` provides a unified interface on top a whole library of scraping and downloading tools, including: `wget-lua`, `puppeteer`, `playwright`, `singlefile`, `readability`, `yt-dlp` and more...
+When passed a URL, it saves everything it can download on it to the current dir:
 
 - page HTML, JS, CSS
 - images/video/audio/subs, PDF, screenshot, article text
 - source code, [and much more](https://github.com/ArchiveBox/abx-dl#All-Outputs)...
+
+> `abx-dl` abstracts away common, powerful scraping and downloading tools, including: `wget`, `wget-lua`, `curl`, `puppeteer`, `playwright`, `singlefile`, `readability`, `yt-dlp`, `forum-dl`, and more through the [plugin library](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement)...
 
 ### ~~Install~~
 
