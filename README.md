@@ -13,7 +13,16 @@ Uses headless chrome to get HTML, JS, CSS, images/video/audio/subs, pdf, screens
 
 ```bash
 pip install abx-dl[all]
-abx-dl --version
+
+abx-dl install  # optional: install system pkgs
+# installs wget, curl, puppeteer, singlefile,
+# ...all apt/brew/pip/npm pkgs needed...
+```
+
+Or Install only the components you need:
+```bash
+pip install abx-dl abx-plugin-wget abx-plugin-singlefile
+abx-dl install
 ```
 
 ---
@@ -21,6 +30,11 @@ abx-dl --version
 ### Usage
 ```bash
 mkdir ~/Downloads/example.com && cd ~/Downloads/example.com
+abx-dl version
+abx-dl help
+
+# Example Usage:
+abx-dl -c MAX_MEDIA_SIZE=250m --extract=title,singlefile,screenshot,media 'https://youtube.com/watch?v=123abc
 ```
 
 #### Download everything
