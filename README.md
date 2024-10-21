@@ -150,5 +150,7 @@ See: [`ArchiveBox/ArchiveBox`](https://github.com/ArchiveBox/ArchiveBox)
 ---
 
 <center>
+<p align="center">
 <i>Created by the <a href="https://github.com/ArchiveBox">ArchiveBox</a> team.</i>
+</p>
 </center>
