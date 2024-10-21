@@ -43,7 +43,7 @@ Forget the pain of setting up janky manual crawling scripts with a mixture of `J
 
 #### What options does it provide?
 
-Pass `--exctract=<methods>` to get exactly what you need, with config that intelligently applies to all methods:
+Pass `--exctract=<methods>` to get only what you need, and set other config via env vars / args:
 
 - `USER_AGENT`, `CHECK_SSL_VALIDITY`, `CHROME_USER_DATA_DIR`/`COOKIES_TXT`
 - `TIMEOUT=60`, `MAX_MEDIA_SIZE=750m`, `ONLY_NEW=True`
