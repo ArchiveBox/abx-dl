@@ -24,7 +24,7 @@ It's useful for scraping, downloading, OSINT, digital preservation, and more.
 
 <sup>It gets everything by default, or you can pass <code>--extract=title,screenshot,media...</code> to select specific methods.</sup>
 
-> `abx-dl` bundles all of your favorite powerful scraping and downloading tools, including: `wget`, `wget-lua`, `curl`, `puppeteer`, `playwright`, `singlefile`, `readability`, `yt-dlp`, `forum-dl`, and many more through the [plugin library](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement)...  
+> `abx-dl` bundles all of your favorite powerful scraping and downloading tools, including: `wget`, `wget-lua`, `curl`, `puppeteer`, `playwright`, `singlefile`, `readability`, `yt-dlp`, `forum-dl`, and many more through the **[ABX Plugin Library](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement)**...  
 
 ---
 
