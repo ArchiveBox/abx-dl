@@ -18,6 +18,8 @@ It's useful for scraping, downloading, OSINT, digital preservation, and more.
 
 ---
 
+<br/>
+
 #### 🍜 What does it save?
 
 ```python
@@ -31,6 +33,8 @@ abx-dl --extract=title,favicon,headers,wget,media,singlefile,screenshot,pdf,dom,
 - snapshot of the page as a PDF, screenshot, and [Singlefile](https://github.com/gildas-lormeau/single-file-cli) HTML
 - article text, `git` source code, [and much more](https://github.com/ArchiveBox/abx-dl#All-Outputs)...
 
+<br/>
+
 #### 🧩 How does it work?
 
 Forget about writing janky manual crawlling scripts with `bash` + `JS` + `Python` + `playwright`/`puppeteer`.
@@ -42,13 +46,15 @@ It auto-detects a wide variety of embedded resources using plugins, and extracts
 
 You no longer have to deal with installing and configuring a bunch of tools individually.
 
+<br/>
+
 #### ⚙️ What options does it provide?
 
 Pass `--exctract=<methods>` to get only what you need, and set other config via env vars / args:
 
 - `USER_AGENT`, `CHECK_SSL_VALIDITY`, `CHROME_USER_DATA_DIR`/`COOKIES_TXT`
 - `TIMEOUT=60`, `MAX_MEDIA_SIZE=750m`, `RESOLUTION=1440,2000`, `ONLY_NEW=True`
-- [and more](https://github.com/ArchiveBox/ArchiveBox/wiki/Configuration)...
+- [and more here](https://github.com/ArchiveBox/ArchiveBox/wiki/Configuration)...
 
 <sup>Configuration options apply seamlessly across all methods.</sup> 
 
