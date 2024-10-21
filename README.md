@@ -151,6 +151,6 @@ See: [`ArchiveBox/ArchiveBox`](https://github.com/ArchiveBox/ArchiveBox)
 
 <center>
 <p align="center">
-<i>Created by the <a href="https://github.com/ArchiveBox">ArchiveBox</a> team.</i>
+<i>❈ Created by the <a href="https://github.com/ArchiveBox">ArchiveBox</a> team in Emeryville, California. ❈</i>
 </p>
 </center>
