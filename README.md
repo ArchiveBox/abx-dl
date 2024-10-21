@@ -130,7 +130,7 @@ abx-dl -c MAX_MEDIA_SIZE=250m --extract=title,singlefile,screenshot,media 'https
 - `media/someVideo.mp4`, `media/subtitles`, ... (downloaded with `yt-dlp`)
 - `readability/`, `mercury/`, `htmltotext.txt` (article text/markdown)
 - `git/` (source code)
-- ... [and more](https://github.com/ArchiveBox/ArchiveBox#output-formats) ...
+- ... [and more via plugin library](https://github.com/ArchiveBox/ArchiveBox#output-formats) ...
 
 ---
 
