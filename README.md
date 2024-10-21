@@ -10,10 +10,10 @@
 
 ---
 
-`abx-dl` is a CLI tool for downloading web content. It's designed to autodetect and fetch *all available content* on URLs you pass it.  
+`abx-dl` is a CLI tool for downloading URLs. It aims to autodetect and fetch *all available content*.  
 It's useful for scraping, downloading, OSINT, digital preservation, and more.
 
-*It's inspired by other great download CLI tools like `yt-dlp`, `gallery-dl`, `wget`, and `curl`.*
+*It's an all-in-one command that bundles `yt-dlp`, `gallery-dl`, `wget`, `curl`, and many other great tools.*
 
 🍜 `abx-dl` can save all of this and more:
 - HTML, JS, CSS, images, etc. rendered with a headless browser
@@ -24,7 +24,7 @@ It's useful for scraping, downloading, OSINT, digital preservation, and more.
 
 <sup>It gets everything by default, or you can pass <code>--extract=title,screenshot,media...</code> to select specific methods.</sup>
 
-> `abx-dl` bundles all of your favorite powerful scraping and downloading tools, including: `wget`, `wget-lua`, `curl`, `puppeteer`, `playwright`, `singlefile`, `readability`, `yt-dlp`, `forum-dl`, and many more through the **[ABX Plugin Library](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement)**...  
+> `abx-dl` automatically interaces with all of your favorite powerful scraping and downloading tools, including: `wget`, `wget-lua`, `curl`, `puppeteer`, `playwright`, `singlefile`, `readability`, `yt-dlp`, `forum-dl`, and many more through the **[ABX Plugin Library](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement)**...  
 
 ---
 
