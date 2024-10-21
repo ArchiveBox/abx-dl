@@ -1,13 +1,18 @@
-# abx-dl [COMING SOON]
+# ⬇️ `abx-dl`
 
 > [!IMPORTANT]  
-> *Coming Soon...*  read the [Plugin Ecosystem Announcement (2024-10)](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement#%F0%9F%94%A2-For-the-minimalists-who-just-want-something-simple)  
+> ❈ *Coming Soon...*  read the [Plugin Ecosystem Announcement (2024-10)](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement#%F0%9F%94%A2-For-the-minimalists-who-just-want-something-simple)  
 > <sub>Release ETA: after `archivebox` `v0.9.0`</sub>
 
+*`abx-dl` is aiming to be a simple, powerful, composable CLI tool for downloading URLs, inspired by great tools like `wget`, `curl`, `yt-dlp`, and `gallery-dl`.*
 
-A CLI tool to download *everything* from a given URL (works like `wget`, `curl`, `yt-dlp`, `gallery-dl`, etc.).
+> A CLI tool to download *everything* you could possibly want from a given URL.
 
-Uses headless chrome to get HTML, JS, CSS, images/video/audio/subs, pdf, screenshot, article text, gits src, [and more](https://github.com/ArchiveBox/abx-dl#All-Outputs)...
+Uses the latest and greatest tools like `wget-lua`, `puppeteer`, `yt-dlp` and more to get:
+
+- page HTML, JS, CSS
+- images/video/audio/subs, PDF, screenshot, article text
+- source code, [and much more](https://github.com/ArchiveBox/abx-dl#All-Outputs)...
 
 ### ~~Install~~
 
@@ -21,6 +26,15 @@ pip install abx-dl abx-plugin-wget abx-plugin-singlefile ...
 abx-dl install  
 # installs wget, curl, puppeteer, singlefile, etc.
 # ...any other apt/brew/pip/npm pkgs needed...
+```
+
+### 🪶 Lite Install
+
+If you don't need everything in `abx-dl[all]`, you can pick and choose individual pieces:
+```python
+pip install abx-dl abx-plugin-wget abx-plugin-singlefile ...
+abx-dl install wget,singlefile,...
+abx-dl --extract=wget,singlefile 'https://example.com'
 ```
 
 ---
