@@ -64,7 +64,7 @@ Pass `--exctract=<methods>` to get only what you need, and set other config via 
 
 <br/>
 
-### ~~📦 Install~~
+### 📦 Install
 
 ```bash
 pip install abx-dl[all]
@@ -79,9 +79,9 @@ abx-dl install wget,singlefile,readability
 abx-dl --extract=wget,singlefile,... 'https://example.com'
 </code></pre>
 </details>
-<br/
+<br/>
 
-### Usage
+### 🔠 Usage
 
 ```bash
 # Basic usage:
@@ -125,7 +125,12 @@ env CHROME_USER_DATA_DIR=~/.config/abx-dl/personas/Default/chrome_profile
 # pass per-run config as CLI args
 abx-dl -c MAX_MEDIA_SIZE=250m --extract=title,singlefile,screenshot,media 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
 ```
+
+<br/>
+
 ---
+
+<br/>
 
 ### All Outputs
 
@@ -138,7 +143,10 @@ abx-dl -c MAX_MEDIA_SIZE=250m --extract=title,singlefile,screenshot,media 'https
 - `git/` (source code)
 - ... [and more via plugin library](https://github.com/ArchiveBox/ArchiveBox#output-formats) ...
 
----
 
 For more advanced use with collections, parallel downloading, a Web UI + REST API, etc.  
 See: [`ArchiveBox/ArchiveBox`](https://github.com/ArchiveBox/ArchiveBox)
+
+---
+
+<center><i>Created by the <a href="https://github.com/ArchiveBox">ArchiveBox</a> team.</i></center>
