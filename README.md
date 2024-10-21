@@ -10,7 +10,7 @@
 
 ---
 
-*Ever wish you could `yt-dlp`, `gallery-dl`, `wget`, `curl`, `puppeteer`, etc. all in one command?.*
+*Ever wish you could `yt-dlp`, `gallery-dl`, `wget`, `curl`, `puppeteer`, etc. all in one command?*
 
 `abx-dl` is an all-in-one CLI tool for downloading URLs "by any means necessary".  
 
@@ -36,7 +36,7 @@ abx-dl --extract=title,favicon,headers,wget,media,singlefile,screenshot,pdf,dom,
 In order to work on complex modern sites with JS, it renders all URLs in a headless browser using puppeteer.  
 Then it auto-detects a wide variety of embedded resources using a suite of plugins, and extracts all discovered content out to raw files (mp4, png, txt, pdf, etc.).
 
-> `abx-dl` collects all of your favorite powerful scraping and downloading tools, including: `wget`, `wget-lua`, `curl`, `puppeteer`, `playwright`, `singlefile`, `readability`, `yt-dlp`, `forum-dl`, and many more through the **[ABX Plugin Library](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement)**...  
+> `abx-dl` collects all of your favorite powerful scraping and downloading tools, including: `wget`, `wget-lua`, `curl`, `puppeteer`, `playwright`, `singlefile`, `readability`, `yt-dlp`, `forum-dl`, and many more through the **[ABX Plugin Library](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement)** (shared with [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox))...  
 
 Now you don't have to think about about installing and configuring a bunch of tools individually.  
 Forget the pain of setting up janky manual crawling scripts with a mixture of `JS`+`Python`+`Bash`!  
