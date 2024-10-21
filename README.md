@@ -18,6 +18,8 @@ It takes URLS, renders them in a headless browser, auto-detects a wide variety o
  
 It's useful for scraping, downloading, OSINT, digital preservation, and more.
 
+#### What does it save?
+
 🍜 `abx-dl` can download and extract:
 - HTML, JS, CSS, images, etc. rendered with a headless browser
 - title, favicon, headers, outlinks, and other metadata
@@ -27,10 +29,15 @@ It's useful for scraping, downloading, OSINT, digital preservation, and more.
 
 <sup>It gets everything by default, or you can pass <code>--extract=title,screenshot,media...</code> to select specific methods.</sup>
 
+#### How does it work?
+
 > `abx-dl` automatically interaces with all of your favorite powerful scraping and downloading tools, including: `wget`, `wget-lua`, `curl`, `puppeteer`, `playwright`, `singlefile`, `readability`, `yt-dlp`, `forum-dl`, and many more through the **[ABX Plugin Library](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement)**...  
 
 Now you don't have to think about about installing and configuring a bunch of tools individually.  
 Forget the pain of setting up janky crawler scripts with a mixture of `JS`+`Python`+`Bash`, just use one tool!  
+
+#### What options does it provide?
+
 Pass `--exctract=<methods>` to get exactly what you need, with config that intelligently applies to all methods:
 
 - `USER_AGENT`, `CHECK_SSL_VALIDITY`, `CHROME_USER_DATA_DIR`/`COOKIES_TXT`
