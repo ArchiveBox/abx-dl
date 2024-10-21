@@ -14,11 +14,15 @@
 
 `abx-dl` is an all-in-one CLI tool for downloading URLs "by any means necessary".  
 
-It takes URLS, renders them in a headless browser, auto-detects a wide variety of embedded resources, and extracts all the content out to raw files (mp4, png, txt, pdf, etc.).
- 
 It's useful for scraping, downloading, OSINT, digital preservation, and more.
 
+---
+
 #### What does it save?
+
+```python
+abx-dl --extract=title,favicon,headers,wget,media,singlefile,screenshot,pdf,dom,readability,git,... 'https://example.com'`
+```
 
 🍜 `abx-dl` can download and extract:
 - HTML, JS, CSS, images, etc. rendered with a headless browser
@@ -30,6 +34,8 @@ It's useful for scraping, downloading, OSINT, digital preservation, and more.
 <sup>It gets everything by default, or you can pass <code>--extract=title,screenshot,media...</code> to select specific methods.</sup>
 
 #### How does it work?
+
+It takes URLS, renders them in a headless browser, auto-detects a wide variety of embedded resources, and extracts all the content out to raw files (mp4, png, txt, pdf, etc.).
 
 > `abx-dl` automatically interaces with all of your favorite powerful scraping and downloading tools, including: `wget`, `wget-lua`, `curl`, `puppeteer`, `playwright`, `singlefile`, `readability`, `yt-dlp`, `forum-dl`, and many more through the **[ABX Plugin Library](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement)**...  
 
