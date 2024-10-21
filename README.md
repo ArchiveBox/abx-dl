@@ -12,7 +12,7 @@
 
 *Ever wish you could `yt-dlp`, `gallery-dl`, `wget`, `curl`, `puppeteer`, etc. all in one command?*
 
-`abx-dl` is an all-in-one CLI tool for downloading URLs "by any means necessary".  
+✨ `abx-dl` is an all-in-one CLI tool for downloading URLs "by any means necessary".  
 
 It's useful for scraping, downloading, OSINT, digital preservation, and more.
 
