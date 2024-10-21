@@ -10,28 +10,28 @@
 
 ---
 
-*Ever wish you could `yt-dlp`, `gallery-dl`, `wget`, `curl`, `puppeteer`, etc. all in one command?*
+✨ *Ever wish you could `yt-dlp`, `gallery-dl`, `wget`, `curl`, `puppeteer`, etc. all in one command?*
 
-✨ `abx-dl` is an all-in-one CLI tool for downloading URLs "by any means necessary".  
+`abx-dl` is an all-in-one CLI tool for downloading URLs "by any means necessary".  
 
 It's useful for scraping, downloading, OSINT, digital preservation, and more.
 
 ---
 
-#### What does it save?
+#### 🍜 What does it save?
 
 ```python
 abx-dl --extract=title,favicon,headers,wget,media,singlefile,screenshot,pdf,dom,readability,git,... 'https://example.com'`
 ```
 
-🍜 `abx-dl` gets everything by default, or you can tell it to only extract:
+`abx-dl` gets everything by default, or you can tell it to only extract:
 - HTML, JS, CSS, images, etc. rendered with a headless browser
 - title, favicon, headers, outlinks, and other metadata
 - audio, video, subtitles, playlists, comments
 - snapshot of the page as a PDF, screenshot, and [Singlefile](https://github.com/gildas-lormeau/single-file-cli) HTML
 - article text, `git` source code, [and much more](https://github.com/ArchiveBox/abx-dl#All-Outputs)...
 
-#### How does it work?
+#### 🧩 How does it work?
 
 In order to work on complex modern sites with JS, it renders all URLs in a headless browser using puppeteer.  
 Then it auto-detects a wide variety of embedded resources using a suite of plugins, and extracts all discovered content out to raw files (`mp4`, `png`, `txt`, `pdf`, `html`, etc.) in the current working directory.
@@ -41,7 +41,7 @@ Then it auto-detects a wide variety of embedded resources using a suite of plugi
 Now you don't have to think about about installing and configuring a bunch of tools individually.  
 Forget the pain of setting up janky manual crawling scripts with a mixture of `JS`+`Python`+`Bash`!  
 
-#### What options does it provide?
+#### ⚙️ What options does it provide?
 
 Pass `--exctract=<methods>` to get only what you need, and set other config via env vars / args:
 
