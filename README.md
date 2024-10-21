@@ -58,9 +58,9 @@ abx-dl 'https://example.com'
 
 If you don't need everything in `abx-dl[all]`, you can pick and choose individual pieces:
 ```python
-pip install abx-dl abx-plugin-wget abx-plugin-singlefile ...
-abx-dl install wget,singlefile,...
-abx-dl --extract=wget,singlefile 'https://example.com'
+pip install abx-dl[favicon,wget,singlefile,readability,git]
+abx-dl install wget,singlefile,readability
+abx-dl --extract=wget,singlefile,... 'https://example.com'
 ```
 
 ---
