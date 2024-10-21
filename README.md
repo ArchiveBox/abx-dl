@@ -47,7 +47,9 @@ Pass `--exctract=<methods>` to get only what you need, and set other config via 
 
 - `USER_AGENT`, `CHECK_SSL_VALIDITY`, `CHROME_USER_DATA_DIR`/`COOKIES_TXT`
 - `TIMEOUT=60`, `MAX_MEDIA_SIZE=750m`, `ONLY_NEW=True`
-- [and more](https://github.com/ArchiveBox/ArchiveBox/wiki/Configuration) across all methods... 
+- [and more](https://github.com/ArchiveBox/ArchiveBox/wiki/Configuration)...
+
+<sup>Configuration options apply seamlessly across all methods.</sup> 
 
 ---
 
