@@ -12,14 +12,14 @@
 
 *Ever wish you could `yt-dlp`, `gallery-dl`, `wget`, `curl`, `chrome --screenshot/--pdf`, etc. all in one command?.*
 
-`abx-dl` is an all-in-one CLI tool for downloading URLs "by any means necessary".  
-It intelligently autodetects and pulls a wide variety of content types from any URLs you feed it.
+`abx-dl` is an all-in-one CLI tool for downloading URLs "by any means necessary" (or by means you specify).  
+It takes URLS in, renders in a headless browser, auto-detects a wide variety of embedded resources, and extracts all content out to raw files (mp4, png, txt, pdf, etc.).
  
 It's useful for scraping, downloading, OSINT, digital preservation, and more.
 
 🍜 `abx-dl` can save all of this and more:
 - HTML, JS, CSS, images, etc. rendered with a headless browser
-- title, favicon, headers, and other metadata
+- title, favicon, headers, outlinks, and other metadata
 - audio, video, subtitles, playlists, comments
 - snapshot of the page as a PDF, screenshot, and [Singlefile](https://github.com/gildas-lormeau/single-file-cli) HTML
 - article text, `git` source code, [and much more](https://github.com/ArchiveBox/abx-dl#All-Outputs)...
@@ -27,6 +27,14 @@ It's useful for scraping, downloading, OSINT, digital preservation, and more.
 <sup>It gets everything by default, or you can pass <code>--extract=title,screenshot,media...</code> to select specific methods.</sup>
 
 > `abx-dl` automatically interaces with all of your favorite powerful scraping and downloading tools, including: `wget`, `wget-lua`, `curl`, `puppeteer`, `playwright`, `singlefile`, `readability`, `yt-dlp`, `forum-dl`, and many more through the **[ABX Plugin Library](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement)**...  
+
+Now you don't have to think about about installing and configuring a bunch of tools individually.  
+Forget the pain of setting up janky crawler scripts with a mixture of `JS`+`Python`+`Bash`, just use one tool!  
+Pass `--exctract=<methods>` to get exactly what you need, with config that intelligently applies to all methods:
+
+- `USER_AGENT`, `CHECK_SSL_VALIDITY`, `CHROME_USER_DATA_DIR`/`COOKIES_TXT`
+- `TIMEOUT=60`, `MAX_MEDIA_SIZE=750m`, `ONLY_NEW=True`
+- [and more](https://github.com/ArchiveBox/ArchiveBox/wiki/Configuration) across all methods... 
 
 ---
 
