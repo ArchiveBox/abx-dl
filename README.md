@@ -58,7 +58,6 @@ Pass `--exctract=<methods>` to get only what you need, and set other config via 
 ```bash
 pip install abx-dl[all]
 abx-dl install   # optional: install any system packages needed
-abx-dl 'https://example.com'
 ```
 
 <details>
@@ -74,10 +73,6 @@ abx-dl --extract=wget,singlefile,... 'https://example.com'
 ### Usage
 
 ```bash
-mkdir ~/Downloads/example.com && cd ~/Downloads/example.com
-abx-dl version
-abx-dl help
-
 # Basic usage:
 abx-dl [--help|--version] [--config|-c] [--extract=methods] [urls...]
 ```
