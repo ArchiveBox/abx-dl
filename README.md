@@ -78,8 +78,8 @@ mkdir ~/Downloads/example.com && cd ~/Downloads/example.com
 abx-dl version
 abx-dl help
 
-# Basic example usage:
-abx-dl --extract=title,singlefile,screenshot,media 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+# Basic usage:
+abx-dl [--help|--version] [--config|-c] [--extract=methods] [urls...]
 ```
 
 #### Download everything
