@@ -12,7 +12,7 @@
 
 `abx-dl` is a CLI tool for downloading web content. It's a simple and quick way to use all the power of ArchiveBox without any of the fuss.
 
-*It's inspired by great tools like `wget`, `curl`, `yt-dlp`, and `gallery-dl` that take a URL write output to the current dir.*
+*It's inspired by great tools like `wget`, `curl`, `yt-dlp`, and `gallery-dl` that take a URL download files to the current dir.*
 
 When passed a URL, `abx-dl` downloads content using all configured methods to the current dir:
 
