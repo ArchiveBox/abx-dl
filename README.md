@@ -5,8 +5,8 @@
 > `abx-dl 'https://example.com'`
 
 > [!IMPORTANT]  
-> ❈ *Coming Soon...*  read the [Plugin Ecosystem Announcement (2024-10)](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement#%F0%9F%94%A2-For-the-minimalists-who-just-want-something-simple) [DONATE TO SUPPORT DEVELOPMENT](https://donate.archivebox.io/)  
-> <sub>Release ETA: after `archivebox` `v0.9.0`</sub>
+> ❈ NOT YET RELEASED *Coming Soon...*  read the [Plugin Ecosystem Announcement (2024-10)](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement#%F0%9F%94%A2-For-the-minimalists-who-just-want-something-simple)  
+> <sub>Release ETA: after `archivebox` `v0.9.0`</sub> 🚀 [Donate to support development!](https://donate.archivebox.io/)  
 
 ---
 
