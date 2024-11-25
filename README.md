@@ -1,7 +1,7 @@
 # ⬇️ `abx-dl`
 
 > A CLI tool to auto-detect and download *everything* available from a URL.  
-> `pip install abx-dl[all]`  
+> `pip install abx-dl`  
 > `abx-dl 'https://example.com'`
 
 > [!IMPORTANT]  
