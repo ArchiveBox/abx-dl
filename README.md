@@ -38,7 +38,7 @@ abx-dl --extract=title,favicon,headers,wget,media,singlefile,screenshot,pdf,dom,
 
 #### 🧩 How does it work?
 
-Forget about writing janky manual crawlling scripts with `bash` + `JS` + `Python` + `playwright`/`puppeteer`.
+Forget about writing janky manual crawling scripts with `JS`/`Python`/`playwright`/`puppeteer`/`bash`.
 
 `abx-dl` renders all URLs passed in a fully-featured modern browser using puppeteer. 
 It auto-detects a wide variety of embedded resources using plugins, and extracts discovered content out to raw files (`mp4`, `png`, `txt`, `pdf`, `html`, etc.) in the current working directory.
