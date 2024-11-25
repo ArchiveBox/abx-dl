@@ -1,6 +1,6 @@
 # ⬇️ `abx-dl`
 
-> A CLI tool to auto-detect and download *everything* available from a URL.  
+> A simple all-in-one CLI tool to auto-detect and download *everything* available from a URL.  
 > `pip install abx-dl`  
 > `abx-dl 'https://example.com/page/to/download'`
 
@@ -14,7 +14,8 @@
 
 `abx-dl` is an all-in-one CLI tool for downloading URLs "by any means necessary".  
 
-It's useful for scraping, downloading, OSINT, digital preservation, and more.
+It's useful for scraping, downloading, OSINT, digital preservation, and more.  
+`abx-dl` is built to provide a simpler one-shot CLI interface to the [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox) archiving engine.
 
 ---
 
