@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "puppeteer": "^23.10.1",
+    "puppeteer-core": "^23.10.1",
+    "sharp": "^0.33.5"
+  },
+  "type": "module"
+}
