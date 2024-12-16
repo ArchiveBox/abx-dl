@@ -51,7 +51,7 @@ You no longer have to deal with installing and configuring a bunch of tools indi
 
 #### ⚙️ What options does it provide?
 
-Pass `--exctract=<methods>` to get only what you need, and set other config via env vars / args:
+Pass `--extract=<methods>` to get only what you need, and set other config via env vars / args:
 
 - `USER_AGENT`, `CHECK_SSL_VALIDITY`, `CHROME_USER_DATA_DIR`/`COOKIES_TXT`
 - `TIMEOUT=60`, `MAX_MEDIA_SIZE=750m`, `RESOLUTION=1440,2000`, `ONLY_NEW=True`
