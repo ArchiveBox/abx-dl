@@ -15,7 +15,7 @@
 `abx-dl` is an all-in-one CLI tool for downloading URLs "by any means necessary".  
 
 It's useful for scraping, downloading, OSINT, digital preservation, and more.  
-`abx-dl` is built to provide a simpler one-shot CLI interface to the [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox) archiving engine.
+`abx-dl` is built to provide a simpler one-shot CLI interface to the [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox) archiving engine (it replaces the old `archivebox oneshot` command).
 
 ---
 
