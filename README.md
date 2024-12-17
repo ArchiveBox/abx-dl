@@ -32,7 +32,8 @@ abx-dl --extract=title,favicon,headers,wget,media,singlefile,screenshot,pdf,dom,
 - title, favicon, headers, outlinks, and other metadata
 - audio, video, subtitles, playlists, comments
 - snapshot of the page as a PDF, screenshot, and [Singlefile](https://github.com/gildas-lormeau/single-file-cli) HTML
-- article text, `git` source code, [and much more](https://github.com/ArchiveBox/abx-dl#All-Outputs)...
+- article text, `git` source code
+- [and much more](https://github.com/ArchiveBox/abx-dl#All-Outputs)...
 
 <br/>
 
