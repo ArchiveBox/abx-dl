@@ -69,12 +69,12 @@ Pass `--extract=<methods>` to get only what you need, and set other config via e
 ### 📦 ~~Install~~ `Coming Soon...`
 
 ```bash
-pip install abx-dl[all]
+pip install abx-dl
 abx-dl install           # optional: install any system packages needed
 ```
 
 <details>
-<summary>If you don't need everything in <code>abx-dl[all]</code>, you can pick and choose individual pieces...</summary>
+<summary>If you don't need everything in <code>abx-dl</code>, you can pick and choose individual pieces...</summary>
 <h4>🪶 Lightweight Install</h4>
 <pre><code>pip install abx-dl[favicon,wget,singlefile,readability,git]
 abx-dl install wget,singlefile,readability
