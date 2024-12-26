@@ -73,14 +73,14 @@ pip install abx-dl
 abx-dl install           # optional: install any system packages needed
 ```
 
-<details>
+<!--details>
 <summary>If you don't need everything in <code>abx-dl</code>, you can pick and choose individual pieces...</summary>
 <h4>🪶 Lightweight Install</h4>
 <pre><code>pip install abx-dl
 abx-dl install wget,singlefile,readability
 abx-dl --extract=wget,singlefile,readability 'https://example.com'
 </code></pre>
-</details>
+</details-->
 <br/>
 
 ### 🔠 Usage
