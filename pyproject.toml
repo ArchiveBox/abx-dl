@@ -43,7 +43,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-npm = ["abx-plugin-pip"]
+pip = ["abx-plugin-pip"]
 npm = ["abx-plugin-npm"]
 wget = ["abx-plugin-wget"]
 curl = ["abx-plugin-curl"]
