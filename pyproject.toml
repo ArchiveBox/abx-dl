@@ -129,7 +129,7 @@ pythonPlatform = "Linux"
 
 
 [project.scripts]
-archivebox = "abx_dl:main"
+abx-dl = "abx_dl:main"
 
 [project.urls]
 Homepage = "https://github.com/ArchiveBox/abx-dl"
