@@ -146,14 +146,8 @@ abx-dl -c MAX_MEDIA_SIZE=250m --extract=title,singlefile,screenshot,media 'https
 - `git/` (source code)
 - ... [and more via plugin library](https://github.com/ArchiveBox/ArchiveBox#output-formats) ...
 
+---
 
 For more advanced use with collections, parallel downloading, a Web UI + REST API, etc.  
 See: [`ArchiveBox/ArchiveBox`](https://github.com/ArchiveBox/ArchiveBox)
 
----
-
-<center>
-<p align="center">
-<i>❈ Created by the <a href="https://github.com/ArchiveBox">ArchiveBox</a> team in Emeryville, California. ❈</i>
-</p>
-</center>
