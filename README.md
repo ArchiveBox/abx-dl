@@ -1,12 +1,13 @@
-# ⬇️ `abx-dl`
+# ⬇️ `abx-dl` [VAPORWARE] (please make this!)
 
 > A simple all-in-one CLI tool to auto-detect and download *everything* available from a URL.  
 > `pip install abx-dl`  
 > `abx-dl 'https://example.com/page/to/download'`
 
 > [!IMPORTANT]  
-> ❈ NOT YET RELEASED *Coming Soon...*  read the [Plugin Ecosystem Announcement (2024-10)](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement#%F0%9F%94%A2-For-the-minimalists-who-just-want-something-simple)  
-> <sub>Release ETA: after [`archivebox` `v0.9.0`](https://github.com/ArchiveBox/ArchiveBox/releases/)</sub> &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; 🚀 [Donate to support development!](https://donate.archivebox.io/)  
+> ❈ NOT IMPLEMENTED YET *Coming someday...*  read the [Plugin Ecosystem Announcement (2024-10)](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement#%F0%9F%94%A2-For-the-minimalists-who-just-want-something-simple)  
+> <sub>Release ETA: after [`archivebox` `v0.9.0`](https://github.com/ArchiveBox/ArchiveBox/releases/)</sub> &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;
+> You should make this! Use https://deepwiki.com/archivebox/abx-pkg to set up the dependencies like yt-dlp, ffmpeg, chrome, etc. + a single global event queue and single worker process/actor for each.
 
 ---
 
