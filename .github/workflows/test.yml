@@ -1,0 +1,176 @@
+name: Parallel Plugin Tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+env:
+  PYTHONIOENCODING: utf-8
+  USE_COLOR: "False"
+
+jobs:
+  discover-plugins:
+    name: Discover plugins
+    runs-on: ubuntu-24.04
+    outputs:
+      plugins: ${{ steps.set-matrix.outputs.plugins }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 1
+
+      - name: Discover plugins
+        id: set-matrix
+        run: |
+          # Find all plugin directories
+          plugins=$(find abx_dl/plugins -maxdepth 1 -mindepth 1 -type d ! -name '__*' ! -name '.*' | sort)
+
+          # Create JSON array with plugin info
+          json_array="["
+          first=true
+          for plugin_dir in $plugins; do
+            plugin_name=$(basename "$plugin_dir")
+
+            # Check if plugin has snapshot hooks
+            if ls "$plugin_dir"/on_Snapshot* 1> /dev/null 2>&1; then
+              if [ "$first" = true ]; then
+                first=false
+              else
+                json_array+=","
+              fi
+              json_array+="{\"name\":\"$plugin_name\",\"path\":\"$plugin_dir\"}"
+            fi
+          done
+          json_array+="]"
+
+          echo "plugins=$json_array" >> $GITHUB_OUTPUT
+          echo "Found plugins:"
+          echo "$json_array" | jq '.'
+
+  test-plugin:
+    name: ${{ matrix.plugin.name }}
+    runs-on: ubuntu-24.04
+    needs: discover-plugins
+    if: ${{ needs.discover-plugins.outputs.plugins != '[]' }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        plugin: ${{ fromJson(needs.discover-plugins.outputs.plugins) }}
+        python: ["3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 1
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install system dependencies
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: wget curl git ripgrep
+          version: 1.0
+
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@latest
+        with:
+          chrome-version: stable
+
+      - name: Install Python dependencies
+        run: |
+          uv sync --dev
+
+      - name: Test plugin - ${{ matrix.plugin.name }}
+        run: |
+          uv run abx-dl --plugins=${{ matrix.plugin.name }} 'https://example.com' --output=./test-output
+
+          # Check that output was created
+          ls -la ./test-output/
+          ls -la ./test-output/${{ matrix.plugin.name }}/ || true
+
+          # Check index.json for success
+          cat ./test-output/index.json | jq '.plugins["${{ matrix.plugin.name }}"]'
+        env:
+          CHROME_BINARY: ${{ steps.setup-chrome.outputs.chrome-path }}
+          TIMEOUT: "120"
+
+  test-all:
+    name: All plugins
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install system dependencies
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: wget curl git ripgrep
+          version: 1.0
+
+      - name: Install Chrome
+        uses: browser-actions/setup-chrome@latest
+        with:
+          chrome-version: stable
+
+      - name: Install Python dependencies
+        run: |
+          uv sync --dev
+
+      - name: Test all plugins
+        run: |
+          uv run abx-dl 'https://example.com' --output=./test-output --timeout=120
+
+          echo "=== Output structure ==="
+          find ./test-output -type f | head -50
+
+          echo "=== Results ==="
+          cat ./test-output/index.json | jq '.'
+        env:
+          TIMEOUT: "120"
+
+      - name: Upload test output
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-output
+          path: ./test-output/
+          retention-days: 7

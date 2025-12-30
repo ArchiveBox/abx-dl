@@ -54,6 +54,9 @@ dev-dependencies = [
     "pip>=24.2",
     "setuptools>=75.1.0",
     "wheel>=0.44.0",
+    ### TESTING
+    "pytest>=8.0.0",
+    "pytest-xdist>=3.5.0",
     ### DEBUGGING
     "ipdb>=0.13.13",
     "viztracer",                                     # usage: viztracer ../.venv/bin/archivebox manage check
