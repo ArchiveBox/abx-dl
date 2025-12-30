@@ -163,3 +163,9 @@ cython_debug/
 test/
 test2/
 test*/
+test*/
+*.pyc
+__pycache__/
+.venv/
+dist/
+*.egg-info/
