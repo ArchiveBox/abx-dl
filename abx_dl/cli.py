@@ -2,17 +2,18 @@
 CLI interface for abx-dl using rich-click.
 """
 
+import sys
 from pathlib import Path
 
 import rich_click as click
 from rich.console import Console
-from rich.live import Live
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 
 from .dependencies import load_binary, install_binary
-from .executor import download_live, ArchiveResult
-from .plugins import discover_plugins, get_plugin_names
+from .executor import download
+from .models import ArchiveResult
+from .plugins import discover_plugins
 
 console = Console()
 
@@ -26,16 +27,10 @@ class DefaultGroup(click.Group):
     """A click Group that runs 'dl' command by default if a URL is found in args."""
 
     def resolve_command(self, ctx, args):
-        # If no args or first arg is a known command, proceed normally
         if not args:
             return super().resolve_command(ctx, args)
-
-        cmd_name = args[0]
-        # If it's a known command, proceed normally
-        if cmd_name in self.commands:
+        if args[0] in self.commands:
             return super().resolve_command(ctx, args)
-
-        # Otherwise assume it's a URL and use 'dl' command
         return super().resolve_command(ctx, ['dl'] + args)
 
 
@@ -67,88 +62,52 @@ def cli(ctx):
 def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: int | None):
     """Download a URL using all enabled plugins."""
     plugins = ctx.obj['plugins']
-
     selected = [p.strip() for p in plugin_list.split(',')] if plugin_list else None
     out_path = Path(output_dir) if output_dir else Path.cwd()
+    config_overrides = {'TIMEOUT': timeout} if timeout else {}
+    is_tty = sys.stdout.isatty()
 
-    config_overrides = {}
-    if timeout:
-        config_overrides['TIMEOUT'] = timeout
+    results: list[ArchiveResult] = []
+    gen = download(url, plugins, out_path, selected, config_overrides or None)
 
-    console.print(f"[bold blue]Downloading:[/bold blue] {url}")
-    console.print(f"[dim]Output: {out_path.absolute()}[/dim]")
+    if is_tty:
+        # Rich progress display for TTY
+        console.print(f"[bold blue]Downloading:[/bold blue] {url}")
+        console.print(f"[dim]Output: {out_path.absolute()}[/dim]")
+        console.print(f"[dim]Plugins: {', '.join(selected) if selected else f'all ({len(plugins)} available)'}[/dim]\n")
 
-    if selected:
-        console.print(f"[dim]Plugins: {', '.join(selected)}[/dim]")
+        # Count total hooks for progress bar
+        total = sum(len(p.get_crawl_hooks()) + len(p.get_snapshot_hooks()) for p in plugins.values())
+
+        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TaskProgressColumn(), console=console) as progress:
+            task = progress.add_task("[cyan]Running plugins...", total=total)
+            for ar in gen:
+                results.append(ar)
+                icon = {"succeeded": "[green]✓[/green]", "failed": "[red]✗[/red]", "skipped": "[yellow]○[/yellow]"}.get(ar.status, "?")
+                progress.update(task, advance=1, description=f"{icon} {ar.plugin}")
+
+        # Results table
+        console.print()
+        table = Table(title="Results")
+        table.add_column("Plugin", style="cyan")
+        table.add_column("Status", style="bold")
+        table.add_column("Output")
+
+        for ar in results:
+            status_style = {'succeeded': '[green]succeeded[/green]', 'failed': '[red]failed[/red]', 'skipped': '[yellow]skipped[/yellow]'}.get(ar.status, ar.status)
+            output = ar.output_str or ar.error or ''
+            table.add_row(ar.plugin, status_style, output[:50] + '...' if len(output) > 50 else output)
+
+        console.print(table)
+        console.print()
+        console.print(f"[green]{sum(1 for r in results if r.status == 'succeeded')} succeeded[/green], "
+                      f"[red]{sum(1 for r in results if r.status == 'failed')} failed[/red], "
+                      f"[yellow]{sum(1 for r in results if r.status == 'skipped')} skipped[/yellow]")
+        console.print(f"[dim]Output: {out_path.absolute()}[/dim]")
     else:
-        console.print(f"[dim]Plugins: all ({len(plugins)} available)[/dim]")
-
-    console.print()
-
-    # Run with live progress
-    hook_results: list[ArchiveResult] = []
-
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TaskProgressColumn(),
-        console=console,
-    ) as progress:
-        result_gen = download_live(
-            url=url,
-            plugins=plugins,
-            output_dir=out_path,
-            selected_plugins=selected,
-            config_overrides=config_overrides if config_overrides else None,
-        )
-
-        # Get total hooks count and create progress task
-        total_hooks, gen = result_gen
-        task = progress.add_task("[cyan]Running plugins...", total=total_hooks)
-
-        for hook_result in gen:
-            hook_results.append(hook_result)
-            status_icon = {"succeeded": "[green]✓[/green]", "failed": "[red]✗[/red]", "skipped": "[yellow]○[/yellow]"}.get(hook_result.status, "?")
-            progress.update(task, advance=1, description=f"{status_icon} {hook_result.hook.plugin_name}")
-
-    console.print()
-
-    # Show results table
-    table = Table(title="Results")
-    table.add_column("Plugin", style="cyan")
-    table.add_column("Status", style="bold")
-    table.add_column("Output")
-
-    for hook_result in hook_results:
-        status_style = {
-            'succeeded': '[green]succeeded[/green]',
-            'failed': '[red]failed[/red]',
-            'skipped': '[yellow]skipped[/yellow]',
-        }.get(hook_result.status, hook_result.status)
-
-        output = hook_result.output_path or hook_result.error or ''
-        if len(output) > 50:
-            output = output[:47] + '...'
-
-        table.add_row(
-            hook_result.hook.plugin_name,
-            status_style,
-            output,
-        )
-
-    console.print(table)
-
-    # Summary
-    succeeded = [r for r in hook_results if r.status == 'succeeded']
-    failed = [r for r in hook_results if r.status == 'failed']
-    skipped = [r for r in hook_results if r.status == 'skipped']
-
-    console.print()
-    console.print(f"[green]{len(succeeded)} succeeded[/green], "
-                  f"[red]{len(failed)} failed[/red], "
-                  f"[yellow]{len(skipped)} skipped[/yellow]")
-    console.print(f"[dim]Output: {out_path.absolute()}[/dim]")
+        # JSONL output for non-TTY (handled by executor, just consume generator)
+        for ar in gen:
+            results.append(ar)
 
 
 @cli.command()
@@ -166,7 +125,6 @@ def plugins(ctx):
         plugin = all_plugins[name]
         hooks_count = len(plugin.get_snapshot_hooks())
         binaries = ', '.join(b.get('name', '') for b in plugin.binaries) or '-'
-
         table.add_row(name, str(hooks_count), binaries)
 
     console.print(table)
@@ -179,21 +137,14 @@ def plugins(ctx):
 def install(ctx, plugin_names: str | None):
     """Install dependencies for plugins."""
     all_plugins = ctx.obj.get('plugins', discover_plugins())
-
-    if plugin_names:
-        names = [n.strip() for n in plugin_names.split(',')]
-        plugins_to_install = {n: all_plugins[n] for n in names if n in all_plugins}
-    else:
-        plugins_to_install = all_plugins
+    plugins_to_install = {n: all_plugins[n] for n in plugin_names.split(',') if n in all_plugins} if plugin_names else all_plugins
 
     console.print("[bold]Installing plugin dependencies...[/bold]\n")
 
     for name, plugin in plugins_to_install.items():
         if not plugin.binaries:
             continue
-
         console.print(f"[cyan]{name}[/cyan]")
-
         for spec in plugin.binaries:
             binary = install_binary(spec)
             if binary.is_valid:
@@ -210,12 +161,7 @@ def install(ctx, plugin_names: str | None):
 def check(ctx, plugin_names: str | None):
     """Check if plugin dependencies are available."""
     all_plugins = ctx.obj.get('plugins', discover_plugins())
-
-    if plugin_names:
-        names = [n.strip() for n in plugin_names.split(',')]
-        plugins_to_check = {n: all_plugins[n] for n in names if n in all_plugins}
-    else:
-        plugins_to_check = all_plugins
+    plugins_to_check = {n: all_plugins[n] for n in plugin_names.split(',') if n in all_plugins} if plugin_names else all_plugins
 
     table = Table(title="Dependency Status")
     table.add_column("Plugin", style="cyan")
@@ -225,33 +171,17 @@ def check(ctx, plugin_names: str | None):
     table.add_column("Path")
 
     all_ok = True
-
     for name, plugin in sorted(plugins_to_check.items()):
         if not plugin.binaries:
             continue
-
         for spec in plugin.binaries:
             binary = load_binary(spec)
-            if binary.is_valid:
-                status = "[green]✓[/green]"
-            else:
-                status = "[red]✗[/red]"
-                all_ok = False
-
-            table.add_row(
-                name,
-                binary.name,
-                status,
-                str(binary.loaded_version) if binary.loaded_version else '-',
-                str(binary.loaded_abspath) if binary.loaded_abspath else '-',
-            )
+            status = "[green]✓[/green]" if binary.is_valid else "[red]✗[/red]"
+            all_ok = all_ok and binary.is_valid
+            table.add_row(name, binary.name, status, str(binary.loaded_version or '-'), str(binary.loaded_abspath or '-'))
 
     console.print(table)
-
-    if all_ok:
-        console.print("\n[bold green]All dependencies available![/bold green]")
-    else:
-        console.print("\n[bold yellow]Some dependencies missing. Run 'abx-dl install' to install them.[/bold yellow]")
+    console.print(f"\n[bold green]All dependencies available![/bold green]" if all_ok else "\n[bold yellow]Some dependencies missing. Run 'abx-dl install' to install them.[/bold yellow]")
 
 
 @cli.command()
@@ -267,31 +197,23 @@ def info(ctx, plugin_name: str):
         return
 
     plugin = all_plugins[plugin_name]
-
     console.print(f"[bold cyan]{plugin.name}[/bold cyan]")
     console.print(f"[dim]Path: {plugin.path}[/dim]\n")
 
-    # Config options
     if plugin.config_schema:
         console.print("[bold]Config options:[/bold]")
         for key, prop in plugin.config_schema.items():
-            default = prop.get('default', '-')
-            desc = prop.get('description', '')
-            console.print(f"  {key}={default}")
-            if desc:
-                console.print(f"    [dim]{desc}[/dim]")
+            console.print(f"  {key}={prop.get('default', '-')}")
+            if prop.get('description'):
+                console.print(f"    [dim]{prop['description']}[/dim]")
         console.print()
 
-    # Binaries
     if plugin.binaries:
         console.print("[bold]Binaries:[/bold]")
         for binary in plugin.binaries:
-            name = binary.get('name', '?')
-            providers = binary.get('binproviders', 'env')
-            console.print(f"  {name} (providers: {providers})")
+            console.print(f"  {binary.get('name', '?')} (providers: {binary.get('binproviders', 'env')})")
         console.print()
 
-    # Hooks
     hooks = plugin.get_snapshot_hooks()
     if hooks:
         console.print("[bold]Hooks:[/bold]")
@@ -301,7 +223,6 @@ def info(ctx, plugin_name: str):
 
 
 def main():
-    """Entry point for CLI."""
     cli(obj={})
 
 

@@ -6,9 +6,32 @@ Loads config exclusively from environment variables.
 
 import json
 import os
+import platform
+import tempfile
 from pathlib import Path
 from typing import Any
 
+
+def get_arch() -> str:
+    """Get architecture string like arm64-darwin or x86_64-linux."""
+    machine = platform.machine().lower()
+    system = platform.system().lower()
+    return f"{machine}-{system}"
+
+
+# Paths
+DATA_DIR = Path(os.environ.get('DATA_DIR', Path.cwd()))
+LIB_DIR = Path(os.environ.get('LIB_DIR', Path.home() / '.config' / 'abx' / 'lib' / get_arch()))
+TMP_DIR = Path(os.environ.get('TMP_DIR', tempfile.mkdtemp(prefix='abx-dl-')))
+
+# Ensure directories exist
+LIB_DIR.mkdir(parents=True, exist_ok=True)
+
+# Derived paths for package managers
+PIP_HOME = LIB_DIR / 'pip'
+NPM_HOME = LIB_DIR / 'npm'
+NODE_MODULES_DIR = NPM_HOME / 'node_modules'
+NPM_BIN_DIR = NODE_MODULES_DIR / '.bin'
 
 # Global config defaults
 GLOBAL_DEFAULTS = {
@@ -16,6 +39,12 @@ GLOBAL_DEFAULTS = {
     'USER_AGENT': 'Mozilla/5.0 (compatible; abx-dl/1.0; +https://github.com/ArchiveBox/abx-dl)',
     'CHECK_SSL_VALIDITY': True,
     'COOKIES_FILE': '',
+    'LIB_DIR': str(LIB_DIR),
+    'TMP_DIR': str(TMP_DIR),
+    'PIP_HOME': str(PIP_HOME),
+    'NPM_HOME': str(NPM_HOME),
+    'NODE_MODULES_DIR': str(NODE_MODULES_DIR),
+    'NPM_BIN_DIR': str(NPM_BIN_DIR),
 }
 
 

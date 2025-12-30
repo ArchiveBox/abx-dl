@@ -4,10 +4,17 @@ Dependency management for abx-dl using abx-pkg.
 
 from typing import Any
 
-from abx_pkg import Binary, BinProvider, EnvProvider, PipProvider, NpmProvider, BrewProvider, AptProvider
+from abx_pkg import Binary, BinProvider, EnvProvider, PipProvider, NpmProvider, BrewProvider, AptProvider, BinProviderOverrides   # DO NOT REMOVE UNUSED IMPORT, critical for pydantic circular reference fix
 
+DEFAULT_PROVIDER_TYPES: list[type[BinProvider]] = [EnvProvider, PipProvider, NpmProvider, BrewProvider, AptProvider]
+DEFAULT_PROVIDERS: list[BinProvider] = []
+for provider_type in DEFAULT_PROVIDER_TYPES:
+    try:
+        DEFAULT_PROVIDERS.append(provider_type())
+    except Exception:
+        # provider is not available on this system, e.g. apt is linux-only, brew is mac-only, etc.
+        pass
 
-DEFAULT_PROVIDERS: list[BinProvider] = [EnvProvider(), PipProvider(), NpmProvider(), BrewProvider(), AptProvider()]
 
 
 def load_binary(spec: dict[str, Any]) -> Binary:

@@ -37,8 +37,7 @@ jobs:
         run: |
           # Remove symlink and clone actual plugin files from dev branch
           rm -rf abx_dl/plugins
-          git clone --depth=1 --branch=dev --filter=blob:none --sparse https://github.com/ArchiveBox/ArchiveBox.git /tmp/archivebox
-          cd /tmp/archivebox && git sparse-checkout set archivebox/plugins
+          git clone --depth=1 --branch=dev https://github.com/ArchiveBox/ArchiveBox.git /tmp/archivebox
           cp -r /tmp/archivebox/archivebox/plugins abx_dl/
 
           # Show what we're including
