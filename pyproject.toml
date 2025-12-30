@@ -1,6 +1,6 @@
 [project]
 name = "abx-dl"
-version = "0.0.1rc1"
+version = "1.0.0"
 requires-python = ">=3.10"
 description = "All-in-one CLI tool to download and extract content from URLs"
 authors = [{name = "Nick Sweeting", email = "pyproject.toml@archivebox.io"}]
@@ -70,6 +70,11 @@ dev-dependencies = [
 requires = ["pdm-backend"]
 build-backend = "pdm.backend"
 # https://github.com/astral-sh/uv/issues/3957
+
+[tool.pdm.build]
+includes = ["abx_dl/"]
+# Follow symlinks to include actual plugin files in distribution
+source-includes = ["abx_dl/plugins/"]
 
 [tool.setuptools]
 packages = ["abx_dl"]
