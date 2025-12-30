@@ -36,10 +36,10 @@ jobs:
       - name: Clone ArchiveBox plugins
         run: |
           # Remove symlink and clone actual plugin files from dev branch
-          rm -f abx_dl/plugins
+          rm -rf abx_dl/plugins
           git clone --depth=1 --branch=dev --filter=blob:none --sparse https://github.com/ArchiveBox/ArchiveBox.git /tmp/archivebox
           cd /tmp/archivebox && git sparse-checkout set archivebox/plugins
-          cp -r /tmp/archivebox/archivebox/plugins abx_dl/plugins
+          cp -r /tmp/archivebox/archivebox/plugins abx_dl/
 
           # Show what we're including
           echo "=== Plugins included ==="

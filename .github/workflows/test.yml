@@ -24,10 +24,10 @@ jobs:
 
       - name: Clone ArchiveBox plugins
         run: |
-          rm -f abx_dl/plugins
+          rm -rf abx_dl/plugins
           git clone --depth=1 --branch=dev --filter=blob:none --sparse https://github.com/ArchiveBox/ArchiveBox.git /tmp/archivebox
           cd /tmp/archivebox && git sparse-checkout set archivebox/plugins
-          cp -r /tmp/archivebox/archivebox/plugins abx_dl/plugins
+          cp -r /tmp/archivebox/archivebox/plugins abx_dl/
 
       - name: Discover plugins
         id: set-matrix
@@ -76,10 +76,10 @@ jobs:
 
       - name: Clone ArchiveBox plugins
         run: |
-          rm -f abx_dl/plugins
+          rm -rf abx_dl/plugins
           git clone --depth=1 --branch=dev --filter=blob:none --sparse https://github.com/ArchiveBox/ArchiveBox.git /tmp/archivebox
           cd /tmp/archivebox && git sparse-checkout set archivebox/plugins
-          cp -r /tmp/archivebox/archivebox/plugins abx_dl/plugins
+          cp -r /tmp/archivebox/archivebox/plugins abx_dl/
 
       - name: Set up Python ${{ matrix.python }}
         uses: actions/setup-python@v5
@@ -137,10 +137,10 @@ jobs:
 
       - name: Clone ArchiveBox plugins
         run: |
-          rm -f abx_dl/plugins
+          rm -rf abx_dl/plugins
           git clone --depth=1 --branch=dev --filter=blob:none --sparse https://github.com/ArchiveBox/ArchiveBox.git /tmp/archivebox
           cd /tmp/archivebox && git sparse-checkout set archivebox/plugins
-          cp -r /tmp/archivebox/archivebox/plugins abx_dl/plugins
+          cp -r /tmp/archivebox/archivebox/plugins abx_dl/
 
       - name: Set up Python
         uses: actions/setup-python@v5

@@ -23,7 +23,7 @@ NPM_BIN_DIR = NODE_MODULES_DIR / '.bin'
 
 
 @dataclass
-class HookResult:
+class ArchiveResult:
     """Result from running a hook."""
     hook: Hook
     status: str  # 'succeeded', 'failed', 'skipped'
@@ -39,18 +39,18 @@ class DownloadResult:
     url: str
     snapshot_id: str
     output_dir: Path
-    hook_results: list[HookResult] = field(default_factory=list)
+    hook_results: list[ArchiveResult] = field(default_factory=list)
 
     @property
-    def succeeded(self) -> list[HookResult]:
+    def succeeded(self) -> list[ArchiveResult]:
         return [r for r in self.hook_results if r.status == 'succeeded']
 
     @property
-    def failed(self) -> list[HookResult]:
+    def failed(self) -> list[ArchiveResult]:
         return [r for r in self.hook_results if r.status == 'failed']
 
     @property
-    def skipped(self) -> list[HookResult]:
+    def skipped(self) -> list[ArchiveResult]:
         return [r for r in self.hook_results if r.status == 'skipped']
 
 
@@ -66,7 +66,7 @@ def get_interpreter(language: str) -> list[str]:
 
 
 def run_hook(hook: Hook, url: str, snapshot_id: str, output_dir: Path,
-             env: dict[str, str], timeout: int = 60) -> HookResult:
+             env: dict[str, str], timeout: int = 60) -> ArchiveResult:
     """Run a single hook."""
     # Get files before running
     files_before = set(output_dir.rglob('*'))
@@ -74,7 +74,7 @@ def run_hook(hook: Hook, url: str, snapshot_id: str, output_dir: Path,
     # Build command
     interpreter = get_interpreter(hook.language)
     if not interpreter:
-        return HookResult(
+        return ArchiveResult(
             hook=hook,
             status='failed',
             error=f'Unknown language: {hook.language}',
@@ -136,7 +136,7 @@ def run_hook(hook: Hook, url: str, snapshot_id: str, output_dir: Path,
                 status = 'failed'
                 error = result.stderr.decode('utf-8', errors='replace')[:500]
 
-        return HookResult(
+        return ArchiveResult(
             hook=hook,
             status=status,
             output_path=output_path,
@@ -146,13 +146,13 @@ def run_hook(hook: Hook, url: str, snapshot_id: str, output_dir: Path,
         )
 
     except subprocess.TimeoutExpired:
-        return HookResult(
+        return ArchiveResult(
             hook=hook,
             status='failed',
             error=f'Timed out after {timeout}s',
         )
     except Exception as e:
-        return HookResult(
+        return ArchiveResult(
             hook=hook,
             status='failed',
             error=f'{type(e).__name__}: {e}',
@@ -160,7 +160,7 @@ def run_hook(hook: Hook, url: str, snapshot_id: str, output_dir: Path,
 
 
 def run_plugin(plugin: Plugin, url: str, snapshot_id: str, output_dir: Path,
-               config_overrides: dict[str, Any] | None = None) -> list[HookResult]:
+               config_overrides: dict[str, Any] | None = None) -> list[ArchiveResult]:
     """Run all snapshot hooks for a plugin."""
     results = []
 
@@ -298,7 +298,7 @@ def extract_config_updates(jsonl_records: list[dict[str, Any]]) -> dict[str, str
 
 def download_live(url: str, plugins: dict[str, Plugin], output_dir: Path | None = None,
                   selected_plugins: list[str] | None = None,
-                  config_overrides: dict[str, Any] | None = None) -> tuple[int, Generator[HookResult, None, None]]:
+                  config_overrides: dict[str, Any] | None = None) -> tuple[int, Generator[ArchiveResult, None, None]]:
     """
     Download a URL using all enabled plugins, yielding results as they complete.
 
@@ -337,7 +337,7 @@ def download_live(url: str, plugins: dict[str, Plugin], output_dir: Path | None 
 
     total_hooks = len(crawl_hooks) + len(all_hooks)
 
-    def run_hooks() -> Generator[HookResult, None, None]:
+    def run_hooks() -> Generator[ArchiveResult, None, None]:
         hook_results = []
         # Shared config that accumulates updates from hooks
         shared_config = dict(config_overrides) if config_overrides else {}

@@ -10,8 +10,8 @@ from rich.live import Live
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 
-from .dependencies import DependencyManager
-from .executor import download_live, HookResult
+from .dependencies import load_binary, install_binary
+from .executor import download_live, ArchiveResult
 from .plugins import discover_plugins, get_plugin_names
 
 console = Console()
@@ -86,7 +86,7 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
     console.print()
 
     # Run with live progress
-    hook_results: list[HookResult] = []
+    hook_results: list[ArchiveResult] = []
 
     with Progress(
         SpinnerColumn(),
@@ -179,7 +179,6 @@ def plugins(ctx):
 def install(ctx, plugin_names: str | None):
     """Install dependencies for plugins."""
     all_plugins = ctx.obj.get('plugins', discover_plugins())
-    dm = DependencyManager()
 
     if plugin_names:
         names = [n.strip() for n in plugin_names.split(',')]
@@ -195,12 +194,12 @@ def install(ctx, plugin_names: str | None):
 
         console.print(f"[cyan]{name}[/cyan]")
 
-        results = dm.install_plugin_dependencies(plugin.binaries)
-        for bin_name, info in results.items():
-            if info.is_available:
-                console.print(f"  [green]✓[/green] {bin_name} ({info.version or 'unknown'}) - {info.abspath}")
+        for spec in plugin.binaries:
+            binary = install_binary(spec)
+            if binary.is_valid:
+                console.print(f"  [green]✓[/green] {binary.name} ({binary.loaded_version or 'unknown'}) - {binary.loaded_abspath}")
             else:
-                console.print(f"  [red]✗[/red] {bin_name} - not found")
+                console.print(f"  [red]✗[/red] {binary.name} - not found")
 
     console.print("\n[bold green]Done![/bold green]")
 
@@ -211,7 +210,6 @@ def install(ctx, plugin_names: str | None):
 def check(ctx, plugin_names: str | None):
     """Check if plugin dependencies are available."""
     all_plugins = ctx.obj.get('plugins', discover_plugins())
-    dm = DependencyManager()
 
     if plugin_names:
         names = [n.strip() for n in plugin_names.split(',')]
@@ -232,9 +230,9 @@ def check(ctx, plugin_names: str | None):
         if not plugin.binaries:
             continue
 
-        results = dm.check_plugin_dependencies(plugin.binaries)
-        for bin_name, info in results.items():
-            if info.is_available:
+        for spec in plugin.binaries:
+            binary = load_binary(spec)
+            if binary.is_valid:
                 status = "[green]✓[/green]"
             else:
                 status = "[red]✗[/red]"
@@ -242,10 +240,10 @@ def check(ctx, plugin_names: str | None):
 
             table.add_row(
                 name,
-                bin_name,
+                binary.name,
                 status,
-                info.version or '-',
-                info.abspath or '-',
+                str(binary.loaded_version) if binary.loaded_version else '-',
+                str(binary.loaded_abspath) if binary.loaded_abspath else '-',
             )
 
     console.print(table)
