@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title data-lang="optionsPageTitle"></title>
+    <link rel="stylesheet" href="/options/options.css">
+</head>
+
+<body>
+    <header>
+        <a href="#" target="_blank" data-lang-link="/">
+            <img src="/assets/images/logo.svg" height="32">
+            <span class="version"></span>
+        </a>
+    </header>
+
+    <div class="container" style="display: none;">
+        <h2 data-lang="accountSettings"></h2>
+        <div class="content">
+            <table class="config">
+                <tr>
+                    <td style="width: 100px;">
+                        <span data-lang="apiKey"></span>
+                    </td>
+                    <td>
+                        <input type="text" name="apiKey">
+                    </td>
+                    <td style="width: 140px; padding-left: 0;">
+                        <button style="width: 100%" class="default-btn" id="connect" data-lang="login"></button>
+                    </td>
+                </tr>
+                <tr>
+                    <td colspan="3">
+                        <div class="hint">
+                            <span data-lang="doNotHaveApiKey"></span>
+                            <span data-lang="createAccountToGetIt" data-lang-string="/auth/register"></span>
+                        </div>
+                    </td>
+                </tr>
+            </table>
+        </div>
+
+        <form id="config-form">
+            <h2 data-lang="generalSettings"></h2>
+            <div class="content">
+                <table class="config">
+                    <tr>
+                        <td>
+                            <span data-lang="enablePlugin"></span>
+                        </td>
+                        <td>
+                            <div class="switch">
+                                <input type="checkbox" name="isPluginEnabled" id="isPluginEnabled">
+                                <label for="isPluginEnabled"></label>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <span data-lang="submitFormsAutomatically"></span>
+                            (<span data-lang="delay"></span>:
+                            <div class="custom-select">
+                                <div class="custom-select-label">
+                                    <span class="custom-select-value">0</span>
+                                    <span data-lang="seconds"></span>
+                                </div>
+                                <div class="custom-select-dropdown">
+                                    <div class="custom-select-dropdown-inner">
+                                        <div class="custom-select-dropdown-value" data-value="0">0</div>
+                                        <div class="custom-select-dropdown-value" data-value="1">1</div>
+                                        <div class="custom-select-dropdown-value" data-value="3">3</div>
+                                        <div class="custom-select-dropdown-value" data-value="5">5</div>
+                                        <div class="custom-select-dropdown-field">
+                                            <input type="text" name="submitFormsDelay" placeholder="0" data-type="int">
+                                            <button>></button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>)
+                        </td>
+                        <td>
+                            <div class="switch">
+                                <input type="checkbox" name="autoSubmitForms" id="autoSubmitForms">
+                                <label for="autoSubmitForms"></label>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td colspan="2">
+                            <span data-lang="ifErrorRepeat"></span>
+                            <div class="custom-select">
+                                <div class="custom-select-label">
+                                    <span class="custom-select-value">0</span>
+                                    <span data-lang="times"></span>
+                                </div>
+                                <div class="custom-select-dropdown">
+                                    <div class="custom-select-dropdown-inner">
+                                        <div class="custom-select-dropdown-value" data-value="0">0</div>
+                                        <div class="custom-select-dropdown-value" data-value="1">1</div>
+                                        <div class="custom-select-dropdown-value" data-value="3">3</div>
+                                        <div class="custom-select-dropdown-value" data-value="5">5</div>
+                                        <div class="custom-select-dropdown-field">
+                                            <input type="text" name="repeatOnErrorTimes" placeholder="0"
+                                                data-type="int">
+                                            <button>></button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            (<span data-lang="delay"></span>
+                            <div class="custom-select">
+                                <div class="custom-select-label">
+                                    <span class="custom-select-value">0</span>
+                                    <span data-lang="seconds"></span>
+                                </div>
+                                <div class="custom-select-dropdown">
+                                    <div class="custom-select-dropdown-inner">
+                                        <div class="custom-select-dropdown-value" data-value="0">0</div>
+                                        <div class="custom-select-dropdown-value" data-value="5">5</div>
+                                        <div class="custom-select-dropdown-value" data-value="10">10</div>
+                                        <div class="custom-select-dropdown-value" data-value="30">30</div>
+                                        <div class="custom-select-dropdown-value" data-value="60">60</div>
+                                        <div class="custom-select-dropdown-field">
+                                            <input type="text" name="repeatOnErrorDelay" placeholder="0"
+                                                data-type="int">
+                                            <button>></button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>)
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <span data-lang="buttonPosition"></span>
+                        </td>
+                        <td style="padding-left: 0">
+                            <select name="buttonPosition">
+                                <option value="inner" data-lang="buttonPositionInner">In form with captcha</option>
+                                <option value="fixed" data-lang="buttonPositionFixed">Relative by the viewport</option>
+                            </select>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+
+            <h2 class="text-right" data-lang="enabledSolveAutomatically"></h2>
+            <div class="content">
+                <table class="config">
+                    <tr>
+                        <td>
+                            Normal CAPTCHA (Image)
+                        </td>
+                        <td>
+                            <div class="switch">
+                                <input type="checkbox" name="enabledForNormal" id="enabledForNormal">
+                                <label for="enabledForNormal"></label>
+                            </div>
+                            <div class="switch">
+                                <input type="checkbox" name="autoSolveNormal" id="autoSolveNormal">
+                                <label for="autoSolveNormal"></label>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>reCAPTCHA V2(<span data-lang="with"></span>
+                            <div class="custom-select">
+                                <div class="custom-select-label">
+                                    <span class="custom-select-value">token</span>
+                                </div>
+                                <div class="custom-select-dropdown">
+                                    <div class="custom-select-dropdown-inner">
+                                        <div class="custom-select-dropdown-value" data-value="token">Token</div>
+                                        <div class="custom-select-dropdown-value" data-value="click">Click</div>
+                                        <div class="custom-select-dropdown-field d-none">
+                                            <input type="text" name="recaptchaV2Type" data-type="string">
+                                            <button>></button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>)
+                        </td>
+                        <td>
+                            <div class="switch">
+                                <input type="checkbox" name="enabledForRecaptchaV2" id="enabledForRecaptchaV2">
+                                <label for="enabledForRecaptchaV2"></label>
+                            </div>
+                            <div class="switch">
+                                <input type="checkbox" name="autoSolveRecaptchaV2" id="autoSolveRecaptchaV2">
+                                <label for="autoSolveRecaptchaV2"></label>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>reCAPTCHA V2 Invisible</td>
+                        <td>
+                            <div class="switch">
+                                <input type="checkbox" name="enabledForInvisibleRecaptchaV2"
+                                    id="enabledForInvisibleRecaptchaV2">
+                                <label for="enabledForInvisibleRecaptchaV2"></label>
+                            </div>
+                            <div class="switch">
+                                <input type="checkbox" name="autoSolveInvisibleRecaptchaV2"
+                                    id="autoSolveInvisibleRecaptchaV2">
+                                <label for="autoSolveInvisibleRecaptchaV2"></label>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            reCAPTCHA V3
+                            (<span data-lang="minScore"></span>
+                            <div class="custom-select">
+                                <div class="custom-select-label">
+                                    <span class="custom-select-value">0.1</span>
+                                </div>
+                                <div class="custom-select-dropdown">
+                                    <div class="custom-select-dropdown-inner">
+                                        <div class="custom-select-dropdown-value" data-value="0.1">0.1</div>
+                                        <div class="custom-select-dropdown-value" data-value="0.3">0.3</div>
+                                        <div class="custom-select-dropdown-value" data-value="0.5">0.5</div>
+                                        <div class="custom-select-dropdown-value" data-value="0.7">0.7</div>
+                                        <div class="custom-select-dropdown-value" data-value="0.9">0.9</div>
+                                        <div class="custom-select-dropdown-field d-none">
+                                            <input type="text" name="recaptchaV3MinScore" placeholder="0"
+                                                data-type="float">
+                                            <button>></button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>)
+                        </td>
+                        <td>
+                            <div class="switch">
+                                <input type="checkbox" name="enabledForRecaptchaV3" id="enabledForRecaptchaV3">
+                                <label for="enabledForRecaptchaV3"></label>
+                            </div>
+                            <div class="switch">
+                                <input type="checkbox" name="autoSolveRecaptchaV3" id="autoSolveRecaptchaV3">
+                                <label for="autoSolveRecaptchaV3"></label>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>reCAPTCHA Audio</td>
+                        <td>
+                            <div class="switch" style="margin-right: 66px">
+                                <input type="checkbox" name="enabledForRecaptchaAudio" id="enabledForRecaptchaAudio">
+                                <label for="enabledForRecaptchaAudio"></label>
+                            </div>
+                            <!-- <div class="switch">
+                                <input type="checkbox" name="autoSolveRecaptchaAudio" id="autoSolveRecaptchaAudio">
+                                <label for="autoSolveRecaptchaAudio"></label>
+                            </div> -->
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>GeeTest</td>
+                        <td>
+                            <div class="switch">
+                                <input type="checkbox" name="enabledForGeetest" id="enabledForGeetest">
+                                <label for="enabledForGeetest"></label>
+                            </div>
+                            <div class="switch">
+                                <input type="checkbox" name="autoSolveGeetest" id="autoSolveGeetest">
+                                <label for="autoSolveGeetest"></label>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>GeeTest V4</td>
+                        <td>
+                            <div class="switch">
+                                <input type="checkbox" name="enabledForGeetest_v4" id="enabledForGeetest_v4">
+                                <label for="enabledForGeetest_v4"></label>
+                            </div>
+                            <div class="switch">
+                                <input type="checkbox" name="autoSolveGeetest_v4" id="autoSolveGeetest_v4">
+                                <label for="autoSolveGeetest_v4"></label>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>KeyCaptcha</td>
+                        <td>
+                            <div class="switch">
+                                <input type="checkbox" name="enabledForKeycaptcha" id="enabledForKeycaptcha">
+                                <label for="enabledForKeycaptcha"></label>
+                            </div>
+                            <div class="switch">
+                                <input type="checkbox" name="autoSolveKeycaptcha" id="autoSolveKeycaptcha">
+                                <label for="autoSolveKeycaptcha"></label>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Arkose Labs</td>
+                        <td>
+                            <div class="switch">
+                                <input type="checkbox" name="enabledForArkoselabs" id="enabledForArkoselabs">
+                                <label for="enabledForArkoselabs"></label>
+                            </div>
+                            <div class="switch">
+                                <input type="checkbox" name="autoSolveArkoselabs" id="autoSolveArkoselabs">
+                                <label for="autoSolveArkoselabs"></label>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Lemin CAPTCHA</td>
+                        <td>
+                            <div class="switch">
+                                <input type="checkbox" name="enabledForLemin" id="enabledForLemin">
+                                <label for="enabledForLemin"></label>
+                            </div>
+                            <div class="switch">
+                                <input type="checkbox" name="autoSolveLemin" id="autoSolveLemin">
+                                <label for="autoSolveLemin"></label>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Yandex Smart Captcha</td>
+                        <td>
+                            <div class="switch">
+                                <input type="checkbox" name="enabledForYandex" id="enabledForYandex">
+                                <label for="enabledForYandex"></label>
+                            </div>
+                            <div class="switch">
+                                <input type="checkbox" name="autoSolveYandex" id="autoSolveYandex">
+                                <label for="autoSolveYandex"></label>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Capy Puzzle</td>
+                        <td>
+                            <div class="switch">
+                                <input type="checkbox" name="enabledForCapyPuzzle" id="enabledForCapyPuzzle">
+                                <label for="enabledForCapyPuzzle"></label>
+                            </div>
+                            <div class="switch">
+                                <input type="checkbox" name="autoSolveCapyPuzzle" id="autoSolveCapyPuzzle">
+                                <label for="autoSolveCapyPuzzle"></label>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Cloudflare Turnstile</td>
+                        <td>
+                            <div class="switch">
+                                <input type="checkbox" name="enabledForTurnstile" id="enabledForTurnstile">
+                                <label for="enabledForTurnstile"></label>
+                            </div>
+                            <div class="switch">
+                                <input type="checkbox" name="autoSolveTurnstile" id="autoSolveTurnstile">
+                                <label for="autoSolveTurnstile"></label>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>Amazon WAF</td>
+                        <td>
+                            <div class="switch">
+                                <input type="checkbox" name="enabledForAmazonWaf" id="enabledForAmazonWaf">
+                                <label for="enabledForAmazonWaf"></label>
+                            </div>
+                            <div class="switch">
+                                <input type="checkbox" name="autoSolveAmazonWaf" id="autoSolveAmazonWaf">
+                                <label for="autoSolveAmazonWaf"></label>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>MTCaptcha</td>
+                        <td>
+                            <div class="switch">
+                                <input type="checkbox" name="enabledForMTCaptcha" id="enabledForMTCaptcha">
+                                <label for="enabledForMTCaptcha"></label>
+                            </div>
+                            <div class="switch">
+                                <input type="checkbox" name="autoSolveMTCaptcha" id="autoSolveMTCaptcha">
+                                <label for="autoSolveMTCaptcha"></label>
+                            </div>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+
+            <h2 data-lang="proxySettings"></h2>
+            <div class="content">
+                <table class="config">
+                    <tr>
+                        <td>
+                            <span data-lang="useProxy"></span>
+                        </td>
+                        <td>
+                            <div class="switch">
+                                <input type="checkbox" name="useProxy" id="useProxy">
+                                <label for="useProxy"></label>
+                            </div>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td>
+                            <span data-lang="proxyType"></span>
+                        </td>
+                        <td>
+                            <select name="proxytype">
+                                <option value="HTTP">HTTP</option>
+                                <option value="HTTPS">HTTPS</option>
+                                <option value="SOCKS4">SOCKS4</option>
+                                <option value="SOCKS5">SOCKS5</option>
+                            </select>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td colspan="2" style="border-bottom: none">
+                            <input type="text" name="proxy" placeholder="login:password@123.123.123.123:3128">
+                        </td>
+                    </tr>
+                    <tr>
+                        <td colspan="2">
+                            <span data-lang="proxyOffer" data-lang-string="/proxy/residential-proxies"></span>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+
+            <div id="black-list">
+                <h2 data-lang="blackListDomain" style="margin-bottom: 4px;"></h2>
+                <div class="content" style="padding: 20px">
+                    <textarea name="blackListDomain" id="blackListDomain" rows="4" placeholder="example.com"></textarea>
+                </div>
+            </div>
+
+            <div id="autosubmit-rules">
+                <h2 data-lang="autoSubmitRules" style="margin-bottom: 4px;"></h2>
+                <div data-lang="autoSubmitDescription" class="subtitle"></div>
+                <div class="content"></div>
+            </div>
+        </form>
+
+        <h2 data-lang="haveAnyQuestions"></h2>
+        <div class="hint">
+            <span data-lang="contactUs" data-lang-string="info@2captcha.com"></span>
+            <div style="margin-top: 6px;">Read the <a href="/manual/manual.html">Manual</a></div>
+        </div>
+    </div>
+    <br><br>
+    <script src="/vendor/jquery/3.5.1/jquery.min.js"></script>
+    <script src="/common/config.js"></script>
+    <script src="/common/i18n.js"></script>
+    <script src="/options/options.js"></script>
+</body>
+
+</html>

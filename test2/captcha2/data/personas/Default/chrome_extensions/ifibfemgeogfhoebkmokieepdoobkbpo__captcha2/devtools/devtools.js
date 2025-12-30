@@ -1,0 +1,1 @@
+chrome['devtools']['panels']['create']('2Captcha\x20Detector','assets/images/logo.svg','app/index.html');

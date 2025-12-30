@@ -111,115 +111,126 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
 
 
 @cli.command()
+@click.argument('plugin_names', nargs=-1)
+@click.option('--install', '-i', 'do_install', is_flag=True, help='Install plugin dependencies')
 @click.pass_context
-def plugins(ctx):
-    """List available plugins."""
+def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool):
+    """Check and show info for plugins. Optionally install dependencies.
+
+    **Examples:**
+
+        abx-dl plugins                           # check + show info for all plugins
+
+        abx-dl plugins wget ytdlp git            # check + show info for these plugins
+
+        abx-dl plugins --install                 # install all plugins
+
+        abx-dl plugins --install wget ytdlp git  # install only these plugins
+    """
     all_plugins = ctx.obj.get('plugins', discover_plugins())
 
-    table = Table(title="Available Plugins")
-    table.add_column("Name", style="cyan")
-    table.add_column("Hooks", justify="right")
-    table.add_column("Binaries")
+    # Filter to selected plugins if specified
+    if plugin_names:
+        selected = {n: all_plugins[n] for n in plugin_names if n in all_plugins}
+        not_found = [n for n in plugin_names if n not in all_plugins]
+        if not_found:
+            console.print(f"[yellow]Warning: Unknown plugins: {', '.join(not_found)}[/yellow]")
+        if not selected:
+            console.print(f"[red]No valid plugins specified.[/red]")
+            console.print(f"[dim]Available: {', '.join(sorted(all_plugins.keys()))}[/dim]")
+            return
+    else:
+        selected = all_plugins
 
-    for name in sorted(all_plugins.keys()):
-        plugin = all_plugins[name]
-        hooks_count = len(plugin.get_snapshot_hooks())
-        binaries = ', '.join(b.get('name', '') for b in plugin.binaries) or '-'
-        table.add_row(name, str(hooks_count), binaries)
+    if do_install:
+        # Install mode
+        console.print("[bold]Installing plugin dependencies...[/bold]\n")
+        for name, plugin in sorted(selected.items()):
+            if not plugin.binaries:
+                continue
+            console.print(f"[cyan]{name}[/cyan]")
+            for spec in plugin.binaries:
+                binary = install_binary(spec)
+                if binary.is_valid:
+                    console.print(f"  [green]✓[/green] {binary.name} ({binary.loaded_version or 'unknown'}) - {binary.loaded_abspath}")
+                else:
+                    console.print(f"  [red]✗[/red] {binary.name} - not found")
+        console.print("\n[bold green]Done![/bold green]")
+    else:
+        # Check + info mode (default)
+        # Show summary table
+        table = Table(title="Plugins")
+        table.add_column("Name", style="cyan")
+        table.add_column("Status")
+        table.add_column("Hooks", justify="right")
+        table.add_column("Binaries")
 
-    console.print(table)
-    console.print(f"\n[dim]{len(all_plugins)} plugins available[/dim]")
+        all_ok = True
+        for name in sorted(selected.keys()):
+            plugin = selected[name]
+            hooks_count = len(plugin.get_snapshot_hooks())
 
-
-@cli.command()
-@click.argument('plugin_names', required=False)
-@click.pass_context
-def install(ctx, plugin_names: str | None):
-    """Install dependencies for plugins."""
-    all_plugins = ctx.obj.get('plugins', discover_plugins())
-    plugins_to_install = {n: all_plugins[n] for n in plugin_names.split(',') if n in all_plugins} if plugin_names else all_plugins
-
-    console.print("[bold]Installing plugin dependencies...[/bold]\n")
-
-    for name, plugin in plugins_to_install.items():
-        if not plugin.binaries:
-            continue
-        console.print(f"[cyan]{name}[/cyan]")
-        for spec in plugin.binaries:
-            binary = install_binary(spec)
-            if binary.is_valid:
-                console.print(f"  [green]✓[/green] {binary.name} ({binary.loaded_version or 'unknown'}) - {binary.loaded_abspath}")
+            # Check binary status
+            if plugin.binaries:
+                binary_statuses = []
+                for spec in plugin.binaries:
+                    binary = load_binary(spec)
+                    if binary.is_valid:
+                        binary_statuses.append(f"[green]{binary.name}[/green]")
+                    else:
+                        binary_statuses.append(f"[red]{binary.name}[/red]")
+                        all_ok = False
+                binaries_str = ', '.join(binary_statuses)
+                status = "[green]✓[/green]" if all(b.startswith('[green]') for b in binary_statuses) else "[yellow]○[/yellow]"
             else:
-                console.print(f"  [red]✗[/red] {binary.name} - not found")
+                binaries_str = '-'
+                status = "[green]✓[/green]"
 
-    console.print("\n[bold green]Done![/bold green]")
+            table.add_row(name, status, str(hooks_count), binaries_str)
+
+        console.print(table)
+        console.print(f"\n[dim]{len(selected)} plugins[/dim]")
+
+        if not all_ok:
+            console.print("[yellow]Some dependencies missing. Run 'abx-dl plugins --install' to install them.[/yellow]")
+
+        # Show detailed info if only a few plugins selected
+        if len(selected) <= 3:
+            for name, plugin in sorted(selected.items()):
+                console.print(f"\n[bold cyan]─── {plugin.name} ───[/bold cyan]")
+                console.print(f"[dim]Path: {plugin.path}[/dim]")
+
+                if plugin.config_schema:
+                    console.print("\n[bold]Config options:[/bold]")
+                    for key, prop in plugin.config_schema.items():
+                        console.print(f"  {key}={prop.get('default', '-')}")
+                        if prop.get('description'):
+                            console.print(f"    [dim]{prop['description']}[/dim]")
+
+                if plugin.binaries:
+                    console.print("\n[bold]Binaries:[/bold]")
+                    for spec in plugin.binaries:
+                        binary = load_binary(spec)
+                        status = "[green]✓[/green]" if binary.is_valid else "[red]✗[/red]"
+                        version = f" ({binary.loaded_version})" if binary.is_valid and binary.loaded_version else ""
+                        path = f" - {binary.loaded_abspath}" if binary.is_valid else ""
+                        console.print(f"  {status} {spec.get('name', '?')}{version}{path}")
+                        console.print(f"    [dim]providers: {spec.get('binproviders', 'env')}[/dim]")
+
+                hooks = plugin.get_snapshot_hooks()
+                if hooks:
+                    console.print("\n[bold]Hooks:[/bold]")
+                    for hook in hooks:
+                        bg = " [dim](background)[/dim]" if hook.is_background else ""
+                        console.print(f"  Step {hook.step}.{hook.priority}: {hook.name}{bg}")
 
 
 @cli.command()
-@click.argument('plugin_names', required=False)
+@click.argument('plugin_names', nargs=-1)
 @click.pass_context
-def check(ctx, plugin_names: str | None):
-    """Check if plugin dependencies are available."""
-    all_plugins = ctx.obj.get('plugins', discover_plugins())
-    plugins_to_check = {n: all_plugins[n] for n in plugin_names.split(',') if n in all_plugins} if plugin_names else all_plugins
-
-    table = Table(title="Dependency Status")
-    table.add_column("Plugin", style="cyan")
-    table.add_column("Binary")
-    table.add_column("Status")
-    table.add_column("Version")
-    table.add_column("Path")
-
-    all_ok = True
-    for name, plugin in sorted(plugins_to_check.items()):
-        if not plugin.binaries:
-            continue
-        for spec in plugin.binaries:
-            binary = load_binary(spec)
-            status = "[green]✓[/green]" if binary.is_valid else "[red]✗[/red]"
-            all_ok = all_ok and binary.is_valid
-            table.add_row(name, binary.name, status, str(binary.loaded_version or '-'), str(binary.loaded_abspath or '-'))
-
-    console.print(table)
-    console.print(f"\n[bold green]All dependencies available![/bold green]" if all_ok else "\n[bold yellow]Some dependencies missing. Run 'abx-dl install' to install them.[/bold yellow]")
-
-
-@cli.command()
-@click.argument('plugin_name')
-@click.pass_context
-def info(ctx, plugin_name: str):
-    """Show detailed info about a plugin."""
-    all_plugins = ctx.obj.get('plugins', discover_plugins())
-
-    if plugin_name not in all_plugins:
-        console.print(f"[red]Plugin not found: {plugin_name}[/red]")
-        console.print(f"[dim]Available: {', '.join(sorted(all_plugins.keys()))}[/dim]")
-        return
-
-    plugin = all_plugins[plugin_name]
-    console.print(f"[bold cyan]{plugin.name}[/bold cyan]")
-    console.print(f"[dim]Path: {plugin.path}[/dim]\n")
-
-    if plugin.config_schema:
-        console.print("[bold]Config options:[/bold]")
-        for key, prop in plugin.config_schema.items():
-            console.print(f"  {key}={prop.get('default', '-')}")
-            if prop.get('description'):
-                console.print(f"    [dim]{prop['description']}[/dim]")
-        console.print()
-
-    if plugin.binaries:
-        console.print("[bold]Binaries:[/bold]")
-        for binary in plugin.binaries:
-            console.print(f"  {binary.get('name', '?')} (providers: {binary.get('binproviders', 'env')})")
-        console.print()
-
-    hooks = plugin.get_snapshot_hooks()
-    if hooks:
-        console.print("[bold]Hooks:[/bold]")
-        for hook in hooks:
-            bg = " [dim](background)[/dim]" if hook.is_background else ""
-            console.print(f"  Step {hook.step}.{hook.priority}: {hook.name}{bg}")
+def install(ctx, plugin_names: tuple[str, ...]):
+    """Shortcut for 'abx-dl plugins --install [plugins...]'."""
+    ctx.invoke(plugins, plugin_names=plugin_names, do_install=True)
 
 
 def main():

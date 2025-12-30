@@ -127,9 +127,9 @@ def download(url: str, plugins: dict[str, Plugin], output_dir: Path, selected_pl
         env = build_env_for_plugin(plugin.name, plugin.config_schema, shared_config)
         timeout = int(env.get(f"{plugin.name.upper()}_TIMEOUT", env.get('TIMEOUT', '60')))
 
+        # Executor creates plugin subdir, hooks write to cwd directly
         plugin_output_dir = output_dir / plugin.name
         plugin_output_dir.mkdir(parents=True, exist_ok=True)
-
         proc, ar = run_hook(hook, url, snapshot.id, plugin_output_dir, env, timeout)
 
         # Write to index.jsonl

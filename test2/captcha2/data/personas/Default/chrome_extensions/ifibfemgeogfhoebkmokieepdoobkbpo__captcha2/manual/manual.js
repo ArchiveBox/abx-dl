@@ -1,0 +1,1 @@
+$('.menu')['on']('click','a',function(a){let b=$(this)['attr']('href');$('.content')['children']()['removeClass']('active');$(b)['addClass']('active');$('.menu')['children']()['removeClass']('active');$(this)['addClass']('active');});if(location['href']['includes']('#')){let id=location['href']['split']('#')[0x1];$('a[href=\x27#'+id+'\x27]')['click']();}

@@ -108,7 +108,7 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          uv sync --dev
+          uv sync --extra dev
 
       - name: Test plugin - ${{ matrix.plugin.name }}
         run: |
@@ -168,7 +168,7 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          uv sync --dev
+          uv sync --extra dev
 
       - name: Test all plugins
         run: |

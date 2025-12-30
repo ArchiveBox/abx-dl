@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <title data-lang="optionsPageTitle"></title>
+    <link rel="stylesheet" href="/manual/manual.css">
+</head>
+
+<body>
+    <header>
+        <a href="#" target="_blank" data-lang-link="/">
+            <img src="/assets/images/logo.svg" height="32">
+        </a>
+    </header>
+    <div class="container">
+        <div class="menu">
+            <a href="#about" class="active">About</a>
+            <a href="#api-key">API-KEY</a>
+            <a href="#enable-plugin">Enable plugin</a>
+            <a href="#submit-forms-automatically">Submit forms automatically</a>
+            <a href="#if-error-happens-repeat">If error happens, repeat</a>
+            <a href="#enabled-solve-automatically">Enabled / Solve automatically</a>
+            <a href="#proxy">Proxy</a>
+            <a href="#image-captcha-solving">Image captcha solving</a>
+            <a href="#2captcha-detector">2Captcha detector</a>
+        </div>
+
+        <div class="content">
+
+            <div id="about" class="active">
+                <h2>About</h2>
+                <p>This plugin allows you to automatically solve CAPTCHAs found on any webpage.</p>
+                <p>❗️❗️❗️Extension is free. But you have to purchase an API KEY❗️❗️❗️</p>
+                <p>In order to obtain API KEY you have to create an account on 2Сaptcha.com and replenish your
+                    balance.<br>
+                    Every solved captcha will decrease your balance as per this rate:<br>
+                    💰1000 resolutions - $2.99 (1 captcha - 2.99 cents)
+                </p>
+
+                <p>😆 The extension is made for those users who can't bypass a captcha for some reason being either
+                    banned by captcha or not able to read it.</p>
+
+                <p>🚀 For now extension supports:<br>
+                    ✅ Simple captcha⭐️ (an image with symbols)<br>
+                    ✅ reCaptcha V2 / V2 Invisible / V3 / Enterprise<br>
+                    ✅ GeeTest<br>
+                    ✅ Arkose Labs Captcha (FunCaptcha)<br>
+                    ✅ KeyCaptcha<br>
+                    ✅ GeeTest V4<br>
+                    ✅ Lemin<br>
+                    ✅ Capy Puzzle<br>
+                    ✅ Cloudflare Turnstile<br>
+                    ✅ Amazon WAF<br>
+                    ✅ MTCaptcha
+                </p>
+
+                <p>🚀 How it works:</p>
+                <p>The extension goes through page's HTML code. If it contains a captcha code extension sends a request
+                    to 2captcha server for resolution.</p>
+                <p>When captcha is solved, extension sets a solution inside HTML code of the page. Then it could be used
+                    automatically when user submits a filled form.</p>
+                <p>Keep in mind that solution is valid for 120 seconds only. It means you have 117-119 seconds to
+                    complete the form and submit it.</p>
+
+                <p>🌐 Support and information:<br>
+                    <a href="https://captchaforum.com/threads/2captcha-solver-browser-extension.1160/"
+                        target="_blank">https://captchaforum.com/threads/2captcha-solver-browser-extension.1160/</a>
+                </p>
+            </div>
+
+            <div id="api-key">
+                <h2>API-KEY</h2>
+                <p>Your 2captcha.com API KEY. You may get it on your Dashboard on <a href="https://2captcha.com/"
+                        target="_blank">2captcha.com</a>.</p>
+            </div>
+
+            <div id="enable-plugin">
+                <h2>Enable plugin</h2>
+                <p>Enables HTML code analysis.</p>
+            </div>
+
+            <div id="submit-forms-automatically">
+                <h2>Submit forms automatically</h2>
+                <p>Enables automatic submission of forms upon receiving a captcha resolution. Please be extra careful
+                    with this option. Some web forms doesn't have validation of data indicated. It leads to page refresh
+                    with an error message indicating fields to be filled. Extension will send a new captcha resolution
+                    request to 2captcha API and then will send a form again and again until you close this browser tab
+                    or you run out of balance on 2captcha.</p>
+                <p><b>Delay</b> - You may set up a delayed automatic submission, indicating amount of seconds of the
+                    delay.</p>
+                <p>By default, plugin submits the form. If needed, another behaviour can be specified. For example, once
+                    captcha is solved, plugin can execute custom javascript code on certain pages. This behaviour can be
+                    configured in <a href="/options/options.html#autosubmit-rules" target="_blank">AutoSubmit rules</a>
+                    section.
+                <p>Custom Javascript code can be generated based on the list of defined actions, for example:</p>
+                <p>1. Click on element with id "login-button"</p>
+                <div style="margin-left: 12px;">
+                    <p>Javascript:</p>
+                    <pre>document.getElementById("login-button").click()</pre>
+                    <p>Actions:</p>
+                    <pre>{"type":"source","value":"document"}
+{"type":"method","value":"getElementById","args":["login-button"]}
+{"type":"method","value":"click"}</pre>
+                </div>
+                <p>2. Traverse DOM:</p>
+                <div style="margin-left: 12px;">
+                    <p>Javascript:</p>
+                    <pre>document.querySelector(".captcha-solver").closest("form").children[1].click()</pre>
+                    <p>Actions:</p>
+                    <pre>{"type":"source","value":"document"}
+{"type":"method","value":"querySelector","args":[".captcha-solver"]}
+{"type":"method","value":"closest","args":["form"]}
+{"type":"property","value":"children"}
+{"type":"index","value":1}
+{"type":"method","value":"click"}</pre>
+                </div>
+                <p>3. Execute predefined function:</p>
+                <div style="margin-left: 12px;">
+                    <p>Javascript:</p>
+                    <pre>login("username", "password")</pre>
+                    <p>Actions:</p>
+                    <pre>{"type":"source","value":"window"}
+{"type":"method","value":"login","args":["username", "password"]}</pre>
+                </div>
+            </div>
+
+            <div id="if-error-happens-repeat">
+                <h2>If error happens, repeat</h2>
+                <p>Try to send a request again if a solution from 2catpcha didn't work or extension failed to send
+                    captcha challenge to 2captcha.com. Please note, if a website with a captcha challenge refuse to
+                    accept a captcha resolution from extension, it will refresh a page with captcha and extension will
+                    detect it as a new captcha page. Even if this option is not enabled, an extension will send a
+                    captcha request to 2captcha.com.</p>
+                <p><b>Delay</b> - You may set up a delay for repeat of captcha submission, indicating amount of seconds
+                    of delay.</p>
+            </div>
+
+            <div id="enabled-solve-automatically">
+                <h2>Enabled / Solve automatically</h2>
+                <p>Check options accordingly for every captcha type.</p>
+                <p><b>Enabled</b> - Check a code of the page for this type of captcha.</p>
+                <p><b>Solve automatically</b> - If set, an extension will send this captcha challenge to 2captcha.com
+                    API for resolution when found. If you leave it unchecked, an extension will add a "Solve with
+                    2catpcha" button to this webpage. If the captcha is invisible, the button will be placed under form
+                    submission button. Please check screenshots below.</p>
+            </div>
+
+            <div id="proxy">
+                <h2>Proxy</h2>
+                <p><b>Use proxy</b> - enable this option if you want a captcha to be solved via your proxy server.</p>
+                <p><b>Proxy type</b> - indicate proxy type. We only support HTTP. HTTPS. SOCKS4 and SOCKS5. We can't
+                    detect proxy type automatically so you have to indicate it.</p>
+                <p><b>login:password@123.123.123.123:3128</b> - indicate your proxy address, port and credentials
+                    accordingly. If your proxy doesn't need authorization, leave only IP and port:
+                    "123.123.123.123:3128"</p>
+                <p>Don't forget to allow access to your proxy from our IP 138.201.188.166. Our requests will be tunneled
+                    from our gateway, so we will never have direct access to your proxy.</p>
+                <p>We recommend using <a href="https://2captcha.com/proxy/residential-proxies" target="_blank">2Captcha
+                        residential proxies</a> to maximum efficiency.</p>
+            </div>
+
+            <div id="image-captcha-solving">
+                <h2>Image captcha solving</h2>
+                <p>The extension could not detect where is a captcha located and where exactly a resolution should be
+                    placed in when captcha is solved. So you have to indicate this for every website you will need to
+                    bypass captcha on. To do so Right click on a picture and choose "Solve this captcha" to let
+                    extension know where the captcha is located. Then do the same for resolution field, Right click on
+                    it and choose "Insert captcha resolution here". These parameters will be stored in the extension
+                    settings for this particular website.</p>
+            </div>
+
+            <div id="2captcha-detector">
+                <h2>2Captcha detector</h2>
+                <p>2Captcha detector is a tool designed to detect captcha parameters on a page. 2Captcha detector
+                    displays the parameters of all found captchas on the page in the form of a table. 2Captcha detector
+                    provides sample requests to send found captchas, sample requests are displayed for two versions of
+                    api, for <a href="https://2captcha.com/2captcha-api" target="_blank">API V1</a> and <a
+                        href="https://2captcha.com/api-docs" target="_blank">API V2</a>.</p>
+                <h3>How it works:</h3>
+                <ol>
+                    <li>Install the extension in your browser and authorize in the extension.</li>
+                    <li>Press the “F12” key on your keyboard to open developer tools.</li>
+                    <li>Click on the tab labeled “2Captcha Detector”.</li>
+                    <li>Without closing the “2Captcha Detector” panel, visit the website where you want to identify the
+                        CAPTCHA.</li>
+                    <li>Run the captcha.</li>
+                </ol>
+                <p>After the steps are done, on the “2Captcha Detector” tab you will see the parameters of the found
+                    captchas and sample queries for the found captchas.</p>
+            </div>
+
+        </div>
+
+    </div>
+
+    <br><br>
+
+    <!-- SCRIPTS -->
+    <script src="/vendor/jquery/3.5.1/jquery.min.js"></script>
+    <script src="/common/i18n.js"></script>
+    <script src="/manual/manual.js"></script>
+
+</body>
+
+</html>

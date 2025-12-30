@@ -1,0 +1,455 @@
+/* cyrillic */
+@font-face {
+    font-family: 'Manrope';
+    font-style: normal;
+    font-weight: 300;
+    font-display: swap;
+    src: url(/assets/fonts/Manrope/Manrope-Light.ttf) format('truetype');
+    unicode-range: U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+
+/* greek */
+@font-face {
+    font-family: 'Manrope';
+    font-style: normal;
+    font-weight: 300;
+    font-display: swap;
+    src: url(/assets/fonts/Manrope/Manrope-Light.ttf) format('truetype');
+    unicode-range: U+0370-03FF;
+}
+
+/* latin-ext */
+@font-face {
+    font-family: 'Manrope';
+    font-style: normal;
+    font-weight: 300;
+    font-display: swap;
+    src: url(/assets/fonts/Manrope/Manrope-Light.ttf) format('truetype');
+    unicode-range: U+0100-024F, U+0259, U+1E00-1EFF, U+2020, U+20A0-20AB, U+20AD-20CF, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* latin */
+@font-face {
+    font-family: 'Manrope';
+    font-style: normal;
+    font-weight: 300;
+    font-display: swap;
+    src: url(/assets/fonts/Manrope/Manrope-Light.ttf) format('truetype');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0px;
+    background-color: #232323;
+    color: white;
+    font-size: 81.25%;
+    font-family: Manrope, serif;
+    font-weight: 300;
+}
+
+header {
+    width: 100%;
+    text-align: center;
+    padding: 30px;
+    background-color: #232323;
+    color: white;
+}
+
+header a {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    text-decoration: none;
+    color: #fff;
+}
+
+.version {
+    margin-left: 10px;
+    margin-top: 6px;
+}
+
+.container {
+    margin: 0 auto;
+    width: 710px;
+    max-width: 100%;
+    padding: 0 15px;
+}
+
+.logo {
+    text-align: center;
+    margin: 30px 0;
+}
+
+.content {
+    background-color: #141414;
+    border-radius: 5px;
+    box-shadow: 0px 0px 5px 0px rgba(0, 0, 0, 0.2);
+    margin-bottom: 30px;
+}
+
+h2 {
+    color: #8f8f8f;
+    font-size: 108%;
+    font-weight: 400;
+    letter-spacing: .25px;
+    margin-bottom: 10px;
+    margin-top: 0;
+    padding-bottom: 4px;
+    padding-top: 8px;
+}
+
+.subtitle {
+    color: silver;
+    font-size: 12px;
+    margin-bottom: 10px;
+}
+
+.hint {
+    color: #9f9f9f;
+}
+
+.hint a {
+    color: #00bcbd;
+}
+
+.hint a:hover {
+    color: #009798;
+    text-decoration: none;
+}
+
+form .result {
+    display: inline-block;
+    margin-left: 10px;
+}
+
+form .result .green {
+    color: green;
+}
+
+form .result .red {
+    color: red;
+}
+
+textarea,
+input[type=text] {
+    width: 100%;
+    border: 1px solid #dddddd;
+    border-radius: 4px;
+    padding: 7px;
+    background-color: #232323;
+    color: white;
+}
+
+select {
+    border: 1px solid #dddddd;
+    border-radius: 4px;
+    padding: 2px;
+}
+
+input[type=text].small {
+    padding: 2px;
+    text-align: center;
+    width: 36px;
+    margin-left: 3px;
+    margin-right: 3px;
+}
+
+.default-btn {
+    background-color: #141414;;
+    border: 1px solid rgb(218, 220, 224);
+    border-radius: 4px;
+    color: #3bb0b1;
+    flex-shrink: 0;
+    font-weight: bold;
+    height: 32px;
+    margin: 0;
+    padding: 8px 16px;
+    text-decoration: none;
+    text-transform: none;
+}
+
+.default-btn:hover {
+    cursor: pointer;
+    background-color: #232323;
+    border-color: rgb(210, 227, 252);
+}
+
+
+table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+table th,
+table td {
+    border-bottom: 2px solid #232323;
+    padding: 10px 20px;
+    line-height: 24px;
+}
+
+table th {
+    text-align: left;
+}
+
+table td:last-child {
+    text-align: right;
+}
+
+table td:first-child {
+    text-align: left;
+}
+
+table tr:last-child td {
+    border-bottom: none;
+}
+
+.switch {
+    display: inline-block;
+    position: relative;
+    margin: 0 0 10px;
+    font-size: 16px;
+    line-height: 24px;
+}
+
+.switch input {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 36px;
+    height: 20px;
+    opacity: 0;
+    z-index: 0;
+}
+
+.switch label {
+    display: block;
+    padding: 0 0 0 44px;
+    cursor: pointer;
+}
+
+.switch label:before {
+    content: "";
+    position: absolute;
+    left: 0;
+    width: 36px;
+    height: 12px;
+    background-color: #232323;
+    border-radius: 12px;
+    z-index: 1;
+    transition: background-color 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.switch label:after {
+    content: "";
+    position: absolute;
+    top: -3px;
+    left: 0;
+    width: 18px;
+    height: 18px;
+    background-color: #707070;
+    border-radius: 14px;
+    box-shadow: 0 2px 2px 0 rgba(0, 0, 0, 0.14), 0 3px 1px -2px rgba(0, 0, 0, 0.2), 0 1px 5px 0 rgba(0, 0, 0, 0.12);
+    z-index: 2;
+    transition: all 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+    transition-property: left, background-color;
+}
+
+.switch input:checked + label:before {
+    background-color: #00bcbd;
+}
+
+.switch input:checked + label:after {
+    left: 18px;
+    background-color: white;
+}
+
+.switch + .switch {
+    margin-left: 20px;
+}
+
+
+/* RADIO BUTTONS */
+.md-radio {
+    margin: 2px 0;
+}
+
+.md-radio.md-radio-inline {
+    display: inline-block;
+}
+
+.md-radio input[type=radio] {
+    display: none;
+}
+
+.md-radio input[type=radio] + label:before {
+    border-color: #00aab1;
+    animation: ripple 0.2s linear forwards;
+}
+
+.md-radio input[type=radio]:checked + label:after {
+    transform: scale(1);
+}
+
+.md-radio label {
+    display: inline-block;
+    height: 20px;
+    position: relative;
+    padding: 0 30px;
+    margin-bottom: 0;
+    cursor: pointer;
+    vertical-align: bottom;
+}
+
+.md-radio label:before, .md-radio label:after {
+    position: absolute;
+    content: "";
+    border-radius: 50%;
+    transition: all 0.3s ease;
+    transition-property: transform, border-color;
+}
+
+.md-radio label:before {
+    left: 0;
+    top: 2px;
+    width: 14px;
+    height: 14px;
+    border: 1px solid rgba(0, 0, 0, 0.54);
+}
+
+.md-radio label:after {
+    top: 5px;
+    left: 3px;
+    width: 10px;
+    height: 10px;
+    transform: scale(0);
+    background: #00aab1;
+}
+
+
+.custom-select {
+    display: inline-block;
+    padding-left: 6px;
+    position: relative;
+}
+
+.custom-select-label {
+    position: relative;
+    color: #0075ff;
+    text-decoration: underline;
+    padding-right: 20px;
+    user-select: none;
+}
+
+.custom-select.open .custom-select-label {
+    text-decoration: none;
+}
+
+.custom-select-label:hover {
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.custom-select-label:after {
+    content: ">";
+    position: absolute;
+    right: 5px;
+    top: 5px;
+    display: block;
+    transform: rotate(90deg);
+    font-size: 22px;
+    line-height: 10px;
+    width: 10px;
+    height: 10px;
+}
+
+.custom-select-dropdown {
+    position: absolute;
+    left: 0;
+    top: 22px;
+    width: max-content;
+    display: none;
+    z-index: 2;
+}
+
+.custom-select.open .custom-select-dropdown {
+    display: block;
+}
+
+.custom-select-dropdown-inner {
+    display: block;
+    width: fit-content;
+    margin: 0 auto;
+    background-color: #0175ff;
+    padding: 5px;
+    border-radius: 6px;
+}
+
+.custom-select-dropdown-value {
+    display: inline-block;
+    background-color: #3192fd;
+    padding: 4px 12px;
+    border-radius: 4px;
+    height: 30px;
+}
+
+.custom-select-dropdown-value:hover {
+    background-color: #6ab1ff;
+    cursor: pointer;
+}
+
+.custom-select-dropdown-field {
+    display: inline-block;
+    vertical-align: top;
+    background-color: white;
+    border-radius: 4px;
+    padding: 3px;
+    height: 30px;
+}
+
+.custom-select-dropdown-field input {
+    height: 100%;
+    border: none;
+    text-align: left;
+    padding-left: 2px;
+    width: 36px;
+    background-color: white;
+    color: black;
+}
+
+.custom-select-dropdown-field button {
+    height: 100%;
+    vertical-align: top;
+    background-color: #02bcc1;
+    border: none;
+    border-radius: 4px;
+    color: white;
+    line-height: 20px;
+}
+
+.custom-select-dropdown-field button:hover {
+    cursor: pointer;
+    background-color: rgb(2 167 172);
+}
+
+.custom-select-dropdown-field input:focus,
+.custom-select-dropdown-field button:focus {
+    outline: 0;
+    box-shadow: none;
+}
+
+
+.d-none {
+    display: none !important;
+}
+
+.text-right {
+    text-align: right;
+}
+
+a {
+    color: #0075ff;
+}

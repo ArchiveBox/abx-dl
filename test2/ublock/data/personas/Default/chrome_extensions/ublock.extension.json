@@ -1,0 +1,10 @@
+{
+  "webstore_id": "cjpalhdlnbpafiamejdnhcphjbkeiagm",
+  "name": "ublock",
+  "webstore_url": "https://chromewebstore.google.com/detail/cjpalhdlnbpafiamejdnhcphjbkeiagm",
+  "crx_url": "https://clients2.google.com/service/update2/crx?response=redirect&prodversion=1230&acceptformat=crx3&x=id%3Dcjpalhdlnbpafiamejdnhcphjbkeiagm%26uc",
+  "crx_path": "data/personas/Default/chrome_extensions/cjpalhdlnbpafiamejdnhcphjbkeiagm__ublock.crx",
+  "unpacked_path": "data/personas/Default/chrome_extensions/cjpalhdlnbpafiamejdnhcphjbkeiagm__ublock",
+  "id": "ajhahakihbfjgjdpfcgbmcilfklgoddi",
+  "version": "1.68.0"
+}

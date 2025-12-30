@@ -101,6 +101,28 @@ abx-dl install [plugins]        # Install plugin dependencies
 abx-dl check [plugins]          # Check dependency status
 ```
 
+#### Installing Dependencies
+
+Many plugins require external binaries (e.g., `wget`, `chrome`, `yt-dlp`, `single-file`). Use `abx-dl install` to automatically install them:
+
+```bash
+# Install all plugin dependencies
+abx-dl install
+
+# Install dependencies for specific plugins only
+abx-dl install wget,singlefile,ytdlp
+
+# Check which dependencies are available/missing
+abx-dl check
+```
+
+Dependencies are installed to `~/.config/abx/lib/{arch}/` using the appropriate package manager:
+- **pip packages** → `~/.config/abx/lib/{arch}/pip/venv/`
+- **npm packages** → `~/.config/abx/lib/{arch}/npm/`
+- **brew/apt packages** → system locations
+
+You can override the install location with `LIB_DIR=/path/to/lib abx-dl install`.
+
 <br/>
 
 ---
@@ -111,7 +133,7 @@ abx-dl check [plugins]          # Check dependency status
 
 ```
 ./
-├── index.json              # Snapshot metadata and results
+├── index.jsonl             # Snapshot metadata and results (JSONL format)
 ├── title/
 │   └── title.txt
 ├── favicon/
@@ -134,7 +156,7 @@ abx-dl check [plugins]          # Check dependency status
 
 ### All Outputs
 
-- `index.json` - snapshot metadata and plugin results
+- `index.jsonl` - snapshot metadata and plugin results (JSONL format, ArchiveBox-compatible)
 - `title/title.txt` - page title
 - `favicon/favicon.ico` - site favicon
 - `screenshot/screenshot.png` - full page screenshot (Chrome)

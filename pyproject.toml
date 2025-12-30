@@ -1,6 +1,6 @@
 [project]
 name = "abx-dl"
-version = "1.0.1"
+version = "1.0.2"
 requires-python = ">=3.10"
 description = "All-in-one CLI tool to download and extract content from URLs"
 authors = [{name = "Nick Sweeting", email = "pyproject.toml@archivebox.io"}]
@@ -46,21 +46,19 @@ dependencies = [
     "requests>=2.28.0",
 ]
 
-
-[tool.uv]
-dev-dependencies = [
-    ### BUILD
-    "uv",
+[project.optional-dependencies]
+dev = [
+    # BUILD
     "pip>=24.2",
     "setuptools>=75.1.0",
     "wheel>=0.44.0",
-    ### TESTING
+    # TESTING
     "pytest>=8.0.0",
     "pytest-xdist>=3.5.0",
-    ### DEBUGGING
+    # DEBUGGING
     "ipdb>=0.13.13",
-    "viztracer",                                     # usage: viztracer ../.venv/bin/archivebox manage check
-    ### LINTING
+    "viztracer",
+    # LINTING
     "ruff>=0.6.6",
     "flake8>=7.1.1",
     "mypy>=1.11.2",
