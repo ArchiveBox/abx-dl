@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Generator
 
 from .config import build_env_for_plugin, LIB_DIR, NPM_BIN_DIR, NODE_MODULES_DIR
+from .dependencies import load_binary, install_binary
 from .models import Snapshot, Process, ArchiveResult, write_jsonl, now_iso
 from .plugins import Hook, Plugin
 
@@ -94,10 +95,30 @@ def run_hook(hook: Hook, url: str, snapshot_id: str, output_dir: Path, env: dict
         return proc, ar
 
 
-def download(url: str, plugins: dict[str, Plugin], output_dir: Path, selected_plugins: list[str] | None = None, config_overrides: dict[str, Any] | None = None) -> Generator[ArchiveResult, None, Snapshot]:
+def check_plugin_dependencies(plugin: Plugin, auto_install: bool = True) -> tuple[bool, list[str]]:
+    """
+    Check if a plugin's dependencies are available.
+    If auto_install=True, attempt to install missing dependencies.
+    Returns (all_available, list_of_missing_binary_names).
+    """
+    missing = []
+    for spec in plugin.binaries:
+        binary = load_binary(spec)
+        if not binary.is_valid:
+            if auto_install:
+                binary = install_binary(spec)
+            if not binary.is_valid:
+                missing.append(spec.get('name', '?'))
+    return len(missing) == 0, missing
+
+
+def download(url: str, plugins: dict[str, Plugin], output_dir: Path, selected_plugins: list[str] | None = None, config_overrides: dict[str, Any] | None = None, auto_install: bool = True) -> Generator[ArchiveResult, None, Snapshot]:
     """
     Download a URL using plugins. Yields ArchiveResults as they complete.
     Writes all output to index.jsonl.
+
+    If auto_install=True (default), missing plugin dependencies are lazily installed.
+    If auto_install=False, plugins with missing dependencies are skipped with a warning.
     """
     output_dir = output_dir or Path.cwd()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -113,9 +134,30 @@ def download(url: str, plugins: dict[str, Plugin], output_dir: Path, selected_pl
         selected_lower = [p.lower() for p in selected_plugins]
         plugins = {n: p for n, p in plugins.items() if n.lower() in selected_lower}
 
+    # Check/install dependencies and filter unavailable plugins
+    available_plugins: dict[str, Plugin] = {}
+    skipped_plugins: list[tuple[str, list[str]]] = []
+
+    for name, plugin in plugins.items():
+        if plugin.binaries:
+            deps_ok, missing = check_plugin_dependencies(plugin, auto_install=auto_install)
+            if deps_ok:
+                available_plugins[name] = plugin
+            else:
+                skipped_plugins.append((name, missing))
+        else:
+            available_plugins[name] = plugin
+
+    # Warn about skipped plugins
+    if skipped_plugins and is_tty:
+        for plugin_name, missing in skipped_plugins:
+            print(f"Warning: Skipping plugin '{plugin_name}' - missing dependencies: {', '.join(missing)}", file=sys.stderr)
+        if not auto_install:
+            print("Hint: Run without --no-install to auto-install dependencies, or run 'abx-dl plugins --install'", file=sys.stderr)
+
     # Collect all hooks sorted by execution order
     all_hooks: list[tuple[Plugin, Hook]] = []
-    for plugin in plugins.values():
+    for plugin in available_plugins.values():
         for hook in plugin.get_crawl_hooks() + plugin.get_snapshot_hooks():
             all_hooks.append((plugin, hook))
     all_hooks.sort(key=lambda x: x[1].sort_key)

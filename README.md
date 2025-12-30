@@ -70,7 +70,7 @@ Configuration is handled via environment variables:
 
 ```bash
 pip install abx-dl
-abx-dl install           # optional: install plugin dependencies
+abx-dl plugins --install   # optional: pre-install plugin dependencies
 ```
 
 <br/>
@@ -82,7 +82,10 @@ abx-dl install           # optional: install plugin dependencies
 abx-dl 'https://example.com'
 
 # Download with specific plugins only:
-abx-dl --plugins=title,favicon,screenshot 'https://example.com'
+abx-dl --plugins=wget,ytdlp,git,screenshot 'https://example.com'
+
+# Skip auto-installing missing dependencies (emit warnings instead):
+abx-dl --no-install 'https://example.com'
 
 # Specify output directory:
 abx-dl --output=./downloads 'https://example.com'
@@ -94,26 +97,35 @@ abx-dl --timeout=120 'https://example.com'
 #### Commands
 
 ```bash
-abx-dl <url>                    # Download URL (default command)
-abx-dl plugins                  # List available plugins
-abx-dl info <plugin>            # Show plugin details
-abx-dl install [plugins]        # Install plugin dependencies
-abx-dl check [plugins]          # Check dependency status
+abx-dl <url>                              # Download URL (default command)
+abx-dl plugins                            # Check + show info for all plugins
+abx-dl plugins wget ytdlp git             # Check + show info for specific plugins
+abx-dl plugins --install                  # Install all plugin dependencies
+abx-dl plugins --install wget ytdlp git   # Install specific plugin dependencies
 ```
 
 #### Installing Dependencies
 
-Many plugins require external binaries (e.g., `wget`, `chrome`, `yt-dlp`, `single-file`). Use `abx-dl install` to automatically install them:
+Many plugins require external binaries (e.g., `wget`, `chrome`, `yt-dlp`, `single-file`).
+
+By default, `abx-dl` lazily auto-installs missing dependencies as needed when you download a URL.
+Use `--no-install` to skip plugins with missing dependencies instead:
 
 ```bash
-# Install all plugin dependencies
-abx-dl install
+# Auto-installs missing deps on-the-fly (default behavior)
+abx-dl 'https://example.com'
+
+# Skip plugins with missing deps, emit warnings instead
+abx-dl --no-install 'https://example.com'
+
+# Pre-install all plugin dependencies
+abx-dl plugins --install
 
 # Install dependencies for specific plugins only
-abx-dl install wget,singlefile,ytdlp
+abx-dl plugins --install wget singlefile ytdlp
 
 # Check which dependencies are available/missing
-abx-dl check
+abx-dl plugins
 ```
 
 Dependencies are installed to `~/.config/abx/lib/{arch}/` using the appropriate package manager:

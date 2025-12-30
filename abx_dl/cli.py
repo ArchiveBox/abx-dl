@@ -45,9 +45,13 @@ def cli(ctx):
 
         abx-dl 'https://example.com'
 
-        abx-dl --plugins=favicon,title,wget 'https://example.com'
+        abx-dl --plugins=wget,ytdlp,git 'https://example.com'
+
+        abx-dl --no-install 'https://example.com'
 
         abx-dl plugins
+
+        abx-dl plugins wget ytdlp --install
     """
     ctx.ensure_object(dict)
     ctx.obj['plugins'] = discover_plugins()
@@ -58,9 +62,22 @@ def cli(ctx):
 @click.option('--plugins', '-p', 'plugin_list', help='Comma-separated list of plugins to use')
 @click.option('--output', '-o', 'output_dir', type=click.Path(), help='Output directory')
 @click.option('--timeout', '-t', type=int, help='Timeout in seconds')
+@click.option('--no-install', 'no_install', is_flag=True, help='Skip plugins with missing dependencies instead of auto-installing')
 @click.pass_context
-def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: int | None):
-    """Download a URL using all enabled plugins."""
+def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: int | None, no_install: bool):
+    """Download a URL using all enabled plugins.
+
+    By default, missing plugin dependencies are lazily auto-installed as needed.
+    Use --no-install to skip plugins with missing dependencies instead.
+
+    **Examples:**
+
+        abx-dl 'https://example.com'
+
+        abx-dl --plugins=wget,ytdlp,git 'https://example.com'
+
+        abx-dl --no-install 'https://example.com'
+    """
     plugins = ctx.obj['plugins']
     selected = [p.strip() for p in plugin_list.split(',')] if plugin_list else None
     out_path = Path(output_dir) if output_dir else Path.cwd()
@@ -68,7 +85,7 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
     is_tty = sys.stdout.isatty()
 
     results: list[ArchiveResult] = []
-    gen = download(url, plugins, out_path, selected, config_overrides or None)
+    gen = download(url, plugins, out_path, selected, config_overrides or None, auto_install=not no_install)
 
     if is_tty:
         # Rich progress display for TTY
