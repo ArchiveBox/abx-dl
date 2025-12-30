@@ -38,21 +38,14 @@ classifiers = [
 
 
 dependencies = [
-    "click==8.1.7",
-    "archivebox==0.8.5rc50",
+    "rich-click>=1.8.0",
+    "rich>=13.0.0",
+    "abx-pkg>=0.6.0",
+    "pydantic>=2.0.0",
+    "platformdirs>=4.0.0",
+    "requests>=2.28.0",
 ]
 
-[project.optional-dependencies]
-npm = ["abx-plugin-pip"]
-npm = ["abx-plugin-npm"]
-wget = ["abx-plugin-wget"]
-curl = ["abx-plugin-curl"]
-puppeteer = ["abx-plugin-puppeteer"]
-playwright = ["abx-plugin-playwright"]
-chrome = ["abx-plugin-chrome"]
-all = [
-    "archivebox[wget,curl]"
-]
 
 [tool.uv]
 dev-dependencies = [
@@ -129,7 +122,7 @@ pythonPlatform = "Linux"
 
 
 [project.scripts]
-archivebox = "abx_dl:main"
+abx-dl = "abx_dl:main"
 
 [project.urls]
 Homepage = "https://github.com/ArchiveBox/abx-dl"
