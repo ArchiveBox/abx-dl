@@ -155,12 +155,17 @@ def download(url: str, plugins: dict[str, Plugin], output_dir: Path, selected_pl
         if not auto_install:
             print("Hint: Run without --no-install to auto-install dependencies, or run 'abx-dl plugins --install'", file=sys.stderr)
 
-    # Collect all hooks sorted by execution order
-    all_hooks: list[tuple[Plugin, Hook]] = []
+    # Collect hooks: Crawl hooks first (setup), then Snapshot hooks (extraction)
+    crawl_hooks: list[tuple[Plugin, Hook]] = []
+    snapshot_hooks: list[tuple[Plugin, Hook]] = []
     for plugin in available_plugins.values():
-        for hook in plugin.get_crawl_hooks() + plugin.get_snapshot_hooks():
-            all_hooks.append((plugin, hook))
-    all_hooks.sort(key=lambda x: x[1].sort_key)
+        for hook in plugin.get_crawl_hooks():
+            crawl_hooks.append((plugin, hook))
+        for hook in plugin.get_snapshot_hooks():
+            snapshot_hooks.append((plugin, hook))
+    crawl_hooks.sort(key=lambda x: x[1].sort_key)
+    snapshot_hooks.sort(key=lambda x: x[1].sort_key)
+    all_hooks = crawl_hooks + snapshot_hooks
 
     # Run hooks
     shared_config = dict(config_overrides) if config_overrides else {}
