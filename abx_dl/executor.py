@@ -3,8 +3,11 @@ Plugin execution engine for abx-dl.
 """
 
 import json
+import os
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Generator
 
@@ -19,15 +22,20 @@ def get_interpreter(language: str) -> list[str]:
     return {'py': [sys.executable], 'js': ['node'], 'sh': ['bash']}.get(language, [])
 
 
-def run_hook(hook: Hook, url: str, snapshot_id: str, output_dir: Path, env: dict[str, str], timeout: int = 60) -> tuple[Process, ArchiveResult]:
-    """Run a single hook and return Process and ArchiveResult."""
+def run_hook(hook: Hook, url: str, snapshot_id: str, output_dir: Path, env: dict[str, str], timeout: int = 60) -> tuple[Process, ArchiveResult, subprocess.Popen | None]:
+    """
+    Run a single hook and return Process, ArchiveResult, and optionally Popen handle.
+
+    For background hooks, returns the Popen object so caller can manage cleanup.
+    For foreground hooks, returns None for the Popen.
+    """
     files_before = set(output_dir.rglob('*'))
 
     interpreter = get_interpreter(hook.language)
     if not interpreter:
         proc = Process(cmd=[], exit_code=1, stderr=f'Unknown language: {hook.language}')
         result = ArchiveResult(snapshot_id=snapshot_id, plugin=hook.plugin_name, hook_name=hook.name, status='failed', error=proc.stderr)
-        return proc, result
+        return proc, result, None
 
     # Set lib paths
     env.update({
@@ -41,6 +49,34 @@ def run_hook(hook: Hook, url: str, snapshot_id: str, output_dir: Path, env: dict
     proc = Process(cmd=cmd, pwd=str(output_dir), timeout=timeout, started_at=now_iso())
 
     try:
+        if hook.is_background:
+            # Background hook - start and don't wait, return Popen handle
+            popen = subprocess.Popen(cmd, cwd=str(output_dir), env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            # Give it a moment to start and potentially fail fast
+            time.sleep(0.3)
+            if popen.poll() is not None:
+                # Process already exited (fast failure)
+                stdout, stderr = popen.communicate()
+                proc.exit_code = popen.returncode
+                proc.stdout = stdout.decode('utf-8', errors='replace')
+                proc.stderr = stderr.decode('utf-8', errors='replace')
+                proc.ended_at = now_iso()
+                status = 'failed' if popen.returncode != 0 else 'succeeded'
+                ar = ArchiveResult(
+                    snapshot_id=snapshot_id, plugin=hook.plugin_name, hook_name=hook.name,
+                    status=status, process_id=proc.id, start_ts=proc.started_at, end_ts=proc.ended_at,
+                    error=proc.stderr[:500] if proc.exit_code != 0 else None,
+                )
+                return proc, ar, None  # No popen to track since it already exited
+            else:
+                # Still running - return handle for later cleanup
+                ar = ArchiveResult(
+                    snapshot_id=snapshot_id, plugin=hook.plugin_name, hook_name=hook.name,
+                    status='started', process_id=proc.id, start_ts=proc.started_at,
+                )
+                return proc, ar, popen
+
+        # Foreground hook - wait for completion
         result = subprocess.run(cmd, cwd=str(output_dir), env=env, capture_output=True, timeout=timeout)
         proc.exit_code = result.returncode
         proc.stdout = result.stdout.decode('utf-8', errors='replace')
@@ -79,20 +115,86 @@ def run_hook(hook: Hook, url: str, snapshot_id: str, output_dir: Path, env: dict
             end_ts=proc.ended_at,
             error=proc.stderr[:500] if result.returncode != 0 else None,
         )
-        return proc, ar
+        return proc, ar, None
 
     except subprocess.TimeoutExpired:
         proc.exit_code = -1
         proc.stderr = f'Timed out after {timeout}s'
         proc.ended_at = now_iso()
         ar = ArchiveResult(snapshot_id=snapshot_id, plugin=hook.plugin_name, hook_name=hook.name, status='failed', process_id=proc.id, error=proc.stderr)
-        return proc, ar
+        return proc, ar, None
     except Exception as e:
         proc.exit_code = -1
         proc.stderr = f'{type(e).__name__}: {e}'
         proc.ended_at = now_iso()
         ar = ArchiveResult(snapshot_id=snapshot_id, plugin=hook.plugin_name, hook_name=hook.name, status='failed', process_id=proc.id, error=proc.stderr)
-        return proc, ar
+        return proc, ar, None
+
+
+def cleanup_background_hooks(bg_hooks: list[tuple[subprocess.Popen, Process, ArchiveResult, Path]], index_path: Path, is_tty: bool):
+    """
+    Send SIGTERM to all background hooks, wait for them to finish, and collect output.
+    """
+    for popen, proc, ar, output_dir in bg_hooks:
+        if popen.poll() is None:
+            # Still running - send SIGTERM
+            try:
+                popen.send_signal(signal.SIGTERM)
+            except (ProcessLookupError, OSError):
+                pass
+
+    # Wait for all to finish (with timeout)
+    for popen, proc, ar, output_dir in bg_hooks:
+        try:
+            stdout, stderr = popen.communicate(timeout=10)
+            proc.exit_code = popen.returncode
+            proc.stdout = stdout.decode('utf-8', errors='replace')
+            proc.stderr = stderr.decode('utf-8', errors='replace')
+            proc.ended_at = now_iso()
+
+            # Detect new files
+            files_after = set(output_dir.rglob('*'))
+            new_files = [str(f.relative_to(output_dir)) for f in files_after if f.is_file()]
+
+            # Update ArchiveResult
+            ar.end_ts = proc.ended_at
+            ar.output_files = new_files
+
+            # Parse JSONL output for final status
+            status = 'succeeded' if popen.returncode == 0 else 'failed'
+            for line in proc.stdout.strip().split('\n'):
+                if line.strip():
+                    try:
+                        record = json.loads(line)
+                        if record.get('type') == 'ArchiveResult':
+                            status = record.get('status', status)
+                            ar.output_str = record.get('output_str', '')
+                    except json.JSONDecodeError:
+                        pass
+            ar.status = status
+            if popen.returncode != 0:
+                ar.error = proc.stderr[:500]
+
+        except subprocess.TimeoutExpired:
+            popen.kill()
+            popen.wait()
+            proc.exit_code = -1
+            proc.stderr = 'Background hook did not exit after SIGTERM'
+            proc.ended_at = now_iso()
+            ar.status = 'failed'
+            ar.error = proc.stderr
+            ar.end_ts = proc.ended_at
+        except Exception as e:
+            proc.exit_code = -1
+            proc.stderr = f'{type(e).__name__}: {e}'
+            proc.ended_at = now_iso()
+            ar.status = 'failed'
+            ar.error = proc.stderr
+            ar.end_ts = proc.ended_at
+
+        # Write final results
+        write_jsonl(index_path, proc, also_print=not is_tty)
+        write_jsonl(index_path, ar, also_print=not is_tty)
 
 
 def check_plugin_dependencies(plugin: Plugin, auto_install: bool = True) -> tuple[bool, list[str]]:
@@ -167,35 +269,53 @@ def download(url: str, plugins: dict[str, Plugin], output_dir: Path, selected_pl
     snapshot_hooks.sort(key=lambda x: x[1].sort_key)
     all_hooks = crawl_hooks + snapshot_hooks
 
-    # Run hooks
+    # Track background hooks for cleanup
+    background_hooks: list[tuple[subprocess.Popen, Process, ArchiveResult, Path]] = []
     shared_config = dict(config_overrides) if config_overrides else {}
 
-    for plugin, hook in all_hooks:
-        env = build_env_for_plugin(plugin.name, plugin.config_schema, shared_config)
-        timeout = int(env.get(f"{plugin.name.upper()}_TIMEOUT", env.get('TIMEOUT', '60')))
+    try:
+        for plugin, hook in all_hooks:
+            env = build_env_for_plugin(plugin.name, plugin.config_schema, shared_config)
+            timeout = int(env.get(f"{plugin.name.upper()}_TIMEOUT", env.get('TIMEOUT', '60')))
 
-        # Executor creates plugin subdir, hooks write to cwd directly
-        plugin_output_dir = output_dir / plugin.name
-        plugin_output_dir.mkdir(parents=True, exist_ok=True)
-        proc, ar = run_hook(hook, url, snapshot.id, plugin_output_dir, env, timeout)
+            # Executor creates plugin subdir, hooks write to cwd directly
+            plugin_output_dir = output_dir / plugin.name
+            plugin_output_dir.mkdir(parents=True, exist_ok=True)
+            proc, ar, popen = run_hook(hook, url, snapshot.id, plugin_output_dir, env, timeout)
 
-        # Write to index.jsonl
-        write_jsonl(index_path, proc, also_print=not is_tty)
-        write_jsonl(index_path, ar, also_print=not is_tty)
+            if popen:
+                # Background hook - track for later cleanup
+                background_hooks.append((popen, proc, ar, plugin_output_dir))
+                # Yield initial "started" result
+                yield ar
+            else:
+                # Foreground hook - write results immediately
+                write_jsonl(index_path, proc, also_print=not is_tty)
+                write_jsonl(index_path, ar, also_print=not is_tty)
 
-        # Extract config updates from stdout
-        for line in proc.stdout.split('\n'):
-            if line.strip():
-                try:
-                    record = json.loads(line)
-                    if record.get('type') == 'Binary':
-                        name = record.get('name', '')
-                        abspath = record.get('abspath', '')
-                        if name and abspath:
-                            shared_config[f'{name.upper()}_BINARY'] = abspath
-                except json.JSONDecodeError:
-                    pass
+                # Extract config updates from stdout
+                for line in proc.stdout.split('\n'):
+                    if line.strip():
+                        try:
+                            record = json.loads(line)
+                            if record.get('type') == 'Binary':
+                                name = record.get('name', '')
+                                abspath = record.get('abspath', '')
+                                if name and abspath:
+                                    shared_config[f'{name.upper()}_BINARY'] = abspath
+                            elif record.get('type') == 'Machine' and record.get('_method') == 'update':
+                                key = record.get('key', '').replace('config/', '')
+                                value = record.get('value', '')
+                                if key and value:
+                                    shared_config[key] = value
+                        except json.JSONDecodeError:
+                            pass
 
-        yield ar
+                yield ar
+
+    finally:
+        # Cleanup background hooks - send SIGTERM, collect output
+        if background_hooks:
+            cleanup_background_hooks(background_hooks, index_path, is_tty)
 
     return snapshot
