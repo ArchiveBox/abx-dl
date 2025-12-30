@@ -48,16 +48,12 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    # BUILD
-    "pip>=24.2",
-    "setuptools>=75.1.0",
-    "wheel>=0.44.0",
     # TESTING
     "pytest>=8.0.0",
     "pytest-xdist>=3.5.0",
     # DEBUGGING
-    "ipdb>=0.13.13",
-    "viztracer",
+    # "ipdb>=0.13.13",
+    # "viztracer",
     # LINTING
     "ruff>=0.6.6",
     "flake8>=7.1.1",
@@ -73,10 +69,6 @@ build-backend = "pdm.backend"
 includes = ["abx_dl/"]
 # Follow symlinks to include actual plugin files in distribution
 source-includes = ["abx_dl/plugins/"]
-
-[tool.setuptools]
-packages = ["abx_dl"]
-package-dir = {"abx_dl" = "abx_dl"}
 
 [tool.ruff]
 line-length = 140
