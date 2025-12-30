@@ -56,16 +56,36 @@ Each plugin can output:
 Configuration is handled via environment variables or persistent config file (`~/.config/abx/config.env`):
 
 ```bash
-abx-dl config                     # show all config values
-abx-dl config --get TIMEOUT       # get a specific value
-abx-dl config --set TIMEOUT=120   # set persistently
+abx-dl config                        # show all config (global + per-plugin)
+abx-dl config --get WGET_TIMEOUT     # get a specific value
+abx-dl config --set TIMEOUT=120      # set persistently (resolves aliases)
+```
+
+Output is grouped by section:
+```bash
+# GLOBAL
+TIMEOUT=60
+USER_AGENT="Mozilla/5.0 ..."
+...
+
+# plugins/wget
+WGET_BINARY="wget"
+WGET_TIMEOUT=60
+...
+
+# plugins/chrome
+CHROME_BINARY="chromium"
+...
 ```
 
 Common options:
-- `CHROME_BINARY`, `WGET_BINARY`, etc. - binary paths
 - `TIMEOUT=60` - default timeout for hooks
+- `USER_AGENT` - default user agent string
+- `{PLUGIN}_BINARY` - path to plugin's binary (e.g. `WGET_BINARY`, `CHROME_BINARY`)
 - `{PLUGIN}_ENABLED=true/false` - enable/disable specific plugins
 - `{PLUGIN}_TIMEOUT=120` - per-plugin timeout overrides
+
+Aliases are automatically resolved (e.g. `--set USE_WGET=false` saves as `WGET_ENABLED=false`).
 
 <br/>
 
