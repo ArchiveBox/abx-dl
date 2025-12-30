@@ -1,22 +1,20 @@
-# ⬇️ `abx-dl` [VAPORWARE] (please make this!)
+# ⬇️ `abx-dl`
 
-> A simple all-in-one CLI tool to auto-detect and download *everything* available from a URL.  
-> `pip install abx-dl`  
-> `abx-dl 'https://example.com/page/to/download'`
+> A simple all-in-one CLI tool to auto-detect and download *everything* available from a URL.
 
-> [!IMPORTANT]  
-> ❈ NOT IMPLEMENTED YET *Coming someday...*  read the [Plugin Ecosystem Announcement (2024-10)](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement#%F0%9F%94%A2-For-the-minimalists-who-just-want-something-simple)  
-> <sub>Release ETA: after [`archivebox` `v0.9.0`](https://github.com/ArchiveBox/ArchiveBox/releases/)</sub> &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp; &nbsp;
-> You should make this! Use https://deepwiki.com/archivebox/abx-pkg to set up the dependencies like yt-dlp, ffmpeg, chrome, etc. + a single global event queue and single worker process/actor for each.
+```bash
+pip install abx-dl
+abx-dl 'https://example.com/page/to/download'
+```
 
 ---
 
 ✨ *Ever wish you could `yt-dlp`, `gallery-dl`, `wget`, `curl`, `puppeteer`, etc. all in one command?*
 
-`abx-dl` is an all-in-one CLI tool for downloading URLs "by any means necessary".  
+`abx-dl` is an all-in-one CLI tool for downloading URLs "by any means necessary".
 
-It's useful for scraping, downloading, OSINT, digital preservation, and more.  
-`abx-dl` is built to provide a simpler one-shot CLI interface to the [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox) archiving engine (it replaces the old `archivebox oneshot` command).
+It's useful for scraping, downloading, OSINT, digital preservation, and more.
+`abx-dl` provides a simpler one-shot CLI interface to the [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox) plugin ecosystem.
 
 ---
 
@@ -24,11 +22,11 @@ It's useful for scraping, downloading, OSINT, digital preservation, and more.
 
 #### 🍜 What does it save?
 
-```python
-abx-dl --extract=title,favicon,headers,wget,media,singlefile,screenshot,pdf,dom,readability,git,... 'https://example.com'`
+```bash
+abx-dl --plugins=title,favicon,headers,wget,singlefile,screenshot,pdf,dom,readability,git,... 'https://example.com'
 ```
 
-`abx-dl` gets everything by default, or you can tell it to `--extract=...` specific methods:
+`abx-dl` runs all plugins by default, or you can specify `--plugins=...` for specific methods:
 - HTML, JS, CSS, images, etc. rendered with a headless browser
 - title, favicon, headers, outlinks, and other metadata
 - audio, video, subtitles, playlists, comments
@@ -40,26 +38,27 @@ abx-dl --extract=title,favicon,headers,wget,media,singlefile,screenshot,pdf,dom,
 
 #### 🧩 How does it work?
 
-Forget about writing janky manual crawling scripts with `JS`/`Python`/`playwright`/`puppeteer`/`bash`.
+`abx-dl` uses the **[ABX Plugin Library](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement)** (shared with [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox)) to run a collection of downloading and scraping tools.
 
-`abx-dl` renders all URLs passed in a fully-featured modern browser using puppeteer. 
-It auto-detects a wide variety of embedded resources using plugins, and extracts discovered content out to raw files (`mp4`, `png`, `txt`, `pdf`, `html`, etc.) in the current working directory.
+Plugins are discovered from the `plugins/` directory and execute hooks in order:
+1. **Crawl hooks** run first (setup/install dependencies like Chrome)
+2. **Snapshot hooks** run per-URL to extract content
 
-> `abx-dl` collects all of your favorite powerful scraping and downloading tools, including: `wget`, `wget-lua`, `curl`, `puppeteer`, `playwright`, `singlefile`, `readability`, `yt-dlp`, `forum-dl`, and many more through the **[ABX Plugin Library](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement)** (shared with [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox))...  
-
-You no longer have to deal with installing and configuring a bunch of tools individually.
+Each plugin can output:
+- Files to its output directory
+- JSONL records for status reporting
+- Config updates that propagate to subsequent plugins
 
 <br/>
 
-#### ⚙️ What options does it provide?
+#### ⚙️ Configuration
 
-Pass `--extract=<methods>` to get only what you need, and set other config via env vars / args:
+Configuration is handled via environment variables:
 
-- `USER_AGENT`, `CHECK_SSL_VALIDITY`, `CHROME_USER_DATA_DIR`/`COOKIES_TXT`
-- `TIMEOUT=60`, `MAX_MEDIA_SIZE=750m`, `RESOLUTION=1440,2000`, `ONLY_NEW=True`
-- [and more here](https://github.com/ArchiveBox/ArchiveBox/wiki/Configuration)...
-
-<sup>Configuration options apply seamlessly across all methods.</sup> 
+- `CHROME_BINARY`, `WGET_BINARY`, etc. - binary paths
+- `TIMEOUT=60` - default timeout for hooks
+- `{PLUGIN}_ENABLED=true/false` - enable/disable specific plugins
+- `{PLUGIN}_TIMEOUT=120` - per-plugin timeout overrides
 
 <br/>
 
@@ -67,87 +66,98 @@ Pass `--extract=<methods>` to get only what you need, and set other config via e
 
 <br/>
 
-### 📦 ~~Install~~ `Coming Soon...`
+### 📦 Install
 
 ```bash
 pip install abx-dl
-abx-dl install           # optional: install any system packages needed
+abx-dl install           # optional: install plugin dependencies
 ```
 
-<!--details>
-<summary>If you don't need everything in <code>abx-dl</code>, you can pick and choose individual pieces...</summary>
-<h4>🪶 Lightweight Install</h4>
-<pre><code>pip install abx-dl
-abx-dl install wget,singlefile,readability
-abx-dl --extract=wget,singlefile,readability 'https://example.com'
-</code></pre>
-</details-->
 <br/>
 
 ### 🔠 Usage
 
 ```bash
-# Basic usage:
-abx-dl [--help|--version] [--config|-c] [--extract=methods] [url]
-```
-
-#### Download everything
-
-```bash
+# Basic usage - download URL with all plugins:
 abx-dl 'https://example.com'
-ls ./
-# <see All Outputs below>
+
+# Download with specific plugins only:
+abx-dl --plugins=title,favicon,screenshot 'https://example.com'
+
+# Specify output directory:
+abx-dl --output=./downloads 'https://example.com'
+
+# Set timeout:
+abx-dl --timeout=120 'https://example.com'
 ```
 
-#### Download just title + screenshot
+#### Commands
 
 ```bash
-abx-dl --extract=title,screenshot 'https://example.com'
-ls ./
-# index.json  title.txt  screenshot.png
-```
-
-#### Download title + screenshot + html + media
-
-```bash
-abx-dl --extract=title,favicon,screenshot,singlefile,media 'https://example.com'
-ls ./
-# index.json  index.html  title.txt  favicon.ico  screenshot.png  singlefile.html  media/Some_video.mp4
-```
-
-#### Pass config options
-
-Config can be persisted via file, set via env vars, or passed via CLI args.
-```bash
-# set per-user config in ~/.config/abx-dl/abx-dl.conf
-abx-dl config --set CHECK_SSL_VALIDITY=True
-
-# environment variables work too and are equivalent
-env CHROME_USER_DATA_DIR=~/.config/abx-dl/personas/Default/chrome_profile
-
-# pass per-run config as CLI args
-abx-dl -c MAX_MEDIA_SIZE=250m --extract=title,singlefile,screenshot,media 'https://www.youtube.com/watch?v=dQw4w9WgXcQ'
+abx-dl <url>                    # Download URL (default command)
+abx-dl plugins                  # List available plugins
+abx-dl info <plugin>            # Show plugin details
+abx-dl install [plugins]        # Install plugin dependencies
+abx-dl check [plugins]          # Check dependency status
 ```
 
 <br/>
 
 ---
+
+<br/>
+
+### Output Structure
+
+```
+./
+├── index.json              # Snapshot metadata and results
+├── title/
+│   └── title.txt
+├── favicon/
+│   └── favicon.ico
+├── screenshot/
+│   └── screenshot.png
+├── pdf/
+│   └── output.pdf
+├── dom/
+│   └── output.html
+├── wget/
+│   └── example.com/
+│       └── index.html
+├── singlefile/
+│   └── output.html
+└── ...
+```
 
 <br/>
 
 ### All Outputs
 
-- `index.json`, `index.html`
-- `title.txt`, `title.json`, `headers.json`, `favicon.ico`
-- `example.com/*.{html,css,js,png...}`, `warc/`  (saved with `wget-lua`)
-- `screenshot.png`, `dom.html`, `output.pdf` (rendered with `chrome`)
-- `media/someVideo.mp4`, `media/subtitles`, ... (downloaded with `yt-dlp`)
-- `readability/`, `mercury/`, `htmltotext.txt` (article text/markdown)
-- `git/` (source code)
-- ... [and more via plugin library](https://github.com/ArchiveBox/ArchiveBox#output-formats) ...
+- `index.json` - snapshot metadata and plugin results
+- `title/title.txt` - page title
+- `favicon/favicon.ico` - site favicon
+- `screenshot/screenshot.png` - full page screenshot (Chrome)
+- `pdf/output.pdf` - page as PDF (Chrome)
+- `dom/output.html` - rendered DOM (Chrome)
+- `wget/example.com/...` - mirrored site files
+- `singlefile/output.html` - single-file HTML snapshot
+- ... and more via plugin library ...
 
 ---
 
-For more advanced use with collections, parallel downloading, a Web UI + REST API, etc.  
-See: [`ArchiveBox/ArchiveBox`](https://github.com/ArchiveBox/ArchiveBox)
+### Architecture
 
+`abx-dl` is built on these components:
+
+- **`abx_dl/plugins.py`** - Plugin discovery from `plugins/` directory
+- **`abx_dl/executor.py`** - Hook execution engine with config propagation
+- **`abx_dl/config.py`** - Environment variable configuration
+- **`abx_dl/cli.py`** - Rich CLI with live progress display
+
+Plugins are symlinked from [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox)'s plugin directory.
+
+---
+
+For more advanced use with collections, parallel downloading, a Web UI + REST API, etc.
+See: [`ArchiveBox/ArchiveBox`](https://github.com/ArchiveBox/ArchiveBox)

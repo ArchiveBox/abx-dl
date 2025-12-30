@@ -56,6 +56,13 @@ class Plugin:
             key=lambda h: h.sort_key
         )
 
+    def get_crawl_hooks(self) -> list[Hook]:
+        """Get hooks that run once per crawl (setup/install)."""
+        return sorted(
+            [h for h in self.hooks if 'Crawl' in h.name],
+            key=lambda h: h.sort_key
+        )
+
 
 def parse_hook_filename(filename: str) -> tuple[str, int, int, bool, str] | None:
     """

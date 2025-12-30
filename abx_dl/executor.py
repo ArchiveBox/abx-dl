@@ -275,6 +275,27 @@ def download(url: str, plugins: dict[str, Plugin], output_dir: Path | None = Non
     return result
 
 
+def extract_config_updates(jsonl_records: list[dict[str, Any]]) -> dict[str, str]:
+    """Extract config updates from Machine JSONL records."""
+    updates = {}
+    for record in jsonl_records:
+        if record.get('type') == 'Machine' and record.get('_method') == 'update':
+            key = record.get('key', '')
+            value = record.get('value', '')
+            # Convert config/CHROME_BINARY -> CHROME_BINARY
+            if key.startswith('config/'):
+                key = key[7:]
+            if key and value:
+                updates[key] = str(value)
+        elif record.get('type') == 'Binary':
+            # Also extract binary paths
+            name = record.get('name', '')
+            abspath = record.get('abspath', '')
+            if name and abspath:
+                updates[f'{name.upper()}_BINARY'] = abspath
+    return updates
+
+
 def download_live(url: str, plugins: dict[str, Plugin], output_dir: Path | None = None,
                   selected_plugins: list[str] | None = None,
                   config_overrides: dict[str, Any] | None = None) -> tuple[int, Generator[HookResult, None, None]]:
@@ -307,10 +328,41 @@ def download_live(url: str, plugins: dict[str, Plugin], output_dir: Path | None 
 
     all_hooks.sort(key=lambda x: x[1].sort_key)
 
+    # Also get crawl hooks (run once for setup/install)
+    crawl_hooks: list[tuple[Plugin, Hook]] = []
+    for plugin in plugins_to_run.values():
+        for hook in plugin.get_crawl_hooks():
+            crawl_hooks.append((plugin, hook))
+    crawl_hooks.sort(key=lambda x: x[1].sort_key)
+
+    total_hooks = len(crawl_hooks) + len(all_hooks)
+
     def run_hooks() -> Generator[HookResult, None, None]:
         hook_results = []
+        # Shared config that accumulates updates from hooks
+        shared_config = dict(config_overrides) if config_overrides else {}
+
+        # Run crawl hooks first (setup/install)
+        for plugin, hook in crawl_hooks:
+            env = build_env_for_plugin(plugin.name, plugin.config_schema, shared_config)
+            timeout_key = f"{plugin.name.upper()}_TIMEOUT"
+            timeout = int(env.get(timeout_key, env.get('TIMEOUT', '120')))
+
+            plugin_output_dir = output_dir / plugin.name
+            plugin_output_dir.mkdir(parents=True, exist_ok=True)
+
+            hook_result = run_hook(hook, url, snapshot_id, plugin_output_dir, env, timeout)
+            hook_results.append(hook_result)
+
+            # Extract and propagate config updates from this hook
+            config_updates = extract_config_updates(hook_result.jsonl_records)
+            shared_config.update(config_updates)
+
+            yield hook_result
+
+        # Run snapshot hooks
         for plugin, hook in all_hooks:
-            env = build_env_for_plugin(plugin.name, plugin.config_schema, config_overrides)
+            env = build_env_for_plugin(plugin.name, plugin.config_schema, shared_config)
             timeout_key = f"{plugin.name.upper()}_TIMEOUT"
             timeout = int(env.get(timeout_key, env.get('TIMEOUT', '60')))
 
@@ -319,13 +371,18 @@ def download_live(url: str, plugins: dict[str, Plugin], output_dir: Path | None 
 
             hook_result = run_hook(hook, url, snapshot_id, plugin_output_dir, env, timeout)
             hook_results.append(hook_result)
+
+            # Extract and propagate config updates from this hook
+            config_updates = extract_config_updates(hook_result.jsonl_records)
+            shared_config.update(config_updates)
+
             yield hook_result
 
         # Write index.json at the end
         result = DownloadResult(url=url, snapshot_id=snapshot_id, output_dir=output_dir, hook_results=hook_results)
         write_index(result)
 
-    return len(all_hooks), run_hooks()
+    return total_hooks, run_hooks()
 
 
 def write_index(result: DownloadResult):
