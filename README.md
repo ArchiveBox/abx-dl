@@ -53,8 +53,15 @@ Each plugin can output:
 
 #### ⚙️ Configuration
 
-Configuration is handled via environment variables:
+Configuration is handled via environment variables or persistent config file (`~/.config/abx/config.env`):
 
+```bash
+abx-dl config                     # show all config values
+abx-dl config --get TIMEOUT       # get a specific value
+abx-dl config --set TIMEOUT=120   # set persistently
+```
+
+Common options:
 - `CHROME_BINARY`, `WGET_BINARY`, etc. - binary paths
 - `TIMEOUT=60` - default timeout for hooks
 - `{PLUGIN}_ENABLED=true/false` - enable/disable specific plugins
@@ -102,6 +109,9 @@ abx-dl plugins                            # Check + show info for all plugins
 abx-dl plugins wget ytdlp git             # Check + show info for specific plugins
 abx-dl plugins --install                  # Install all plugin dependencies
 abx-dl plugins --install wget ytdlp git   # Install specific plugin dependencies
+abx-dl config                             # Show all config values
+abx-dl config --get TIMEOUT               # Get a specific config value
+abx-dl config --set TIMEOUT=120           # Set a config value persistently
 ```
 
 #### Installing Dependencies

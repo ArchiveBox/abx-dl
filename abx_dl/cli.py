@@ -10,12 +10,14 @@ from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 
+from .config import get_config, set_config, CONFIG_FILE
 from .dependencies import load_binary, install_binary
 from .executor import download
 from .models import ArchiveResult
 from .plugins import discover_plugins
 
 console = Console()
+stderr_console = Console(stderr=True)
 
 click.rich_click.USE_RICH_MARKUP = True
 click.rich_click.USE_MARKDOWN = True
@@ -248,6 +250,67 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool):
 def install(ctx, plugin_names: tuple[str, ...]):
     """Shortcut for 'abx-dl plugins --install [plugins...]'."""
     ctx.invoke(plugins, plugin_names=plugin_names, do_install=True)
+
+
+@cli.command()
+@click.option('--get', 'get_key', help='Get a specific config value')
+@click.option('--set', 'set_pair', help='Set a config value (KEY=value)')
+@click.pass_context
+def config(ctx, get_key: str | None, set_pair: str | None):
+    """Show or modify configuration.
+
+    **Examples:**
+
+        abx-dl config                        # show all config
+
+        abx-dl config --get TIMEOUT          # get a specific value
+
+        abx-dl config --set TIMEOUT=120      # set a value persistently
+    """
+    import json
+
+    # Get plugin schemas for alias resolution and full config
+    all_plugins = ctx.obj.get('plugins', discover_plugins())
+    plugin_schemas = {name: p.config_schema for name, p in all_plugins.items() if p.config_schema}
+
+    if set_pair:
+        if '=' not in set_pair:
+            console.print("[red]Invalid format. Use --set KEY=value[/red]")
+            return
+        key, value = set_pair.split('=', 1)
+        # Try to parse value as JSON, handle Python-style booleans, otherwise treat as string
+        try:
+            parsed_value = json.loads(value)
+        except json.JSONDecodeError:
+            # Handle Python-style booleans
+            if value.lower() in ('true', 'yes', '1'):
+                parsed_value = True
+            elif value.lower() in ('false', 'no', '0'):
+                parsed_value = False
+            else:
+                parsed_value = value
+        saved = set_config(plugin_schemas, **{key: parsed_value})
+        for canonical_key, val in saved.items():
+            print(f"{canonical_key}={json.dumps(val)}")
+        stderr_console.print(f"[dim]Saved to {CONFIG_FILE}[/dim]")
+        return
+
+    if get_key:
+        result = get_config(get_key, plugin_schemas=plugin_schemas)
+        value = result.get(get_key)
+        if value is not None:
+            print(f"{get_key}={json.dumps(value)}")
+        else:
+            stderr_console.print(f"[yellow]{get_key} is not set[/yellow]")
+        return
+
+    # Show all config grouped by section
+    grouped = get_config(plugin_schemas=plugin_schemas)
+    for section, values in grouped.items():
+        print(f"# {section}")
+        for key, value in values.items():
+            print(f"{key}={json.dumps(value)}")
+        print()
 
 
 def main():

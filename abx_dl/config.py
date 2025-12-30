@@ -1,12 +1,13 @@
 """
 Configuration management for abx-dl.
 
-Loads config exclusively from environment variables.
+Loads config from environment variables and persistent config file.
 """
 
 import json
 import os
 import platform
+import re
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -20,12 +21,143 @@ def get_arch() -> str:
 
 
 # Paths
+CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', Path.home() / '.config' / 'abx'))
+CONFIG_FILE = CONFIG_DIR / 'config.env'
 DATA_DIR = Path(os.environ.get('DATA_DIR', Path.cwd()))
-LIB_DIR = Path(os.environ.get('LIB_DIR', Path.home() / '.config' / 'abx' / 'lib' / get_arch()))
+LIB_DIR = Path(os.environ.get('LIB_DIR', CONFIG_DIR / 'lib' / get_arch()))
 TMP_DIR = Path(os.environ.get('TMP_DIR', tempfile.mkdtemp(prefix='abx-dl-')))
 
 # Ensure directories exist
+CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 LIB_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def load_config_file() -> dict[str, str]:
+    """Load config from ~/.config/abx/config.env file."""
+    config = {}
+    if CONFIG_FILE.exists():
+        for line in CONFIG_FILE.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            # Parse KEY="value" or KEY=value format
+            match = re.match(r'^([A-Z_][A-Z0-9_]*)=(.*)$', line, re.IGNORECASE)
+            if match:
+                key = match.group(1)
+                value = match.group(2)
+                # Strip quotes if present
+                if (value.startswith('"') and value.endswith('"')) or \
+                   (value.startswith("'") and value.endswith("'")):
+                    value = value[1:-1]
+                config[key] = value
+    return config
+
+
+def get_config(*keys: str, plugin_schemas: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    """
+    Get config values. Returns all config if no keys specified.
+
+    If plugin_schemas is provided (dict of {plugin_name: schema}), includes plugin config.
+    Returns dict grouped as: {'GLOBAL': {...}, 'plugins/name': {...}, ...}
+    If plugin_schemas is None, returns flat dict of global config only.
+    """
+    # Build global config
+    global_config: dict[str, Any] = {}
+    global_config.update(GLOBAL_DEFAULTS)
+
+    # Override with persistent config (parse JSON values)
+    for key, value in load_config_file().items():
+        try:
+            global_config[key] = json.loads(value)
+        except json.JSONDecodeError:
+            global_config[key] = value
+
+    # Override with environment variables
+    for key in list(global_config.keys()):
+        if key in os.environ:
+            try:
+                global_config[key] = json.loads(os.environ[key])
+            except json.JSONDecodeError:
+                global_config[key] = os.environ[key]
+
+    if plugin_schemas is None:
+        # No plugins - return flat global config
+        if keys:
+            return {k: global_config.get(k) for k in keys}
+        return dict(sorted(global_config.items()))
+
+    # Build grouped config with plugins
+    result: dict[str, dict[str, Any]] = {'GLOBAL': dict(sorted(global_config.items()))}
+
+    for plugin_name, schema in sorted(plugin_schemas.items()):
+        plugin_config: dict[str, Any] = {}
+        for key in schema:
+            plugin_config[key] = get_config_value(key, schema)
+        if plugin_config:
+            result[f'plugins/{plugin_name}'] = plugin_config
+
+    if keys:
+        # Search all sections for requested keys
+        flat = {}
+        for section_config in result.values():
+            for k in keys:
+                if k in section_config:
+                    flat[k] = section_config[k]
+        return flat
+
+    return result
+
+
+def resolve_alias(key: str, plugin_schemas: dict[str, dict[str, Any]] | None = None) -> str:
+    """
+    Resolve an alias to its canonical config key.
+    Returns the canonical key if found, otherwise returns the original key.
+    """
+    if plugin_schemas is None:
+        return key
+
+    for schema in plugin_schemas.values():
+        # Check if key is a canonical key
+        if key in schema:
+            return key
+        # Check if key is an alias for any canonical key
+        for canonical_key, prop in schema.items():
+            if key in prop.get('x-aliases', []):
+                return canonical_key
+
+    return key
+
+
+def set_config(plugin_schemas: dict[str, dict[str, Any]] | None = None, **kwargs: Any) -> dict[str, Any]:
+    """
+    Set config values persistently in ~/.config/abx/config.env.
+    Resolves aliases to canonical keys if plugin_schemas provided.
+    Returns dict of {canonical_key: value} that was actually saved.
+    """
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Load existing config
+    config = load_config_file()
+
+    # Resolve aliases and update values (store as JSON)
+    saved = {}
+    for key, value in kwargs.items():
+        canonical_key = resolve_alias(key, plugin_schemas)
+        config[canonical_key] = json.dumps(value)
+        saved[canonical_key] = value
+
+    # Write back
+    lines = [f'{k}={v}' for k, v in sorted(config.items())]
+    CONFIG_FILE.write_text('\n'.join(lines) + '\n')
+
+    return saved
+
+
+# Load persistent config into environment (lower priority than actual env vars)
+_persistent_config = load_config_file()
+for _key, _value in _persistent_config.items():
+    if _key not in os.environ:
+        os.environ[_key] = _value
 
 # Derived paths for package managers
 PIP_HOME = LIB_DIR / 'pip'
@@ -190,3 +322,5 @@ def _serialize_value(value: Any) -> str:
     elif isinstance(value, list):
         return json.dumps(value)
     return str(value)
+
+
