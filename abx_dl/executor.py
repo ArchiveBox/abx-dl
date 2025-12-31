@@ -1,5 +1,7 @@
 """
 Plugin execution engine for abx-dl.
+
+Hook execution and process management logic adapted from ArchiveBox.
 """
 
 import json
@@ -15,6 +17,12 @@ from .config import build_env_for_plugin, LIB_DIR, NPM_BIN_DIR, NODE_MODULES_DIR
 from .dependencies import load_binary, install_binary
 from .models import Snapshot, Process, ArchiveResult, write_jsonl, now_iso
 from .plugins import Hook, Plugin
+from .process_utils import (
+    validate_pid_file,
+    write_pid_file_with_mtime,
+    write_cmd_file,
+    is_process_alive,
+)
 
 
 def get_interpreter(language: str) -> list[str]:
@@ -22,20 +30,32 @@ def get_interpreter(language: str) -> list[str]:
     return {'py': [sys.executable], 'js': ['node'], 'sh': ['bash']}.get(language, [])
 
 
-def run_hook(hook: Hook, url: str, snapshot_id: str, output_dir: Path, env: dict[str, str], timeout: int = 60) -> tuple[Process, ArchiveResult, subprocess.Popen | None]:
+# ============================================================================
+# ADAPTED FROM: ArchiveBox/archivebox/hooks.py run_hook()
+# COMMIT: 69965a27820507526767208c179c62f4a579555c
+# DATE: 2024-12-30
+# MODIFICATIONS:
+#   - Removed Django settings references
+#   - Removed Machine model references
+#   - Simplified return type to (Process, ArchiveResult, is_background)
+#   - Uses abx-dl's Process/ArchiveResult models instead of HookResult dict
+#   - Writes to files like ArchiveBox but still returns parsed output
+# ============================================================================
+def run_hook(hook: Hook, url: str, snapshot_id: str, output_dir: Path, env: dict[str, str], timeout: int = 60) -> tuple[Process, ArchiveResult, bool]:
     """
-    Run a single hook and return Process, ArchiveResult, and optionally Popen handle.
+    Run a single hook and return Process, ArchiveResult, and is_background flag.
 
-    For background hooks, returns the Popen object so caller can manage cleanup.
-    For foreground hooks, returns None for the Popen.
+    For background hooks, returns immediately with is_background=True.
+    Process output is written to stdout.log/stderr.log files.
+    PID files are created with mtime set to process start time for validation.
     """
-    files_before = set(output_dir.rglob('*'))
+    start_time = time.time()
 
     interpreter = get_interpreter(hook.language)
     if not interpreter:
         proc = Process(cmd=[], exit_code=1, stderr=f'Unknown language: {hook.language}')
         result = ArchiveResult(snapshot_id=snapshot_id, plugin=hook.plugin_name, hook_name=hook.name, status='failed', error=proc.stderr)
-        return proc, result, None
+        return proc, result, False
 
     # Set lib paths
     env.update({
@@ -48,49 +68,82 @@ def run_hook(hook: Hook, url: str, snapshot_id: str, output_dir: Path, env: dict
     cmd = [*interpreter, str(hook.path), f'--url={url}', f'--snapshot-id={snapshot_id}']
     proc = Process(cmd=cmd, pwd=str(output_dir), timeout=timeout, started_at=now_iso())
 
+    # Detect if this is a background hook (long-running daemon)
+    # Convention: .bg. suffix (e.g., on_Snapshot__21_consolelog.bg.js)
+    is_background = hook.is_background
+
+    # Set up output files for ALL hooks (matches ArchiveBox structure)
+    stdout_file = output_dir / 'stdout.log'
+    stderr_file = output_dir / 'stderr.log'
+    pid_file = output_dir / 'hook.pid'
+    cmd_file = output_dir / 'cmd.sh'
+
     try:
-        if hook.is_background:
-            # Background hook - start and don't wait, return Popen handle
-            popen = subprocess.Popen(cmd, cwd=str(output_dir), env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            # Give it a moment to start and potentially fail fast
-            time.sleep(0.3)
-            if popen.poll() is not None:
-                # Process already exited (fast failure)
-                stdout, stderr = popen.communicate()
-                proc.exit_code = popen.returncode
-                proc.stdout = stdout.decode('utf-8', errors='replace')
-                proc.stderr = stderr.decode('utf-8', errors='replace')
-                proc.ended_at = now_iso()
-                status = 'failed' if popen.returncode != 0 else 'succeeded'
-                ar = ArchiveResult(
-                    snapshot_id=snapshot_id, plugin=hook.plugin_name, hook_name=hook.name,
-                    status=status, process_id=proc.id, start_ts=proc.started_at, end_ts=proc.ended_at,
-                    error=proc.stderr[:500] if proc.exit_code != 0 else None,
-                )
-                return proc, ar, None  # No popen to track since it already exited
-            else:
-                # Still running - return handle for later cleanup
+        # Write command script for validation/debugging
+        write_cmd_file(cmd_file, cmd)
+
+        # Capture files before execution to detect new output
+        files_before = set(output_dir.rglob('*')) if output_dir.exists() else set()
+
+        # Open log files for writing (like ArchiveBox)
+        with open(stdout_file, 'w') as out, open(stderr_file, 'w') as err:
+            process = subprocess.Popen(
+                cmd,
+                cwd=str(output_dir),
+                stdout=out,
+                stderr=err,
+                env=env,
+            )
+
+            # Write PID with mtime set to process start time for validation
+            process_start_time = time.time()
+            write_pid_file_with_mtime(pid_file, process.pid, process_start_time)
+
+            if is_background:
+                # Background hook - return immediately, don't wait
+                # Process continues running, writing to stdout.log
+                # Cleanup will poll for completion later via PID file
                 ar = ArchiveResult(
                     snapshot_id=snapshot_id, plugin=hook.plugin_name, hook_name=hook.name,
                     status='started', process_id=proc.id, start_ts=proc.started_at,
                 )
-                return proc, ar, popen
+                return proc, ar, True
 
-        # Foreground hook - wait for completion
-        result = subprocess.run(cmd, cwd=str(output_dir), env=env, capture_output=True, timeout=timeout)
-        proc.exit_code = result.returncode
-        proc.stdout = result.stdout.decode('utf-8', errors='replace')
-        proc.stderr = result.stderr.decode('utf-8', errors='replace')
+            # Normal hook - wait for completion with timeout
+            try:
+                returncode = process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()  # Clean up zombie
+                proc.exit_code = -1
+                proc.stderr = f'Hook timed out after {timeout} seconds'
+                proc.ended_at = now_iso()
+                ar = ArchiveResult(
+                    snapshot_id=snapshot_id, plugin=hook.plugin_name, hook_name=hook.name,
+                    status='failed', process_id=proc.id, start_ts=proc.started_at,
+                    end_ts=proc.ended_at, error=proc.stderr,
+                )
+                return proc, ar, False
+
+        # Read output from files (after closing them)
+        stdout = stdout_file.read_text() if stdout_file.exists() else ''
+        stderr = stderr_file.read_text() if stderr_file.exists() else ''
+
+        proc.exit_code = returncode
+        proc.stdout = stdout
+        proc.stderr = stderr
         proc.ended_at = now_iso()
 
-        # Detect new files
-        files_after = set(output_dir.rglob('*'))
+        # Detect new files created by the hook
+        files_after = set(output_dir.rglob('*')) if output_dir.exists() else set()
         new_files = [str(f.relative_to(output_dir)) for f in (files_after - files_before) if f.is_file()]
+        # Exclude the log files themselves from new_files
+        new_files = [f for f in new_files if f not in ('stdout.log', 'stderr.log', 'hook.pid', 'cmd.sh')]
 
-        # Parse JSONL output
-        status = 'succeeded' if result.returncode == 0 else 'failed'
+        # Parse JSONL output from stdout
+        status = 'succeeded' if returncode == 0 else 'failed'
         output_str = ''
-        for line in proc.stdout.strip().split('\n'):
+        for line in stdout.strip().split('\n'):
             if line.strip():
                 try:
                     record = json.loads(line)
@@ -103,6 +156,13 @@ def run_hook(hook: Hook, url: str, snapshot_id: str, output_dir: Path, env: dict
         if not new_files and status == 'succeeded':
             status = 'skipped'
 
+        # Clean up log files on success (keep on failure for debugging)
+        if returncode == 0:
+            stdout_file.unlink(missing_ok=True)
+            stderr_file.unlink(missing_ok=True)
+            pid_file.unlink(missing_ok=True)
+            # Keep cmd.sh for reference
+
         ar = ArchiveResult(
             snapshot_id=snapshot_id,
             plugin=hook.plugin_name,
@@ -113,88 +173,182 @@ def run_hook(hook: Hook, url: str, snapshot_id: str, output_dir: Path, env: dict
             output_files=new_files,
             start_ts=proc.started_at,
             end_ts=proc.ended_at,
-            error=proc.stderr[:500] if result.returncode != 0 else None,
+            error=stderr[:500] if returncode != 0 else None,
         )
-        return proc, ar, None
+        return proc, ar, False
 
-    except subprocess.TimeoutExpired:
-        proc.exit_code = -1
-        proc.stderr = f'Timed out after {timeout}s'
-        proc.ended_at = now_iso()
-        ar = ArchiveResult(snapshot_id=snapshot_id, plugin=hook.plugin_name, hook_name=hook.name, status='failed', process_id=proc.id, error=proc.stderr)
-        return proc, ar, None
     except Exception as e:
         proc.exit_code = -1
         proc.stderr = f'{type(e).__name__}: {e}'
         proc.ended_at = now_iso()
-        ar = ArchiveResult(snapshot_id=snapshot_id, plugin=hook.plugin_name, hook_name=hook.name, status='failed', process_id=proc.id, error=proc.stderr)
-        return proc, ar, None
+        ar = ArchiveResult(
+            snapshot_id=snapshot_id, plugin=hook.plugin_name, hook_name=hook.name,
+            status='failed', process_id=proc.id, error=proc.stderr,
+        )
+        return proc, ar, False
 
 
-def cleanup_background_hooks(bg_hooks: list[tuple[subprocess.Popen, Process, ArchiveResult, Path]], index_path: Path, is_tty: bool):
+# ============================================================================
+# ADAPTED FROM: ArchiveBox/archivebox/crawls/models.py Crawl.cleanup()
+# COMMIT: 69965a27820507526767208c179c62f4a579555c
+# DATE: 2024-12-30
+# MODIFICATIONS:
+#   - Standalone function instead of model method
+#   - Takes output_dir parameter instead of self.OUTPUT_DIR
+#   - Writes final results to index.jsonl
+#   - No Django ORM updates
+# ============================================================================
+def cleanup_background_hooks(output_dir: Path, index_path: Path, is_tty: bool):
     """
-    Send SIGTERM to all background hooks, wait for them to finish, and collect output.
+    Clean up background hooks by scanning for all .pid files.
+
+    Sends SIGTERM, waits, then SIGKILL if needed.
+    Uses process group killing to handle Chrome and its children.
+    Handles unkillable processes gracefully.
     """
-    for popen, proc, ar, output_dir in bg_hooks:
-        if popen.poll() is None:
-            # Still running - send SIGTERM
+    if not output_dir.exists():
+        return
+
+    # Find all .pid files in the output directory
+    pid_files = list(output_dir.glob('**/*.pid'))
+    if not pid_files:
+        return
+
+    for pid_file in pid_files:
+        # Validate PID before killing to avoid killing unrelated processes
+        cmd_file = pid_file.parent / 'cmd.sh'
+        if not validate_pid_file(pid_file, cmd_file):
+            # PID reused by different process or process dead
+            pid_file.unlink(missing_ok=True)
+            continue
+
+        try:
+            pid = int(pid_file.read_text().strip())
+
+            # Step 1: Send SIGTERM for graceful shutdown
             try:
-                popen.send_signal(signal.SIGTERM)
-            except (ProcessLookupError, OSError):
+                # Try to kill process group first (handles detached processes like Chrome)
+                try:
+                    os.killpg(pid, signal.SIGTERM)
+                except (OSError, ProcessLookupError):
+                    # Fall back to killing just the process
+                    os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                # Already dead
+                pid_file.unlink(missing_ok=True)
+                continue
+
+            # Step 2: Wait for graceful shutdown
+            time.sleep(2)
+
+            # Step 3: Check if still alive
+            if not is_process_alive(pid):
+                # Process terminated gracefully
+                pid_file.unlink(missing_ok=True)
+                _finalize_background_hook(pid_file.parent, index_path, is_tty, success=True)
+                continue
+
+            # Step 4: Process still alive, force kill ENTIRE process group with SIGKILL
+            try:
+                try:
+                    # Always kill entire process group with SIGKILL (not individual processes)
+                    os.killpg(pid, signal.SIGKILL)
+                except (OSError, ProcessLookupError):
+                    # Process group kill failed, try single process as fallback
+                    os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                # Process died between check and kill
+                pid_file.unlink(missing_ok=True)
+                _finalize_background_hook(pid_file.parent, index_path, is_tty, success=True)
+                continue
+
+            # Step 5: Wait and verify death
+            time.sleep(1)
+
+            if is_process_alive(pid):
+                # Process is unkillable (likely in UNE state on macOS)
+                # This happens when Chrome crashes in kernel syscall (IOSurface)
+                # Log but don't block cleanup - process will remain until reboot
+                if is_tty:
+                    print(f'Warning: Process {pid} is unkillable (likely crashed in kernel). Will remain until reboot.', file=sys.stderr)
+                _finalize_background_hook(pid_file.parent, index_path, is_tty, success=False, error='Process unkillable')
+            else:
+                # Successfully killed
+                pid_file.unlink(missing_ok=True)
+                _finalize_background_hook(pid_file.parent, index_path, is_tty, success=True)
+
+        except (ValueError, OSError):
+            # Invalid PID file or permission error
+            pass
+
+
+def _finalize_background_hook(plugin_dir: Path, index_path: Path, is_tty: bool, success: bool, error: str | None = None):
+    """
+    Read output from a background hook's log files and write final results to index.jsonl.
+    """
+    stdout_file = plugin_dir / 'stdout.log'
+    stderr_file = plugin_dir / 'stderr.log'
+    cmd_file = plugin_dir / 'cmd.sh'
+
+    # Read output
+    stdout = stdout_file.read_text() if stdout_file.exists() else ''
+    stderr = stderr_file.read_text() if stderr_file.exists() else ''
+
+    # Detect new files
+    new_files = [
+        str(f.relative_to(plugin_dir)) for f in plugin_dir.rglob('*')
+        if f.is_file() and f.name not in ('stdout.log', 'stderr.log', 'hook.pid', 'cmd.sh')
+    ]
+
+    # Parse JSONL output for final status
+    status = 'succeeded' if success else 'failed'
+    output_str = ''
+    snapshot_id = ''
+    hook_name = ''
+    plugin_name = plugin_dir.name
+
+    for line in stdout.strip().split('\n'):
+        if line.strip():
+            try:
+                record = json.loads(line)
+                if record.get('type') == 'ArchiveResult':
+                    status = record.get('status', status)
+                    output_str = record.get('output_str', '')
+                    snapshot_id = record.get('snapshot_id', snapshot_id)
+                    hook_name = record.get('hook_name', hook_name)
+            except json.JSONDecodeError:
                 pass
 
-    # Wait for all to finish (with timeout)
-    for popen, proc, ar, output_dir in bg_hooks:
-        try:
-            stdout, stderr = popen.communicate(timeout=10)
-            proc.exit_code = popen.returncode
-            proc.stdout = stdout.decode('utf-8', errors='replace')
-            proc.stderr = stderr.decode('utf-8', errors='replace')
-            proc.ended_at = now_iso()
+    # Create final Process and ArchiveResult
+    proc = Process(
+        cmd=[],  # cmd.sh has the full command
+        pwd=str(plugin_dir),
+        exit_code=0 if success else -1,
+        stdout=stdout,
+        stderr=stderr,
+        ended_at=now_iso(),
+    )
 
-            # Detect new files
-            files_after = set(output_dir.rglob('*'))
-            new_files = [str(f.relative_to(output_dir)) for f in files_after if f.is_file()]
+    ar = ArchiveResult(
+        snapshot_id=snapshot_id,
+        plugin=plugin_name,
+        hook_name=hook_name,
+        status=status,
+        process_id=proc.id,
+        output_str=output_str,
+        output_files=new_files,
+        end_ts=proc.ended_at,
+        error=error or (stderr[:500] if not success else None),
+    )
 
-            # Update ArchiveResult
-            ar.end_ts = proc.ended_at
-            ar.output_files = new_files
+    # Write final results
+    write_jsonl(index_path, proc, also_print=not is_tty)
+    write_jsonl(index_path, ar, also_print=not is_tty)
 
-            # Parse JSONL output for final status
-            status = 'succeeded' if popen.returncode == 0 else 'failed'
-            for line in proc.stdout.strip().split('\n'):
-                if line.strip():
-                    try:
-                        record = json.loads(line)
-                        if record.get('type') == 'ArchiveResult':
-                            status = record.get('status', status)
-                            ar.output_str = record.get('output_str', '')
-                    except json.JSONDecodeError:
-                        pass
-            ar.status = status
-            if popen.returncode != 0:
-                ar.error = proc.stderr[:500]
-
-        except subprocess.TimeoutExpired:
-            popen.kill()
-            popen.wait()
-            proc.exit_code = -1
-            proc.stderr = 'Background hook did not exit after SIGTERM'
-            proc.ended_at = now_iso()
-            ar.status = 'failed'
-            ar.error = proc.stderr
-            ar.end_ts = proc.ended_at
-        except Exception as e:
-            proc.exit_code = -1
-            proc.stderr = f'{type(e).__name__}: {e}'
-            proc.ended_at = now_iso()
-            ar.status = 'failed'
-            ar.error = proc.stderr
-            ar.end_ts = proc.ended_at
-
-        # Write final results
-        write_jsonl(index_path, proc, also_print=not is_tty)
-        write_jsonl(index_path, ar, also_print=not is_tty)
+    # Clean up log files on success
+    if success:
+        stdout_file.unlink(missing_ok=True)
+        stderr_file.unlink(missing_ok=True)
 
 
 def check_plugin_dependencies(plugin: Plugin, auto_install: bool = True) -> tuple[bool, list[str]]:
@@ -202,7 +356,15 @@ def check_plugin_dependencies(plugin: Plugin, auto_install: bool = True) -> tupl
     Check if a plugin's dependencies are available.
     If auto_install=True, attempt to install missing dependencies.
     Returns (all_available, list_of_missing_binary_names).
+
+    NOTE: Plugins with Crawl hooks are assumed to self-install their dependencies
+    via those hooks, so we skip pre-checking them here.
     """
+    # Plugins with Crawl hooks handle their own dependency installation
+    # (e.g., chrome plugin's on_Crawl__00_install_puppeteer_chromium.py)
+    if plugin.get_crawl_hooks():
+        return True, []
+
     missing = []
     for spec in plugin.binaries:
         binary = load_binary(spec)
@@ -269,8 +431,6 @@ def download(url: str, plugins: dict[str, Plugin], output_dir: Path, selected_pl
     snapshot_hooks.sort(key=lambda x: x[1].sort_key)
     all_hooks = crawl_hooks + snapshot_hooks
 
-    # Track background hooks for cleanup
-    background_hooks: list[tuple[subprocess.Popen, Process, ArchiveResult, Path]] = []
     shared_config = dict(config_overrides) if config_overrides else {}
 
     try:
@@ -281,11 +441,10 @@ def download(url: str, plugins: dict[str, Plugin], output_dir: Path, selected_pl
             # Executor creates plugin subdir, hooks write to cwd directly
             plugin_output_dir = output_dir / plugin.name
             plugin_output_dir.mkdir(parents=True, exist_ok=True)
-            proc, ar, popen = run_hook(hook, url, snapshot.id, plugin_output_dir, env, timeout)
+            proc, ar, is_background = run_hook(hook, url, snapshot.id, plugin_output_dir, env, timeout)
 
-            if popen:
-                # Background hook - track for later cleanup
-                background_hooks.append((popen, proc, ar, plugin_output_dir))
+            if is_background:
+                # Background hook - started, will be cleaned up later via PID file
                 # Yield initial "started" result
                 yield ar
             else:
@@ -314,8 +473,7 @@ def download(url: str, plugins: dict[str, Plugin], output_dir: Path, selected_pl
                 yield ar
 
     finally:
-        # Cleanup background hooks - send SIGTERM, collect output
-        if background_hooks:
-            cleanup_background_hooks(background_hooks, index_path, is_tty)
+        # Cleanup background hooks - scan for PID files, send SIGTERM, collect output
+        cleanup_background_hooks(output_dir, index_path, is_tty)
 
     return snapshot
