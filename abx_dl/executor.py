@@ -224,8 +224,10 @@ def cleanup_background_hooks(output_dir: Path, index_path: Path, is_tty: bool):
         # Validate PID before killing to avoid killing unrelated processes
         cmd_file = pid_file.parent / f'{hook_basename}.sh'
         if not validate_pid_file(pid_file, cmd_file):
-            # PID reused by different process or process dead
+            # PID reused by different process or process already dead
+            # Still finalize the hook to collect its output
             pid_file.unlink(missing_ok=True)
+            _finalize_background_hook(pid_file.parent, hook_basename, index_path, is_tty, success=True)
             continue
 
         try:

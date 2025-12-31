@@ -27,7 +27,7 @@ except ImportError:
 
 def validate_pid_file(pid_file: Path, cmd_file: Optional[Path] = None, tolerance: float = 5.0) -> bool:
     """Validate PID using mtime and optional cmd.sh. Returns True if process is ours."""
-    if not PSUTIL_AVAILABLE or not pid_file.exists():
+    if not pid_file.exists():
         return False
 
     try:

@@ -1,6 +1,6 @@
 [project]
 name = "abx-dl"
-version = "1.0.4"
+version = "1.0.5"
 requires-python = ">=3.10"
 description = "All-in-one CLI tool to download and extract content from URLs"
 authors = [{name = "Nick Sweeting", email = "pyproject.toml@archivebox.io"}]
@@ -44,6 +44,7 @@ dependencies = [
     "pydantic>=2.0.0",
     "platformdirs>=4.0.0",
     "requests>=2.28.0",
+    "psutil>=7.2.1",
 ]
 
 [project.optional-dependencies]
