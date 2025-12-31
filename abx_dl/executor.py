@@ -212,8 +212,8 @@ def cleanup_background_hooks(output_dir: Path, index_path: Path, is_tty: bool):
     if not output_dir.exists():
         return
 
-    # Find all hook .pid files in the output directory (pattern: on_*.pid)
-    # This excludes plugin-created files like chrome.pid, hook.pid
+    # Find all executor-created hook .pid files (pattern: on_*.pid)
+    # Excludes plugin-created files like chrome.pid
     pid_files = list(output_dir.glob('**/on_*.pid'))
     if not pid_files:
         return
