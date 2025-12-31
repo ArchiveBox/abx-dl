@@ -72,11 +72,13 @@ def run_hook(hook: Hook, url: str, snapshot_id: str, output_dir: Path, env: dict
     # Convention: .bg. suffix (e.g., on_Snapshot__21_consolelog.bg.js)
     is_background = hook.is_background
 
-    # Set up output files for ALL hooks (matches ArchiveBox structure)
-    stdout_file = output_dir / 'stdout.log'
-    stderr_file = output_dir / 'stderr.log'
-    pid_file = output_dir / 'hook.pid'
-    cmd_file = output_dir / 'cmd.sh'
+    # Set up output files for ALL hooks - use hook-specific names to avoid conflicts
+    # when multiple hooks run in the same plugin directory
+    hook_basename = hook.name  # e.g., "on_Snapshot__20_chrome_tab.bg"
+    stdout_file = output_dir / f'{hook_basename}.stdout.log'
+    stderr_file = output_dir / f'{hook_basename}.stderr.log'
+    pid_file = output_dir / f'{hook_basename}.pid'
+    cmd_file = output_dir / f'{hook_basename}.sh'
 
     try:
         # Write command script for validation/debugging
@@ -137,8 +139,9 @@ def run_hook(hook: Hook, url: str, snapshot_id: str, output_dir: Path, env: dict
         # Detect new files created by the hook
         files_after = set(output_dir.rglob('*')) if output_dir.exists() else set()
         new_files = [str(f.relative_to(output_dir)) for f in (files_after - files_before) if f.is_file()]
-        # Exclude the log files themselves from new_files
-        new_files = [f for f in new_files if f not in ('stdout.log', 'stderr.log', 'hook.pid', 'cmd.sh')]
+        # Exclude hook-specific log/pid/sh files from new_files
+        excluded_suffixes = ('.stdout.log', '.stderr.log', '.pid', '.sh')
+        new_files = [f for f in new_files if not any(f.endswith(suffix) for suffix in excluded_suffixes)]
 
         # Parse JSONL output from stdout
         status = 'succeeded' if returncode == 0 else 'failed'
@@ -215,8 +218,11 @@ def cleanup_background_hooks(output_dir: Path, index_path: Path, is_tty: bool):
         return
 
     for pid_file in pid_files:
+        # Extract hook_basename from pid filename (e.g., "on_Snapshot__20_chrome_tab.bg.pid" -> "on_Snapshot__20_chrome_tab.bg")
+        hook_basename = pid_file.stem  # removes .pid extension
+
         # Validate PID before killing to avoid killing unrelated processes
-        cmd_file = pid_file.parent / 'cmd.sh'
+        cmd_file = pid_file.parent / f'{hook_basename}.sh'
         if not validate_pid_file(pid_file, cmd_file):
             # PID reused by different process or process dead
             pid_file.unlink(missing_ok=True)
@@ -245,7 +251,7 @@ def cleanup_background_hooks(output_dir: Path, index_path: Path, is_tty: bool):
             if not is_process_alive(pid):
                 # Process terminated gracefully
                 pid_file.unlink(missing_ok=True)
-                _finalize_background_hook(pid_file.parent, index_path, is_tty, success=True)
+                _finalize_background_hook(pid_file.parent, hook_basename, index_path, is_tty, success=True)
                 continue
 
             # Step 4: Process still alive, force kill ENTIRE process group with SIGKILL
@@ -259,7 +265,7 @@ def cleanup_background_hooks(output_dir: Path, index_path: Path, is_tty: bool):
             except ProcessLookupError:
                 # Process died between check and kill
                 pid_file.unlink(missing_ok=True)
-                _finalize_background_hook(pid_file.parent, index_path, is_tty, success=True)
+                _finalize_background_hook(pid_file.parent, hook_basename, index_path, is_tty, success=True)
                 continue
 
             # Step 5: Wait and verify death
@@ -271,40 +277,41 @@ def cleanup_background_hooks(output_dir: Path, index_path: Path, is_tty: bool):
                 # Log but don't block cleanup - process will remain until reboot
                 if is_tty:
                     print(f'Warning: Process {pid} is unkillable (likely crashed in kernel). Will remain until reboot.', file=sys.stderr)
-                _finalize_background_hook(pid_file.parent, index_path, is_tty, success=False, error='Process unkillable')
+                _finalize_background_hook(pid_file.parent, hook_basename, index_path, is_tty, success=False, error='Process unkillable')
             else:
                 # Successfully killed
                 pid_file.unlink(missing_ok=True)
-                _finalize_background_hook(pid_file.parent, index_path, is_tty, success=True)
+                _finalize_background_hook(pid_file.parent, hook_basename, index_path, is_tty, success=True)
 
         except (ValueError, OSError):
             # Invalid PID file or permission error
             pass
 
 
-def _finalize_background_hook(plugin_dir: Path, index_path: Path, is_tty: bool, success: bool, error: str | None = None):
+def _finalize_background_hook(plugin_dir: Path, hook_basename: str, index_path: Path, is_tty: bool, success: bool, error: str | None = None):
     """
     Read output from a background hook's log files and write final results to index.jsonl.
     """
-    stdout_file = plugin_dir / 'stdout.log'
-    stderr_file = plugin_dir / 'stderr.log'
-    cmd_file = plugin_dir / 'cmd.sh'
+    stdout_file = plugin_dir / f'{hook_basename}.stdout.log'
+    stderr_file = plugin_dir / f'{hook_basename}.stderr.log'
+    cmd_file = plugin_dir / f'{hook_basename}.sh'
 
     # Read output
     stdout = stdout_file.read_text() if stdout_file.exists() else ''
     stderr = stderr_file.read_text() if stderr_file.exists() else ''
 
-    # Detect new files
+    # Detect new files (exclude all hook-specific log/pid/sh files)
+    excluded_suffixes = ('.stdout.log', '.stderr.log', '.pid', '.sh')
     new_files = [
         str(f.relative_to(plugin_dir)) for f in plugin_dir.rglob('*')
-        if f.is_file() and f.name not in ('stdout.log', 'stderr.log', 'hook.pid', 'cmd.sh')
+        if f.is_file() and not any(f.name.endswith(suffix) for suffix in excluded_suffixes)
     ]
 
     # Parse JSONL output for final status
     status = 'succeeded' if success else 'failed'
     output_str = ''
     snapshot_id = ''
-    hook_name = ''
+    hook_name = hook_basename  # Use the hook_basename as hook_name
     plugin_name = plugin_dir.name
 
     for line in stdout.strip().split('\n'):
