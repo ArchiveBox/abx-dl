@@ -70,9 +70,6 @@ build-backend = "pdm.backend"
 [tool.pdm.build]
 includes = ["abx_dl/"]
 
-[tool.uv.sources]
-abx-plugins = { workspace = true }
-
 [tool.ruff]
 line-length = 140
 target-version = "py310"
