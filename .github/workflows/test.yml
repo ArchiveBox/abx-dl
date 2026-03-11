@@ -99,12 +99,6 @@ jobs:
           packages: wget curl git ripgrep
           version: 1.0
 
-      - name: Install Chrome
-        id: setup-chrome
-        uses: browser-actions/setup-chrome@latest
-        with:
-          chrome-version: stable
-
       - name: Install Python dependencies
         run: |
           uv sync --extra dev
@@ -114,7 +108,6 @@ jobs:
         run: |
           uv run pytest -q ./abx-plugins/abx_plugins/plugins/${{ matrix.plugin.name }}/tests
         env:
-          CHROME_BINARY: ${{ steps.setup-chrome.outputs.chrome-path }}
           TIMEOUT: "120"
 
   test-all:
@@ -153,12 +146,6 @@ jobs:
           packages: wget curl git ripgrep
           version: 1.0
 
-      - name: Install Chrome
-        id: setup-chrome
-        uses: browser-actions/setup-chrome@latest
-        with:
-          chrome-version: stable
-
       - name: Install Python dependencies
         run: |
           uv sync --extra dev
@@ -175,7 +162,6 @@ jobs:
           cat ./test-output/index.json | jq '.'
         env:
           ABX_PLUGINS_DIR: ${{ github.workspace }}/abx-plugins/abx_plugins/plugins
-          CHROME_BINARY: ${{ steps.setup-chrome.outputs.chrome-path }}
           TIMEOUT: "120"
 
       - name: Upload test output
