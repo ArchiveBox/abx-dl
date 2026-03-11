@@ -25,7 +25,7 @@ It's useful for scraping, downloading, OSINT, digital preservation, and more.
 #### 🍜 What does it save?
 
 ```bash
-abx-dl dl --plugins=title,favicon,headers,wget,singlefile,screenshot,pdf,dom,readability,git,... 'https://example.com'
+abx-dl dl --plugins=wget,title,screenshot,pdf,readability,git 'https://example.com'
 ```
 
 `abx-dl` runs all plugins by default, or you can specify `--plugins=...` for specific methods:
@@ -42,7 +42,7 @@ abx-dl dl --plugins=title,favicon,headers,wget,singlefile,screenshot,pdf,dom,rea
 
 `abx-dl` uses the **[ABX Plugin Library](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement)** (shared with [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox)) to run a collection of downloading and scraping tools.
 
-Plugins are discovered from the `plugins/` directory and execute hooks in order:
+Plugins are loaded from the installed `abx-plugins` package (or from `ABX_PLUGINS_DIR` if you override it) and execute hooks in order:
 1. **Crawl hooks** run first (setup/install dependencies like Chrome)
 2. **Snapshot hooks** run per-URL to extract content
 
@@ -99,7 +99,8 @@ Aliases are automatically resolved (e.g. `--set USE_WGET=false` saves as `WGET_E
 
 ```bash
 pip install abx-dl
-abx-dl plugins --install   # optional: pre-install plugin dependencies
+abx-dl plugins wget        # optional: inspect a plugin and its hooks
+abx-dl plugins --install wget
 ```
 
 <br/>
@@ -110,8 +111,11 @@ abx-dl plugins --install   # optional: pre-install plugin dependencies
 # Basic usage - download URL with all plugins:
 abx-dl dl 'https://example.com'
 
+# Fast smoke test with a single plugin:
+abx-dl dl --plugins=wget 'https://example.com'
+
 # Download with specific plugins only:
-abx-dl dl --plugins=wget,ytdlp,git,screenshot 'https://example.com'
+abx-dl dl --plugins=wget,title,screenshot,pdf 'https://example.com'
 
 # Skip auto-installing missing dependencies (emit warnings instead):
 abx-dl dl --no-install 'https://example.com'
@@ -131,6 +135,7 @@ abx-dl plugins                            # Check + show info for all plugins
 abx-dl plugins wget ytdlp git             # Check + show info for specific plugins
 abx-dl plugins --install                  # Install all plugin dependencies
 abx-dl plugins --install wget ytdlp git   # Install specific plugin dependencies
+abx-dl install wget ytdlp git             # Alias for plugins --install
 abx-dl config                             # Show all config values
 abx-dl config --get TIMEOUT               # Get a specific config value
 abx-dl config --set TIMEOUT=120           # Set a config value persistently
@@ -141,7 +146,7 @@ abx-dl config --set TIMEOUT=120           # Set a config value persistently
 Many plugins require external binaries (e.g., `wget`, `chrome`, `yt-dlp`, `single-file`).
 
 By default, `abx-dl` lazily auto-installs missing dependencies as needed when you download a URL.
-Use `--no-install` to skip plugins with missing dependencies instead:
+Use `--no-install` to skip plugins with missing dependencies instead. `plugins --install` and `install` run crawl/install hooks ahead of time without downloading a snapshot:
 
 ```bash
 # Auto-installs missing deps on-the-fly (default behavior)
@@ -156,6 +161,9 @@ abx-dl plugins --install
 # Install dependencies for specific plugins only
 abx-dl plugins --install wget singlefile ytdlp
 
+# Same install flow via the shortcut alias
+abx-dl install wget singlefile ytdlp
+
 # Check which dependencies are available/missing
 abx-dl plugins
 ```
@@ -165,7 +173,7 @@ Dependencies are installed to `~/.config/abx/lib/{arch}/` using the appropriate 
 - **npm packages** → `~/.config/abx/lib/{arch}/npm/`
 - **brew/apt packages** → system locations
 
-You can override the install location with `LIB_DIR=/path/to/lib abx-dl install`.
+You can override the install location with `LIB_DIR=/path/to/lib abx-dl install wget`.
 
 <br/>
 
@@ -216,12 +224,10 @@ You can override the install location with `LIB_DIR=/path/to/lib abx-dl install`
 
 `abx-dl` is built on these components:
 
-- **`abx_dl/plugins.py`** - Plugin discovery from `plugins/` directory
+- **`abx_dl/plugins.py`** - Plugin discovery from `abx-plugins` or `ABX_PLUGINS_DIR`
 - **`abx_dl/executor.py`** - Hook execution engine with config propagation
 - **`abx_dl/config.py`** - Environment variable configuration
 - **`abx_dl/cli.py`** - Rich CLI with live progress display
-
-Plugins are symlinked from [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox)'s plugin directory.
 
 ---
 

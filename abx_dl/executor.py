@@ -178,6 +178,51 @@ def _poll_background_hooks(
     return finalized
 
 
+def _wait_for_background_hooks(
+    output_dir: Path,
+    index_path: Path,
+    stderr_is_tty: bool,
+    *,
+    emit_jsonl: bool,
+    known_meta_files: set[Path],
+) -> list[tuple[Process, ArchiveResult]]:
+    """Wait for background hooks to finish naturally before falling back to cleanup."""
+    if not known_meta_files:
+        return []
+
+    timeout_seconds = 0
+    for meta_file in known_meta_files:
+        if not meta_file.exists():
+            continue
+        try:
+            timeout_seconds = max(timeout_seconds, int(json.loads(meta_file.read_text()).get('timeout', 0)))
+        except Exception:
+            continue
+
+    deadline = time.time() + max(timeout_seconds, 1)
+    finalized: list[tuple[Process, ArchiveResult]] = []
+
+    while time.time() < deadline:
+        pending_meta_files = {meta_file for meta_file in known_meta_files if meta_file.exists()}
+        if not pending_meta_files:
+            break
+
+        newly_finalized = _poll_background_hooks(
+            output_dir,
+            index_path,
+            stderr_is_tty,
+            emit_jsonl=emit_jsonl,
+            known_meta_files=pending_meta_files,
+        )
+        if newly_finalized:
+            finalized.extend(newly_finalized)
+            continue
+
+        time.sleep(0.1)
+
+    return finalized
+
+
 # ============================================================================
 # ADAPTED FROM: ArchiveBox/archivebox/hooks.py run_hook()
 # COMMIT: 69965a27820507526767208c179c62f4a579555c
@@ -865,6 +910,7 @@ def download(
     selected_plugins: list[str] | None = None,
     config_overrides: dict[str, Any] | None = None,
     auto_install: bool = True,
+    crawl_only: bool = False,
     *,
     emit_jsonl: bool | None = None,
 ) -> Generator[VisibleRecord, None, Snapshot]:
@@ -874,6 +920,7 @@ def download(
 
     If auto_install=True (default), missing plugin dependencies are lazily installed.
     If auto_install=False, plugins with missing dependencies are skipped with a warning.
+    If crawl_only=True, only on_Crawl hooks are executed.
     """
     output_dir = output_dir or Path.cwd()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -923,7 +970,7 @@ def download(
             snapshot_hooks.append((plugin, hook))
     crawl_hooks.sort(key=lambda x: x[1].sort_key)
     snapshot_hooks.sort(key=lambda x: x[1].sort_key)
-    all_hooks = crawl_hooks + snapshot_hooks
+    all_hooks = crawl_hooks if crawl_only else crawl_hooks + snapshot_hooks
 
     # shared_config is stateful across the hook lifecycle:
     # earlier hooks can emit Machine/Binary records that mutate env for later hooks.
@@ -972,6 +1019,27 @@ def download(
                 yield ar
 
             for bg_proc, bg_ar in _poll_background_hooks(
+                output_dir,
+                index_path,
+                stderr_is_tty,
+                emit_jsonl=emit_jsonl,
+                known_meta_files=known_background_meta_files,
+            ):
+                binary_processes = _apply_hook_side_effects(
+                    bg_proc.stdout,
+                    shared_config,
+                    auto_install=auto_install,
+                    plugins=available_plugins,
+                    output_dir=output_dir,
+                    index_path=index_path,
+                    emit_jsonl=emit_jsonl,
+                )
+                for binary_proc in binary_processes:
+                    yield binary_proc
+                yield bg_ar
+
+        if crawl_only and known_background_meta_files:
+            for bg_proc, bg_ar in _wait_for_background_hooks(
                 output_dir,
                 index_path,
                 stderr_is_tty,

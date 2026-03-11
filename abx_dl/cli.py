@@ -5,6 +5,7 @@ CLI interface for abx-dl using rich-click.
 import sys
 from datetime import datetime
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import rich_click as click
 from rich.console import Console, Group
@@ -14,7 +15,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskPr
 from rich.table import Table
 
 from .config import get_config, set_config, CONFIG_FILE
-from .dependencies import load_binary, install_binary
+from .dependencies import load_binary
 from .executor import download
 from .models import ArchiveResult, Process
 from .plugins import discover_plugins
@@ -347,6 +348,56 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
         pass
 
 
+def _run_plugin_install(selected) -> int:
+    console.print("[bold]Installing plugin dependencies...[/bold]\n")
+
+    results_by_hook: dict[tuple[str, str], ArchiveResult] = {}
+    with TemporaryDirectory(prefix='abx-dl-install-') as temp_dir:
+        for record in download(
+            'https://example.com',
+            selected,
+            Path(temp_dir),
+            auto_install=True,
+            crawl_only=True,
+            emit_jsonl=False,
+        ):
+            if isinstance(record, ArchiveResult):
+                results_by_hook[(record.plugin, record.hook_name)] = record
+
+    no_install_hooks = [name for name, plugin in sorted(selected.items()) if not plugin.get_crawl_hooks()]
+
+    if results_by_hook:
+        table = Table(title="Install Results")
+        table.add_column("Plugin", style="cyan")
+        table.add_column("Hook")
+        table.add_column("Status")
+        table.add_column("Output")
+
+        for _, result in sorted(results_by_hook.items()):
+            status_style = STATUS_STYLES.get(result.status, 'white')
+            table.add_row(
+                result.plugin,
+                result.hook_name,
+                f'[{status_style}]{result.status}[/{status_style}]',
+                _compact_output(result.output_str or result.error or ''),
+            )
+
+        console.print(table)
+    else:
+        console.print("[yellow]No install hooks found for the selected plugins.[/yellow]")
+
+    if no_install_hooks:
+        console.print(f"[dim]No install hooks: {', '.join(no_install_hooks)}[/dim]")
+
+    failures = [result for result in results_by_hook.values() if result.status == 'failed']
+    if failures:
+        console.print(f"\n[bold red]{len(failures)} install hook(s) failed.[/bold red]")
+        return 1
+
+    console.print("\n[bold green]Done![/bold green]")
+    return 0
+
+
 @cli.command()
 @click.argument('plugin_names', nargs=-1)
 @click.option('--install', '-i', 'do_install', is_flag=True, help='Install plugin dependencies')
@@ -380,19 +431,7 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool):
         selected = all_plugins
 
     if do_install:
-        # Install mode
-        console.print("[bold]Installing plugin dependencies...[/bold]\n")
-        for name, plugin in sorted(selected.items()):
-            if not plugin.binaries:
-                continue
-            console.print(f"[cyan]{name}[/cyan]")
-            for spec in plugin.binaries:
-                binary = install_binary(spec)
-                if binary.is_valid:
-                    console.print(f"  [green]✓[/green] {binary.name} ({binary.loaded_version or 'unknown'}) - {binary.loaded_abspath}")
-                else:
-                    console.print(f"  [red]✗[/red] {binary.name} - not found")
-        console.print("\n[bold green]Done![/bold green]")
+        raise SystemExit(_run_plugin_install(selected))
     else:
         # Check + info mode (default)
         # Show summary table
@@ -405,7 +444,8 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool):
         all_ok = True
         for name in sorted(selected.keys()):
             plugin = selected[name]
-            hooks_count = len(plugin.get_snapshot_hooks())
+            hooks = plugin.get_crawl_hooks() + plugin.get_snapshot_hooks()
+            hooks_count = len(hooks)
 
             # Check binary status
             if plugin.binaries:
@@ -454,7 +494,7 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool):
                         console.print(f"  {status} {spec.get('name', '?')}{version}{path}")
                         console.print(f"    [dim]providers: {spec.get('binproviders', 'env')}[/dim]")
 
-                hooks = plugin.get_snapshot_hooks()
+                hooks = plugin.get_crawl_hooks() + plugin.get_snapshot_hooks()
                 if hooks:
                     console.print("\n[bold]Hooks:[/bold]")
                     for hook in hooks:
