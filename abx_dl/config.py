@@ -25,11 +25,13 @@ CONFIG_DIR = Path(os.environ.get('CONFIG_DIR', Path.home() / '.config' / 'abx'))
 CONFIG_FILE = CONFIG_DIR / 'config.env'
 DATA_DIR = Path(os.environ.get('DATA_DIR', Path.cwd()))
 LIB_DIR = Path(os.environ.get('LIB_DIR', CONFIG_DIR / 'lib' / get_arch()))
+PERSONAS_DIR = Path(os.environ.get('PERSONAS_DIR', CONFIG_DIR / 'personas'))
 TMP_DIR = Path(os.environ.get('TMP_DIR', tempfile.mkdtemp(prefix='abx-dl-')))
 
 # Ensure directories exist
 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 LIB_DIR.mkdir(parents=True, exist_ok=True)
+PERSONAS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def load_config_file() -> dict[str, str]:
@@ -162,6 +164,7 @@ for _key, _value in _persistent_config.items():
 # Derived paths for package managers
 PIP_HOME = LIB_DIR / 'pip'
 NPM_HOME = LIB_DIR / 'npm'
+PIP_BIN_DIR = PIP_HOME / 'venv' / 'bin'
 NODE_MODULES_DIR = NPM_HOME / 'node_modules'
 NPM_BIN_DIR = NODE_MODULES_DIR / '.bin'
 
@@ -172,10 +175,15 @@ GLOBAL_DEFAULTS = {
     'CHECK_SSL_VALIDITY': True,
     'COOKIES_FILE': '',
     'LIB_DIR': str(LIB_DIR),
+    'PERSONAS_DIR': str(PERSONAS_DIR),
+    'CRAWL_DIR': str(DATA_DIR),
+    'SNAP_DIR': str(DATA_DIR),
     'TMP_DIR': str(TMP_DIR),
     'PIP_HOME': str(PIP_HOME),
+    'PIP_BIN_DIR': str(PIP_BIN_DIR),
     'NPM_HOME': str(NPM_HOME),
     'NODE_MODULES_DIR': str(NODE_MODULES_DIR),
+    'NODE_PATH': str(NODE_MODULES_DIR),
     'NPM_BIN_DIR': str(NPM_BIN_DIR),
 }
 
@@ -288,12 +296,75 @@ def _parse_value(val: str, prop_type: str) -> Any:
     return val
 
 
-def build_env_for_plugin(plugin_name: str, schema: dict[str, Any], overrides: dict[str, Any] | None = None) -> dict[str, str]:
+def _derive_runtime_paths(
+    env: dict[str, str],
+    explicit_keys: set[str],
+    run_output_dir: Path | None = None,
+) -> dict[str, str]:
+    """
+    Derive path defaults that depend on LIB_DIR and per-run output location.
+    Explicit env/config values always win over these derived defaults.
+    """
+    lib_dir = Path(env.get('LIB_DIR', str(LIB_DIR)))
+    pip_home = Path(env['PIP_HOME']) if 'PIP_HOME' in explicit_keys else lib_dir / 'pip'
+    pip_bin_dir = Path(env['PIP_BIN_DIR']) if 'PIP_BIN_DIR' in explicit_keys else pip_home / 'venv' / 'bin'
+    npm_home = Path(env['NPM_HOME']) if 'NPM_HOME' in explicit_keys else lib_dir / 'npm'
+    node_modules_dir = Path(env['NODE_MODULES_DIR']) if 'NODE_MODULES_DIR' in explicit_keys else npm_home / 'node_modules'
+    node_path = env['NODE_PATH'] if 'NODE_PATH' in explicit_keys else str(node_modules_dir)
+    npm_bin_dir = Path(env['NPM_BIN_DIR']) if 'NPM_BIN_DIR' in explicit_keys else node_modules_dir / '.bin'
+
+    derived: dict[str, str] = {}
+
+    if 'PIP_HOME' not in explicit_keys:
+        derived['PIP_HOME'] = str(pip_home)
+    if 'PIP_BIN_DIR' not in explicit_keys:
+        derived['PIP_BIN_DIR'] = str(pip_bin_dir)
+    if 'NPM_HOME' not in explicit_keys:
+        derived['NPM_HOME'] = str(npm_home)
+    if 'NODE_MODULES_DIR' not in explicit_keys:
+        derived['NODE_MODULES_DIR'] = str(node_modules_dir)
+    if 'NODE_PATH' not in explicit_keys:
+        derived['NODE_PATH'] = str(node_path)
+    if 'NPM_BIN_DIR' not in explicit_keys:
+        derived['NPM_BIN_DIR'] = str(npm_bin_dir)
+
+    if run_output_dir is not None:
+        run_dir = str(run_output_dir)
+        if 'CRAWL_DIR' not in explicit_keys:
+            derived['CRAWL_DIR'] = run_dir
+        if 'SNAP_DIR' not in explicit_keys:
+            derived['SNAP_DIR'] = run_dir
+
+    path_dirs: list[str] = []
+    current_path = env.get('PATH', '')
+    if current_path:
+        path_dirs = [part for part in current_path.split(':') if part]
+
+    derived_path = current_path
+    for extra_dir in (str(pip_bin_dir), str(npm_bin_dir)):
+        if extra_dir and extra_dir not in path_dirs:
+            derived_path = f"{extra_dir}:{derived_path}" if derived_path else extra_dir
+            path_dirs.insert(0, extra_dir)
+    if derived_path:
+        derived['PATH'] = derived_path
+
+    return derived
+
+
+def build_env_for_plugin(
+    plugin_name: str,
+    schema: dict[str, Any],
+    overrides: dict[str, Any] | None = None,
+    run_output_dir: Path | None = None,
+) -> dict[str, str]:
     """
     Build environment variables dict for running a plugin.
     Exports all config as environment variables.
     """
     env = os.environ.copy()
+    explicit_keys = set(env.keys())
+    if overrides:
+        explicit_keys.update(overrides.keys())
 
     # Add global defaults
     for key, value in GLOBAL_DEFAULTS.items():
@@ -312,6 +383,9 @@ def build_env_for_plugin(plugin_name: str, schema: dict[str, Any], overrides: di
         for key, value in overrides.items():
             env[key] = _serialize_value(value)
 
+    # Keep path values coherent with the effective LIB_DIR and current run dir.
+    env.update(_derive_runtime_paths(env, explicit_keys=explicit_keys, run_output_dir=run_output_dir))
+
     return env
 
 
@@ -322,5 +396,3 @@ def _serialize_value(value: Any) -> str:
     elif isinstance(value, list):
         return json.dumps(value)
     return str(value)
-
-

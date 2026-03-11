@@ -5,14 +5,30 @@ Discovers plugins from the plugins directory and provides access to their hooks.
 """
 
 import json
+import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 
-# Plugins directory (symlinked to archivebox/plugins)
-PLUGINS_DIR = Path(__file__).parent / 'plugins'
+def _default_plugins_dir() -> Path:
+    override = os.environ.get('ABX_PLUGINS_DIR')
+    if override:
+        return Path(override)
+    try:
+        from abx_plugins import get_plugins_dir
+    except Exception:
+        repo_root = Path(__file__).resolve().parents[3]
+        monorepo_plugins = repo_root / 'abx-plugins' / 'abx_plugins' / 'plugins'
+        if monorepo_plugins.exists():
+            return monorepo_plugins
+        return Path(__file__).parent / 'plugins'
+    return get_plugins_dir()
+
+
+# Plugins directory (prefer abx-plugins package, fallback to local)
+PLUGINS_DIR = _default_plugins_dir()
 
 
 @dataclass
@@ -60,6 +76,13 @@ class Plugin:
         """Get hooks that run once per crawl (setup/install)."""
         return sorted(
             [h for h in self.hooks if 'Crawl' in h.name],
+            key=lambda h: h.sort_key
+        )
+
+    def get_binary_hooks(self) -> list[Hook]:
+        """Get hooks that resolve/install binary dependencies."""
+        return sorted(
+            [h for h in self.hooks if 'Binary' in h.name],
             key=lambda h: h.sort_key
         )
 

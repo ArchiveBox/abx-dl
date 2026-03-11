@@ -29,6 +29,8 @@ class Process:
     cmd: list[str]
     id: str = field(default_factory=uuid7)
     binary_id: str | None = None
+    plugin: str | None = None
+    hook_name: str | None = None
     pwd: str = field(default_factory=os.getcwd)
     env: dict[str, str] = field(default_factory=dict)
     timeout: int = 60

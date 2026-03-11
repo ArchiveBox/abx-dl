@@ -14,6 +14,8 @@ comparing them detects PID reuse.
 """
 
 import os
+import shlex
+import shutil
 import time
 from pathlib import Path
 from typing import Optional
@@ -23,6 +25,60 @@ try:
     PSUTIL_AVAILABLE = True
 except ImportError:
     PSUTIL_AVAILABLE = False
+
+
+def _normalize_exec_name(exec_path: str) -> str:
+    """Normalize an executable path/name for conservative equality checks."""
+    name = Path(exec_path).name.lower()
+    if name.startswith("python"):
+        return "python"
+    if name.startswith("node"):
+        return "node"
+    return name
+
+
+def _read_recorded_argv(cmd_file: Path) -> list[str]:
+    """Parse the recorded command line from a generated cmd.sh helper."""
+    lines = [line.strip() for line in cmd_file.read_text().splitlines() if line.strip()]
+    if not lines:
+        return []
+    try:
+        return shlex.split(lines[-1])
+    except ValueError:
+        return []
+
+
+def _resolve_recorded_exec(exec_path: str) -> str:
+    """Resolve a recorded executable to a stable absolute path when possible."""
+    if not exec_path:
+        return ""
+    if os.path.isabs(exec_path):
+        return os.path.realpath(exec_path)
+    resolved = shutil.which(exec_path)
+    if resolved:
+        return os.path.realpath(resolved)
+    return ""
+
+
+def _resolve_live_exec(exec_path: str) -> str:
+    """Resolve a live process argv[0] to a stable absolute path when possible."""
+    if not exec_path:
+        return ""
+    if os.path.isabs(exec_path):
+        return os.path.realpath(exec_path)
+    resolved = shutil.which(exec_path)
+    if resolved:
+        return os.path.realpath(resolved)
+    return ""
+
+
+def _normalize_recorded_arg(arg: str) -> str:
+    """Normalize a recorded argv entry for equality checks."""
+    if not arg:
+        return ""
+    if os.path.isabs(arg):
+        return os.path.realpath(arg)
+    return arg
 
 
 def validate_pid_file(pid_file: Path, cmd_file: Optional[Path] = None, tolerance: float = 5.0) -> bool:
@@ -41,11 +97,27 @@ def validate_pid_file(pid_file: Path, cmd_file: Optional[Path] = None, tolerance
         # Validate command if provided
         if cmd_file and cmd_file.exists():
             cmd = cmd_file.read_text()
-            cmdline = ' '.join(proc.cmdline())
+            proc_argv = proc.cmdline()
+            cmdline = ' '.join(proc_argv)
             if '--remote-debugging-port' in cmd and '--remote-debugging-port' not in cmdline:
                 return False
-            if ('chrome' in cmd.lower() or 'chromium' in cmd.lower()):
-                if 'chrome' not in proc.name().lower() and 'chromium' not in proc.name().lower():
+
+            recorded_argv = _read_recorded_argv(cmd_file)
+            recorded_exec = _resolve_recorded_exec(recorded_argv[0]) if recorded_argv else ''
+            process_exec = _resolve_live_exec(proc_argv[0]) if proc_argv else ''
+            if recorded_exec and process_exec and recorded_exec != process_exec:
+                return False
+            if not recorded_exec:
+                recorded_exec_name = _normalize_exec_name(recorded_argv[0]) if recorded_argv else ''
+                process_exec_name = _normalize_exec_name(proc_argv[0]) if proc_argv else _normalize_exec_name(proc.name())
+                if recorded_exec_name and process_exec_name and recorded_exec_name != process_exec_name:
+                    return False
+
+            # If the hook launches an interpreter + script, validate the script path too.
+            if len(recorded_argv) > 1 and len(proc_argv) > 1:
+                recorded_entrypoint = _normalize_recorded_arg(recorded_argv[1])
+                process_entrypoint = _normalize_recorded_arg(proc_argv[1])
+                if recorded_entrypoint and process_entrypoint and recorded_entrypoint != process_entrypoint:
                     return False
 
         return True

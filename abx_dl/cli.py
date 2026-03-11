@@ -3,17 +3,20 @@ CLI interface for abx-dl using rich-click.
 """
 
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import rich_click as click
-from rich.console import Console
-from rich.table import Table
+from rich.console import Console, Group
+from rich.live import Live
+from rich.markup import escape
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+from rich.table import Table
 
 from .config import get_config, set_config, CONFIG_FILE
 from .dependencies import load_binary, install_binary
 from .executor import download
-from .models import ArchiveResult
+from .models import ArchiveResult, Process
 from .plugins import discover_plugins
 
 console = Console()
@@ -25,6 +28,18 @@ click.rich_click.SHOW_ARGUMENTS = True
 click.rich_click.GROUP_ARGUMENTS_OPTIONS = True
 
 
+STATUS_STYLES = {
+    'succeeded': 'green',
+    'noresults': 'grey35',
+    'failed': 'red',
+    'skipped': 'bright_black',
+    'started': 'yellow',
+}
+
+
+VisibleRecord = ArchiveResult | Process
+
+
 class DefaultGroup(click.Group):
     """A click Group that runs 'dl' command by default if a URL is found in args."""
 
@@ -34,6 +49,176 @@ class DefaultGroup(click.Group):
         if args[0] in self.commands:
             return super().resolve_command(ctx, args)
         return super().resolve_command(ctx, ['dl'] + args)
+
+
+def _compact_output(text: str, limit: int = 120) -> str:
+    compact = ' '.join(text.split())
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 3] + '...'
+
+
+def _record_muted_style(record: VisibleRecord) -> str | None:
+    if _record_status(record) == 'noresults':
+        return 'grey35'
+    return None
+
+
+def _format_archive_result_line(ar: ArchiveResult) -> str:
+    hook_name = escape(ar.hook_name or '-')
+    status = escape(ar.status or '-')
+    output = escape(_compact_output(ar.output_str or ar.error or ''))
+    status_style = STATUS_STYLES.get(ar.status, 'white')
+    muted_style = _record_muted_style(ar)
+    line = (
+        f"[dim]{'ArchiveResult':<13}[/dim] "
+        f"[cyan]{hook_name:<40}[/cyan] "
+        f"[{status_style}]{status:<10}[/{status_style}]"
+    )
+    if output:
+        line += f" [{muted_style}]{output}[/{muted_style}]" if muted_style else f" {output}"
+    return line
+
+
+def _parse_process_output(proc: Process) -> str:
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line.startswith('{'):
+            continue
+        try:
+            record = __import__('json').loads(line)
+        except Exception:
+            continue
+        if record.get('type') != 'Binary':
+            continue
+        name = str(record.get('name', '')).strip()
+        version = str(record.get('version', '')).strip()
+        if version:
+            return f'{name} {version}'.strip()
+        abspath = str(record.get('abspath', '')).strip()
+        if abspath:
+            return abspath
+
+    stderr = _compact_output(proc.stderr or '')
+    if stderr:
+        return stderr
+    return _compact_output(proc.stdout or '')
+
+
+def _record_type_name(record: VisibleRecord) -> str:
+    return type(record).__name__
+
+
+def _record_hook_name(record: VisibleRecord) -> str:
+    if isinstance(record, ArchiveResult):
+        return record.hook_name or '-'
+    if record.hook_name:
+        return record.hook_name
+    for part in record.cmd:
+        name = Path(part).name
+        if name.startswith('on_'):
+            return Path(name).stem
+    return '-'
+
+
+def _record_status(record: VisibleRecord) -> str:
+    if isinstance(record, ArchiveResult):
+        return record.status or '-'
+    return 'succeeded' if record.exit_code == 0 else 'failed'
+
+
+def _record_output(record: VisibleRecord) -> str:
+    if isinstance(record, ArchiveResult):
+        return record.output_str or record.error or ''
+    return _parse_process_output(record)
+
+
+def _record_start_ts(record: VisibleRecord) -> str | None:
+    return record.start_ts if isinstance(record, ArchiveResult) else record.started_at
+
+
+def _record_end_ts(record: VisibleRecord) -> str | None:
+    return record.end_ts if isinstance(record, ArchiveResult) else record.ended_at
+
+
+def _record_timeout(record: VisibleRecord, default_timeout_seconds: int) -> int:
+    return default_timeout_seconds if isinstance(record, ArchiveResult) else record.timeout
+
+
+def _record_key(record: VisibleRecord) -> str:
+    if isinstance(record, ArchiveResult):
+        return record.hook_name or record.id
+    return record.id
+
+
+def _format_elapsed(start_ts: str | None, end_ts: str | None, timeout_seconds: int, *, now: datetime | None = None) -> str:
+    if not start_ts:
+        return '-'
+
+    try:
+        start = datetime.fromisoformat(start_ts)
+    except ValueError:
+        return '-'
+
+    if end_ts:
+        try:
+            end = datetime.fromisoformat(end_ts)
+        except ValueError:
+            end = now or datetime.now()
+    else:
+        end = now or datetime.now()
+
+    elapsed = max(0.0, (end - start).total_seconds())
+    return f'{elapsed:.1f}s/{timeout_seconds}s'
+
+
+def _build_archive_results_table(results: list[VisibleRecord], *, timeout_seconds: int, now: datetime | None = None) -> Table:
+    table = Table(show_header=True, header_style='bold')
+    table.add_column('Type', style='dim', width=13, no_wrap=True)
+    table.add_column('Hook Name', style='cyan', width=40, no_wrap=True)
+    table.add_column('Status', width=10, no_wrap=True)
+    table.add_column('Elapsed', width=12, no_wrap=True)
+    table.add_column('Output')
+
+    for record in results:
+        status = escape(_record_status(record))
+        status_style = STATUS_STYLES.get(_record_status(record), 'white')
+        muted_style = _record_muted_style(record)
+        elapsed = escape(
+            _format_elapsed(
+                _record_start_ts(record),
+                _record_end_ts(record),
+                _record_timeout(record, timeout_seconds),
+                now=now,
+            )
+        )
+        output = escape(_compact_output(_record_output(record)))
+        table.add_row(
+            _record_type_name(record),
+            escape(_record_hook_name(record)),
+            f'[{status_style}]{status}[/{status_style}]',
+            f'[{muted_style}]{elapsed}[/{muted_style}]' if muted_style else elapsed,
+            f'[{muted_style}]{output}[/{muted_style}]' if muted_style and output else output,
+        )
+
+    return table
+
+
+class _LiveStatusView:
+    def __init__(self, results: dict[str, VisibleRecord], progress: Progress, timeout_seconds: int) -> None:
+        self.results = results
+        self.progress = progress
+        self.timeout_seconds = timeout_seconds
+
+    def __rich_console__(self, console, options):
+        yield Group(
+            _build_archive_results_table(
+                list(self.results.values()),
+                timeout_seconds=self.timeout_seconds,
+                now=datetime.now(),
+            ),
+            self.progress,
+        )
 
 
 @click.group(cls=DefaultGroup)
@@ -84,49 +269,82 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
     selected = [p.strip() for p in plugin_list.split(',')] if plugin_list else None
     out_path = Path(output_dir) if output_dir else Path.cwd()
     config_overrides = {'TIMEOUT': timeout} if timeout else {}
-    is_tty = sys.stdout.isatty()
+    timeout_seconds = int((config_overrides or {}).get('TIMEOUT') or get_config('TIMEOUT').get('TIMEOUT') or 60)
+    stdout_is_tty = sys.stdout.isatty()
+    stderr_is_tty = sys.stderr.isatty()
+    interactive_tty = stdout_is_tty or stderr_is_tty
+    ui_console = stderr_console if stderr_is_tty else console
 
-    results: list[ArchiveResult] = []
-    gen = download(url, plugins, out_path, selected, config_overrides or None, auto_install=not no_install)
+    results: list[VisibleRecord] = []
+    gen = download(
+        url,
+        plugins,
+        out_path,
+        selected,
+        config_overrides or None,
+        auto_install=not no_install,
+        emit_jsonl=not stdout_is_tty,
+    )
 
-    if is_tty:
-        # Rich progress display for TTY
-        console.print(f"[bold blue]Downloading:[/bold blue] {url}")
-        console.print(f"[dim]Output: {out_path.absolute()}[/dim]")
-        console.print(f"[dim]Plugins: {', '.join(selected) if selected else f'all ({len(plugins)} available)'}[/dim]\n")
+    if interactive_tty:
+        ui_console.print(f"[bold blue]Downloading:[/bold blue] {url}")
+        ui_console.print(f"[dim]Output: {out_path.absolute()}[/dim]")
+        ui_console.print(f"[dim]Plugins: {', '.join(selected) if selected else f'all ({len(plugins)} available)'}[/dim]")
+        ui_console.print()
 
-        # Count total hooks for progress bar
-        total = sum(len(p.get_crawl_hooks()) + len(p.get_snapshot_hooks()) for p in plugins.values())
+    selected_plugins = (
+        {name: plugin for name, plugin in plugins.items() if name in selected}
+        if selected
+        else plugins
+    )
+    total_hooks = sum(len(plugin.get_crawl_hooks()) + len(plugin.get_snapshot_hooks()) for plugin in selected_plugins.values())
+    live_results: dict[str, VisibleRecord] = {}
 
-        with Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TaskProgressColumn(), console=console) as progress:
-            task = progress.add_task("[cyan]Running plugins...", total=total)
-            for ar in gen:
-                results.append(ar)
-                icon = {"succeeded": "[green]✓[/green]", "failed": "[red]✗[/red]", "skipped": "[yellow]○[/yellow]"}.get(ar.status, "?")
-                progress.update(task, advance=1, description=f"{icon} {ar.plugin}")
+    if interactive_tty:
+        progress = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            console=ui_console,
+            transient=False,
+        )
+        status_view = _LiveStatusView(live_results, progress, timeout_seconds)
 
-        # Results table
-        console.print()
-        table = Table(title="Results")
-        table.add_column("Plugin", style="cyan")
-        table.add_column("Status", style="bold")
-        table.add_column("Output")
+        task_id = progress.add_task("[cyan]Running plugins...", total=total_hooks)
+        with Live(
+            status_view,
+            console=ui_console,
+            refresh_per_second=8,
+            transient=False,
+            vertical_overflow='visible',
+        ) as live:
+            for record in gen:
+                results.append(record)
+                if isinstance(record, Process):
+                    task = progress.tasks[task_id]
+                    if task.total is not None:
+                        progress.update(task_id, total=task.total + 1)
+                progress.update(task_id, advance=1, description=f"[cyan]{escape(_record_hook_name(record))}[/cyan]")
+                live_results[_record_key(record)] = record
+                live.refresh()
+    else:
+        for record in gen:
+            results.append(record)
 
-        for ar in results:
-            status_style = {'succeeded': '[green]succeeded[/green]', 'failed': '[red]failed[/red]', 'skipped': '[yellow]skipped[/yellow]'}.get(ar.status, ar.status)
-            output = ar.output_str or ar.error or ''
-            table.add_row(ar.plugin, status_style, output[:50] + '...' if len(output) > 50 else output)
-
-        console.print(table)
-        console.print()
-        console.print(f"[green]{sum(1 for r in results if r.status == 'succeeded')} succeeded[/green], "
-                      f"[red]{sum(1 for r in results if r.status == 'failed')} failed[/red], "
-                      f"[yellow]{sum(1 for r in results if r.status == 'skipped')} skipped[/yellow]")
-        console.print(f"[dim]Output: {out_path.absolute()}[/dim]")
+    if interactive_tty:
+        archive_results = [record for record in results if isinstance(record, ArchiveResult)]
+        ui_console.print()
+        ui_console.print(
+            f"[green]{sum(1 for r in archive_results if r.status == 'succeeded')} succeeded[/green], "
+            f"[grey35]{sum(1 for r in archive_results if r.status == 'noresults')} noresults[/grey35], "
+            f"[red]{sum(1 for r in archive_results if r.status == 'failed')} failed[/red], "
+            f"[bright_black]{sum(1 for r in archive_results if r.status == 'skipped')} skipped[/bright_black]"
+        )
+        ui_console.print(f"[dim]Output: {out_path.absolute()}[/dim]")
     else:
         # JSONL output for non-TTY (handled by executor, just consume generator)
-        for ar in gen:
-            results.append(ar)
+        pass
 
 
 @cli.command()
