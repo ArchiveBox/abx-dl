@@ -1,7 +1,7 @@
 [project]
 name = "abx-dl"
 version = "1.9.2"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 description = "All-in-one CLI tool to download and extract content from URLs"
 authors = [{name = "Nick Sweeting", email = "pyproject.toml@archivebox.io"}]
 license = {text = "MIT"}
@@ -21,7 +21,6 @@ classifiers = [
     "Natural Language :: English",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Topic :: Internet :: WWW/HTTP",
@@ -72,7 +71,7 @@ includes = ["abx_dl/"]
 
 [tool.ruff]
 line-length = 140
-target-version = "py310"
+target-version = "py311"
 src = ["abx_dl"]
 exclude = ["*.pyi", "typings/", "migrations/", "vendor/"]
 
@@ -115,7 +114,7 @@ venv = ".venv"
 # defineConstant = { DEBUG = true }
 reportMissingImports = true
 reportMissingTypeStubs = false
-pythonVersion = "3.10"
+pythonVersion = "3.11"
 pythonPlatform = "Linux"
 
 
