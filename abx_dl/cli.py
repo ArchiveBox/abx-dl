@@ -230,11 +230,11 @@ def cli(ctx):
 
     **Examples:**
 
-        abx-dl 'https://example.com'
+        abx-dl dl 'https://example.com'
 
-        abx-dl --plugins=wget,ytdlp,git 'https://example.com'
+        abx-dl dl --plugins=wget,ytdlp,git 'https://example.com'
 
-        abx-dl --no-install 'https://example.com'
+        abx-dl dl --no-install 'https://example.com'
 
         abx-dl plugins
 
@@ -259,11 +259,11 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
 
     **Examples:**
 
-        abx-dl 'https://example.com'
+        abx-dl dl 'https://example.com'
 
-        abx-dl --plugins=wget,ytdlp,git 'https://example.com'
+        abx-dl dl --plugins=wget,ytdlp,git 'https://example.com'
 
-        abx-dl --no-install 'https://example.com'
+        abx-dl dl --no-install 'https://example.com'
     """
     plugins = ctx.obj['plugins']
     selected = [p.strip() for p in plugin_list.split(',')] if plugin_list else None

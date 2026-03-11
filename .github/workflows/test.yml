@@ -24,15 +24,14 @@ jobs:
 
       - name: Clone ArchiveBox plugins
         run: |
-          rm -rf abx_dl/plugins
-          git clone --depth=1 --branch=dev https://github.com/ArchiveBox/ArchiveBox.git /tmp/archivebox
-          cp -r /tmp/archivebox/archivebox/plugins abx_dl/
+          rm -rf abx-plugins
+          git clone --depth=1 https://github.com/ArchiveBox/abx-plugins.git abx-plugins
 
       - name: Discover plugins
         id: set-matrix
         run: |
           # Find all plugin directories
-          plugins=$(find abx_dl/plugins -maxdepth 1 -mindepth 1 -type d ! -name '__*' ! -name '.*' | sort)
+          plugins=$(find abx-plugins/abx_plugins/plugins -maxdepth 1 -mindepth 1 -type d ! -name '__*' ! -name '.*' | sort)
 
           # Create JSON array with plugin info
           json_array="["
@@ -75,9 +74,8 @@ jobs:
 
       - name: Clone ArchiveBox plugins
         run: |
-          rm -rf abx_dl/plugins
-          git clone --depth=1 --branch=dev https://github.com/ArchiveBox/ArchiveBox.git /tmp/archivebox
-          cp -r /tmp/archivebox/archivebox/plugins abx_dl/
+          rm -rf abx-plugins
+          git clone --depth=1 https://github.com/ArchiveBox/abx-plugins.git abx-plugins
 
       - name: Set up Python ${{ matrix.python }}
         uses: actions/setup-python@v5
@@ -109,17 +107,11 @@ jobs:
       - name: Install Python dependencies
         run: |
           uv sync --extra dev
+          uv pip install -e ./abx-plugins
 
       - name: Test plugin - ${{ matrix.plugin.name }}
         run: |
-          uv run abx-dl --plugins=${{ matrix.plugin.name }} 'https://example.com' --output=./test-output
-
-          # Check that output was created
-          ls -la ./test-output/
-          ls -la ./test-output/${{ matrix.plugin.name }}/ || true
-
-          # Check index.json for success
-          cat ./test-output/index.json | jq '.plugins["${{ matrix.plugin.name }}"]'
+          uv run pytest -q ./abx-plugins/abx_plugins/plugins/${{ matrix.plugin.name }}/tests
         env:
           CHROME_BINARY: ${{ steps.setup-chrome.outputs.chrome-path }}
           TIMEOUT: "120"
@@ -135,9 +127,8 @@ jobs:
 
       - name: Clone ArchiveBox plugins
         run: |
-          rm -rf abx_dl/plugins
-          git clone --depth=1 --branch=dev https://github.com/ArchiveBox/ArchiveBox.git /tmp/archivebox
-          cp -r /tmp/archivebox/archivebox/plugins abx_dl/
+          rm -rf abx-plugins
+          git clone --depth=1 https://github.com/ArchiveBox/abx-plugins.git abx-plugins
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -169,10 +160,11 @@ jobs:
       - name: Install Python dependencies
         run: |
           uv sync --extra dev
+          uv pip install -e ./abx-plugins
 
       - name: Test all plugins
         run: |
-          uv run abx-dl 'https://example.com' --output=./test-output --timeout=120
+          uv run abx-dl dl 'https://example.com' --output=./test-output --timeout=120
 
           echo "=== Output structure ==="
           find ./test-output -type f | head -50
@@ -180,6 +172,7 @@ jobs:
           echo "=== Results ==="
           cat ./test-output/index.json | jq '.'
         env:
+          ABX_PLUGINS_DIR: ${{ github.workspace }}/abx-plugins/abx_plugins/plugins
           TIMEOUT: "120"
 
       - name: Upload test output
