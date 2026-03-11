@@ -108,6 +108,7 @@ jobs:
         run: |
           uv run pytest -q ./abx-plugins/abx_plugins/plugins/${{ matrix.plugin.name }}/tests
         env:
+          CHROME_SANDBOX: "false"
           TIMEOUT: "120"
 
   test-all:
@@ -162,6 +163,7 @@ jobs:
           cat ./test-output/index.json | jq '.'
         env:
           ABX_PLUGINS_DIR: ${{ github.workspace }}/abx-plugins/abx_plugins/plugins
+          CHROME_SANDBOX: "false"
           TIMEOUT: "120"
 
       - name: Upload test output
