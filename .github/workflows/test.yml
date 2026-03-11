@@ -39,8 +39,8 @@ jobs:
           for plugin_dir in $plugins; do
             plugin_name=$(basename "$plugin_dir")
 
-            # Check if plugin has snapshot hooks
-            if ls "$plugin_dir"/on_Snapshot* 1> /dev/null 2>&1; then
+            # Only schedule plugin jobs for snapshot plugins that actually ship tests
+            if ls "$plugin_dir"/on_Snapshot* 1> /dev/null 2>&1 && [ -d "$plugin_dir/tests" ]; then
               if [ "$first" = true ]; then
                 first=false
               else
@@ -100,6 +100,7 @@ jobs:
           version: 1.0
 
       - name: Install Chrome
+        id: setup-chrome
         uses: browser-actions/setup-chrome@latest
         with:
           chrome-version: stable
@@ -153,6 +154,7 @@ jobs:
           version: 1.0
 
       - name: Install Chrome
+        id: setup-chrome
         uses: browser-actions/setup-chrome@latest
         with:
           chrome-version: stable
@@ -173,6 +175,7 @@ jobs:
           cat ./test-output/index.json | jq '.'
         env:
           ABX_PLUGINS_DIR: ${{ github.workspace }}/abx-plugins/abx_plugins/plugins
+          CHROME_BINARY: ${{ steps.setup-chrome.outputs.chrome-path }}
           TIMEOUT: "120"
 
       - name: Upload test output
