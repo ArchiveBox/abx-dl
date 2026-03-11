@@ -4,9 +4,8 @@
 
 ```bash
 pip install abx-dl
-abx-dl 'https://example.com/page/to/download'
+abx-dl 'https://example.com'
 ```
-
 ---
 
 ✨ *Ever wish you could `yt-dlp`, `gallery-dl`, `wget`, `curl`, `puppeteer`, etc. all in one command?*
@@ -15,6 +14,9 @@ abx-dl 'https://example.com/page/to/download'
 
 It's useful for scraping, downloading, OSINT, digital preservation, and more.
 `abx-dl` provides a simpler one-shot CLI interface to the [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox) plugin ecosystem.
+
+<img width="1000" height="1082" alt="Screenshot 2026-03-11 at 6 53 03 AM" src="https://github.com/user-attachments/assets/4e19d985-1a93-4f65-9970-2565be16b718" />
+
 
 ---
 
