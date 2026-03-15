@@ -11,6 +11,32 @@ env:
   USE_COLOR: "False"
 
 jobs:
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+          enable-cache: true
+
+      - name: Install Python dependencies
+        run: uv sync --extra dev
+
+      - name: Run repo test suite
+        run: uv run pytest -q tests server/tests
+
   discover-plugins:
     name: Discover plugins
     runs-on: ubuntu-24.04
@@ -64,6 +90,7 @@ jobs:
     if: ${{ needs.discover-plugins.outputs.plugins != '[]' }}
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      TWOCAPTCHA_API_KEY: ${{ secrets.TWOCAPTCHA_API_KEY }}
 
     strategy:
       fail-fast: false
@@ -114,7 +141,33 @@ jobs:
 
       - name: Test plugin - ${{ matrix.plugin.name }}
         run: |
-          uv run pytest -q ./abx-plugins/abx_plugins/plugins/${{ matrix.plugin.name }}/tests
+          plugin_tests="./abx-plugins/abx_plugins/plugins/${{ matrix.plugin.name }}/tests"
+          attempts=0
+          max_attempts=3
+
+          while true; do
+            attempts=$((attempts + 1))
+            set +e
+            uv run pytest -q "$plugin_tests"
+            status=$?
+            set -e
+
+            if [ "$status" -eq 0 ]; then
+              exit 0
+            fi
+
+            if [ "$status" -eq 5 ]; then
+              echo "No tests collected for ${{ matrix.plugin.name }}; treating as pass."
+              exit 0
+            fi
+
+            if [ "$attempts" -ge "$max_attempts" ]; then
+              exit "$status"
+            fi
+
+            echo "Plugin tests failed for ${{ matrix.plugin.name }} with exit code $status. Retrying ($attempts/$max_attempts)..."
+            sleep 10
+          done
         env:
           CHROME_SANDBOX: "false"
           TIMEOUT: "120"

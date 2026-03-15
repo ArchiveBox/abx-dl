@@ -59,6 +59,15 @@ def _run_cli(tmp_path: Path, *args: str, timeout: int = 180) -> subprocess.Compl
     )
 
 
+def _hook_names(plugin_name: str, event_name: str) -> list[str]:
+    plugin = discover_plugins()[plugin_name]
+    return [
+        hook.name
+        for hook in sorted(plugin.hooks, key=lambda hook: hook.sort_key)
+        if event_name in hook.name
+    ]
+
+
 def test_compact_output_collapses_whitespace_and_truncates() -> None:
     text = "line one\n\nline two\tline three"
     assert _compact_output(text, limit=20) == "line one line two..."
@@ -132,21 +141,26 @@ def test_readme_config_commands_round_trip_in_isolated_config_dir(tmp_path: Path
 
 def test_readme_plugins_command_lists_real_wget_hooks(tmp_path: Path) -> None:
     result = _run_cli(tmp_path, 'plugins', 'wget')
+    expected_hook_names = _hook_names('wget', 'Crawl') + _hook_names('wget', 'Snapshot')
 
     assert result.returncode == 0
     assert 'wget' in result.stdout
-    assert 'on_Crawl__10_wget_install.bg' in result.stdout
-    assert 'on_Snapshot__06_wget.bg' in result.stdout
+    assert expected_hook_names
+    for hook_name in expected_hook_names:
+        assert hook_name in result.stdout
 
 
 def test_readme_install_command_runs_real_install_hooks(tmp_path: Path) -> None:
     result = _run_cli(tmp_path, 'plugins', '--install', 'wget')
+    install_hook_names = _hook_names('wget', 'Crawl')
 
     assert result.returncode == 0
     assert 'Installing plugin dependencies' in result.stdout
     assert 'Install Results' in result.stdout
     assert 'wget' in result.stdout
-    assert 'on_Crawl__10_wget_install.bg' in result.stdout
+    assert install_hook_names
+    for hook_name in install_hook_names:
+        assert hook_name in result.stdout
     assert 'succeeded' in result.stdout
 
 
