@@ -48,6 +48,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+server = [
+    "flask>=3.0",
+]
 dev = [
     # TESTING
     "pytest>=8.0.0",
@@ -120,6 +123,7 @@ pythonPlatform = "Linux"
 
 [project.scripts]
 abx-dl = "abx_dl:main"
+abx-dl-server = "server.server:main"
 
 [project.urls]
 Homepage = "https://github.com/ArchiveBox/abx-dl"
