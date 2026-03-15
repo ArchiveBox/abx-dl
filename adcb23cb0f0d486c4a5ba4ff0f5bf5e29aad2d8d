@@ -1,0 +1,45 @@
+server/server.py
+  55c27a4613771422 1-7,15,59-62,66-69,235,375,380,382,481-486,531-535,537
+  29de7d9931859b1e 57-58,64-65,202,204
+abx_dl/config.py
+  55c27a4613771422 192-194,337-338
+abx_dl/executor.py
+  55c27a4613771422 136,182-198
+server/templates/session.html
+  55c27a4613771422 329-333,440-441,446
+pyproject.toml
+  29de7d9931859b1e 83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.11",
+  "base_commit_sha": "adcb23cb0f0d486c4a5ba4ff0f5bf5e29aad2d8d",
+  "prompts": {
+    "29de7d9931859b1e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019cf369-4a67-76c1-be18-cd3c2eb5ffa2",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>",
+      "messages": [],
+      "total_additions": 18,
+      "total_deletions": 7,
+      "accepted_lines": 8,
+      "overriden_lines": 0
+    },
+    "55c27a4613771422": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019cf369-e311-70d3-9bb2-63179029251d",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>",
+      "messages": [],
+      "total_additions": 128,
+      "total_deletions": 45,
+      "accepted_lines": 127,
+      "overriden_lines": 0
+    }
+  }
+}
