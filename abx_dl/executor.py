@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 from typing import Any, Generator
 
-from .config import build_env_for_plugin
+from .config import build_env_for_plugin, set_config
 from .dependencies import load_binary, install_binary
 from .models import Snapshot, Process, ArchiveResult, write_jsonl, now_iso, uuid7
 from .plugins import Hook, Plugin
@@ -757,10 +757,21 @@ def _binary_env_key(name: str) -> str:
     return f'{normalized}_BINARY'
 
 
+def _persist_machine_config(config: dict[str, Any]) -> None:
+    """Persist Machine config values to ~/.config/abx/config.env so subsequent runs pick them up."""
+    if not config:
+        return
+    try:
+        set_config(**{k: v for k, v in config.items() if v})
+    except Exception:
+        pass
+
+
 def _apply_machine_record(record: dict[str, Any], shared_config: dict[str, Any]) -> None:
     config = record.get('config')
     if isinstance(config, dict):
         shared_config.update(config)
+        _persist_machine_config(config)
         return
 
     if record.get('_method') != 'update':
@@ -769,6 +780,7 @@ def _apply_machine_record(record: dict[str, Any], shared_config: dict[str, Any])
     key = record.get('key', '').replace('config/', '')
     if key:
         shared_config[key] = record.get('value', '')
+        _persist_machine_config({key: record.get('value', '')})
 
 
 def _record_binary_path(record: dict[str, Any], shared_config: dict[str, Any]) -> bool:
@@ -954,10 +966,10 @@ def download(
     snapshot = Snapshot(url=url)
     write_jsonl(index_path, snapshot, also_print=emit_jsonl)
 
-    # Filter plugins
+    # Filter plugins (resolves required_plugins dependencies from config.json)
     if selected_plugins:
-        selected_lower = [p.lower() for p in selected_plugins]
-        plugins = {n: p for n, p in plugins.items() if n.lower() in selected_lower}
+        from .plugins import filter_plugins
+        plugins = filter_plugins(plugins, selected_plugins)
 
     # Check/install dependencies and filter unavailable plugins
     available_plugins: dict[str, Plugin] = {}

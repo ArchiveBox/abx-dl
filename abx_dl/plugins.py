@@ -59,6 +59,7 @@ class Plugin:
     config_schema: dict[str, Any] = field(default_factory=dict)
     binaries: list[dict[str, Any]] = field(default_factory=list)
     hooks: list[Hook] = field(default_factory=list)
+    required_plugins: list[str] = field(default_factory=list)
 
     @property
     def enabled_key(self) -> str:
@@ -132,6 +133,7 @@ def load_plugin(plugin_dir: Path) -> Plugin | None:
         try:
             schema = json.loads(config_file.read_text())
             plugin.config_schema = schema.get('properties', {})
+            plugin.required_plugins = schema.get('required_plugins', [])
         except json.JSONDecodeError:
             pass
 
@@ -199,13 +201,27 @@ def get_plugin_names(plugins: dict[str, Plugin]) -> list[str]:
 
 
 def filter_plugins(plugins: dict[str, Plugin], names: list[str] | None) -> dict[str, Plugin]:
-    """Filter plugins to only include specified names."""
+    """Filter plugins to only include specified names, plus their required_plugins dependencies."""
     if not names:
         return plugins
 
-    names_lower = [n.lower() for n in names]
+    # Resolve transitive dependencies via required_plugins in config.json
+    resolved: set[str] = set()
+    queue = [n.lower() for n in names]
+    while queue:
+        name = queue.pop()
+        if name in resolved:
+            continue
+        resolved.add(name)
+        plugin = plugins.get(name)
+        if plugin:
+            for dep in plugin.required_plugins:
+                dep_lower = dep.lower()
+                if dep_lower not in resolved:
+                    queue.append(dep_lower)
+
     return {
         name: plugin
         for name, plugin in plugins.items()
-        if name.lower() in names_lower
+        if name.lower() in resolved
     }
