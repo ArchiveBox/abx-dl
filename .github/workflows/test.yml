@@ -30,35 +30,32 @@ jobs:
       - name: Discover plugins
         id: set-matrix
         run: |
-          chrome_test_pattern='ensure_chrome_test_prereqs|ensure_chromium_and_puppeteer_installed|require_chrome_runtime|chrome_session\(|CHROME_NAVIGATE_HOOK'
-          # Find all plugin directories
-          plugins=$(find abx-plugins/abx_plugins/plugins -maxdepth 1 -mindepth 1 -type d ! -name '__*' ! -name '.*' | sort)
-
-          # Create JSON array with plugin info
-          json_array="["
+          plugins_json="["
           first=true
-          for plugin_dir in $plugins; do
-            plugin_name=$(basename "$plugin_dir")
-
-            # Only schedule plugin jobs for snapshot plugins that actually ship tests
-            if ls "$plugin_dir"/on_Snapshot* 1> /dev/null 2>&1 && [ -d "$plugin_dir/tests" ]; then
-              needs_chromium=false
-              if rg -q "$chrome_test_pattern" "$plugin_dir/tests"; then
-                needs_chromium=true
-              fi
-              if [ "$first" = true ]; then
-                first=false
-              else
-                json_array+=","
-              fi
-              json_array+="{\"name\":\"$plugin_name\",\"path\":\"$plugin_dir\",\"needs_chromium\":$needs_chromium}"
+          for plugin_dir in $(find abx-plugins/abx_plugins/plugins -maxdepth 1 -mindepth 1 -type d ! -name '__*' ! -name '.*' | sort); do
+            if [ ! -d "$plugin_dir/tests" ]; then
+              continue
             fi
-          done
-          json_array+="]"
 
-          echo "plugins=$json_array" >> $GITHUB_OUTPUT
+            plugin_name=$(basename "$plugin_dir")
+            needs_chromium=false
+            if grep -Riq "chrom" "$plugin_dir"; then
+              needs_chromium=true
+            fi
+
+            if [ "$first" = true ]; then
+              first=false
+            else
+              plugins_json+=","
+            fi
+
+            plugins_json+="{\"name\":\"$plugin_name\",\"path\":\"$plugin_dir\",\"needs_chromium\":$needs_chromium}"
+          done
+          plugins_json+="]"
+
+          echo "plugins=$plugins_json" >> $GITHUB_OUTPUT
           echo "Found plugins:"
-          echo "$json_array" | jq '.'
+          echo "$plugins_json" | jq '.'
 
   test-plugin:
     name: ${{ matrix.plugin.name }}
