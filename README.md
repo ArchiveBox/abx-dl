@@ -302,7 +302,7 @@ Generated from the `abx-plugins` marketplace docs. Each line lists the plugin an
 This repo includes an `abx-dl` skill for coding agents that need to run the standalone ArchiveBox extractor pipeline without a full ArchiveBox install.
 
 - Skill source: [`skills/abx-dl/SKILL.md`](./skills/abx-dl/SKILL.md)
-- skills.sh page: https://skills.sh/ArchiveBox/abx-dl/abx-dl
+- skills.sh page: https://skills.sh/archivebox/abx-dl/abx-dl
 
 ---
 
