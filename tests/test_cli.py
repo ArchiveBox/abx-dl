@@ -5,7 +5,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from abx_dl.cli import _build_archive_results_table, _compact_output, _format_archive_result_line, _format_elapsed
+from abx_dl.cli import _build_archive_results_table, _compact_output, _format_archive_result_line, _format_elapsed, cli as cli_group
 from abx_dl.models import ArchiveResult
 from abx_dl.plugins import discover_plugins
 
@@ -106,6 +106,14 @@ def test_build_archive_results_table_includes_elapsed_column() -> None:
     assert [column.header for column in table.columns] == ['Type', 'Hook Name', 'Status', 'Elapsed', 'Output']
     elapsed_cells = table.columns[3]._cells
     assert elapsed_cells == ['5.0s/60s']
+
+
+def test_default_group_routes_bare_url_and_top_level_dl_options() -> None:
+    assert cli_group._should_default_to_dl(['https://example.com']) is True
+    assert cli_group._should_default_to_dl(['--plugins=wget', 'https://example.com']) is True
+    assert cli_group._should_default_to_dl(['--timeout=120', 'https://example.com']) is True
+    assert cli_group._should_default_to_dl(['plugins', 'wget']) is False
+    assert cli_group._should_default_to_dl(['--help']) is False
 
 
 def test_readme_config_commands_round_trip_in_isolated_config_dir(tmp_path: Path) -> None:

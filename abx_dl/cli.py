@@ -44,6 +44,21 @@ VisibleRecord = ArchiveResult | Process
 class DefaultGroup(click.Group):
     """A click Group that runs 'dl' command by default if a URL is found in args."""
 
+    def _should_default_to_dl(self, args: list[str]) -> bool:
+        if not args:
+            return False
+
+        first_non_option = next((arg for arg in args if not arg.startswith('-')), None)
+        if first_non_option is None:
+            return False
+
+        return first_non_option not in self.commands
+
+    def parse_args(self, ctx, args):
+        if self._should_default_to_dl(args):
+            args.insert(0, 'dl')
+        return super().parse_args(ctx, args)
+
     def resolve_command(self, ctx, args):
         if not args:
             return super().resolve_command(ctx, args)
@@ -231,11 +246,13 @@ def cli(ctx):
 
     **Examples:**
 
+        abx-dl 'https://example.com'
+
+        abx-dl --plugins=wget,ytdlp,git 'https://example.com'
+
+        abx-dl --no-install 'https://example.com'
+
         abx-dl dl 'https://example.com'
-
-        abx-dl dl --plugins=wget,ytdlp,git 'https://example.com'
-
-        abx-dl dl --no-install 'https://example.com'
 
         abx-dl plugins
 
@@ -259,6 +276,12 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
     Use --no-install to skip plugins with missing dependencies instead.
 
     **Examples:**
+
+        abx-dl 'https://example.com'
+
+        abx-dl --plugins=wget,ytdlp,git 'https://example.com'
+
+        abx-dl --no-install 'https://example.com'
 
         abx-dl dl 'https://example.com'
 
