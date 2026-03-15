@@ -1,0 +1,279 @@
+name: Verify Chromium launch
+description: Validate that Chromium can start, expose CDP, and evaluate JS in a page target.
+inputs:
+  chrome-path:
+    description: Path to Chromium/Chrome binary.
+    required: false
+    default: "/usr/bin/chromium"
+  max-attempts:
+    description: Number of launch attempts before failing.
+    required: false
+    default: "3"
+  timeout-ms:
+    description: Milliseconds to wait for DevTools and CDP per attempt.
+    required: false
+    default: "30000"
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        set -euo pipefail
+        max_attempts="${{ inputs.max-attempts }}"
+        attempt=1
+        while [ "$attempt" -le "$max_attempts" ]; do
+          if [ -n "${{ inputs.chrome-path }}" ]; then
+            pkill -f "${{ inputs.chrome-path }}" >/dev/null 2>&1 || true
+          fi
+          if node - <<'NODE'
+        const { spawn } = require("node:child_process");
+
+        const chrome = "${{ inputs.chrome-path }}";
+        const timeoutMs = Number("${{ inputs.timeout-ms }}");
+        const wsPrefix = "DevTools listening on ";
+        const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+        let proc;
+        let wsUrl;
+        let ws;
+        let closed = false;
+
+        const waitForWsUrl = async () => {
+          const deadline = Date.now() + timeoutMs;
+          while (!wsUrl) {
+            if (Date.now() > deadline) {
+              throw new Error(`Chromium did not expose a CDP websocket URL within ${timeoutMs}ms`);
+            }
+            await sleep(250);
+          }
+          return wsUrl;
+        };
+
+        const cleanup = () => {
+          if (ws && !closed) {
+            try {
+              ws.close();
+            } catch {}
+          }
+          if (proc && !proc.killed) {
+            proc.kill("SIGKILL");
+          }
+        };
+
+        const connectAndVerify = (url) =>
+          new Promise((resolve, reject) => {
+            const deadline = Date.now() + timeoutMs;
+            const pending = new Map();
+            let nextId = 1;
+
+            const fail = (error) => {
+              if (closed) return;
+              closed = true;
+              for (const { reject } of pending.values()) reject(error);
+              pending.clear();
+              reject(error);
+            };
+
+            const send = (method, params = {}, sessionId) =>
+              new Promise((resolveSend, rejectSend) => {
+                if (closed) {
+                  rejectSend(new Error(`socket closed before ${method}`));
+                  return;
+                }
+                const id = nextId++;
+                pending.set(id, { resolve: resolveSend, reject: rejectSend });
+                const message = { id, method, params };
+                if (sessionId) message.sessionId = sessionId;
+                ws.send(JSON.stringify(message));
+              });
+
+            ws = new WebSocket(url);
+
+            const timer = setTimeout(() => {
+              fail(new Error(`CDP connect + verify timed out after ${timeoutMs}ms`));
+            }, timeoutMs);
+
+            ws.addEventListener("open", async () => {
+              try {
+                const targets = await send("Target.getTargets");
+                const pageTarget = (targets.targetInfos || []).find(
+                  (target) => target.type === "page" && target.url === "about:blank",
+                );
+                if (!pageTarget) {
+                  throw new Error("No about:blank page target available after Chromium launch");
+                }
+
+                const attached = await send("Target.attachToTarget", {
+                  targetId: pageTarget.targetId,
+                  flatten: true,
+                });
+                const sessionId = attached.sessionId;
+                if (!sessionId) {
+                  throw new Error("CDP did not return a sessionId for the page target");
+                }
+
+                await send("Runtime.enable", {}, sessionId);
+                const evaluated = await send(
+                  "Runtime.evaluate",
+                  { expression: "1 + 1", returnByValue: true },
+                  sessionId,
+                );
+                const value = evaluated?.result?.value;
+                if (value !== 2) {
+                  throw new Error(`Unexpected Runtime.evaluate result: ${JSON.stringify(evaluated)}`);
+                }
+
+                clearTimeout(timer);
+                closed = true;
+                resolve();
+              } catch (error) {
+                clearTimeout(timer);
+                fail(error instanceof Error ? error : new Error(String(error)));
+              }
+            });
+
+            ws.addEventListener("message", (event) => {
+              let message;
+              try {
+                message = JSON.parse(String(event.data));
+              } catch {
+                return;
+              }
+              if (!message || typeof message.id !== "number") return;
+              const pendingRequest = pending.get(message.id);
+              if (!pendingRequest) return;
+              pending.delete(message.id);
+              if (message.error) {
+                pendingRequest.reject(
+                  new Error(
+                    message.error.message || `CDP ${message.error.code || "error"} on ${message.method || "request"}`,
+                  ),
+                );
+                return;
+              }
+              pendingRequest.resolve(message.result || {});
+            });
+
+            ws.addEventListener("error", (event) => {
+              const message = event?.error?.message || event?.message || "unknown websocket error";
+              clearTimeout(timer);
+              fail(new Error(`Failed to connect to Chromium CDP: ${message}`));
+            });
+
+            ws.addEventListener("close", () => {
+              if (!closed && Date.now() < deadline) {
+                clearTimeout(timer);
+                fail(new Error("Chromium CDP websocket closed before verification completed"));
+              }
+            });
+          });
+
+        (async () => {
+          try {
+            const startTime = Date.now();
+            const args = [
+              "--ash-no-nudges",
+              "--block-new-web-contents",
+              "--deny-permission-prompts",
+              "--disable-background-networking",
+              "--disable-breakpad",
+              "--disable-client-side-phishing-detection",
+              "--disable-component-update",
+              "--disable-components=AcceptCHFrame,OptimizationHints,ProcessPerSiteUpToMainFrameThreshold,InterestFeedContentSuggestions,CalculateNativeWinOcclusion,BackForwardCache,HeavyAdPrivacyMitigations,LazyFrameLoading,ImprovedCookieControls,PrivacySandboxSettings4,AutofillServerCommunication,CertificateTransparencyComponentUpdater,DestroyProfileOnBrowserClose,CrashReporting,OverscrollHistoryNavigation,InfiniteSessionRestore",
+              "--disable-datasaver-prompt",
+              "--disable-default-apps",
+              "--disable-desktop-notifications",
+              "--disable-dev-shm-usage",
+              "--disable-domain-reliability",
+              "--disable-extensions",
+              "--disable-external-intent-requests",
+              "--disable-hang-monitor",
+              "--disable-infobars",
+              "--disable-notifications",
+              "--disable-popup-blocking",
+              "--disable-print-preview",
+              "--disable-prompt-on-repost",
+              "--disable-search-engine-choice-screen",
+              "--disable-session-crashed-bubble",
+              "--disable-setuid-sandbox",
+              "--disable-site-isolation-trials",
+              "--disable-speech-api",
+              "--disable-speech-synthesis-api",
+              "--disable-sync",
+              "--disable-web-security",
+              "--headless=new",
+              "--hide-crash-restore-bubble",
+              "--metrics-recording-only",
+              "--no-default-browser-check",
+              "--no-first-run",
+              "--no-pings",
+              "--no-sandbox",
+              "--no-zygote",
+              "--noerrdialogs",
+              "--password-store=basic",
+              "--remote-debugging-port=0",
+              "--safebrowsing-disable-auto-update",
+              "--silent-debugger-extension-api",
+              '--simulate-outdated-no-au="Tue, 31 Dec 2099 23:59:59 GMT"',
+              "--suppress-message-center-popups",
+              "--test-type=gpu",
+              "--use-mock-keychain",
+              "about:blank",
+            ];
+
+            proc = spawn(chrome, args, { stdio: ["ignore", "pipe", "pipe"] });
+            const lineBuffers = { stdout: "", stderr: "" };
+            const onData = (stream) => (data) => {
+              const text = data.toString();
+              if (stream === "stderr") process.stderr.write(text);
+              else process.stdout.write(text);
+              lineBuffers[stream] += text;
+              const lines = lineBuffers[stream].split(/\r?\n/);
+              lineBuffers[stream] = lines.pop() ?? "";
+              for (const line of lines) {
+                const idx = line.indexOf(wsPrefix);
+                if (idx === -1) continue;
+                const candidate = line.slice(idx + wsPrefix.length).trim().split(/\s+/)[0];
+                if (candidate.startsWith("ws://") || candidate.startsWith("wss://")) {
+                  wsUrl = candidate;
+                }
+              }
+            };
+
+            proc.stdout.on("data", onData("stdout"));
+            proc.stderr.on("data", onData("stderr"));
+            proc.on("exit", (code, signal) => {
+              if (!closed && !wsUrl) {
+                closed = true;
+                console.error(`Chromium exited before exposing CDP (code=${code}, signal=${signal})`);
+                process.exitCode = 1;
+              }
+            });
+
+            const url = await waitForWsUrl();
+            const wsFoundMs = Date.now() - startTime;
+            console.log(`CDP URL found after ${(wsFoundMs / 1000).toFixed(2)}s, verifying browser target...`);
+            await connectAndVerify(url);
+            const totalMs = Date.now() - startTime;
+            console.log(`Chromium launched and verified in ${(totalMs / 1000).toFixed(2)}s`);
+            cleanup();
+            process.exit(0);
+          } catch (error) {
+            cleanup();
+            console.error(error instanceof Error ? error.message : String(error));
+            process.exit(1);
+          }
+        })();
+        NODE
+          then
+            if [ "$attempt" -gt 1 ]; then
+              echo "Chromium launch succeeded after ${attempt} attempts; runner is likely resource constrained."
+            fi
+            exit 0
+          fi
+          echo "Chromium launch attempt ${attempt} failed."
+          attempt=$((attempt + 1))
+          sleep 2
+        done
+        echo "Failed to launch Chromium reliably before running chrome-dependent tests."
+        exit 1

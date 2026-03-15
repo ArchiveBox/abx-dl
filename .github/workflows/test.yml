@@ -30,6 +30,7 @@ jobs:
       - name: Discover plugins
         id: set-matrix
         run: |
+          chrome_test_pattern='ensure_chrome_test_prereqs|ensure_chromium_and_puppeteer_installed|require_chrome_runtime|chrome_session\(|CHROME_NAVIGATE_HOOK'
           # Find all plugin directories
           plugins=$(find abx-plugins/abx_plugins/plugins -maxdepth 1 -mindepth 1 -type d ! -name '__*' ! -name '.*' | sort)
 
@@ -41,12 +42,16 @@ jobs:
 
             # Only schedule plugin jobs for snapshot plugins that actually ship tests
             if ls "$plugin_dir"/on_Snapshot* 1> /dev/null 2>&1 && [ -d "$plugin_dir/tests" ]; then
+              needs_chromium=false
+              if rg -q "$chrome_test_pattern" "$plugin_dir/tests"; then
+                needs_chromium=true
+              fi
               if [ "$first" = true ]; then
                 first=false
               else
                 json_array+=","
               fi
-              json_array+="{\"name\":\"$plugin_name\",\"path\":\"$plugin_dir\"}"
+              json_array+="{\"name\":\"$plugin_name\",\"path\":\"$plugin_dir\",\"needs_chromium\":$needs_chromium}"
             fi
           done
           json_array+="]"
@@ -104,6 +109,10 @@ jobs:
           uv sync --extra dev
           uv pip install -e ./abx-plugins
 
+      - name: Verify Chromium launch
+        if: ${{ matrix.plugin.needs_chromium }}
+        uses: ./.github/actions/verify-chromium-launch
+
       - name: Test plugin - ${{ matrix.plugin.name }}
         run: |
           uv run pytest -q ./abx-plugins/abx_plugins/plugins/${{ matrix.plugin.name }}/tests
@@ -151,6 +160,9 @@ jobs:
         run: |
           uv sync --extra dev
           uv pip install -e ./abx-plugins
+
+      - name: Verify Chromium launch
+        uses: ./.github/actions/verify-chromium-launch
 
       - name: Test all plugins
         run: |
