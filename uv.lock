@@ -4,7 +4,7 @@ requires-python = ">=3.11"
 
 [[package]]
 name = "abx-dl"
-version = "1.9.6"
+version = "1.9.9"
 source = { editable = "." }
 dependencies = [
     { name = "abx-pkg" },
@@ -20,21 +20,19 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "flake8" },
+    { name = "flask" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-xdist" },
     { name = "ruff" },
 ]
-server = [
-    { name = "flask" },
-]
 
 [package.metadata]
 requires-dist = [
-    { name = "abx-pkg", specifier = ">=0.6.5" },
-    { name = "abx-plugins", specifier = ">=0.9.6" },
+    { name = "abx-pkg", specifier = ">=1.9.5" },
+    { name = "abx-plugins", specifier = ">=1.9.5" },
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=7.1.1" },
-    { name = "flask", marker = "extra == 'server'", specifier = ">=3.0" },
+    { name = "flask", marker = "extra == 'dev'", specifier = ">=3.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11.2" },
     { name = "platformdirs", specifier = ">=4.0.0" },
     { name = "psutil", specifier = ">=7.2.1" },
@@ -46,11 +44,11 @@ requires-dist = [
     { name = "rich-click", specifier = ">=1.8.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.6" },
 ]
-provides-extras = ["server", "dev"]
+provides-extras = ["dev"]
 
 [[package]]
 name = "abx-pkg"
-version = "0.7.0"
+version = "1.9.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pip" },
@@ -58,14 +56,14 @@ dependencies = [
     { name = "pydantic" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/24/fc/befe47679688c40a10e46b962ce6fb180f34b7d2a898c40d96f9095b95b5/abx_pkg-0.7.0.tar.gz", hash = "sha256:a77a00761ba769b5bbbf9d11da3859acfcee918523f40d43677beba25f16f8df", size = 128953, upload-time = "2026-03-15T10:53:36.603Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d7/cb/29fca62cef2d2471756861adba16348dc9a909e7563e2e447d192f706f5f/abx_pkg-1.9.5.tar.gz", hash = "sha256:f1716e6e4e6faf4c76e8a64570eadd93f64319aa41a9ba39650168fd9579a86b", size = 137479, upload-time = "2026-03-15T22:17:54.373Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/65/b7/9426ed7d9d0b5ff2e2879692644cb5820468274ccf82e177791bb9af80f5/abx_pkg-0.7.0-py3-none-any.whl", hash = "sha256:597ad4aa8ad06bec9c13d5febb13e57f25f2e25c577cd226dcf53df021ca6f80", size = 55912, upload-time = "2026-03-15T10:53:35.228Z" },
+    { url = "https://files.pythonhosted.org/packages/28/9c/0582b15b32fe57703923112da3b27e638853e2590909cf86473fd869a7b3/abx_pkg-1.9.5-py3-none-any.whl", hash = "sha256:51a75e14790a74ef033fafb48376508011b56f58ea88a7fcd63c5db836068deb", size = 62129, upload-time = "2026-03-15T22:17:55.549Z" },
 ]
 
 [[package]]
 name = "abx-plugins"
-version = "0.9.6"
+version = "1.9.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "abx-pkg" },
@@ -78,9 +76,9 @@ dependencies = [
     { name = "ruff" },
     { name = "ty" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/67/7d/810a54b34c59fb3e36b4c770f98c64c1aba68a4146d0a4b0f93fa4231488/abx_plugins-0.9.6.tar.gz", hash = "sha256:e7a851b91cd0bf6160f250ad21c3c33509269fe405c9b8b5c541b1ddeb5e9250", size = 481836, upload-time = "2026-03-15T20:46:22.077Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9a/b5/aa5dc33ac862beb7bb200c37032e7e00792694e5724b92cfffdb7ed2d67f/abx_plugins-1.9.5.tar.gz", hash = "sha256:2fdfc7038290798a711f065b23d3d22152ff7b1b6ad281873be4cde5e2b67019", size = 482599, upload-time = "2026-03-15T22:19:37.052Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/69/9a/83b9eb28f9eefc27e4bdd8f5fef555e90e00ce864e3551fb5cca1d06cf1c/abx_plugins-0.9.6-py3-none-any.whl", hash = "sha256:48c7e28a659a43152a2d9803614ee05796b2dc53388e876fc2eac1b0cf87bb85", size = 673566, upload-time = "2026-03-15T20:46:20.671Z" },
+    { url = "https://files.pythonhosted.org/packages/23/d5/5102021f6b4fbd2a96c349ca6679407ebed9da84ce714de377780a73c1c8/abx_plugins-1.9.5-py3-none-any.whl", hash = "sha256:f1e9ff22f31e269660779fc907b717ede9c68941d08df4d0948487cea0a1875a", size = 674480, upload-time = "2026-03-15T22:19:35.545Z" },
 ]
 
 [[package]]
