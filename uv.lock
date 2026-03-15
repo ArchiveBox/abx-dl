@@ -4,7 +4,7 @@ requires-python = ">=3.11"
 
 [[package]]
 name = "abx-dl"
-version = "1.9.4"
+version = "1.9.6"
 source = { editable = "." }
 dependencies = [
     { name = "abx-pkg" },
@@ -25,12 +25,16 @@ dev = [
     { name = "pytest-xdist" },
     { name = "ruff" },
 ]
+server = [
+    { name = "flask" },
+]
 
 [package.metadata]
 requires-dist = [
-    { name = "abx-pkg", specifier = ">=0.6.0" },
-    { name = "abx-plugins", specifier = ">=0.9.2" },
+    { name = "abx-pkg", specifier = ">=0.6.5" },
+    { name = "abx-plugins", specifier = ">=0.9.6" },
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=7.1.1" },
+    { name = "flask", marker = "extra == 'server'", specifier = ">=3.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11.2" },
     { name = "platformdirs", specifier = ">=4.0.0" },
     { name = "psutil", specifier = ">=7.2.1" },
@@ -42,11 +46,11 @@ requires-dist = [
     { name = "rich-click", specifier = ">=1.8.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6.6" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["server", "dev"]
 
 [[package]]
 name = "abx-pkg"
-version = "0.6.3"
+version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pip" },
@@ -54,29 +58,29 @@ dependencies = [
     { name = "pydantic" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/6f/ba/459c70edaa1ff706638e4d384ffa93d8bc06e85069d6f65891dabe11d2ab/abx_pkg-0.6.3.tar.gz", hash = "sha256:06c7e6ec35b903561182765609ce1ba6a66dcf673f05ac40add4a1183e442017", size = 115602, upload-time = "2026-02-28T10:39:19.672Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/24/fc/befe47679688c40a10e46b962ce6fb180f34b7d2a898c40d96f9095b95b5/abx_pkg-0.7.0.tar.gz", hash = "sha256:a77a00761ba769b5bbbf9d11da3859acfcee918523f40d43677beba25f16f8df", size = 128953, upload-time = "2026-03-15T10:53:36.603Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/21/56/d9b9f9f7593cbcdeba3541d8afa5bddda9d13b606e768e13325d92541e61/abx_pkg-0.6.3-py3-none-any.whl", hash = "sha256:7da48327c133b745b03db8ccc90d33797c6c9a8f726dd4120937b2c818e811af", size = 44316, upload-time = "2026-02-28T10:39:18.403Z" },
+    { url = "https://files.pythonhosted.org/packages/65/b7/9426ed7d9d0b5ff2e2879692644cb5820468274ccf82e177791bb9af80f5/abx_pkg-0.7.0-py3-none-any.whl", hash = "sha256:597ad4aa8ad06bec9c13d5febb13e57f25f2e25c577cd226dcf53df021ca6f80", size = 55912, upload-time = "2026-03-15T10:53:35.228Z" },
 ]
 
 [[package]]
 name = "abx-plugins"
-version = "0.9.2"
+version = "0.9.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "abx-pkg" },
     { name = "feedparser" },
+    { name = "pydantic-settings" },
     { name = "pyright" },
     { name = "pytest" },
     { name = "pytest-httpserver" },
-    { name = "requests" },
     { name = "rich-click" },
     { name = "ruff" },
     { name = "ty" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/79/f0/ea80fc04ab3046ad7917c6812fbc1d90b46cfc2d8144a34e982c9e6bb639/abx_plugins-0.9.2.tar.gz", hash = "sha256:253aae5a2b23f90c49d47c03af76f7e1e496148a01a7cd682a1f2a7fa7d4503e", size = 438477, upload-time = "2026-03-11T14:11:02.71Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/67/7d/810a54b34c59fb3e36b4c770f98c64c1aba68a4146d0a4b0f93fa4231488/abx_plugins-0.9.6.tar.gz", hash = "sha256:e7a851b91cd0bf6160f250ad21c3c33509269fe405c9b8b5c541b1ddeb5e9250", size = 481836, upload-time = "2026-03-15T20:46:22.077Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a3/7f/3817efa780d29aedd5cb37349e87669a6d7ee15d7aa6498348212c79c79c/abx_plugins-0.9.2-py3-none-any.whl", hash = "sha256:9607a5abe0c3a6679e19c749ae657e232fd2ac708b0d8092f8323e3a6084881c", size = 601323, upload-time = "2026-03-11T14:11:01.165Z" },
+    { url = "https://files.pythonhosted.org/packages/69/9a/83b9eb28f9eefc27e4bdd8f5fef555e90e00ce864e3551fb5cca1d06cf1c/abx_plugins-0.9.6-py3-none-any.whl", hash = "sha256:48c7e28a659a43152a2d9803614ee05796b2dc53388e876fc2eac1b0cf87bb85", size = 673566, upload-time = "2026-03-15T20:46:20.671Z" },
 ]
 
 [[package]]
@@ -86,6 +90,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/ee/67/531ea369ba64dcff5ec9c3402f9f51bf748cec26dde048a2f973a4eea7f5/annotated_types-0.7.0.tar.gz", hash = "sha256:aff07c09a53a08bc8cfccb9c85b05f1aa9a2a6f23728d790723543408344ce89", size = 16081, upload-time = "2024-05-20T21:33:25.928Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/78/b6/6307fbef88d9b5ee7421e68d78a9f162e0da4900bc5f5793f6d3d0e34fb8/annotated_types-0.7.0-py3-none-any.whl", hash = "sha256:1f02e8b43a8fbbc3f3e0d4f0f4bfc8131bcb4eebe8849b8e5c773f3a1c582a53", size = 13643, upload-time = "2024-05-20T21:33:24.1Z" },
+]
+
+[[package]]
+name = "blinker"
+version = "1.9.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/21/28/9b3f50ce0e048515135495f198351908d99540d69bfdc8c1d15b73dc55ce/blinker-1.9.0.tar.gz", hash = "sha256:b4ce2265a7abece45e7cc896e98dbebe6cead56bcf805a3d23136d145f5445bf", size = 22460, upload-time = "2024-11-08T17:25:47.436Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/10/cb/f2ad4230dc2eb1a74edf38f1a38b9b52277f75bef262d8908e60d957e13c/blinker-1.9.0-py3-none-any.whl", hash = "sha256:ba0efaa9080b619ff2f3459d1d500c57bddea4a6b424b60a91141db6fd2f08bc", size = 8458, upload-time = "2024-11-08T17:25:46.184Z" },
 ]
 
 [[package]]
@@ -227,6 +240,23 @@ wheels = [
 ]
 
 [[package]]
+name = "flask"
+version = "3.1.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "blinker" },
+    { name = "click" },
+    { name = "itsdangerous" },
+    { name = "jinja2" },
+    { name = "markupsafe" },
+    { name = "werkzeug" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/26/00/35d85dcce6c57fdc871f3867d465d780f302a175ea360f62533f12b27e2b/flask-3.1.3.tar.gz", hash = "sha256:0ef0e52b8a9cd932855379197dd8f94047b359ca0a78695144304cb45f87c9eb", size = 759004, upload-time = "2026-02-19T05:00:57.678Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7f/9c/34f6962f9b9e9c71f6e5ed806e0d0ff03c9d1b0b2340088a0cf4bce09b18/flask-3.1.3-py3-none-any.whl", hash = "sha256:f4bcbefc124291925f1a26446da31a5178f9483862233b23c0c96a20701f670c", size = 103424, upload-time = "2026-02-19T05:00:56.027Z" },
+]
+
+[[package]]
 name = "idna"
 version = "3.11"
 source = { registry = "https://pypi.org/simple" }
@@ -242,6 +272,27 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/72/34/14ca021ce8e5dfedc35312d08ba8bf51fdd999c576889fc2c24cb97f4f10/iniconfig-2.3.0.tar.gz", hash = "sha256:c76315c77db068650d49c5b56314774a7804df16fee4402c1f19d6d15d8c4730", size = 20503, upload-time = "2025-10-18T21:55:43.219Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/cb/b1/3846dd7f199d53cb17f49cba7e651e9ce294d8497c8c150530ed11865bb8/iniconfig-2.3.0-py3-none-any.whl", hash = "sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12", size = 7484, upload-time = "2025-10-18T21:55:41.639Z" },
+]
+
+[[package]]
+name = "itsdangerous"
+version = "2.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/9c/cb/8ac0172223afbccb63986cc25049b154ecfb5e85932587206f42317be31d/itsdangerous-2.2.0.tar.gz", hash = "sha256:e0050c0b7da1eea53ffaf149c0cfbb5c6e2e2b69c4bef22c81fa6eb73e5f6173", size = 54410, upload-time = "2024-04-16T21:28:15.614Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/04/96/92447566d16df59b2a776c0fb82dbc4d9e07cd95062562af01e408583fc4/itsdangerous-2.2.0-py3-none-any.whl", hash = "sha256:c6242fc49e35958c8b15141343aa660db5fc54d4f13a1db01a3f5891b98700ef", size = 16234, upload-time = "2024-04-16T21:28:14.499Z" },
+]
+
+[[package]]
+name = "jinja2"
+version = "3.1.6"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "markupsafe" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/df/bf/f7da0350254c0ed7c72f3e33cef02e048281fec7ecec5f032d4aac52226b/jinja2-3.1.6.tar.gz", hash = "sha256:0137fb05990d35f1275a587e9aee6d56da821fc83491a0fb838183be43f66d6d", size = 245115, upload-time = "2025-03-05T20:05:02.478Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/62/a1/3d680cbfd5f4b8f15abc1d571870c5fc3e594bb582bc3b64ea099db13e56/jinja2-3.1.6-py3-none-any.whl", hash = "sha256:85ece4451f492d0c13c5dd7c13a64681a86afae63a5f347908daf103ce6d2f67", size = 134899, upload-time = "2025-03-05T20:05:00.369Z" },
 ]
 
 [[package]]
@@ -663,6 +714,20 @@ wheels = [
 ]
 
 [[package]]
+name = "pydantic-settings"
+version = "2.13.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "python-dotenv" },
+    { name = "typing-inspection" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/52/6d/fffca34caecc4a3f97bda81b2098da5e8ab7efc9a66e819074a11955d87e/pydantic_settings-2.13.1.tar.gz", hash = "sha256:b4c11847b15237fb0171e1462bf540e294affb9b86db4d9aa5c01730bdbe4025", size = 223826, upload-time = "2026-02-19T13:45:08.055Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/00/4b/ccc026168948fec4f7555b9164c724cf4125eac006e176541483d2c959be/pydantic_settings-2.13.1-py3-none-any.whl", hash = "sha256:d56fd801823dbeae7f0975e1f8c8e25c258eb75d278ea7abb5d9cebb01b56237", size = 58929, upload-time = "2026-02-19T13:45:06.034Z" },
+]
+
+[[package]]
 name = "pyflakes"
 version = "3.4.0"
 source = { registry = "https://pypi.org/simple" }
@@ -732,6 +797,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/78/b4/439b179d1ff526791eb921115fca8e44e596a13efeda518b9d845a619450/pytest_xdist-3.8.0.tar.gz", hash = "sha256:7e578125ec9bc6050861aa93f2d59f1d8d085595d6551c2c90b6f4fad8d3a9f1", size = 88069, upload-time = "2025-07-01T13:30:59.346Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ca/31/d4e37e9e550c2b92a9cbc2e4d0b7420a27224968580b5a447f420847c975/pytest_xdist-3.8.0-py3-none-any.whl", hash = "sha256:202ca578cfeb7370784a8c33d6d05bc6e13b4f25b5053c30a152269fd10f0b88", size = 46396, upload-time = "2025-07-01T13:30:56.632Z" },
+]
+
+[[package]]
+name = "python-dotenv"
+version = "1.2.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/82/ed/0301aeeac3e5353ef3d94b6ec08bbcabd04a72018415dcb29e588514bba8/python_dotenv-1.2.2.tar.gz", hash = "sha256:2c371a91fbd7ba082c2c1dc1f8bf89ca22564a087c2c287cd9b662adde799cf3", size = 50135, upload-time = "2026-03-01T16:00:26.196Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/0b/d7/1959b9648791274998a9c3526f6d0ec8fd2233e4d4acce81bbae76b44b2a/python_dotenv-1.2.2-py3-none-any.whl", hash = "sha256:1d8214789a24de455a8b8bd8ae6fe3c6b69a5e3d64aa8a8e5d68e694bbcb285a", size = 22101, upload-time = "2026-03-01T16:00:25.09Z" },
 ]
 
 [[package]]
