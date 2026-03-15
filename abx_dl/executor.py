@@ -399,7 +399,7 @@ def run_hook(hook: Hook, url: str, snapshot_id: str, output_dir: Path, env: dict
             output_files=new_files,
             start_ts=proc.started_at,
             end_ts=proc.ended_at,
-            error=stderr[:500] if returncode != 0 else None,
+            error=stderr if returncode != 0 else None,
         )
         return proc, ar, False
 
@@ -695,7 +695,7 @@ def _finalize_background_hook(
         output_files=new_files,
         start_ts=meta.get('started_at'),
         end_ts=proc.ended_at,
-        error=error or (stderr[:500] if effective_exit_code != 0 else None),
+        error=error or (stderr if effective_exit_code != 0 else None),
     )
 
     # Write final results

@@ -219,6 +219,30 @@ def test_download_finalizes_background_hooks_after_sigterm(tmp_path: Path) -> No
     assert final_process['exit_code'] == 0
 
 
+def test_download_preserves_full_hook_stderr_in_archive_result(tmp_path: Path) -> None:
+    plugins_root = tmp_path / 'plugins'
+    full_error = 'ERROR: ' + ('proxy-blocked ' * 80) + 'storage.googleapis.com'
+
+    _write(
+        plugins_root / 'broken' / 'on_Crawl__00_fail.py',
+        '\n'.join(
+            [
+                'import sys',
+                f'sys.stderr.write({full_error!r})',
+                'raise SystemExit(1)',
+            ]
+        )
+        + '\n',
+    )
+
+    plugins = discover_plugins(plugins_root)
+    results = list(download('https://example.com', plugins, tmp_path / 'run', auto_install=True))
+
+    failure = next(result for result in results if result.plugin == 'broken')
+    assert failure.status == 'failed'
+    assert failure.error == full_error
+
+
 def test_download_applies_background_side_effects_in_hook_lifecycle_order(tmp_path: Path) -> None:
     plugins_root = tmp_path / 'plugins'
 

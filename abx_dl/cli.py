@@ -115,10 +115,10 @@ def _parse_process_output(proc: Process) -> str:
         if abspath:
             return abspath
 
-    stderr = _compact_output(proc.stderr or '')
+    stderr = (proc.stderr or '').strip()
     if stderr:
         return stderr
-    return _compact_output(proc.stdout or '')
+    return (proc.stdout or '').strip()
 
 
 def _record_type_name(record: VisibleRecord) -> str:
@@ -145,8 +145,15 @@ def _record_status(record: VisibleRecord) -> str:
 
 def _record_output(record: VisibleRecord) -> str:
     if isinstance(record, ArchiveResult):
+        if record.status == 'failed':
+            return record.error or record.output_str or ''
         return record.output_str or record.error or ''
     return _parse_process_output(record)
+
+
+def _format_install_failure_label(record: VisibleRecord) -> str:
+    plugin = record.plugin if isinstance(record, ArchiveResult) else (record.plugin or '-')
+    return f'{plugin} / {_record_hook_name(record)}'
 
 
 def _record_start_ts(record: VisibleRecord) -> str | None:
@@ -375,6 +382,7 @@ def _run_plugin_install(selected) -> int:
     console.print("[bold]Installing plugin dependencies...[/bold]\n")
 
     results_by_hook: dict[tuple[str, str], ArchiveResult] = {}
+    failed_processes_by_hook: dict[tuple[str, str], Process] = {}
     with TemporaryDirectory(prefix='abx-dl-install-') as temp_dir:
         for record in download(
             'https://example.com',
@@ -386,23 +394,34 @@ def _run_plugin_install(selected) -> int:
         ):
             if isinstance(record, ArchiveResult):
                 results_by_hook[(record.plugin, record.hook_name)] = record
+            elif isinstance(record, Process) and record.exit_code not in (None, 0):
+                failed_processes_by_hook[(record.plugin or '', _record_hook_name(record))] = record
 
     no_install_hooks = [name for name, plugin in sorted(selected.items()) if not plugin.get_crawl_hooks()]
+    visible_records: list[VisibleRecord] = [
+        result
+        for _, result in sorted(results_by_hook.items())
+    ]
+    visible_records.extend(
+        proc
+        for _, proc in sorted(failed_processes_by_hook.items())
+    )
 
-    if results_by_hook:
+    if visible_records:
         table = Table(title="Install Results")
         table.add_column("Plugin", style="cyan")
         table.add_column("Hook")
         table.add_column("Status")
         table.add_column("Output")
 
-        for _, result in sorted(results_by_hook.items()):
-            status_style = STATUS_STYLES.get(result.status, 'white')
+        for record in visible_records:
+            status = _record_status(record)
+            status_style = STATUS_STYLES.get(status, 'white')
             table.add_row(
-                result.plugin,
-                result.hook_name,
-                f'[{status_style}]{result.status}[/{status_style}]',
-                _compact_output(result.output_str or result.error or ''),
+                record.plugin or '-',
+                _record_hook_name(record),
+                f'[{status_style}]{status}[/{status_style}]',
+                _compact_output(_record_output(record)),
             )
 
         console.print(table)
@@ -412,9 +431,16 @@ def _run_plugin_install(selected) -> int:
     if no_install_hooks:
         console.print(f"[dim]No install hooks: {', '.join(no_install_hooks)}[/dim]")
 
-    failures = [result for result in results_by_hook.values() if result.status == 'failed']
+    failures = [record for record in visible_records if _record_status(record) == 'failed']
     if failures:
-        console.print(f"\n[bold red]{len(failures)} install hook(s) failed.[/bold red]")
+        console.print("\n[bold red]Failure details:[/bold red]")
+        for record in failures:
+            details = _record_output(record).strip()
+            if not details:
+                continue
+            console.print(f"\n[bold cyan]{escape(_format_install_failure_label(record))}[/bold cyan]")
+            console.print(escape(details))
+        console.print(f"\n[bold red]{len(failures)} install step(s) failed.[/bold red]")
         return 1
 
     console.print("\n[bold green]Done![/bold green]")

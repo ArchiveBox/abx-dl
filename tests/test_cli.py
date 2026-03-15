@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import subprocess
@@ -5,8 +6,11 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from rich.console import Console
+
+import abx_dl.cli as cli_module
 from abx_dl.cli import _build_archive_results_table, _compact_output, _format_archive_result_line, _format_elapsed, cli as cli_group
-from abx_dl.models import ArchiveResult
+from abx_dl.models import ArchiveResult, Process
 from abx_dl.plugins import discover_plugins
 
 
@@ -162,6 +166,48 @@ def test_readme_install_command_runs_real_install_hooks(tmp_path: Path) -> None:
     for hook_name in install_hook_names:
         assert hook_name in result.stdout
     assert 'succeeded' in result.stdout
+
+
+def test_run_plugin_install_passes_through_failed_binary_hook_stderr(monkeypatch) -> None:
+    plugin = discover_plugins()['chrome']
+    console_output = io.StringIO()
+    sandbox_error = "\n".join(
+        [
+            "npm ERR! getaddrinfo EAI_AGAIN storage.googleapis.com",
+            "HINT: Override NO_PROXY before retrying.",
+            'HINT: NO_PROXY="localhost,127.0.0.1"',
+        ]
+    )
+
+    def fake_download(*args, **kwargs):
+        yield Process(
+            cmd=['python', 'on_Binary__12_puppeteer_install.py'],
+            plugin='puppeteer',
+            hook_name='on_Binary__12_puppeteer_install',
+            exit_code=1,
+            stderr=sandbox_error,
+        )
+        yield ArchiveResult(
+            snapshot_id='snap',
+            plugin='chrome',
+            hook_name='on_Crawl__70_chrome_install.finite.bg',
+            status='succeeded',
+            output_str='chromium requested',
+        )
+
+    monkeypatch.setattr(cli_module, 'download', fake_download)
+    monkeypatch.setattr(
+        cli_module,
+        'console',
+        Console(file=console_output, force_terminal=False, color_system=None, width=120),
+    )
+
+    exit_code = cli_module._run_plugin_install({'chrome': plugin})
+
+    rendered = console_output.getvalue()
+    assert exit_code == 1
+    assert 'on_Binary__12_puppeteer_install' in rendered
+    assert sandbox_error in rendered
 
 
 def test_readme_dl_command_downloads_example_dot_com_with_real_output(tmp_path: Path) -> None:
