@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Session {{ session.id }} &mdash; abx-dl</title>
+    <style>
+        :root {
+            --bg: #0f1117;
+            --surface: #1a1d27;
+            --surface2: #242836;
+            --border: #2e3344;
+            --text: #e1e4ed;
+            --text-dim: #8b90a0;
+            --accent: #6c8cff;
+            --accent-hover: #8aa4ff;
+            --green: #4ade80;
+            --red: #f87171;
+            --orange: #fb923c;
+            --yellow: #facc15;
+            --radius: 8px;
+            --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 2rem 1.5rem;
+        }
+
+        .back-link {
+            display: inline-block;
+            color: var(--accent);
+            text-decoration: none;
+            font-size: 0.85rem;
+            margin-bottom: 1rem;
+        }
+
+        .back-link:hover { text-decoration: underline; }
+
+        header {
+            margin-bottom: 1.5rem;
+        }
+
+        header h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            margin-bottom: 0.25rem;
+        }
+
+        header h1 span { color: var(--accent); }
+
+        .card {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .card h2 {
+            font-size: 1.05rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+
+        /* Status badge */
+        .badge {
+            display: inline-block;
+            padding: 0.15rem 0.6rem;
+            border-radius: 999px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .badge-starting, .badge-running { background: rgba(108, 140, 255, 0.15); color: var(--accent); }
+        .badge-completed { background: rgba(74, 222, 128, 0.15); color: var(--green); }
+        .badge-failed { background: rgba(248, 113, 113, 0.15); color: var(--red); }
+        .badge-timeout { background: rgba(251, 146, 60, 0.15); color: var(--orange); }
+
+        /* Metadata grid */
+        .meta-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 0.75rem;
+        }
+
+        .meta-item label {
+            display: block;
+            font-size: 0.75rem;
+            font-weight: 500;
+            color: var(--text-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.15rem;
+        }
+
+        .meta-item .value {
+            font-family: var(--mono);
+            font-size: 0.85rem;
+            word-break: break-all;
+        }
+
+        .meta-item .value a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .meta-item .value a:hover { text-decoration: underline; }
+
+        /* Progress bar */
+        .progress-section {
+            margin-bottom: 0.75rem;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid var(--border);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            vertical-align: middle;
+            margin-right: 0.4rem;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* Records / progress list */
+        .record-list {
+            list-style: none;
+        }
+
+        .record-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.6rem;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 0.85rem;
+        }
+
+        .record-item:last-child { border-bottom: none; }
+
+        .record-type {
+            font-family: var(--mono);
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 0.1rem 0.4rem;
+            border-radius: 4px;
+            background: var(--surface2);
+            color: var(--text-dim);
+            white-space: nowrap;
+            min-width: 90px;
+            text-align: center;
+        }
+
+        .record-type.type-Snapshot { color: var(--accent); }
+        .record-type.type-ArchiveResult { color: var(--green); }
+        .record-type.type-Process { color: var(--orange); }
+
+        .record-detail {
+            flex: 1;
+            font-family: var(--mono);
+            font-size: 0.8rem;
+            color: var(--text-dim);
+        }
+
+        .record-status {
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .status-succeeded { color: var(--green); }
+        .status-failed { color: var(--red); }
+        .status-started, .status-queued { color: var(--yellow); }
+
+        /* File listing */
+        .file-list {
+            list-style: none;
+        }
+
+        .file-item {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            padding: 0.5rem 0.6rem;
+            border-radius: 6px;
+            transition: background 0.1s;
+        }
+
+        .file-item:hover { background: var(--surface2); }
+
+        .file-icon {
+            font-size: 1.1rem;
+            width: 24px;
+            text-align: center;
+            opacity: 0.6;
+        }
+
+        .file-info { flex: 1; min-width: 0; }
+
+        .file-path {
+            font-family: var(--mono);
+            font-size: 0.82rem;
+            color: var(--accent);
+            text-decoration: none;
+            display: block;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .file-path:hover { text-decoration: underline; }
+
+        .file-size {
+            font-size: 0.75rem;
+            color: var(--text-dim);
+        }
+
+        .zip-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.5rem 1rem;
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: var(--radius);
+            color: var(--accent);
+            text-decoration: none;
+            font-size: 0.85rem;
+            font-weight: 500;
+            transition: border-color 0.15s;
+        }
+
+        .zip-btn:hover { border-color: var(--accent); }
+
+        /* Logs */
+        .logs-toggle {
+            background: none;
+            border: none;
+            color: var(--accent);
+            cursor: pointer;
+            font-size: 0.85rem;
+            padding: 0;
+            text-decoration: underline;
+        }
+
+        .logs-toggle:hover { color: var(--accent-hover); }
+
+        .log-content {
+            background: var(--surface2);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 0.75rem 1rem;
+            font-family: var(--mono);
+            font-size: 0.75rem;
+            line-height: 1.5;
+            max-height: 400px;
+            overflow: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+            color: var(--text-dim);
+            margin-top: 0.5rem;
+            display: none;
+        }
+
+        .log-content.visible { display: block; }
+
+        .empty-state {
+            text-align: center;
+            padding: 2rem 1rem;
+            color: var(--text-dim);
+            font-size: 0.9rem;
+        }
+
+        .plugins-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.35rem;
+        }
+
+        .plugin-tag {
+            font-family: var(--mono);
+            font-size: 0.78rem;
+            padding: 0.1rem 0.5rem;
+            background: var(--surface2);
+            border-radius: 4px;
+            color: var(--text-dim);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a href="/" class="back-link">&larr; Back to homepage</a>
+
+        <header>
+            <h1><span>Session</span> {{ session.id }}</h1>
+        </header>
+
+        <!-- Session Info -->
+        <div class="card">
+            <h2>
+                Status:
+                <span class="badge badge-{{ session.status }}">{{ session.status }}</span>
+                {% if session.status in ('starting', 'running') %}
+                    <span class="spinner"></span>
+                {% endif %}
+            </h2>
+
+            <div class="meta-grid">
+                <div class="meta-item">
+                    <label>URL</label>
+                    <div class="value"><a href="{{ session.url }}" target="_blank" rel="noopener">{{ session.url }}</a></div>
+                </div>
+                <div class="meta-item">
+                    <label>Session ID</label>
+                    <div class="value">{{ session.id }}</div>
+                </div>
+                <div class="meta-item">
+                    <label>Created</label>
+                    <div class="value" data-utc="{{ session.created_at }}">{{ session.created_at }}</div>
+                </div>
+                {% if session.finished_at %}
+                <div class="meta-item">
+                    <label>Finished</label>
+                    <div class="value">{{ session.finished_at }}</div>
+                </div>
+                {% endif %}
+                {% if session.error %}
+                <div class="meta-item">
+                    <label>Error</label>
+                    <div class="value" style="color: var(--red);">{{ session.error }}</div>
+                </div>
+                {% endif %}
+            </div>
+
+            <div style="margin-top: 0.75rem;">
+                <label style="margin-bottom: 0.35rem;">Plugins</label>
+                <div class="plugins-list">
+                    {% for p in session.plugins %}
+                    <span class="plugin-tag">{{ p }}</span>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Progress Records -->
+        <div class="card">
+            <h2>Progress</h2>
+            {% if records %}
+            <ul class="record-list">
+                {% for r in records %}
+                <li class="record-item">
+                    <span class="record-type type-{{ r.get('type', 'unknown') }}">{{ r.get('type', '?') }}</span>
+                    <span class="record-detail">
+                        {% if r.get('type') == 'Snapshot' %}
+                            {{ r.get('url', '') }}
+                        {% elif r.get('type') == 'ArchiveResult' %}
+                            <strong>{{ r.get('plugin', '') }}</strong> / {{ r.get('hook_name', '') }}
+                            <span class="record-status status-{{ r.get('status', '') }}">{{ r.get('status', '') }}</span>
+                            {% if r.get('output_str') %} &mdash; {{ r.get('output_str', '') }}{% endif %}
+                        {% elif r.get('type') == 'Process' %}
+                            {{ r.get('plugin', '') }} / {{ r.get('hook_name', '') }}
+                            {% if r.get('exit_code') is not none %} exit={{ r.get('exit_code') }}{% endif %}
+                        {% else %}
+                            {{ r | tojson }}
+                        {% endif %}
+                    </span>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <div class="empty-state">
+                {% if session.status in ('starting', 'running') %}
+                    <span class="spinner"></span> Waiting for progress data...
+                {% else %}
+                    No progress records found.
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Files -->
+        <div class="card">
+            <h2>
+                Result Files
+                {% if files %}
+                    <a href="/download/{{ session.id }}/zip" class="zip-btn" style="float: right; margin-top: -4px;">
+                        Download ZIP
+                    </a>
+                {% endif %}
+            </h2>
+            {% if files %}
+            <ul class="file-list">
+                {% for f in files %}
+                <li class="file-item">
+                    <span class="file-icon">&#128196;</span>
+                    <div class="file-info">
+                        <a class="file-path" href="/download/{{ session.id }}/{{ f.path }}">{{ f.path }}</a>
+                        <span class="file-size">{{ format_size(f.size) }}</span>
+                    </div>
+                </li>
+                {% endfor %}
+            </ul>
+            {% else %}
+            <div class="empty-state">
+                {% if session.status in ('starting', 'running') %}
+                    <span class="spinner"></span> Files will appear here as they are created...
+                {% else %}
+                    No result files.
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Logs -->
+        <div class="card">
+            <h2>Logs</h2>
+            {% if logs %}
+                {% for name, content in logs.items() %}
+                    {% if content.strip() %}
+                    <button class="logs-toggle" onclick="toggleLog('log-{{ loop.index }}')">{{ name }}</button>
+                    <div id="log-{{ loop.index }}" class="log-content">{{ content }}</div>
+                    {% endif %}
+                {% endfor %}
+                {% if not logs.values()|select|list %}
+                    <div class="empty-state">No log output yet.</div>
+                {% endif %}
+            {% else %}
+                <div class="empty-state">No logs available.</div>
+            {% endif %}
+        </div>
+
+        <!-- API info -->
+        <div class="card" style="font-size: 0.85rem; color: var(--text-dim);">
+            <strong>API endpoint:</strong>
+            <code style="font-family: var(--mono); color: var(--accent);">GET /api/session/{{ session.id }}</code>
+        </div>
+    </div>
+
+    <script>
+        function toggleLog(id) {
+            const el = document.getElementById(id);
+            el.classList.toggle('visible');
+        }
+
+        // Auto-refresh if session is still in progress
+        {% if session.status in ('starting', 'running') %}
+        setTimeout(() => location.reload(), 3000);
+        {% endif %}
+    </script>
+</body>
+</html>
