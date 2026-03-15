@@ -32,7 +32,7 @@ server = [
 [package.metadata]
 requires-dist = [
     { name = "abx-pkg", specifier = ">=0.6.5" },
-    { name = "abx-plugins", specifier = ">=0.9.4" },
+    { name = "abx-plugins", specifier = ">=0.9.6" },
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=7.1.1" },
     { name = "flask", marker = "extra == 'server'", specifier = ">=3.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11.2" },
@@ -65,7 +65,7 @@ wheels = [
 
 [[package]]
 name = "abx-plugins"
-version = "0.9.5"
+version = "0.9.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "abx-pkg" },
@@ -78,9 +78,9 @@ dependencies = [
     { name = "ruff" },
     { name = "ty" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/40/cd/ece7b6d61db6b48b8f9ad6db23e0d6cb077df2e293eac59f5fd0a4a24ebb/abx_plugins-0.9.5.tar.gz", hash = "sha256:31acebd2928b85bd1db65a6791c4f4b1cd7af8735d90f18ad074289448f0f3f4", size = 481832, upload-time = "2026-03-15T11:00:09.959Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/67/7d/810a54b34c59fb3e36b4c770f98c64c1aba68a4146d0a4b0f93fa4231488/abx_plugins-0.9.6.tar.gz", hash = "sha256:e7a851b91cd0bf6160f250ad21c3c33509269fe405c9b8b5c541b1ddeb5e9250", size = 481836, upload-time = "2026-03-15T20:46:22.077Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4a/fc/86f2fc1b1a43aabe89866dbb779e6e7f0276c5ee6fb21387ff43ea2c2535/abx_plugins-0.9.5-py3-none-any.whl", hash = "sha256:8f7b6fd486209cd750ee1426e9a81375f17864d3d4130cdf2243a040dd7075dc", size = 673578, upload-time = "2026-03-15T11:00:08.756Z" },
+    { url = "https://files.pythonhosted.org/packages/69/9a/83b9eb28f9eefc27e4bdd8f5fef555e90e00ce864e3551fb5cca1d06cf1c/abx_plugins-0.9.6-py3-none-any.whl", hash = "sha256:48c7e28a659a43152a2d9803614ee05796b2dc53388e876fc2eac1b0cf87bb85", size = 673566, upload-time = "2026-03-15T20:46:20.671Z" },
 ]
 
 [[package]]
