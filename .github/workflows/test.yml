@@ -65,6 +65,8 @@ jobs:
     runs-on: ubuntu-24.04
     needs: discover-plugins
     if: ${{ needs.discover-plugins.outputs.plugins != '[]' }}
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 
     strategy:
       fail-fast: false
