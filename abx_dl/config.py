@@ -189,8 +189,9 @@ GLOBAL_DEFAULTS = {
     # abx-dl handles Chromium installation via on_Binary__12_puppeteer_install instead.
     'PUPPETEER_SKIP_DOWNLOAD': '1',
     'PUPPETEER_CACHE_DIR': str(LIB_DIR / 'puppeteer'),
-    # Disable Chrome sandbox by default (required in Docker/root environments)
-    'CHROME_SANDBOX': 'false',
+    # Keep Chrome's sandbox enabled by default; callers that need --no-sandbox
+    # in Docker/root environments must opt out explicitly.
+    'CHROME_SANDBOX': 'true',
 }
 
 
@@ -333,6 +334,8 @@ def _derive_runtime_paths(
         derived['NODE_PATH'] = str(node_path)
     if 'NPM_BIN_DIR' not in explicit_keys:
         derived['NPM_BIN_DIR'] = str(npm_bin_dir)
+    if 'PUPPETEER_CACHE_DIR' not in explicit_keys:
+        derived['PUPPETEER_CACHE_DIR'] = str(lib_dir / 'puppeteer')
 
     if run_output_dir is not None:
         run_dir = str(run_output_dir)

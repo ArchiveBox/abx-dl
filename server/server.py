@@ -1,4 +1,10 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#   "flask>=3.0",
+# ]
+# ///
 """
 abx-dl Web Download Server
 
@@ -6,7 +12,7 @@ A simple web server that lets users submit URLs for downloading via abx-dl.
 Each request gets a unique session directory. Results are cleaned up after 24 hours.
 
 Usage:
-    python server.py [--host 0.0.0.0] [--port 8484] [--data-dir /tmp/abx-dl-sessions]
+    uv run server/server.py [--host 0.0.0.0] [--port 8484] [--data-dir /tmp/abx-dl-sessions]
 
 REST API:
     POST /api/download        - Submit a new download (JSON body: {"url": "...", "plugins": ["wget","title"]})
@@ -47,6 +53,21 @@ from flask import (
     send_file,
     url_for,
 )
+
+try:
+    from server.server_utils import (
+        get_safe_external_url,
+        get_visible_log_entries,
+        normalize_recovered_session_info,
+        resolve_public_session_download,
+    )
+except ImportError:
+    from server_utils import (
+        get_safe_external_url,
+        get_visible_log_entries,
+        normalize_recovered_session_info,
+        resolve_public_session_download,
+    )
 
 # ---------------------------------------------------------------------------
 # App configuration
@@ -178,7 +199,9 @@ def _run_download(sid: str, url: str, plugins: list[str], timeout: int) -> None:
 
     except subprocess.TimeoutExpired:
         proc.kill()
+        proc.wait()
         with sessions_lock:
+            sessions[sid]["exit_code"] = proc.returncode
             sessions[sid]["status"] = "timeout"
             sessions[sid]["error"] = f"Process timed out after {timeout + 30}s"
             sessions[sid]["finished_at"] = datetime.now(timezone.utc).isoformat()
@@ -209,12 +232,7 @@ def get_session_info(sid: str) -> dict[str, Any] | None:
     # Try loading from disk (server restart recovery)
     meta_path = session_dir(sid) / "session.json"
     if meta_path.exists():
-        info = json.loads(meta_path.read_text())
-        # If it was "running" but we restarted, mark as failed
-        if info.get("status") in ("starting", "running"):
-            info["status"] = "failed"
-            info["error"] = "Server restarted while download was in progress"
-            info["finished_at"] = datetime.now(timezone.utc).isoformat()
+        info = normalize_recovered_session_info(json.loads(meta_path.read_text()))
         with sessions_lock:
             sessions[sid] = info
         return dict(info)
@@ -354,12 +372,14 @@ def session_page(sid: str):
         abort(404)
     files = list_session_files(sid)
     logs = get_session_logs(sid)
+    log_entries = get_visible_log_entries(logs)
     records = get_session_jsonl(sid)
     return render_template(
         "session.html",
         session=info,
+        session_url_href=get_safe_external_url(info.get("url", "")),
         files=files,
-        logs=logs,
+        log_entries=log_entries,
         records=records,
         format_size=format_size,
     )
@@ -458,12 +478,12 @@ def api_sessions():
     if data_dir.exists():
         for entry in sorted(data_dir.iterdir(), reverse=True):
             if entry.is_dir() and entry.name not in all_sessions:
-                meta = entry / "session.json"
-                if meta.exists():
-                    try:
-                        all_sessions[entry.name] = json.loads(meta.read_text())
-                    except json.JSONDecodeError:
-                        continue
+                try:
+                    info = get_session_info(entry.name)
+                except json.JSONDecodeError:
+                    continue
+                if info:
+                    all_sessions[entry.name] = info
 
     result = sorted(all_sessions.values(), key=lambda s: s.get("created_at", ""), reverse=True)
     return jsonify(result)
@@ -508,13 +528,13 @@ def download_file(sid: str, filepath: str):
         abort(404)
 
     sdir = session_dir(sid)
-    target = (sdir / filepath).resolve()
-
-    # Prevent path traversal
-    if not str(target).startswith(str(sdir.resolve())):
-        abort(403)
-
-    if not target.is_file():
+    allowed_paths = {file_info["path"] for file_info in list_session_files(sid)}
+    target = resolve_public_session_download(
+        sdir,
+        filepath,
+        allowed_relative_paths=allowed_paths,
+    )
+    if target is None:
         abort(404)
 
     return send_file(target, as_attachment=True)

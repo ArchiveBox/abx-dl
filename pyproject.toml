@@ -48,9 +48,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-server = [
-    "flask>=3.0",
-]
 dev = [
     # TESTING
     "pytest>=8.0.0",
@@ -83,7 +80,7 @@ exclude = ["*.pyi", "typings/", "migrations/", "vendor/"]
 ignore = ["E731", "E303", "E266", "E241", "E222"]
 
 [tool.pytest.ini_options]
-testpaths = [ "tests" ]
+testpaths = [ "tests", "server/tests" ]
 
 [tool.mypy]
 mypy_path = "abx_dl,abx_dl/typings"
@@ -123,7 +120,6 @@ pythonPlatform = "Linux"
 
 [project.scripts]
 abx-dl = "abx_dl:main"
-abx-dl-server = "server.server:main"
 
 [project.urls]
 Homepage = "https://github.com/ArchiveBox/abx-dl"

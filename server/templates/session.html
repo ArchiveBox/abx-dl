@@ -325,7 +325,13 @@
             <div class="meta-grid">
                 <div class="meta-item">
                     <label>URL</label>
-                    <div class="value"><a href="{{ session.url }}" target="_blank" rel="noopener">{{ session.url }}</a></div>
+                    <div class="value">
+                        {% if session_url_href %}
+                        <a href="{{ session_url_href }}" target="_blank" rel="noopener">{{ session.url }}</a>
+                        {% else %}
+                        {{ session.url }}
+                        {% endif %}
+                    </div>
                 </div>
                 <div class="meta-item">
                     <label>Session ID</label>
@@ -431,18 +437,13 @@
         <!-- Logs -->
         <div class="card">
             <h2>Logs</h2>
-            {% if logs %}
-                {% for name, content in logs.items() %}
-                    {% if content.strip() %}
+            {% if log_entries %}
+                {% for name, content in log_entries %}
                     <button class="logs-toggle" onclick="toggleLog('log-{{ loop.index }}')">{{ name }}</button>
                     <div id="log-{{ loop.index }}" class="log-content">{{ content }}</div>
-                    {% endif %}
                 {% endfor %}
-                {% if not logs.values()|select|list %}
-                    <div class="empty-state">No log output yet.</div>
-                {% endif %}
             {% else %}
-                <div class="empty-state">No logs available.</div>
+                <div class="empty-state">No log output yet.</div>
             {% endif %}
         </div>
 
