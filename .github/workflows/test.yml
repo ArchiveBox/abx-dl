@@ -90,6 +90,9 @@ jobs:
     if: ${{ needs.discover-plugins.outputs.plugins != '[]' }}
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDECODEEXTRACT_MODEL: sonnet
+      CLAUDECODEEXTRACT_MAX_TURNS: "10"
+      CLAUDECODEEXTRACT_TIMEOUT: "120"
       TWOCAPTCHA_API_KEY: ${{ secrets.TWOCAPTCHA_API_KEY }}
 
     strategy:
