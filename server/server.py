@@ -238,7 +238,7 @@ def list_session_files(sid: str) -> list[dict[str, Any]]:
         if str(rel) in skip_names:
             continue
         # Skip hook internal files
-        if rel.name.endswith((".pid", ".sh", ".meta.json")):
+        if rel.name.endswith((".pid", ".sh", ".meta.json", ".stdout.log", ".stderr.log")):
             continue
         files.append({
             "path": str(rel),
