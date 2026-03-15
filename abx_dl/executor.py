@@ -132,7 +132,15 @@ def _poll_background_hooks(
         return []
 
     finalized: list[tuple[Process, ArchiveResult]] = []
-    meta_files = sorted(known_meta_files) if known_meta_files is not None else sorted(output_dir.glob('**/on_*.meta.json'))
+    # Sort by hook step/priority digits (e.g. on_Crawl__60_ < on_Crawl__70_) so
+    # earlier hooks' side effects (Binary/Machine records) are applied first.
+    def _hook_sort_key(meta_path: Path) -> str:
+        name = meta_path.name
+        import re as _re
+        m = _re.search(r'__(\d\d)_', name)
+        return (m.group(1) if m else '99') + name
+    meta_files_raw = known_meta_files if known_meta_files is not None else output_dir.glob('**/on_*.meta.json')
+    meta_files = sorted(meta_files_raw, key=_hook_sort_key)
     for meta_file in meta_files:
         if not meta_file.exists():
             continue

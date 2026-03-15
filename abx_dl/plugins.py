@@ -91,11 +91,12 @@ def parse_hook_filename(filename: str) -> tuple[str, int, int, bool, str] | None
     """
     Parse hook filename to extract metadata.
 
-    Format: on_{Event}__{XX}_{description}[.bg].{ext}
+    Format: on_{Event}__{XX}_{description}[...bg].{ext}
 
     Returns: (event, step, priority, is_background, language) or None
     """
-    pattern = r'^on_(\w+)__(\d)(\d)_(\w+)(\.bg)?\.(\w+)$'
+    # Loose match: on_Event__XY_description[.anything.bg].ext
+    pattern = r'^on_(\w+)__(\d)(\d)_(.+)\.(\w+)$'
     match = re.match(pattern, filename)
     if not match:
         return None
@@ -103,8 +104,8 @@ def parse_hook_filename(filename: str) -> tuple[str, int, int, bool, str] | None
     event = match.group(1)
     step = int(match.group(2))
     priority = int(match.group(3))
-    is_background = match.group(5) is not None
-    language = match.group(6)
+    is_background = '.bg.' in filename
+    language = match.group(5)
 
     if language not in ('py', 'js', 'sh'):
         return None

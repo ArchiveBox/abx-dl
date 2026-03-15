@@ -185,6 +185,12 @@ GLOBAL_DEFAULTS = {
     'NODE_MODULES_DIR': str(NODE_MODULES_DIR),
     'NODE_PATH': str(NODE_MODULES_DIR),
     'NPM_BIN_DIR': str(NPM_BIN_DIR),
+    # Prevent puppeteer's postinstall from downloading Chrome automatically;
+    # abx-dl handles Chromium installation via on_Binary__12_puppeteer_install instead.
+    'PUPPETEER_SKIP_DOWNLOAD': '1',
+    'PUPPETEER_CACHE_DIR': str(LIB_DIR / 'puppeteer'),
+    # Disable Chrome sandbox by default (required in Docker/root environments)
+    'CHROME_SANDBOX': 'false',
 }
 
 
