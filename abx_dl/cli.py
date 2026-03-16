@@ -18,7 +18,7 @@ from .config import get_config, set_config, CONFIG_FILE
 from .dependencies import load_binary
 from .executor import download
 from .models import ArchiveResult, Process
-from .plugins import discover_plugins
+from .plugins import discover_plugins, filter_plugins
 
 console = Console()
 stderr_console = Console(stderr=True)
@@ -466,10 +466,10 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool):
     """
     all_plugins = ctx.obj.get('plugins', discover_plugins())
 
-    # Filter to selected plugins if specified
+    # Filter to selected plugins if specified (resolves required_plugins dependencies)
     if plugin_names:
-        selected = {n: all_plugins[n] for n in plugin_names if n in all_plugins}
-        not_found = [n for n in plugin_names if n not in all_plugins]
+        selected = filter_plugins(all_plugins, list(plugin_names))
+        not_found = [n for n in plugin_names if n.lower() not in {k.lower() for k in all_plugins}]
         if not_found:
             console.print(f"[yellow]Warning: Unknown plugins: {', '.join(not_found)}[/yellow]")
         if not selected:
