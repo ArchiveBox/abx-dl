@@ -213,7 +213,7 @@ def filter_plugins(plugins: dict[str, Plugin], names: list[str] | None) -> dict[
         if name in resolved:
             continue
         resolved.add(name)
-        plugin = plugins.get(name)
+        plugin = next((plugin for plugin_name, plugin in plugins.items() if plugin_name.lower() == name), None)
         if plugin:
             for dep in plugin.required_plugins:
                 dep_lower = dep.lower()
