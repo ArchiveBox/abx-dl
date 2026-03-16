@@ -469,7 +469,7 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool):
     # Filter to selected plugins if specified (resolves required_plugins dependencies)
     if plugin_names:
         selected = filter_plugins(all_plugins, list(plugin_names))
-        not_found = [n for n in plugin_names if n not in all_plugins]
+        not_found = [n for n in plugin_names if n.lower() not in {k.lower() for k in all_plugins}]
         if not_found:
             console.print(f"[yellow]Warning: Unknown plugins: {', '.join(not_found)}[/yellow]")
         if not selected:
