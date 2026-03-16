@@ -3,7 +3,7 @@
 > A simple all-in-one CLI tool to auto-detect and download *everything* available from a URL.
 
 ```bash
-uvx --from abx-dl abx-dl 'https://example.com'
+uvx abx-dl 'https://example.com'
 ```
 ---
 
@@ -24,7 +24,7 @@ It's useful for scraping, downloading, OSINT, digital preservation, and more.
 #### 🍜 What does it save?
 
 ```bash
-abx-dl dl --plugins=wget,title,screenshot,pdf,readability,git 'https://example.com'
+abx-dl --plugins=wget,title,screenshot,pdf,readability,git 'https://example.com'
 ```
 
 `abx-dl` runs all plugins by default, or you can specify `--plugins=...` for specific methods:
@@ -105,15 +105,14 @@ abx-dl --output=./runs/example --plugins=wget,title --timeout=90 'https://exampl
 ### 📦 Install
 
 ```bash
-# From this repo
-uv sync
-uv run abx-dl 'https://example.com'
+pip install abx-dl
+abx-dl 'https://example.com'
 
 # Or run the published CLI without installing it globally
-uvx --from abx-dl abx-dl 'https://example.com'
+uvx abx-dl 'https://example.com'
 
-# Pre-install dependency hooks if you want a deterministic first run
-uv run abx-dl install wget
+# Pre-install dependencies to avoid having to wait for them to install on first-run
+uvx abx-dl install
 ```
 
 <br/>
