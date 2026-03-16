@@ -762,7 +762,7 @@ def _persist_machine_config(config: dict[str, Any]) -> None:
     if not config:
         return
     try:
-        set_config(**{k: v for k, v in config.items() if v})
+        set_config(**{k: v for k, v in config.items() if v is not None})
     except Exception:
         pass
 
