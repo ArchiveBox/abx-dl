@@ -33,14 +33,13 @@ PLUGINS_DIR = _default_plugins_dir()
 
 @dataclass
 class Hook:
-    """Represents a plugin hook."""
+    """Represents a plugin hook — a +x executable, language-agnostic."""
     name: str
     plugin_name: str
     path: Path
     step: int  # Execution step (0-9)
     priority: int  # Priority within step (0-9)
     is_background: bool
-    language: str  # 'py', 'js', 'sh'
 
     @property
     def full_name(self) -> str:
@@ -88,16 +87,15 @@ class Plugin:
         )
 
 
-def parse_hook_filename(filename: str) -> tuple[str, int, int, bool, str] | None:
+def parse_hook_filename(filename: str) -> tuple[str, int, int, bool] | None:
     """
     Parse hook filename to extract metadata.
 
-    Format: on_{Event}__{XX}_{description}[...bg].{ext}
+    Format: on_{Event}__{XX}_{description}[.bg].{ext}
 
-    Returns: (event, step, priority, is_background, language) or None
+    Returns: (event, step, priority, is_background) or None
     """
-    # Loose match: on_Event__XY_description[.anything.bg].ext
-    pattern = r'^on_(\w+)__(\d)(\d)_(.+)\.(\w+)$'
+    pattern = r'^on_(\w+)__(\d)(\d)_.+'
     match = re.match(pattern, filename)
     if not match:
         return None
@@ -106,12 +104,8 @@ def parse_hook_filename(filename: str) -> tuple[str, int, int, bool, str] | None
     step = int(match.group(2))
     priority = int(match.group(3))
     is_background = '.bg.' in filename
-    language = match.group(5)
 
-    if language not in ('py', 'js', 'sh'):
-        return None
-
-    return (event, step, priority, is_background, language)
+    return (event, step, priority, is_background)
 
 
 def load_plugin(plugin_dir: Path) -> Plugin | None:
@@ -156,7 +150,7 @@ def load_plugin(plugin_dir: Path) -> Plugin | None:
         if not parsed:
             continue
 
-        event, step, priority, is_background, language = parsed
+        event, step, priority, is_background = parsed
 
         hook = Hook(
             name=hook_file.stem,
@@ -165,7 +159,6 @@ def load_plugin(plugin_dir: Path) -> Plugin | None:
             step=step,
             priority=priority,
             is_background=is_background,
-            language=language,
         )
         plugin.hooks.append(hook)
 

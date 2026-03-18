@@ -33,16 +33,21 @@ class SnapshotEvent(BaseEvent):
 # ── Process (hook subprocess execution) ──────────────────────────────────────
 
 class ProcessEvent(BaseEvent):
-    """Command: run a hook subprocess."""
-    url: str
-    snapshot_id: str
+    """Command: run a hook subprocess.
+
+    The caller builds hook_args (e.g. ['--url=...', '--snapshot-id=...'] for
+    Crawl/Snapshot hooks, or ['--binary-id=...', '--name=...'] for Binary hooks).
+    Hooks are +x executables, run directly as: [hook_path, *hook_args].
+    The env dict must include correct PATH (set via MachineEvent updates).
+    """
     plugin_name: str
     hook_name: str
     hook_path: str
-    hook_language: str
+    hook_args: list[str]
     is_background: bool
     output_dir: str
     env: dict[str, str]
+    snapshot_id: str = ''
     timeout: int = 60
     event_timeout: float = 360.0
 
