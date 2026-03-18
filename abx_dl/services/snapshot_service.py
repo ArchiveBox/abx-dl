@@ -57,6 +57,8 @@ class SnapshotService(BaseService):
                 is_background=_hook.is_background,
                 output_dir=str(plugin_output_dir), env=env,
                 snapshot_id=self.snapshot.id, timeout=timeout,
+                event_timeout=timeout + 30.0,
+                event_handler_timeout=timeout + 30.0,
             )
             if _hook.is_background:
                 self.bus.emit(process_event)   # fire-and-forget; parallel event concurrency

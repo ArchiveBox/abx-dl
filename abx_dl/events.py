@@ -57,8 +57,12 @@ class ProcessEvent(BaseEvent):
 
     Uses parallel event concurrency so background hooks (fire-and-forget)
     can run alongside the current phase without waiting for the bus serial lock.
+
+    event_handler_timeout must be set explicitly — otherwise bubus falls back
+    to the bus-level event_timeout (60s), which is too short for subprocesses.
     """
     event_concurrency: str = 'parallel'
+    event_handler_timeout: float = 360.0
     plugin_name: str
     hook_name: str
     hook_path: str
