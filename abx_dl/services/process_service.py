@@ -36,7 +36,7 @@ class ProcessService(BaseService):
         self.known_background_meta_files = known_background_meta_files
         super().__init__(bus)
 
-    async def on_Process(self, event: ProcessEvent) -> None:
+    async def on_ProcessEvent(self, event: ProcessEvent) -> None:
         # Import here to avoid circular import (orchestrator imports services)
         from ..orchestrator import run_hook
 

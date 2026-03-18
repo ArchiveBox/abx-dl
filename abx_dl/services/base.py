@@ -32,11 +32,11 @@ class BaseService:
         for attr_name in dir(self):
             if not attr_name.startswith('on_'):
                 continue
-            # on_Process -> "Process" -> try "Process", then "ProcessEvent"
-            # on_Crawl__plugin_hook -> "Crawl" -> try "Crawl", then "CrawlEvent"
+            # on_ProcessEvent -> "ProcessEvent" -> matches ProcessEvent directly
             # on_ProcessCompleted -> "ProcessCompleted" -> matches directly
+            # on_Crawl__plugin_hook -> "Crawl" -> tries "Crawl", then "CrawlEvent" (matches)
             prefix = attr_name.split('on_', 1)[1].split('__')[0]
-            candidates = [prefix, prefix + 'Event'] if not prefix.endswith('Event') else [prefix]
+            candidates = [prefix] if prefix.endswith('Event') else [prefix, prefix + 'Event']
             for event_cls in self.LISTENS_TO:
                 if event_cls.__name__ in candidates:
                     handler = getattr(self, attr_name)
