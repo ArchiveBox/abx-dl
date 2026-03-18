@@ -10,8 +10,8 @@ ProcessKillEvent to SIGTERM daemon hooks; wait_until_idle drains any remaining
 background ProcessEvents.
 
 Events follow command/completion pairs:
-  - ProcessEvent (command) → handler runs subprocess
-  - ProcessCompleted (notification) → handlers parse JSONL, emit Binary/Machine
+  - ProcessEvent (command) → handler streams stdout, emits Binary/Machine in realtime
+  - ProcessCompleted (notification) → carries final result after process exits
 
 Side-effect cascades (Binary→Machine→config) chain through ``await bus.emit()``
 queue-jumps: when a handler awaits an emitted event, bubus processes it and all
@@ -98,7 +98,7 @@ async def download(
     )
     SnapshotService(
         bus, url=url, snapshot=snapshot, output_dir=output_dir,
-        machine=machine_svc, hooks=snapshot_hooks,
+        machine=machine_svc, hooks=snapshot_hooks, crawl_hooks=crawl_hooks,
     )
 
     # --- Drive the lifecycle through the bus ---

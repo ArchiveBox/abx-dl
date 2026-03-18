@@ -1,4 +1,9 @@
-"""SnapshotService — registers per-hook handlers for SnapshotEvent."""
+"""SnapshotService — registers per-hook handlers for SnapshotEvent.
+
+On SnapshotCompleted, emits ProcessKillEvent for all background daemon hooks
+from both crawl and snapshot phases, since crawl daemons (e.g. Chrome) stay
+alive through the snapshot phase.
+"""
 
 from pathlib import Path
 from typing import ClassVar
@@ -13,11 +18,7 @@ from .machine_service import MachineService
 
 
 class SnapshotService(BaseService):
-    """Registers a handler per snapshot hook that builds env and emits ProcessEvent.
-
-    On SnapshotCompleted, emits ProcessKillEvent for each background hook to
-    SIGTERM daemon processes that should shut down after the snapshot phase.
-    """
+    """Registers a handler per snapshot hook that builds env and emits ProcessEvent."""
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [SnapshotEvent, SnapshotCompleted]
     EMITS: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, ProcessKillEvent]
@@ -31,12 +32,14 @@ class SnapshotService(BaseService):
         output_dir: Path,
         machine: MachineService,
         hooks: list[tuple[Plugin, Hook]],
+        crawl_hooks: list[tuple[Plugin, Hook]] | None = None,
     ):
         self.url = url
         self.snapshot = snapshot
         self.output_dir = output_dir
         self.machine = machine
         self.hooks = hooks
+        self.crawl_hooks = crawl_hooks or []
         super().__init__(bus)
         self._register_hook_handlers()
 
@@ -72,8 +75,9 @@ class SnapshotService(BaseService):
         return handler
 
     async def on_SnapshotCompleted(self, event: SnapshotCompleted) -> None:
-        """SIGTERM background daemon hooks now that the snapshot phase is done."""
-        for plugin, hook in self.hooks:
+        """SIGTERM all background daemon hooks (crawl + snapshot phases)."""
+        all_hooks = list(self.crawl_hooks) + list(self.hooks)
+        for plugin, hook in all_hooks:
             if hook.is_background:
                 plugin_output_dir = self.output_dir / plugin.name
                 await self.bus.emit(ProcessKillEvent(

@@ -1,11 +1,17 @@
-"""CrawlService — registers per-hook handlers for CrawlEvent."""
+"""CrawlService — registers per-hook handlers for CrawlEvent.
+
+All crawl hooks (including background) are awaited serially to preserve
+config/binary propagation between ordered install hooks. Background crawl
+daemons (e.g. Chrome) stay alive through the snapshot phase and are killed
+by SnapshotService on SnapshotCompleted.
+"""
 
 from pathlib import Path
 from typing import ClassVar
 
 from bubus import BaseEvent, EventBus
 
-from ..events import CrawlCompleted, CrawlEvent, ProcessEvent, ProcessKillEvent
+from ..events import CrawlEvent, ProcessEvent
 from ..models import Snapshot
 from ..plugins import Hook, Plugin
 from .base import BaseService
@@ -13,14 +19,10 @@ from .machine_service import MachineService
 
 
 class CrawlService(BaseService):
-    """Registers a handler per crawl hook that builds env and emits ProcessEvent.
+    """Registers a handler per crawl hook that builds env and emits ProcessEvent."""
 
-    On CrawlCompleted, emits ProcessKillEvent for each background hook to
-    SIGTERM daemon processes that should shut down after the crawl phase.
-    """
-
-    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [CrawlEvent, CrawlCompleted]
-    EMITS: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, ProcessKillEvent]
+    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [CrawlEvent]
+    EMITS: ClassVar[list[type[BaseEvent]]] = [ProcessEvent]
 
     def __init__(
         self,
@@ -54,7 +56,7 @@ class CrawlService(BaseService):
             plugin_output_dir = self.output_dir / _plugin.name
             plugin_output_dir.mkdir(parents=True, exist_ok=True)
 
-            process_event = ProcessEvent(
+            await self.bus.emit(ProcessEvent(
                 plugin_name=_plugin.name, hook_name=_hook.name,
                 hook_path=str(_hook.path),
                 hook_args=[f'--url={self.url}', f'--snapshot-id={self.snapshot.id}'],
@@ -63,21 +65,6 @@ class CrawlService(BaseService):
                 snapshot_id=self.snapshot.id, timeout=timeout,
                 event_timeout=timeout + 30.0,
                 event_handler_timeout=timeout + 30.0,
-            )
-            if _hook.is_background:
-                self.bus.emit(process_event)   # fire-and-forget; parallel event concurrency
-            else:
-                await self.bus.emit(process_event)
+            ))
 
         return handler
-
-    async def on_CrawlCompleted(self, event: CrawlCompleted) -> None:
-        """SIGTERM background daemon hooks now that the crawl phase is done."""
-        for plugin, hook in self.hooks:
-            if hook.is_background:
-                plugin_output_dir = self.output_dir / plugin.name
-                await self.bus.emit(ProcessKillEvent(
-                    plugin_name=plugin.name,
-                    hook_name=hook.name,
-                    output_dir=str(plugin_output_dir),
-                ))
