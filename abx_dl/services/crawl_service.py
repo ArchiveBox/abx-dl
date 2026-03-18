@@ -5,7 +5,7 @@ from typing import ClassVar
 
 from bubus import BaseEvent, EventBus
 
-from ..events import CrawlEvent, ProcessEvent
+from ..events import CrawlCompleted, CrawlEvent, ProcessEvent, ProcessKillEvent
 from ..models import Snapshot
 from ..plugins import Hook, Plugin
 from .base import BaseService
@@ -13,10 +13,14 @@ from .machine_service import MachineService
 
 
 class CrawlService(BaseService):
-    """Registers a handler per crawl hook that builds env and emits ProcessEvent."""
+    """Registers a handler per crawl hook that builds env and emits ProcessEvent.
 
-    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [CrawlEvent]
-    EMITS: ClassVar[list[type[BaseEvent]]] = [ProcessEvent]
+    On CrawlCompleted, emits ProcessKillEvent for each background hook to
+    SIGTERM daemon processes that should shut down after the crawl phase.
+    """
+
+    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [CrawlEvent, CrawlCompleted]
+    EMITS: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, ProcessKillEvent]
 
     def __init__(
         self,
@@ -66,3 +70,14 @@ class CrawlService(BaseService):
                 await self.bus.emit(process_event)
 
         return handler
+
+    async def on_CrawlCompleted(self, event: CrawlCompleted) -> None:
+        """SIGTERM background daemon hooks now that the crawl phase is done."""
+        for plugin, hook in self.hooks:
+            if hook.is_background:
+                plugin_output_dir = self.output_dir / plugin.name
+                await self.bus.emit(ProcessKillEvent(
+                    plugin_name=plugin.name,
+                    hook_name=hook.name,
+                    output_dir=str(plugin_output_dir),
+                ))

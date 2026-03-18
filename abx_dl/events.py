@@ -55,8 +55,9 @@ class ProcessEvent(BaseEvent):
     Hooks are +x executables, run directly as: [hook_path, *hook_args].
     The env dict must include correct PATH (set via MachineEvent updates).
 
-    Uses parallel event concurrency so background hooks (fire-and-forget)
-    can run alongside the current phase without waiting for the bus serial lock.
+    Uses parallel event concurrency so fire-and-forget background hooks can
+    process alongside the current phase event without waiting for the bus
+    serial lock.
 
     event_handler_timeout must be set explicitly — otherwise bubus falls back
     to the bus-level event_timeout (60s), which is too short for subprocesses.
@@ -73,6 +74,14 @@ class ProcessEvent(BaseEvent):
     snapshot_id: str = ''
     timeout: int = 60
     event_timeout: float = 360.0
+
+
+class ProcessKillEvent(BaseEvent):
+    """Command: SIGTERM a background daemon hook via its PID file."""
+    plugin_name: str
+    hook_name: str
+    output_dir: str
+    event_timeout: float = 10.0
 
 
 class ProcessCompleted(BaseEvent):

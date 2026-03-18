@@ -4,8 +4,10 @@ Event-driven orchestrator for abx-dl using bubus.
 Each plugin hook is registered as its own handler on the EventBus, keyed by
 CrawlEvent or SnapshotEvent. The bus's default serial handler execution ensures
 foreground hooks run in registration order (sorted by hook order). Background
-hooks fire-and-forget via create_task and are drained with wait_until_idle
-before Completed events.
+hooks fire-and-forget their ProcessEvent (parallel event concurrency lets it
+process alongside the phase event). On Completed events, phase services emit
+ProcessKillEvent to SIGTERM daemon hooks; wait_until_idle drains any remaining
+background ProcessEvents.
 
 Events follow command/completion pairs:
   - ProcessEvent (command) → handler runs subprocess
@@ -103,13 +105,13 @@ async def download(
     event_kwargs = dict(url=url, snapshot_id=snapshot.id, output_dir=str(output_dir))
     try:
         await bus.emit(CrawlEvent(**event_kwargs))
-        await bus.wait_until_idle()       # drain background crawl hooks
-        await bus.emit(CrawlCompleted(**event_kwargs))
+        await bus.emit(CrawlCompleted(**event_kwargs))   # SIGTERMs bg daemons via ProcessKillEvent
+        await bus.wait_until_idle()                      # drain bg ProcessEvents
 
         if not crawl_only:
             await bus.emit(SnapshotEvent(**event_kwargs))
-            await bus.wait_until_idle()   # drain background snapshot hooks
-            await bus.emit(SnapshotCompleted(**event_kwargs))
+            await bus.emit(SnapshotCompleted(**event_kwargs))   # SIGTERMs bg daemons
+            await bus.wait_until_idle()                        # drain bg ProcessEvents
 
     finally:
         await bus.stop()

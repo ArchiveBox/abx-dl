@@ -5,7 +5,7 @@ from typing import ClassVar
 
 from bubus import BaseEvent, EventBus
 
-from ..events import ProcessEvent, SnapshotEvent
+from ..events import ProcessEvent, ProcessKillEvent, SnapshotCompleted, SnapshotEvent
 from ..models import Snapshot
 from ..plugins import Hook, Plugin
 from .base import BaseService
@@ -13,10 +13,14 @@ from .machine_service import MachineService
 
 
 class SnapshotService(BaseService):
-    """Registers a handler per snapshot hook that builds env and emits ProcessEvent."""
+    """Registers a handler per snapshot hook that builds env and emits ProcessEvent.
 
-    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [SnapshotEvent]
-    EMITS: ClassVar[list[type[BaseEvent]]] = [ProcessEvent]
+    On SnapshotCompleted, emits ProcessKillEvent for each background hook to
+    SIGTERM daemon processes that should shut down after the snapshot phase.
+    """
+
+    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [SnapshotEvent, SnapshotCompleted]
+    EMITS: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, ProcessKillEvent]
 
     def __init__(
         self,
@@ -66,3 +70,14 @@ class SnapshotService(BaseService):
                 await self.bus.emit(process_event)
 
         return handler
+
+    async def on_SnapshotCompleted(self, event: SnapshotCompleted) -> None:
+        """SIGTERM background daemon hooks now that the snapshot phase is done."""
+        for plugin, hook in self.hooks:
+            if hook.is_background:
+                plugin_output_dir = self.output_dir / plugin.name
+                await self.bus.emit(ProcessKillEvent(
+                    plugin_name=plugin.name,
+                    hook_name=hook.name,
+                    output_dir=str(plugin_output_dir),
+                ))

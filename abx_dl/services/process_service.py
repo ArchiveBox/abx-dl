@@ -11,22 +11,22 @@ from typing import Any, Callable, ClassVar
 
 from bubus import BaseEvent, EventBus
 
-from ..events import BinaryEvent, MachineEvent, ProcessCompleted, ProcessEvent
+from ..events import BinaryEvent, MachineEvent, ProcessCompleted, ProcessEvent, ProcessKillEvent
 from ..models import ArchiveResult, Process, VisibleRecord, write_jsonl, now_iso
-from ..process_utils import write_pid_file_with_mtime, write_cmd_file
+from ..process_utils import write_pid_file_with_mtime, write_cmd_file, safe_kill_process
 from .base import BaseService
 
 
 class ProcessService(BaseService):
     """Owns all hook subprocess execution.
 
-    All hook execution flows through ProcessEvent — no other service runs
-    processes directly. Background and foreground hooks follow the same
-    flow: spawn, wait, finalize, emit ProcessCompleted. bubus concurrency
-    handles running multiple handlers in parallel.
+    Foreground hooks block their handler until completion. Background hooks
+    are fire-and-forget at the phase service level (parallel event concurrency
+    lets them process alongside the phase event). Daemon hooks block in
+    process.wait() until ProcessKillEvent SIGTERM's them.
     """
 
-    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, ProcessCompleted]
+    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, ProcessCompleted, ProcessKillEvent]
     EMITS: ClassVar[list[type[BaseEvent]]] = [ProcessCompleted, BinaryEvent, MachineEvent]
 
     def __init__(
@@ -79,6 +79,13 @@ class ProcessService(BaseService):
             elif record_type == 'Machine':
                 await self.bus.emit(MachineEvent(**record))
 
+    async def on_ProcessKillEvent(self, event: ProcessKillEvent) -> None:
+        """SIGTERM a background daemon process via its PID file."""
+        output_dir = Path(event.output_dir)
+        pid_file = output_dir / f'{event.hook_name}.pid'
+        cmd_file = output_dir / f'{event.hook_name}.sh'
+        safe_kill_process(pid_file, cmd_file, signal_num=signal.SIGTERM)
+
 
 # ── Hook execution ──────────────────────────────────────────────────────────
 
@@ -87,7 +94,12 @@ def _run_hook(
     plugin_name: str, hook_name: str, snapshot_id: str,
     is_background: bool, output_dir: Path, env: dict[str, str], timeout: int = 60,
 ) -> tuple[Process, ArchiveResult]:
-    """Run a hook subprocess (foreground or background) and block until it exits."""
+    """Run a hook subprocess and block until it exits.
+
+    For background hooks, start_new_session=True gives process group isolation.
+    Daemon hooks will block here until SIGTERM'd via ProcessKillEvent.
+    Finite background hooks complete on their own.
+    """
     cmd = [hook_path, *hook_args]
     proc = Process(cmd=cmd, pwd=str(output_dir), timeout=timeout, started_at=now_iso(),
                    plugin=plugin_name, hook_name=hook_name)
