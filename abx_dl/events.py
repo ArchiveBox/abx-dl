@@ -54,7 +54,11 @@ class ProcessEvent(BaseEvent):
 
     Hooks are +x executables, run directly as: [hook_path, *hook_args].
     The env dict must include correct PATH (set via MachineEvent updates).
+
+    Uses parallel event concurrency so background hooks (fire-and-forget)
+    can run alongside the current phase without waiting for the bus serial lock.
     """
+    event_concurrency: str = 'parallel'
     plugin_name: str
     hook_name: str
     hook_path: str

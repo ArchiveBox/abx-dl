@@ -50,13 +50,17 @@ class CrawlService(BaseService):
             plugin_output_dir = self.output_dir / _plugin.name
             plugin_output_dir.mkdir(parents=True, exist_ok=True)
 
-            await self.bus.emit(ProcessEvent(
+            process_event = ProcessEvent(
                 plugin_name=_plugin.name, hook_name=_hook.name,
                 hook_path=str(_hook.path),
                 hook_args=[f'--url={self.url}', f'--snapshot-id={self.snapshot.id}'],
                 is_background=_hook.is_background,
                 output_dir=str(plugin_output_dir), env=env,
                 snapshot_id=self.snapshot.id, timeout=timeout,
-            ))
+            )
+            if _hook.is_background:
+                self.bus.emit(process_event)   # fire-and-forget; parallel event concurrency
+            else:
+                await self.bus.emit(process_event)
 
         return handler

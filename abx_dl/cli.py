@@ -544,7 +544,7 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool):
                     console.print("\n[bold]Hooks:[/bold]")
                     for hook in hooks:
                         bg = " [dim](background)[/dim]" if hook.is_background else ""
-                        console.print(f"  Step {hook.step}.{hook.priority}: {hook.name}{bg}")
+                        console.print(f"  {hook.order:02d}: {hook.name}{bg}")
 
 
 @cli.command()
