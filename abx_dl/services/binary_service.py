@@ -42,33 +42,26 @@ class BinaryService(BaseService):
         super().__init__(bus)
 
     async def on_BinaryEvent(self, event: BinaryEvent) -> None:
-        record = event.record
-        name = record.get('name', '').strip()
-        if not name:
+        if not event.name:
             return
-        abspath = str(record.get('abspath', '')).strip()
-        if abspath:
-            # Binary already resolved — emit MachineEvent to update config
-            await self.bus.emit(MachineEvent(record={
-                'type': 'Machine', '_method': 'update',
-                'key': f'config/{_binary_env_key(name)}', 'value': abspath,
-            }))
+        if event.abspath:
+            await self.bus.emit(MachineEvent(
+                _method='update',
+                key=f'config/{_binary_env_key(event.name)}',
+                value=event.abspath,
+            ))
             return
 
-        # Build hook args from the record
+        # Build hook args from event fields
         from ..models import uuid7
-        hook_args = [f'--name={name}']
-        binary_id = str(record.get('binary_id') or uuid7())
-        hook_args.append(f'--binary-id={binary_id}')
-        binproviders = str(record.get('binproviders') or record.get('binprovider') or '').strip()
-        if binproviders:
-            hook_args.append(f'--binproviders={binproviders}')
-        overrides = record.get('overrides')
-        if overrides is not None:
-            hook_args.append(f'--overrides={json.dumps(overrides)}')
-        custom_cmd = record.get('custom_cmd', record.get('custom-cmd'))
-        if custom_cmd:
-            hook_args.append(f'--custom-cmd={custom_cmd}')
+        binary_id = event.binary_id or uuid7()
+        hook_args = [f'--name={event.name}', f'--binary-id={binary_id}']
+        if event.binproviders:
+            hook_args.append(f'--binproviders={event.binproviders}')
+        if event.overrides is not None:
+            hook_args.append(f'--overrides={json.dumps(event.overrides)}')
+        if event.custom_cmd:
+            hook_args.append(f'--custom-cmd={event.custom_cmd}')
 
         # Broadcast to all plugins' on_Binary hooks — each hook decides
         # internally whether it's the right provider for this binary.
@@ -88,5 +81,5 @@ class BinaryService(BaseService):
                     env=plugin_env, timeout=300,
                 ))
                 # Stop once resolved
-                if self.machine.shared_config.get(_binary_env_key(name)):
+                if self.machine.shared_config.get(_binary_env_key(event.name)):
                     return

@@ -35,8 +35,6 @@ class SnapshotEvent(BaseEvent):
 class ProcessEvent(BaseEvent):
     """Command: run a hook subprocess.
 
-    The caller builds hook_args (e.g. ['--url=...', '--snapshot-id=...'] for
-    Crawl/Snapshot hooks, or ['--binary-id=...', '--name=...'] for Binary hooks).
     Hooks are +x executables, run directly as: [hook_path, *hook_args].
     The env dict must include correct PATH (set via MachineEvent updates).
     """
@@ -70,14 +68,23 @@ class ProcessCompleted(BaseEvent):
 # ── Binary resolution ────────────────────────────────────────────────────────
 
 class BinaryEvent(BaseEvent):
-    """A Binary JSONL record needs resolution via provider on_Binary hooks."""
-    record: dict[str, Any]
+    """A hook needs a binary resolved/installed."""
+    name: str
+    abspath: str = ''
+    binary_id: str = ''
+    machine_id: str = ''
+    binproviders: str = ''
+    overrides: dict[str, Any] | None = None
+    custom_cmd: str = ''
     event_timeout: float = 300.0
 
 
 # ── Machine config update ────────────────────────────────────────────────────
 
 class MachineEvent(BaseEvent):
-    """A Machine JSONL record — update shared config."""
-    record: dict[str, Any]
+    """Update shared machine config."""
+    _method: str = ''
+    key: str = ''
+    value: str = ''
+    config: dict[str, Any] | None = None
     event_timeout: float = 10.0

@@ -21,22 +21,20 @@ class MachineService(BaseService):
         super().__init__(bus)
 
     async def on_MachineEvent(self, event: MachineEvent) -> None:
-        record = event.record
-        config = record.get('config')
-        if isinstance(config, dict):
-            self.shared_config.update(config)
+        if event.config is not None:
+            self.shared_config.update(event.config)
             try:
-                set_config(**{k: v for k, v in config.items() if v is not None})
+                set_config(**{k: v for k, v in event.config.items() if v is not None})
             except Exception:
                 pass
             return
-        if record.get('_method') != 'update':
+        if event._method != 'update':
             return
-        key = record.get('key', '').replace('config/', '')
+        key = event.key.replace('config/', '')
         if key:
-            self.shared_config[key] = record.get('value', '')
+            self.shared_config[key] = event.value
             try:
-                set_config(**{key: record.get('value', '')})
+                set_config(**{key: event.value})
             except Exception:
                 pass
 

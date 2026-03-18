@@ -86,11 +86,11 @@ class ProcessService(BaseService):
     async def on_ProcessCompleted(self, event: ProcessCompleted) -> None:
         """Parse JSONL stdout from completed processes, emit Binary/Machine events."""
         for record in _parse_jsonl_records(event.stdout):
-            record_type = record.get('type')
+            record_type = record.pop('type', None)
             if record_type == 'Binary':
-                await self.bus.emit(BinaryEvent(record=record))
+                await self.bus.emit(BinaryEvent(**record))
             elif record_type == 'Machine':
-                await self.bus.emit(MachineEvent(record=record))
+                await self.bus.emit(MachineEvent(**record))
 
     # ── Background hook management (called by download() lifecycle) ─────────
 
