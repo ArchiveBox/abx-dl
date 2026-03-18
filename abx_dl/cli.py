@@ -2,6 +2,7 @@
 CLI interface for abx-dl using rich-click.
 """
 
+import asyncio
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -16,7 +17,7 @@ from rich.table import Table
 
 from .config import get_config, set_config, CONFIG_FILE
 from .dependencies import load_binary
-from .executor import download
+from .orchestrator import download
 from .models import ArchiveResult, Process
 from .plugins import discover_plugins, filter_plugins
 
@@ -306,17 +307,6 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
     interactive_tty = stdout_is_tty or stderr_is_tty
     ui_console = stderr_console if stderr_is_tty else console
 
-    results: list[VisibleRecord] = []
-    gen = download(
-        url,
-        plugins,
-        out_path,
-        selected,
-        config_overrides or None,
-        auto_install=not no_install,
-        emit_jsonl=not stdout_is_tty,
-    )
-
     if interactive_tty:
         ui_console.print(f"[bold blue]Downloading:[/bold blue] {url}")
         ui_console.print(f"[dim]Output: {out_path.absolute()}[/dim]")
@@ -341,27 +331,33 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
             transient=False,
         )
         status_view = _LiveStatusView(live_results, progress, timeout_seconds)
-
         task_id = progress.add_task("[cyan]Running plugins...", total=total_hooks)
+
+        def on_result(record: VisibleRecord) -> None:
+            if isinstance(record, Process):
+                task = progress.tasks[task_id]
+                if task.total is not None:
+                    progress.update(task_id, total=task.total + 1)
+            progress.update(task_id, advance=1, description=f"[cyan]{escape(_record_hook_name(record))}[/cyan]")
+            live_results[_record_key(record)] = record
+
         with Live(
             status_view,
             console=ui_console,
             refresh_per_second=8,
             transient=False,
             vertical_overflow='visible',
-        ) as live:
-            for record in gen:
-                results.append(record)
-                if isinstance(record, Process):
-                    task = progress.tasks[task_id]
-                    if task.total is not None:
-                        progress.update(task_id, total=task.total + 1)
-                progress.update(task_id, advance=1, description=f"[cyan]{escape(_record_hook_name(record))}[/cyan]")
-                live_results[_record_key(record)] = record
-                live.refresh()
+        ):
+            results = asyncio.run(download(
+                url, plugins, out_path, selected, config_overrides or None,
+                auto_install=not no_install, emit_jsonl=not stdout_is_tty,
+                on_result=on_result,
+            ))
     else:
-        for record in gen:
-            results.append(record)
+        results = asyncio.run(download(
+            url, plugins, out_path, selected, config_overrides or None,
+            auto_install=not no_install, emit_jsonl=not stdout_is_tty,
+        ))
 
     if interactive_tty:
         archive_results = [record for record in results if isinstance(record, ArchiveResult)]
@@ -373,9 +369,6 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
             f"[bright_black]{sum(1 for r in archive_results if r.status == 'skipped')} skipped[/bright_black]"
         )
         ui_console.print(f"[dim]Output: {out_path.absolute()}[/dim]")
-    else:
-        # JSONL output for non-TTY (handled by executor, just consume generator)
-        pass
 
 
 def _run_plugin_install(selected) -> int:
@@ -384,18 +377,21 @@ def _run_plugin_install(selected) -> int:
     results_by_hook: dict[tuple[str, str], ArchiveResult] = {}
     failed_processes_by_hook: dict[tuple[str, str], Process] = {}
     with TemporaryDirectory(prefix='abx-dl-install-') as temp_dir:
-        for record in download(
+        def on_record(record: VisibleRecord) -> None:
+            if isinstance(record, ArchiveResult):
+                results_by_hook[(record.plugin, record.hook_name)] = record
+            elif isinstance(record, Process) and record.exit_code not in (None, 0):
+                failed_processes_by_hook[(record.plugin or '', _record_hook_name(record))] = record
+
+        asyncio.run(download(
             'https://example.com',
             selected,
             Path(temp_dir),
             auto_install=True,
             crawl_only=True,
             emit_jsonl=False,
-        ):
-            if isinstance(record, ArchiveResult):
-                results_by_hook[(record.plugin, record.hook_name)] = record
-            elif isinstance(record, Process) and record.exit_code not in (None, 0):
-                failed_processes_by_hook[(record.plugin or '', _record_hook_name(record))] = record
+            on_result=on_record,
+        ))
 
     no_install_hooks = [name for name, plugin in sorted(selected.items()) if not plugin.get_crawl_hooks()]
     visible_records: list[VisibleRecord] = [

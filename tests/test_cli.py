@@ -179,21 +179,28 @@ def test_run_plugin_install_passes_through_failed_binary_hook_stderr(monkeypatch
         ]
     )
 
-    def fake_download(*args, **kwargs):
-        yield Process(
-            cmd=['python', 'on_Binary__12_puppeteer_install.py'],
-            plugin='puppeteer',
-            hook_name='on_Binary__12_puppeteer_install',
-            exit_code=1,
-            stderr=sandbox_error,
-        )
-        yield ArchiveResult(
-            snapshot_id='snap',
-            plugin='chrome',
-            hook_name='on_Crawl__70_chrome_install.finite.bg',
-            status='succeeded',
-            output_str='chromium requested',
-        )
+    async def fake_download(*args, **kwargs):
+        on_result = kwargs.get('on_result')
+        records = [
+            Process(
+                cmd=['python', 'on_Binary__12_puppeteer_install.py'],
+                plugin='puppeteer',
+                hook_name='on_Binary__12_puppeteer_install',
+                exit_code=1,
+                stderr=sandbox_error,
+            ),
+            ArchiveResult(
+                snapshot_id='snap',
+                plugin='chrome',
+                hook_name='on_Crawl__70_chrome_install.finite.bg',
+                status='succeeded',
+                output_str='chromium requested',
+            ),
+        ]
+        for record in records:
+            if on_result:
+                on_result(record)
+        return records
 
     monkeypatch.setattr(cli_module, 'download', fake_download)
     monkeypatch.setattr(

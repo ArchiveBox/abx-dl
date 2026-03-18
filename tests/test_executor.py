@@ -1,7 +1,8 @@
+import asyncio
 import json
 from pathlib import Path
 
-from abx_dl.executor import download
+from abx_dl.orchestrator import download
 from abx_dl.models import ArchiveResult
 from abx_dl.plugins import discover_plugins
 
@@ -9,6 +10,11 @@ from abx_dl.plugins import discover_plugins
 def _write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content)
+
+
+def _run_download(*args, **kwargs):
+    """Helper to run async download() from sync test code."""
+    return asyncio.run(download(*args, **kwargs))
 
 
 def test_download_dispatches_binary_hooks_and_applies_machine_updates(tmp_path: Path) -> None:
@@ -71,7 +77,7 @@ def test_download_dispatches_binary_hooks_and_applies_machine_updates(tmp_path: 
     )
 
     plugins = discover_plugins(plugins_root)
-    results = list(download('https://example.com', plugins, tmp_path / 'run', auto_install=True))
+    results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
 
     assert next(result for result in results if result.plugin == 'producer').status == 'succeeded'
     assert results[-1].output_str.endswith('|ready|' + str(tmp_path / 'run' / 'provider' / 'lib' / 'node_modules'))
@@ -149,7 +155,7 @@ def test_download_applies_side_effects_from_completed_background_hooks(tmp_path:
     )
 
     plugins = discover_plugins(plugins_root)
-    results = list(download('https://example.com', plugins, tmp_path / 'run', auto_install=True))
+    results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
 
     consumer_result = next(result for result in results if result.plugin == 'consumer')
     assert consumer_result.output_str == str(tmp_path / 'run' / 'provider' / 'bin' / 'demo') + '|ready'
@@ -192,9 +198,9 @@ def test_download_finalizes_background_hooks_after_sigterm(tmp_path: Path) -> No
     )
 
     plugins = discover_plugins(plugins_root)
+    all_results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
     results = [
-        result
-        for result in download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
+        result for result in all_results
         if result.plugin == 'bgdemo' and result.hook_name == 'on_Snapshot__05_wait.bg'
     ]
 
@@ -236,7 +242,7 @@ def test_download_preserves_full_hook_stderr_in_archive_result(tmp_path: Path) -
     )
 
     plugins = discover_plugins(plugins_root)
-    results = list(download('https://example.com', plugins, tmp_path / 'run', auto_install=True))
+    results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
 
     failure = next(result for result in results if result.plugin == 'broken')
     assert failure.status == 'failed'
@@ -293,7 +299,7 @@ def test_download_applies_background_side_effects_in_hook_lifecycle_order(tmp_pa
     )
 
     plugins = discover_plugins(plugins_root)
-    results = list(download('https://example.com', plugins, tmp_path / 'run', auto_install=True))
+    results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
 
     consumer_result = next(result for result in results if result.plugin == 'consumer')
     assert consumer_result.output_str == 'snapshot'
@@ -314,14 +320,12 @@ def test_download_can_suppress_jsonl_stdout(tmp_path: Path, capsys) -> None:
     )
 
     plugins = discover_plugins(plugins_root)
-    results = list(
-        download(
-            'https://example.com',
-            plugins,
-            tmp_path / 'run',
-            auto_install=True,
-            emit_jsonl=False,
-        )
+    results = _run_download(
+        'https://example.com',
+        plugins,
+        tmp_path / 'run',
+        auto_install=True,
+        emit_jsonl=False,
     )
 
     captured = capsys.readouterr()
@@ -346,7 +350,7 @@ def test_cleanup_does_not_refinalize_failed_foreground_hooks(tmp_path: Path) -> 
     )
 
     plugins = discover_plugins(plugins_root)
-    results = [result for result in download('https://example.com', plugins, tmp_path / 'run', auto_install=True) if result.plugin == 'foreground']
+    results = [result for result in _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True) if result.plugin == 'foreground']
 
     assert [result.status for result in results] == ['failed']
 
@@ -375,7 +379,7 @@ def test_successful_hook_with_only_logs_is_succeeded(tmp_path: Path) -> None:
     )
 
     plugins = discover_plugins(plugins_root)
-    results = [result for result in download('https://example.com', plugins, tmp_path / 'run', auto_install=True)]
+    results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
 
     assert [result.status for result in results] == ['succeeded']
 
@@ -395,7 +399,7 @@ def test_successful_hook_with_skipping_log_stays_succeeded_without_explicit_skip
     )
 
     plugins = discover_plugins(plugins_root)
-    results = [result for result in download('https://example.com', plugins, tmp_path / 'run', auto_install=True)]
+    results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
 
     assert [result.status for result in results] == ['succeeded']
 
@@ -420,7 +424,7 @@ def test_output_str_absolute_paths_are_stored_relative_to_hook_output_dir(tmp_pa
     plugins = discover_plugins(plugins_root)
     results = [
         result
-        for result in download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
+        for result in _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
         if isinstance(result, ArchiveResult)
     ]
 
