@@ -33,7 +33,7 @@ class SnapshotService(BaseService):
         self.output_dir = output_dir
         self.machine = machine
         self.hooks = hooks
-        self.bus = bus
+        super().__init__(bus)
         self._register_hook_handlers()
 
     def _register_hook_handlers(self) -> None:
