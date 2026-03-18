@@ -40,7 +40,7 @@ class BinaryService(BaseService):
         self.emit_result = emit_result
         super().__init__(bus)
 
-    async def on_BinaryEvent(self, event: BinaryEvent) -> None:
+    async def on_Binary(self, event: BinaryEvent) -> None:
         record = event.record
         name = record.get('name', '').strip()
         if not name:

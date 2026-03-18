@@ -18,7 +18,7 @@ class MachineService(BaseService):
         self.shared_config = shared_config
         super().__init__(bus)
 
-    async def on_MachineEvent(self, event: MachineEvent) -> None:
+    async def on_Machine(self, event: MachineEvent) -> None:
         record = event.record
         config = record.get('config')
         if isinstance(config, dict):
