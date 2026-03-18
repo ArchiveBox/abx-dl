@@ -84,7 +84,7 @@ async def download(
         bus, machine=machine_svc, plugins=plugins, auto_install=auto_install,
         output_dir=output_dir, emit_result=emit_result,
     )
-    process_svc = ProcessService(
+    ProcessService(
         bus, index_path=index_path, output_dir=output_dir, emit_jsonl=emit_jsonl,
         stderr_is_tty=stderr_is_tty, emit_result=emit_result,
     )
@@ -108,8 +108,6 @@ async def download(
             await bus.emit(SnapshotCompleted(**event_kwargs))
 
     finally:
-        for ar in process_svc.cleanup_background_hooks():
-            emit_result(ar)
         await bus.stop()
 
     return results
