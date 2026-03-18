@@ -22,12 +22,28 @@ class CrawlEvent(BaseEvent):
     event_timeout: float = 300.0
 
 
+class CrawlCompleted(BaseEvent):
+    """Emitted after all on_Crawl hooks have finished."""
+    url: str
+    snapshot_id: str
+    output_dir: str
+    event_timeout: float = 10.0
+
+
 class SnapshotEvent(BaseEvent):
     """Dispatched after crawl phase to trigger all on_Snapshot hook handlers."""
     url: str
     snapshot_id: str
     output_dir: str
     event_timeout: float = 300.0
+
+
+class SnapshotCompleted(BaseEvent):
+    """Emitted after all on_Snapshot hooks have finished."""
+    url: str
+    snapshot_id: str
+    output_dir: str
+    event_timeout: float = 10.0
 
 
 # ── Process (hook subprocess execution) ──────────────────────────────────────

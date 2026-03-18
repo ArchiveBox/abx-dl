@@ -20,7 +20,7 @@ from typing import Any, Callable
 
 from bubus import EventBus
 
-from .events import CrawlEvent, SnapshotEvent
+from .events import CrawlEvent, CrawlCompleted, SnapshotEvent, SnapshotCompleted
 from .models import Snapshot, VisibleRecord, write_jsonl
 from .plugins import Hook, Plugin, filter_plugins
 
@@ -100,13 +100,16 @@ async def download(
     )
 
     # --- Drive the lifecycle through the bus ---
+    event_kwargs = dict(url=url, snapshot_id=snapshot.id, output_dir=str(output_dir))
     try:
-        await bus.emit(CrawlEvent(url=url, snapshot_id=snapshot.id, output_dir=str(output_dir)))
+        await bus.emit(CrawlEvent(**event_kwargs))
+        await bus.emit(CrawlCompleted(**event_kwargs))
 
         if crawl_only and known_background_meta_files:
             await process_svc.wait_for_background_hooks()
         elif not crawl_only:
-            await bus.emit(SnapshotEvent(url=url, snapshot_id=snapshot.id, output_dir=str(output_dir)))
+            await bus.emit(SnapshotEvent(**event_kwargs))
+            await bus.emit(SnapshotCompleted(**event_kwargs))
 
     finally:
         for ar in process_svc.cleanup_background_hooks():
