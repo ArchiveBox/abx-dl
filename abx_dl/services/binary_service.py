@@ -54,43 +54,39 @@ class BinaryService(BaseService):
                 'key': f'config/{_binary_env_key(name)}', 'value': abspath,
             }))
             return
-        # Run provider on_Binary hooks to resolve
-        providers = record.get('binproviders') or record.get('binprovider') or 'env'
-        for provider_name in [p.strip() for p in str(providers).split(',') if p.strip()]:
-            if not self.auto_install and provider_name != 'env':
-                continue
-            provider_plugin = self.plugins.get(provider_name)
-            if not provider_plugin:
-                continue
-            provider_output_dir = self.output_dir / provider_plugin.name
-            provider_output_dir.mkdir(parents=True, exist_ok=True)
-            provider_env = self.machine.get_env_for_plugin(
-                provider_plugin, run_output_dir=self.output_dir,
-            )
 
-            # Build binary hook args
-            from ..models import uuid7
-            binary_id = str(record.get('binary_id') or uuid7())
-            machine_id = str(record.get('machine_id') or provider_env.get('MACHINE_ID', ''))
-            hook_args = [f'--binary-id={binary_id}', f'--machine-id={machine_id}', f'--name={name}']
-            binproviders = str(record.get('binproviders') or record.get('binprovider') or '').strip()
-            if binproviders:
-                hook_args.append(f'--binproviders={binproviders}')
-            overrides = record.get('overrides')
-            if overrides is not None:
-                hook_args.append(f'--overrides={json.dumps(overrides)}')
-            custom_cmd = record.get('custom_cmd', record.get('custom-cmd'))
-            if custom_cmd:
-                hook_args.append(f'--custom-cmd={custom_cmd}')
+        # Build hook args from the record
+        from ..models import uuid7
+        hook_args = [f'--name={name}']
+        binary_id = str(record.get('binary_id') or uuid7())
+        hook_args.append(f'--binary-id={binary_id}')
+        binproviders = str(record.get('binproviders') or record.get('binprovider') or '').strip()
+        if binproviders:
+            hook_args.append(f'--binproviders={binproviders}')
+        overrides = record.get('overrides')
+        if overrides is not None:
+            hook_args.append(f'--overrides={json.dumps(overrides)}')
+        custom_cmd = record.get('custom_cmd', record.get('custom-cmd'))
+        if custom_cmd:
+            hook_args.append(f'--custom-cmd={custom_cmd}')
 
-            for binary_hook in provider_plugin.get_binary_hooks():
-                # All hook execution flows through ProcessEvent
+        # Broadcast to all plugins' on_Binary hooks — each hook decides
+        # internally whether it's the right provider for this binary.
+        for plugin in self.plugins.values():
+            for binary_hook in plugin.get_binary_hooks():
+                plugin_output_dir = self.output_dir / plugin.name
+                plugin_output_dir.mkdir(parents=True, exist_ok=True)
+                plugin_env = self.machine.get_env_for_plugin(
+                    plugin, run_output_dir=self.output_dir,
+                )
+                machine_id = plugin_env.get('MACHINE_ID', '')
                 await self.bus.emit(ProcessEvent(
-                    plugin_name=provider_plugin.name, hook_name=binary_hook.name,
-                    hook_path=str(binary_hook.path), hook_args=hook_args,
-                    is_background=False, output_dir=str(provider_output_dir),
-                    env=provider_env, timeout=300,
+                    plugin_name=plugin.name, hook_name=binary_hook.name,
+                    hook_path=str(binary_hook.path),
+                    hook_args=hook_args + [f'--machine-id={machine_id}'],
+                    is_background=False, output_dir=str(plugin_output_dir),
+                    env=plugin_env, timeout=300,
                 ))
-                # Check if the binary was resolved (MachineEvent would have updated config)
+                # Stop once resolved
                 if self.machine.shared_config.get(_binary_env_key(name)):
                     return
