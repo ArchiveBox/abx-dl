@@ -5,6 +5,10 @@ Each plugin hook is registered as its own handler on the EventBus, keyed by
 CrawlEvent or SnapshotEvent. The bus's default serial handler execution ensures
 hooks run in registration order (sorted by step/priority).
 
+Events follow command/completion pairs:
+  - ProcessEvent (command) → handler runs subprocess
+  - ProcessCompleted (notification) → handlers parse JSONL, emit Binary/Machine
+
 Side-effect cascades (Binary→Machine→config) chain through ``await bus.emit()``
 queue-jumps: when a handler awaits an emitted event, bubus processes it and all
 its children synchronously before returning.
@@ -22,11 +26,11 @@ from typing import Any, Callable
 from bubus import EventBus
 
 from .config import build_env_for_plugin, set_config
-from .dependencies import load_binary, install_binary
 from .events import (
     CrawlEvent,
     SnapshotEvent,
     ProcessEvent,
+    ProcessCompleted,
     BinaryEvent,
     MachineEvent,
 )
@@ -154,26 +158,29 @@ def _background_hook_sort_key(meta_path: Path) -> tuple[int, int, int, str]:
     return (event_order.get(match.group(1), 99), int(match.group(2)), int(match.group(3)), hook_name)
 
 
-def check_plugin_dependencies(plugin: Plugin, auto_install: bool = True) -> tuple[bool, list[str]]:
-    if plugin.get_crawl_hooks():
-        return True, []
-    missing = []
-    for spec in plugin.binaries:
-        binary = load_binary(spec)
-        if not binary.is_valid:
-            if auto_install:
-                binary = install_binary(spec)
-            if not binary.is_valid:
-                missing.append(spec.get('name', '?'))
-    return len(missing) == 0, missing
-
-
 # ============================================================================
 # Subprocess execution (no bus interaction — just runs and returns results)
 # ============================================================================
 
+# ============================================================================
+# ADAPTED FROM: ArchiveBox/archivebox/hooks.py run_hook()
+# COMMIT: 69965a27820507526767208c179c62f4a579555c
+# DATE: 2024-12-30
+# MODIFICATIONS:
+#   - Removed Django settings references
+#   - Removed Machine model references
+#   - Simplified return type to (Process, ArchiveResult, is_background)
+#   - Uses abx-dl's Process/ArchiveResult models instead of HookResult dict
+#   - Writes to files like ArchiveBox but still returns parsed output
+# ============================================================================
 def run_hook(hook: Hook, url: str, snapshot_id: str, output_dir: Path, env: dict[str, str], timeout: int = 60) -> tuple[Process, ArchiveResult, bool]:
-    """Run a single hook subprocess. Returns (Process, ArchiveResult, is_background)."""
+    """
+    Run a single hook and return Process, ArchiveResult, and is_background flag.
+
+    For background hooks, returns immediately with is_background=True.
+    Process output is written to stdout.log/stderr.log files.
+    PID files are created with mtime set to process start time for validation.
+    """
     interpreter = get_interpreter(hook.language)
     if not interpreter:
         proc = Process(cmd=[], exit_code=1, stderr=f'Unknown language: {hook.language}', plugin=hook.plugin_name, hook_name=hook.name)
@@ -463,10 +470,27 @@ def _finalize_background_hook(
     return proc, ar
 
 
+# ============================================================================
+# ADAPTED FROM: ArchiveBox/archivebox/crawls/models.py Crawl.cleanup()
+# COMMIT: 69965a27820507526767208c179c62f4a579555c
+# DATE: 2024-12-30
+# MODIFICATIONS:
+#   - Standalone function instead of model method
+#   - Takes output_dir parameter instead of self.OUTPUT_DIR
+#   - Writes final results to index.jsonl
+#   - No Django ORM updates
+# ============================================================================
 def cleanup_background_hooks(
     output_dir: Path, index_path: Path, stderr_is_tty: bool, *,
     emit_jsonl: bool, known_meta_files: set[Path] | None = None,
 ) -> list[ArchiveResult]:
+    """
+    Clean up background hooks by scanning for all .meta.json files.
+
+    Sends SIGTERM, waits, then SIGKILL if needed.
+    Uses process group killing to handle Chrome and its children.
+    Handles unkillable processes gracefully.
+    """
     if not output_dir.exists():
         return []
     meta_files = sorted(known_meta_files) if known_meta_files is not None else list(output_dir.glob('**/on_*.meta.json'))
@@ -505,52 +529,72 @@ def cleanup_background_hooks(
             continue
 
         try:
+            # Step 1: Send SIGTERM for graceful shutdown
+            # Try to kill process group first (handles detached processes like Chrome)
             try:
                 try:
                     os.killpg(pid, signal.SIGTERM)
                 except (OSError, ProcessLookupError):
+                    # Fall back to killing just the process
                     os.kill(pid, signal.SIGTERM)
             except ProcessLookupError:
+                # Already dead
                 pid_file.unlink(missing_ok=True)
                 exit_code = _try_reap_process(pid)
                 _, ar = _finalize_background_hook(pid_file.parent, hook_basename, index_path, stderr_is_tty, emit_jsonl=emit_jsonl, exit_code=exit_code)
                 final_results.append(ar)
                 continue
 
+            # Step 2: Wait for graceful shutdown
             exit_code = _wait_for_process_exit(pid, timeout=2.0)
+
+            # Step 3: Check if exited after SIGTERM
+            # For current-run children, only finalize once we've actually reaped
+            # the child so their final stdout/stderr is definitely available.
             if exit_code is None and known_meta_files is not None:
                 exit_code = _wait_for_process_exit(pid, timeout=0.2)
 
             if exit_code is not None:
+                # Process terminated gracefully and was reaped
                 pid_file.unlink(missing_ok=True)
                 _, ar = _finalize_background_hook(pid_file.parent, hook_basename, index_path, stderr_is_tty, emit_jsonl=emit_jsonl, exit_code=exit_code)
                 final_results.append(ar)
                 continue
 
+            # Step 4: Process still alive, force kill ENTIRE process group with SIGKILL
             try:
                 try:
+                    # Always kill entire process group with SIGKILL (not individual processes)
                     os.killpg(pid, signal.SIGKILL)
                 except (OSError, ProcessLookupError):
+                    # Process group kill failed, try single process as fallback
                     os.kill(pid, signal.SIGKILL)
             except ProcessLookupError:
+                # Process died between check and kill
                 pid_file.unlink(missing_ok=True)
                 exit_code = _try_reap_process(pid)
                 _, ar = _finalize_background_hook(pid_file.parent, hook_basename, index_path, stderr_is_tty, emit_jsonl=emit_jsonl, exit_code=exit_code)
                 final_results.append(ar)
                 continue
 
+            # Step 5: Wait and verify death
             exit_code = _wait_for_process_exit(pid, timeout=1.0)
             if exit_code is None and is_process_alive(pid):
+                # Process is unkillable (likely in UNE state on macOS)
+                # This happens when Chrome crashes in kernel syscall (IOSurface)
+                # Log but don't block cleanup - process will remain until reboot
                 if stderr_is_tty:
                     print(f'Warning: Process {pid} is unkillable (likely crashed in kernel). Will remain until reboot.', file=sys.stderr)
                 _, ar = _finalize_background_hook(pid_file.parent, hook_basename, index_path, stderr_is_tty, emit_jsonl=emit_jsonl, error='Process unkillable')
                 final_results.append(ar)
             else:
+                # Successfully killed
                 pid_file.unlink(missing_ok=True)
                 _, ar = _finalize_background_hook(pid_file.parent, hook_basename, index_path, stderr_is_tty, emit_jsonl=emit_jsonl, exit_code=exit_code)
                 final_results.append(ar)
 
         except (ValueError, OSError):
+            # Invalid PID file or permission error
             pass
 
     return final_results
@@ -582,28 +626,9 @@ async def download(
     if emit_jsonl is None:
         emit_jsonl = not stdout_is_tty
 
-    # Filter plugins
+    # Filter plugins (no binary pre-check — on_Crawl hooks handle installation)
     if selected_plugins:
         plugins = filter_plugins(plugins, selected_plugins)
-
-    # Check/install dependencies
-    available_plugins: dict[str, Plugin] = {}
-    skipped_plugins: list[tuple[str, list[str]]] = []
-    for name, plugin in plugins.items():
-        if plugin.binaries:
-            deps_ok, missing = check_plugin_dependencies(plugin, auto_install=auto_install)
-            if deps_ok:
-                available_plugins[name] = plugin
-            else:
-                skipped_plugins.append((name, missing))
-        else:
-            available_plugins[name] = plugin
-
-    if skipped_plugins and stderr_is_tty:
-        for plugin_name, missing in skipped_plugins:
-            print(f"Warning: Skipping plugin '{plugin_name}' - missing dependencies: {', '.join(missing)}", file=sys.stderr)
-        if not auto_install:
-            print("Hint: Run without --no-install to auto-install dependencies, or run 'abx-dl plugins --install'", file=sys.stderr)
 
     # Create snapshot
     snapshot = Snapshot(url=url)
@@ -612,7 +637,7 @@ async def download(
     # Collect and sort hooks
     crawl_hooks: list[tuple[Plugin, Hook]] = []
     snapshot_hooks: list[tuple[Plugin, Hook]] = []
-    for plugin in available_plugins.values():
+    for plugin in plugins.values():
         for hook in plugin.get_crawl_hooks():
             crawl_hooks.append((plugin, hook))
         for hook in plugin.get_snapshot_hooks():
@@ -633,9 +658,9 @@ async def download(
     # --- Create event bus ---
     bus = EventBus(name='AbxDl')
 
-    # --- Register system handlers (side-effect cascades) ---
+    # --- System handler: MachineEvent → update shared config ---
 
-    async def handle_machine(event: MachineEvent) -> None:
+    async def on_MachineEvent(event: MachineEvent) -> None:
         record = event.record
         config = record.get('config')
         if isinstance(config, dict):
@@ -655,9 +680,11 @@ async def download(
             except Exception:
                 pass
 
-    bus.on(MachineEvent, handle_machine)
+    bus.on(MachineEvent, on_MachineEvent)
 
-    async def handle_binary(event: BinaryEvent) -> None:
+    # --- System handler: BinaryEvent → resolve via provider on_Binary hooks ---
+
+    async def on_BinaryEvent(event: BinaryEvent) -> None:
         record = event.record
         name = record.get('name', '').strip()
         if not name:
@@ -671,7 +698,7 @@ async def download(
         for provider_name in [p.strip() for p in str(providers).split(',') if p.strip()]:
             if not auto_install and provider_name != 'env':
                 continue
-            provider_plugin = available_plugins.get(provider_name)
+            provider_plugin = plugins.get(provider_name)
             if not provider_plugin:
                 continue
             provider_output_dir = output_dir / provider_plugin.name
@@ -697,9 +724,47 @@ async def download(
                 if resolved:
                     return
 
-    bus.on(BinaryEvent, handle_binary)
+    bus.on(BinaryEvent, on_BinaryEvent)
 
-    async def handle_process(event: ProcessEvent) -> None:
+    # --- System handler: ProcessEvent (command) → run subprocess ---
+
+    async def on_ProcessEvent(event: ProcessEvent) -> None:
+        hook = Hook(
+            name=event.hook_name, plugin_name=event.plugin_name,
+            path=Path(event.hook_path), step=0, priority=0,
+            is_background=event.is_background, language=event.hook_language,
+        )
+        plugin_output_dir = Path(event.output_dir)
+
+        proc, ar, is_background = run_hook(
+            hook, event.url, event.snapshot_id, plugin_output_dir, event.env, event.timeout,
+        )
+
+        if is_background:
+            known_background_meta_files.add(plugin_output_dir / f'{hook.name}.meta.json')
+            emit_result(ar)
+        else:
+            write_jsonl(index_path, proc, also_print=emit_jsonl)
+            write_jsonl(index_path, ar, also_print=emit_jsonl)
+
+            # Emit ProcessCompleted notification so side-effect handlers can react
+            await bus.emit(ProcessCompleted(
+                plugin_name=event.plugin_name, hook_name=event.hook_name,
+                stdout=proc.stdout, stderr=proc.stderr,
+                exit_code=proc.exit_code or 0, output_dir=event.output_dir,
+                output_files=ar.output_files, output_str=ar.output_str,
+                status=ar.status, is_background=False,
+            ))
+            emit_result(ar)
+
+        # Poll for completed bg hooks between each hook
+        await poll_and_process_bg_hooks()
+
+    bus.on(ProcessEvent, on_ProcessEvent)
+
+    # --- System handler: ProcessCompleted → parse JSONL, emit Binary/Machine ---
+
+    async def on_ProcessCompleted(event: ProcessCompleted) -> None:
         for record in _parse_jsonl_records(event.stdout):
             record_type = record.get('type')
             if record_type == 'Binary':
@@ -707,7 +772,7 @@ async def download(
             elif record_type == 'Machine':
                 await bus.emit(MachineEvent(record=record))
 
-    bus.on(ProcessEvent, handle_process)
+    bus.on(ProcessCompleted, on_ProcessCompleted)
 
     # --- Helper: poll bg hooks and process their side effects via the bus ---
 
@@ -716,13 +781,22 @@ async def download(
             output_dir, index_path, stderr_is_tty, emit_jsonl=emit_jsonl,
             known_meta_files=known_background_meta_files,
         ):
-            await bus.emit(ProcessEvent(stdout=bg_proc.stdout))
+            # bg hooks already ran — emit ProcessCompleted for their output
+            await bus.emit(ProcessCompleted(
+                plugin_name=bg_ar.plugin, hook_name=bg_ar.hook_name,
+                stdout=bg_proc.stdout, stderr=bg_proc.stderr,
+                exit_code=bg_proc.exit_code or 0, output_dir=str(output_dir / bg_ar.plugin),
+                output_files=bg_ar.output_files, output_str=bg_ar.output_str,
+                status=bg_ar.status, is_background=True,
+            ))
             emit_result(bg_ar)
 
     # --- Register each Crawl hook as its own handler for CrawlEvent ---
+    # Handlers build env and emit ProcessEvent (command). The ProcessEvent handler
+    # actually executes the subprocess.
 
     for plugin, hook in crawl_hooks:
-        async def make_crawl_handler(event: CrawlEvent, _plugin=plugin, _hook=hook) -> None:
+        async def crawl_handler(event: CrawlEvent, _plugin=plugin, _hook=hook) -> None:
             env = build_env_for_plugin(
                 _plugin.name, _plugin.config_schema, shared_config, run_output_dir=output_dir,
             )
@@ -730,30 +804,23 @@ async def download(
             plugin_output_dir = output_dir / _plugin.name
             plugin_output_dir.mkdir(parents=True, exist_ok=True)
 
-            proc, ar, is_background = run_hook(_hook, url, snapshot.id, plugin_output_dir, env, timeout)
+            # Queue-jump: ProcessEvent handler runs the subprocess synchronously
+            await bus.emit(ProcessEvent(
+                url=url, snapshot_id=snapshot.id,
+                plugin_name=_plugin.name, hook_name=_hook.name,
+                hook_path=str(_hook.path), hook_language=_hook.language,
+                is_background=_hook.is_background,
+                output_dir=str(plugin_output_dir), env=env, timeout=timeout,
+            ))
 
-            if is_background:
-                known_background_meta_files.add(plugin_output_dir / f'{_hook.name}.meta.json')
-                emit_result(ar)
-            else:
-                write_jsonl(index_path, proc, also_print=emit_jsonl)
-                write_jsonl(index_path, ar, also_print=emit_jsonl)
-                # Queue-jump: process side effects synchronously before next handler
-                await bus.emit(ProcessEvent(stdout=proc.stdout))
-                emit_result(ar)
-
-            # Poll for completed bg hooks between each fg hook
-            await poll_and_process_bg_hooks()
-
-        # Give each handler a unique name so bubus doesn't warn about duplicates
-        make_crawl_handler.__name__ = f'crawl__{hook.plugin_name}__{hook.name}'
-        make_crawl_handler.__qualname__ = make_crawl_handler.__name__
-        bus.on(CrawlEvent, make_crawl_handler)
+        crawl_handler.__name__ = hook.name
+        crawl_handler.__qualname__ = hook.name
+        bus.on(CrawlEvent, crawl_handler)
 
     # --- Register each Snapshot hook as its own handler for SnapshotEvent ---
 
     for plugin, hook in snapshot_hooks:
-        async def make_snapshot_handler(event: SnapshotEvent, _plugin=plugin, _hook=hook) -> None:
+        async def snapshot_handler(event: SnapshotEvent, _plugin=plugin, _hook=hook) -> None:
             env = build_env_for_plugin(
                 _plugin.name, _plugin.config_schema, shared_config, run_output_dir=output_dir,
             )
@@ -761,22 +828,17 @@ async def download(
             plugin_output_dir = output_dir / _plugin.name
             plugin_output_dir.mkdir(parents=True, exist_ok=True)
 
-            proc, ar, is_background = run_hook(_hook, url, snapshot.id, plugin_output_dir, env, timeout)
+            await bus.emit(ProcessEvent(
+                url=url, snapshot_id=snapshot.id,
+                plugin_name=_plugin.name, hook_name=_hook.name,
+                hook_path=str(_hook.path), hook_language=_hook.language,
+                is_background=_hook.is_background,
+                output_dir=str(plugin_output_dir), env=env, timeout=timeout,
+            ))
 
-            if is_background:
-                known_background_meta_files.add(plugin_output_dir / f'{_hook.name}.meta.json')
-                emit_result(ar)
-            else:
-                write_jsonl(index_path, proc, also_print=emit_jsonl)
-                write_jsonl(index_path, ar, also_print=emit_jsonl)
-                await bus.emit(ProcessEvent(stdout=proc.stdout))
-                emit_result(ar)
-
-            await poll_and_process_bg_hooks()
-
-        make_snapshot_handler.__name__ = f'snapshot__{hook.plugin_name}__{hook.name}'
-        make_snapshot_handler.__qualname__ = make_snapshot_handler.__name__
-        bus.on(SnapshotEvent, make_snapshot_handler)
+        snapshot_handler.__name__ = hook.name
+        snapshot_handler.__qualname__ = hook.name
+        bus.on(SnapshotEvent, snapshot_handler)
 
     # --- Drive the lifecycle through the bus ---
     try:
@@ -788,7 +850,13 @@ async def download(
                 output_dir, index_path, stderr_is_tty, emit_jsonl=emit_jsonl,
                 known_meta_files=known_background_meta_files,
             ):
-                await bus.emit(ProcessEvent(stdout=bg_proc.stdout))
+                await bus.emit(ProcessCompleted(
+                    plugin_name=bg_ar.plugin, hook_name=bg_ar.hook_name,
+                    stdout=bg_proc.stdout, stderr=bg_proc.stderr,
+                    exit_code=bg_proc.exit_code or 0, output_dir=str(output_dir / bg_ar.plugin),
+                    output_files=bg_ar.output_files, output_str=bg_ar.output_str,
+                    status=bg_ar.status, is_background=True,
+                ))
                 emit_result(bg_ar)
         elif not crawl_only:
             # Emit SnapshotEvent — all snapshot hook handlers fire serially
