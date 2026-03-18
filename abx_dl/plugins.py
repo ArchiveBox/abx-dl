@@ -37,8 +37,7 @@ class Hook:
     name: str
     plugin_name: str
     path: Path
-    step: int  # Execution step (0-9)
-    priority: int  # Priority within step (0-9)
+    order: int  # Two-digit execution order (00-99)
     is_background: bool
 
     @property
@@ -46,8 +45,8 @@ class Hook:
         return f"{self.plugin_name}/{self.name}"
 
     @property
-    def sort_key(self) -> tuple[int, int, str]:
-        return (self.step, self.priority, self.name)
+    def sort_key(self) -> tuple[int, str]:
+        return (self.order, self.name)
 
 
 @dataclass
@@ -87,25 +86,24 @@ class Plugin:
         )
 
 
-def parse_hook_filename(filename: str) -> tuple[str, int, int, bool] | None:
+def parse_hook_filename(filename: str) -> tuple[str, int, bool] | None:
     """
     Parse hook filename to extract metadata.
 
     Format: on_{Event}__{XX}_{description}[.bg].{ext}
 
-    Returns: (event, step, priority, is_background) or None
+    Returns: (event, order, is_background) or None
     """
-    pattern = r'^on_(\w+)__(\d)(\d)_.+'
+    pattern = r'^on_(\w+)__(\d{2})_.+'
     match = re.match(pattern, filename)
     if not match:
         return None
 
     event = match.group(1)
-    step = int(match.group(2))
-    priority = int(match.group(3))
+    order = int(match.group(2))
     is_background = '.bg.' in filename
 
-    return (event, step, priority, is_background)
+    return (event, order, is_background)
 
 
 def load_plugin(plugin_dir: Path) -> Plugin | None:
@@ -150,14 +148,13 @@ def load_plugin(plugin_dir: Path) -> Plugin | None:
         if not parsed:
             continue
 
-        event, step, priority, is_background = parsed
+        event, order, is_background = parsed
 
         hook = Hook(
             name=hook_file.stem,
             plugin_name=plugin_name,
             path=hook_file,
-            step=step,
-            priority=priority,
+            order=order,
             is_background=is_background,
         )
         plugin.hooks.append(hook)

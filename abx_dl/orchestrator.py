@@ -68,7 +68,6 @@ async def download(
 
     # Shared mutable state
     results: list[VisibleRecord] = []
-    known_background_meta_files: set[Path] = set()
 
     def emit_result(record: VisibleRecord) -> None:
         results.append(record)
@@ -88,7 +87,6 @@ async def download(
     process_svc = ProcessService(
         bus, index_path=index_path, output_dir=output_dir, emit_jsonl=emit_jsonl,
         stderr_is_tty=stderr_is_tty, emit_result=emit_result,
-        known_background_meta_files=known_background_meta_files,
     )
     CrawlService(
         bus, url=url, snapshot=snapshot, output_dir=output_dir,
@@ -105,9 +103,7 @@ async def download(
         await bus.emit(CrawlEvent(**event_kwargs))
         await bus.emit(CrawlCompleted(**event_kwargs))
 
-        if crawl_only and known_background_meta_files:
-            await process_svc.wait_for_background_hooks()
-        elif not crawl_only:
+        if not crawl_only:
             await bus.emit(SnapshotEvent(**event_kwargs))
             await bus.emit(SnapshotCompleted(**event_kwargs))
 
