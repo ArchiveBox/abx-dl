@@ -25,16 +25,12 @@ from typing import Any, Callable
 
 from bubus import EventBus
 
-from .config import build_env_for_plugin, set_config
 from .events import (
     CrawlEvent,
     SnapshotEvent,
-    ProcessEvent,
     ProcessCompleted,
-    BinaryEvent,
-    MachineEvent,
 )
-from .models import Snapshot, Process, ArchiveResult, write_jsonl, now_iso, uuid7
+from .models import Snapshot, Process, ArchiveResult, VisibleRecord, write_jsonl, now_iso, uuid7
 from .plugins import Hook, Plugin, filter_plugins
 from .process_utils import (
     validate_pid_file,
@@ -42,9 +38,6 @@ from .process_utils import (
     write_cmd_file,
     is_process_alive,
 )
-
-
-VisibleRecord = ArchiveResult | Process
 
 
 # ============================================================================
@@ -655,190 +648,27 @@ async def download(
         if on_result:
             on_result(record)
 
-    # --- Create event bus ---
+    # --- Create event bus and register services ---
     bus = EventBus(name='AbxDl')
 
-    # --- System handler: MachineEvent → update shared config ---
+    # Import services here to avoid circular imports (services import from orchestrator)
+    from .services import MachineService, BinaryService, ProcessService, CrawlService
 
-    async def on_MachineEvent(event: MachineEvent) -> None:
-        record = event.record
-        config = record.get('config')
-        if isinstance(config, dict):
-            shared_config.update(config)
-            try:
-                set_config(**{k: v for k, v in config.items() if v is not None})
-            except Exception:
-                pass
-            return
-        if record.get('_method') != 'update':
-            return
-        key = record.get('key', '').replace('config/', '')
-        if key:
-            shared_config[key] = record.get('value', '')
-            try:
-                set_config(**{key: record.get('value', '')})
-            except Exception:
-                pass
-
-    bus.on(MachineEvent, on_MachineEvent)
-
-    # --- System handler: BinaryEvent → resolve via provider on_Binary hooks ---
-
-    async def on_BinaryEvent(event: BinaryEvent) -> None:
-        record = event.record
-        name = record.get('name', '').strip()
-        if not name:
-            return
-        abspath = str(record.get('abspath', '')).strip()
-        if abspath:
-            shared_config[_binary_env_key(name)] = abspath
-            return
-        # Run provider on_Binary hooks to resolve
-        providers = record.get('binproviders') or record.get('binprovider') or 'env'
-        for provider_name in [p.strip() for p in str(providers).split(',') if p.strip()]:
-            if not auto_install and provider_name != 'env':
-                continue
-            provider_plugin = plugins.get(provider_name)
-            if not provider_plugin:
-                continue
-            provider_output_dir = output_dir / provider_plugin.name
-            provider_output_dir.mkdir(parents=True, exist_ok=True)
-            provider_env = build_env_for_plugin(
-                provider_plugin.name, provider_plugin.config_schema, shared_config, run_output_dir=output_dir,
-            )
-            for binary_hook in provider_plugin.get_binary_hooks():
-                proc = _run_binary_hook(binary_hook, record, provider_output_dir, provider_env)
-                write_jsonl(index_path, proc, also_print=emit_jsonl)
-                emit_result(proc)
-                resolved = False
-                for emitted in _parse_jsonl_records(proc.stdout):
-                    if emitted.get('type') == 'Machine':
-                        await bus.emit(MachineEvent(record=emitted))
-                    elif emitted.get('type') == 'Binary':
-                        emitted_name = emitted.get('name', '').strip()
-                        emitted_abspath = str(emitted.get('abspath', '')).strip()
-                        if emitted_abspath and emitted_name:
-                            shared_config[_binary_env_key(emitted_name)] = emitted_abspath
-                            if emitted_name == name:
-                                resolved = True
-                if resolved:
-                    return
-
-    bus.on(BinaryEvent, on_BinaryEvent)
-
-    # --- System handler: ProcessEvent (command) → run subprocess ---
-
-    async def on_ProcessEvent(event: ProcessEvent) -> None:
-        hook = Hook(
-            name=event.hook_name, plugin_name=event.plugin_name,
-            path=Path(event.hook_path), step=0, priority=0,
-            is_background=event.is_background, language=event.hook_language,
-        )
-        plugin_output_dir = Path(event.output_dir)
-
-        proc, ar, is_background = run_hook(
-            hook, event.url, event.snapshot_id, plugin_output_dir, event.env, event.timeout,
-        )
-
-        if is_background:
-            known_background_meta_files.add(plugin_output_dir / f'{hook.name}.meta.json')
-            emit_result(ar)
-        else:
-            write_jsonl(index_path, proc, also_print=emit_jsonl)
-            write_jsonl(index_path, ar, also_print=emit_jsonl)
-
-            # Emit ProcessCompleted notification so side-effect handlers can react
-            await bus.emit(ProcessCompleted(
-                plugin_name=event.plugin_name, hook_name=event.hook_name,
-                stdout=proc.stdout, stderr=proc.stderr,
-                exit_code=proc.exit_code or 0, output_dir=event.output_dir,
-                output_files=ar.output_files, output_str=ar.output_str,
-                status=ar.status, is_background=False,
-            ))
-            emit_result(ar)
-
-        # Poll for completed bg hooks between each hook
-        await poll_and_process_bg_hooks()
-
-    bus.on(ProcessEvent, on_ProcessEvent)
-
-    # --- System handler: ProcessCompleted → parse JSONL, emit Binary/Machine ---
-
-    async def on_ProcessCompleted(event: ProcessCompleted) -> None:
-        for record in _parse_jsonl_records(event.stdout):
-            record_type = record.get('type')
-            if record_type == 'Binary':
-                await bus.emit(BinaryEvent(record=record))
-            elif record_type == 'Machine':
-                await bus.emit(MachineEvent(record=record))
-
-    bus.on(ProcessCompleted, on_ProcessCompleted)
-
-    # --- Helper: poll bg hooks and process their side effects via the bus ---
-
-    async def poll_and_process_bg_hooks() -> None:
-        for bg_proc, bg_ar in _poll_background_hooks(
-            output_dir, index_path, stderr_is_tty, emit_jsonl=emit_jsonl,
-            known_meta_files=known_background_meta_files,
-        ):
-            # bg hooks already ran — emit ProcessCompleted for their output
-            await bus.emit(ProcessCompleted(
-                plugin_name=bg_ar.plugin, hook_name=bg_ar.hook_name,
-                stdout=bg_proc.stdout, stderr=bg_proc.stderr,
-                exit_code=bg_proc.exit_code or 0, output_dir=str(output_dir / bg_ar.plugin),
-                output_files=bg_ar.output_files, output_str=bg_ar.output_str,
-                status=bg_ar.status, is_background=True,
-            ))
-            emit_result(bg_ar)
-
-    # --- Register each Crawl hook as its own handler for CrawlEvent ---
-    # Handlers build env and emit ProcessEvent (command). The ProcessEvent handler
-    # actually executes the subprocess.
-
-    for plugin, hook in crawl_hooks:
-        async def crawl_handler(event: CrawlEvent, _plugin=plugin, _hook=hook) -> None:
-            env = build_env_for_plugin(
-                _plugin.name, _plugin.config_schema, shared_config, run_output_dir=output_dir,
-            )
-            timeout = int(env.get(f"{_plugin.name.upper()}_TIMEOUT", env.get('TIMEOUT', '60')))
-            plugin_output_dir = output_dir / _plugin.name
-            plugin_output_dir.mkdir(parents=True, exist_ok=True)
-
-            # Queue-jump: ProcessEvent handler runs the subprocess synchronously
-            await bus.emit(ProcessEvent(
-                url=url, snapshot_id=snapshot.id,
-                plugin_name=_plugin.name, hook_name=_hook.name,
-                hook_path=str(_hook.path), hook_language=_hook.language,
-                is_background=_hook.is_background,
-                output_dir=str(plugin_output_dir), env=env, timeout=timeout,
-            ))
-
-        crawl_handler.__name__ = hook.name
-        crawl_handler.__qualname__ = hook.name
-        bus.on(CrawlEvent, crawl_handler)
-
-    # --- Register each Snapshot hook as its own handler for SnapshotEvent ---
-
-    for plugin, hook in snapshot_hooks:
-        async def snapshot_handler(event: SnapshotEvent, _plugin=plugin, _hook=hook) -> None:
-            env = build_env_for_plugin(
-                _plugin.name, _plugin.config_schema, shared_config, run_output_dir=output_dir,
-            )
-            timeout = int(env.get(f"{_plugin.name.upper()}_TIMEOUT", env.get('TIMEOUT', '60')))
-            plugin_output_dir = output_dir / _plugin.name
-            plugin_output_dir.mkdir(parents=True, exist_ok=True)
-
-            await bus.emit(ProcessEvent(
-                url=url, snapshot_id=snapshot.id,
-                plugin_name=_plugin.name, hook_name=_hook.name,
-                hook_path=str(_hook.path), hook_language=_hook.language,
-                is_background=_hook.is_background,
-                output_dir=str(plugin_output_dir), env=env, timeout=timeout,
-            ))
-
-        snapshot_handler.__name__ = hook.name
-        snapshot_handler.__qualname__ = hook.name
-        bus.on(SnapshotEvent, snapshot_handler)
+    MachineService(bus, shared_config=shared_config)
+    BinaryService(
+        bus, shared_config=shared_config, plugins=plugins, auto_install=auto_install,
+        output_dir=output_dir, index_path=index_path, emit_jsonl=emit_jsonl,
+        emit_result=emit_result,
+    )
+    ProcessService(
+        bus, index_path=index_path, output_dir=output_dir, emit_jsonl=emit_jsonl,
+        stderr_is_tty=stderr_is_tty, emit_result=emit_result,
+        known_background_meta_files=known_background_meta_files,
+    )
+    CrawlService(
+        bus, url=url, snapshot=snapshot, output_dir=output_dir,
+        shared_config=shared_config, crawl_hooks=crawl_hooks, snapshot_hooks=snapshot_hooks,
+    )
 
     # --- Drive the lifecycle through the bus ---
     try:

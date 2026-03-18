@@ -92,6 +92,9 @@ class ArchiveResult:
         return json.dumps(d, default=str)
 
 
+VisibleRecord = ArchiveResult | Process
+
+
 def write_jsonl(path: Path, record: Any, also_print: bool = False):
     """Append a record to a JSONL file."""
     line = record.to_jsonl()
