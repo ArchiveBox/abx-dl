@@ -10,6 +10,7 @@ Events come in command/completion pairs:
 from typing import Any
 
 from bubus import BaseEvent
+from pydantic import ConfigDict, Field
 
 
 # ── Crawl / Snapshot lifecycle ───────────────────────────────────────────────
@@ -99,7 +100,8 @@ class BinaryEvent(BaseEvent):
 
 class MachineEvent(BaseEvent):
     """Update shared machine config."""
-    _method: str = ''
+    model_config = ConfigDict(populate_by_name=True)
+    method: str = Field('', validation_alias='_method')
     key: str = ''
     value: str = ''
     config: dict[str, Any] | None = None

@@ -28,7 +28,7 @@ class MachineService(BaseService):
             except Exception:
                 pass
             return
-        if event._method != 'update':
+        if event.method != 'update':
             return
         key = event.key.replace('config/', '')
         if key:
