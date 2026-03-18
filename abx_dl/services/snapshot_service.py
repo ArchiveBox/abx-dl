@@ -1,21 +1,21 @@
-"""CrawlService — registers per-hook handlers for CrawlEvent."""
+"""SnapshotService — registers per-hook handlers for SnapshotEvent."""
 
 from pathlib import Path
 from typing import ClassVar
 
 from bubus import BaseEvent, EventBus
 
-from ..events import CrawlEvent, ProcessEvent
+from ..events import ProcessEvent, SnapshotEvent
 from ..models import Snapshot
 from ..plugins import Hook, Plugin
 from .base import BaseService
 from .machine_service import MachineService
 
 
-class CrawlService(BaseService):
-    """Registers a handler per crawl hook that builds env and emits ProcessEvent."""
+class SnapshotService(BaseService):
+    """Registers a handler per snapshot hook that builds env and emits ProcessEvent."""
 
-    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [CrawlEvent]
+    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [SnapshotEvent]
     EMITS: ClassVar[list[type[BaseEvent]]] = [ProcessEvent]
 
     def __init__(
@@ -41,7 +41,7 @@ class CrawlService(BaseService):
             handler = self._make_hook_handler(plugin, hook)
             handler.__name__ = hook.name
             handler.__qualname__ = hook.name
-            self.bus.on(CrawlEvent, handler)
+            self.bus.on(SnapshotEvent, handler)
 
     def _make_hook_handler(self, plugin: Plugin, hook: Hook):
         async def handler(event: BaseEvent, _plugin=plugin, _hook=hook) -> None:

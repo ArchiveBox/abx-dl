@@ -78,7 +78,7 @@ async def download(
     # --- Create event bus and register services ---
     bus = EventBus(name='AbxDl')
 
-    from .services import MachineService, BinaryService, ProcessService, CrawlService
+    from .services import MachineService, BinaryService, ProcessService, CrawlService, SnapshotService
 
     machine_svc = MachineService(bus, initial_config=config_overrides)
     BinaryService(
@@ -92,7 +92,11 @@ async def download(
     )
     CrawlService(
         bus, url=url, snapshot=snapshot, output_dir=output_dir,
-        machine=machine_svc, crawl_hooks=crawl_hooks, snapshot_hooks=snapshot_hooks,
+        machine=machine_svc, hooks=crawl_hooks,
+    )
+    SnapshotService(
+        bus, url=url, snapshot=snapshot, output_dir=output_dir,
+        machine=machine_svc, hooks=snapshot_hooks,
     )
 
     # --- Drive the lifecycle through the bus ---
