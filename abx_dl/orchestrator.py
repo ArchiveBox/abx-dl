@@ -147,6 +147,10 @@ async def download(
 
     # --- Create event bus ---
     timeout = int((config_overrides or {}).get('TIMEOUT', 60))
+    # The total crawl timeout is proportional to the number of snapshot hooks
+    # (each one may take up to TIMEOUT seconds). Crawl/binary hooks fit in the
+    # margin since they rarely approach the full per-hook timeout.
+    total_timeout = max(float(len(snapshot_hooks) * timeout), float(timeout))
     bus = EventBus(
         name='AbxDl',
         # parallel event concurrency lets bg ProcessEvents (fire-and-forget
@@ -156,12 +160,11 @@ async def download(
         # entries instead of rejecting new events when the buffer fills
         max_history_size=1000,
         max_history_drop=True,
-        # Timeouts are relative to the user-configured TIMEOUT. The event_timeout
-        # is the hard ceiling for any single event tree (CrawlEvent includes the
-        # entire crawl + snapshot phase). Individual hooks set their own timeouts
-        # via event_handler_timeout on their ProcessEvent.
-        event_timeout=float(timeout) + 120.0,
-        event_slow_timeout=float(timeout) + 60.0,
+        # Timeouts scale with the number of hooks × per-hook TIMEOUT.
+        # Individual hooks set their own timeouts via event_handler_timeout
+        # on their ProcessEvent.
+        event_timeout=total_timeout,
+        event_slow_timeout=total_timeout * 0.8,
         event_handler_slow_timeout=60.0,
     )
 

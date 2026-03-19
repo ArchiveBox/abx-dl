@@ -5,13 +5,6 @@ Uses mtime as a "password": PID files are timestamped with process start time.
 Since filesystem mtimes can be set arbitrarily but process start times cannot,
 comparing them detects PID reuse (a new process that happens to get the same PID
 after the original exited).
-
-# ============================================================================
-# COPIED FROM: ArchiveBox/archivebox/misc/process_utils.py
-# COMMIT: 69965a27820507526767208c179c62f4a579555c
-# DATE: 2024-12-30
-# MODIFICATIONS: Removed __package__ declaration, added async graceful_kill_*
-# ============================================================================
 """
 
 import asyncio
