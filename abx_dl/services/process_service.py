@@ -1,4 +1,4 @@
-"""ProcessService — owns ALL hook subprocess execution."""
+"""ProcessService — owns all hook subprocess execution and JSONL output parsing."""
 
 import asyncio
 import json
@@ -17,19 +17,61 @@ from .base import BaseService
 
 
 class ProcessService(BaseService):
-    """Owns all hook subprocess execution.
+    """Runs hook subprocesses and parses their JSONL output into bus events.
 
-        ProcessEvent
-          ├── stream stdout → emit BinaryEvent / MachineEvent in realtime
-          ├── on exit → ProcessCompleted + ArchiveResult
-          └── (side-effect events are children of the ProcessEvent)
+    This is the only service that spawns subprocesses. Every hook execution
+    flows through here via ProcessEvent.
 
-        ProcessKillEvent
-          └── SIGTERM bg daemon via PID file
+    Subprocess lifecycle::
 
-    Stdout is streamed line-by-line: Binary/Machine JSONL events are emitted
-    in realtime as the process writes them, so config and binary propagation
-    works even for long-running or daemon hooks.
+        ProcessEvent received
+        │
+        ├── Create subprocess: [hook_path, *hook_args]
+        │   - cwd = plugin output dir
+        │   - env = full env dict from MachineService
+        │   - stdout = PIPE (streamed line-by-line)
+        │   - stderr = written to {hook_name}.stderr.log
+        │   - PID written to {hook_name}.pid (for daemon kill)
+        │
+        ├── Stream stdout line-by-line (realtime):
+        │   - Lines starting with '{' are parsed as JSON
+        │   - {"type": "Binary", ...}  → emit BinaryEvent (triggers install chain)
+        │   - {"type": "Machine", ...} → emit MachineEvent (updates shared config)
+        │   - {"type": "ArchiveResult", ...} → captures status/output_str
+        │   - Non-JSON lines are logged but not parsed
+        │
+        ├── Wait for process exit (with timeout)
+        │   - On timeout: SIGTERM → wait 2s → SIGKILL
+        │
+        └── Finalize:
+            - Write Process + ArchiveResult to index.jsonl
+            - Emit ProcessCompleted event
+            - Call emit_result() callback
+
+    Realtime event emission is critical: when a hook outputs Binary/Machine JSONL,
+    the corresponding event is emitted immediately (via ``await self.bus.emit()``).
+    This triggers a bubus "queue-jump" — the BinaryEvent and its entire install
+    chain complete synchronously before the next stdout line is read. This is how
+    a Crawl install hook can request a binary, have it installed by provider hooks,
+    and see the result in config — all within a single ProcessEvent.
+
+    State:
+    - No mutable state beyond constructor args. Each ProcessEvent is handled
+      independently. The subprocess's output determines what events are emitted.
+
+    File artifacts per hook execution:
+    - ``{hook_name}.stdout.log`` — full stdout (deleted on success)
+    - ``{hook_name}.stderr.log`` — full stderr (deleted on success)
+    - ``{hook_name}.pid`` — PID file for daemon hooks (deleted on success)
+    - ``{hook_name}.sh`` — command line for debugging
+
+    bubus details:
+    - Side-effect events (BinaryEvent, MachineEvent) are emitted with ``await``,
+      making them synchronous children of the ProcessEvent. They complete before
+      the next stdout line is processed.
+    - ProcessCompleted is also emitted with ``await`` as an informational child.
+    - Background hooks use ``start_new_session=True`` so SIGTERM to the parent
+      process group doesn't accidentally kill them.
     """
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, ProcessKillEvent]
@@ -55,6 +97,7 @@ class ProcessService(BaseService):
     # ── Event handlers ──────────────────────────────────────────────────────
 
     async def on_ProcessEvent(self, event: ProcessEvent) -> None:
+        """Run a hook subprocess, stream its output, and emit completion events."""
         plugin_output_dir = Path(event.output_dir)
         plugin_output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -78,16 +121,24 @@ class ProcessService(BaseService):
                     *cmd, cwd=str(plugin_output_dir),
                     stdout=asyncio.subprocess.PIPE, stderr=err_fh,
                     env=event.env,
+                    # bg hooks get their own session so killing the parent process
+                    # group (e.g. on CrawlEvent timeout) doesn't cascade to daemons
                     start_new_session=event.is_background,
                 )
             write_pid_file_with_mtime(pid_file, process.pid, time.time())
 
-            # Stream stdout line-by-line, emitting side-effect events in realtime
             stdout_lines: list[str] = []
             status = 'succeeded'
             output_str = ''
 
             async def _stream_stdout() -> None:
+                """Read stdout line-by-line, emitting side-effect events in realtime.
+
+                JSON lines with "type" field trigger immediate event emission:
+                - Binary → BinaryEvent (may trigger full install chain via queue-jump)
+                - Machine → MachineEvent (updates shared config immediately)
+                - ArchiveResult → captures status/output_str (no event emitted)
+                """
                 nonlocal status, output_str
                 assert process.stdout is not None
                 with open(stdout_file, 'w') as out_fh:
@@ -110,6 +161,8 @@ class ProcessService(BaseService):
                         record_type = record.get('type')
                         if record_type == 'Binary':
                             record.pop('type')
+                            # await = queue-jump: entire binary install chain
+                            # completes before we read the next stdout line
                             await self.bus.emit(BinaryEvent(**record))
                         elif record_type == 'Machine':
                             record.pop('type')
@@ -132,6 +185,7 @@ class ProcessService(BaseService):
             returncode = process.returncode or 0
 
         except Exception as e:
+            # Subprocess failed to start or other unexpected error
             proc.exit_code = -1
             proc.stderr = f'{type(e).__name__}: {e}'
             proc.ended_at = now_iso()
@@ -151,7 +205,8 @@ class ProcessService(BaseService):
             self.emit_result(ar)
             return
 
-        # Finalize
+        # ── Finalize: build ArchiveResult from process output ──
+
         stdout = ''.join(stdout_lines)
         stderr = stderr_file.read_text() if stderr_file.exists() else ''
 
@@ -165,6 +220,7 @@ class ProcessService(BaseService):
         proc.stderr = stderr
         proc.ended_at = now_iso()
 
+        # Detect new files created by the hook (excluding our own log files)
         files_after = set(plugin_output_dir.rglob('*')) if plugin_output_dir.exists() else set()
         new_files = sorted(
             str(f.relative_to(plugin_output_dir))
@@ -178,6 +234,7 @@ class ProcessService(BaseService):
 
         output_str = _normalize_output_str(output_str, plugin_output_dir, new_files)
 
+        # Clean up log files on success (keep them on failure for debugging)
         if returncode == 0:
             stdout_file.unlink(missing_ok=True)
             stderr_file.unlink(missing_ok=True)
@@ -204,7 +261,12 @@ class ProcessService(BaseService):
         self.emit_result(ar)
 
     async def on_ProcessKillEvent(self, event: ProcessKillEvent) -> None:
-        """SIGTERM a background daemon process via its PID file."""
+        """SIGTERM a background daemon process via its PID file.
+
+        Called by CrawlService/SnapshotService cleanup handlers. Reads the PID
+        from ``{hook_name}.pid`` and sends SIGTERM. If the hook already exited
+        (PID file missing or stale), this is a safe no-op.
+        """
         output_dir = Path(event.output_dir)
         pid_file = output_dir / f'{event.hook_name}.pid'
         cmd_file = output_dir / f'{event.hook_name}.sh'
@@ -214,7 +276,11 @@ class ProcessService(BaseService):
 # ── Process cleanup ────────────────────────────────────────────────────────
 
 async def _kill_process(process: asyncio.subprocess.Process) -> None:
-    """SIGTERM → wait → SIGKILL an asyncio subprocess."""
+    """Graceful shutdown: SIGTERM → wait 2s → SIGKILL → wait 1s.
+
+    Tries process group kill first (for bg hooks with start_new_session=True),
+    falls back to direct PID kill if the process group doesn't exist.
+    """
     pid = process.pid
     if pid is None:
         return
@@ -249,6 +315,11 @@ async def _kill_process(process: asyncio.subprocess.Process) -> None:
 # ── Pure helpers ────────────────────────────────────────────────────────────
 
 def _normalize_output_str(output_str: str, output_dir: Path, output_files: list[str]) -> str:
+    """Convert absolute paths in output_str to relative paths within output_dir.
+
+    Hooks sometimes report their output as an absolute path. This normalizes it
+    to a relative path so the output_str is portable and matches output_files.
+    """
     text = output_str.strip()
     if not text:
         return ''

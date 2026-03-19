@@ -1,4 +1,4 @@
-"""MachineService — single owner of shared config and env building."""
+"""MachineService — single owner of shared config state."""
 
 from pathlib import Path
 from typing import Any, ClassVar
@@ -12,10 +12,32 @@ from .base import BaseService
 
 
 class MachineService(BaseService):
-    """Owns shared_config. All config reads and writes go through this service.
+    """Owns the shared_config dict — the single source of truth for runtime config.
 
-        MachineEvent (emitted by ProcessService or BinaryService)
-          └── updates shared_config dict + persistent config store
+    All config reads and writes go through this service. Hooks propagate config
+    updates by outputting ``{"type": "Machine", "config": {"KEY": "value"}}``
+    JSONL to stdout, which ProcessService parses and emits as MachineEvent.
+
+    State:
+    - ``shared_config``: mutable dict updated by MachineEvent handlers. Read by
+      ``get_env_for_plugin()`` each time a hook needs an env dict. This is how
+      config propagates between hooks: hook A sets CHROME_BINARY via MachineEvent,
+      hook B's env dict picks it up when get_env_for_plugin() is called later.
+
+    Config update flow::
+
+        Hook stdout: {"type": "Machine", "config": {"CHROME_BINARY": "/path/to/chrome"}}
+            → ProcessService._stream_stdout() parses JSON
+            → ProcessService emits MachineEvent(config={"CHROME_BINARY": "/path/to/chrome"})
+            → MachineService.on_MachineEvent() updates shared_config + persistent store
+
+    Persistent store: ``~/.config/abx/config.env`` is updated via ``set_config()``
+    so config persists across runs (e.g. cached binary paths). Persistent write
+    failures are silently ignored — the in-memory shared_config is always authoritative.
+
+    Two MachineEvent formats are supported (both emitted by hooks):
+    1. Batch: ``{"type": "Machine", "config": {"KEY1": "val1", "KEY2": "val2"}}``
+    2. Single: ``{"type": "Machine", "_method": "update", "key": "config/KEY", "value": "val"}``
     """
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [MachineEvent]
@@ -25,12 +47,17 @@ class MachineService(BaseService):
         super().__init__(bus)
 
     async def on_MachineEvent(self, event: MachineEvent) -> None:
+        """Apply a config update to shared_config and the persistent store.
+
+        Handles both batch format (event.config dict) and single-key format
+        (event.method='update', event.key='config/KEY', event.value='val').
+        """
         if event.config is not None:
             self.shared_config.update(event.config)
             try:
                 set_config(**{k: v for k, v in event.config.items() if v is not None})
             except Exception:
-                pass
+                pass  # persistent store write is best-effort
             return
         if event.method != 'update':
             return
@@ -43,7 +70,15 @@ class MachineService(BaseService):
                 pass
 
     def get_env_for_plugin(self, plugin: Plugin, *, run_output_dir: Path) -> dict[str, str]:
-        """Build env dict for a plugin using current shared_config state."""
+        """Build a complete env dict for running a plugin hook.
+
+        Merges (in priority order): os.environ < GLOBAL_DEFAULTS < plugin schema
+        defaults < shared_config overrides < runtime path derivations.
+
+        Called fresh before each hook execution, so it always reflects the latest
+        shared_config state (including updates from hooks that ran earlier in the
+        same CrawlEvent/SnapshotEvent).
+        """
         return build_env_for_plugin(
             plugin.name, plugin.config_schema, self.shared_config,
             run_output_dir=run_output_dir,

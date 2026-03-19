@@ -1,10 +1,31 @@
 """Event schemas for the abx-dl bubus event bus.
 
-Events come in command/completion pairs:
-  - Command event triggers an action (e.g. ProcessEvent → run a subprocess)
-  - Handler executes the action
-  - Completion event notifies the bus with results (e.g. ProcessCompleted)
-  - Other handlers react to the completion (e.g. parse JSONL, emit Binary/Machine)
+Events form a hierarchy during execution::
+
+    CrawlEvent
+    ├── ProcessEvent (crawl hooks)
+    │   ├── BinaryEvent → ProcessEvent (provider install) → MachineEvent
+    │   └── ProcessCompleted
+    ├── SnapshotEvent
+    │   ├── ProcessEvent (snapshot hooks)
+    │   │   └── ProcessCompleted
+    │   └── ProcessKillEvent (snapshot bg cleanup)
+    ├── ProcessKillEvent (crawl bg cleanup)
+    └── CrawlCompleted
+
+Event types:
+- **Command events** trigger actions: CrawlEvent, SnapshotEvent, ProcessEvent,
+  ProcessKillEvent, BinaryEvent, MachineEvent
+- **Completion events** notify results: CrawlCompleted, SnapshotCompleted,
+  ProcessCompleted
+
+bubus behavior:
+- Each event has ``event_timeout`` — the hard deadline for the event and all its
+  children. If exceeded, bubus cancels pending handlers and child events.
+- ``event_concurrency='parallel'`` on ProcessEvent allows bg hooks to run
+  concurrently with the parent event's handler chain.
+- ``event_handler_timeout`` on ProcessEvent controls the per-handler timeout
+  (how long ProcessService.on_ProcessEvent can run for a single hook).
 """
 
 from typing import Any
@@ -16,7 +37,11 @@ from pydantic import ConfigDict, Field
 # ── Crawl / Snapshot lifecycle ───────────────────────────────────────────────
 
 class CrawlEvent(BaseEvent):
-    """Dispatched once to trigger all on_Crawl hook handlers."""
+    """Root event: triggers all on_Crawl hook handlers (install + daemons).
+
+    Emitted once by orchestrator.download(). The entire crawl + snapshot
+    lifecycle runs as children of this event.
+    """
     url: str
     snapshot_id: str
     output_dir: str
@@ -24,7 +49,11 @@ class CrawlEvent(BaseEvent):
 
 
 class CrawlCompleted(BaseEvent):
-    """Emitted after all on_Crawl hooks have finished."""
+    """Informational: emitted after the full CrawlEvent tree completes.
+
+    No handlers react to this — it exists for logging, monitoring, and
+    to mark the end of the event tree in bus.log_tree() output.
+    """
     url: str
     snapshot_id: str
     output_dir: str
@@ -32,7 +61,11 @@ class CrawlCompleted(BaseEvent):
 
 
 class SnapshotEvent(BaseEvent):
-    """Dispatched after crawl phase to trigger all on_Snapshot hook handlers."""
+    """Triggers all on_Snapshot hook handlers (extraction + indexing).
+
+    Emitted by CrawlService._emit_snapshot_event as a child of CrawlEvent,
+    so the entire snapshot phase sits inside the crawl event tree.
+    """
     url: str
     snapshot_id: str
     output_dir: str
@@ -40,7 +73,7 @@ class SnapshotEvent(BaseEvent):
 
 
 class SnapshotCompleted(BaseEvent):
-    """Emitted after all on_Snapshot hooks have finished."""
+    """Informational: emitted after all snapshot hooks complete."""
     url: str
     snapshot_id: str
     output_dir: str
@@ -52,15 +85,17 @@ class SnapshotCompleted(BaseEvent):
 class ProcessEvent(BaseEvent):
     """Command: run a hook subprocess.
 
-    Hooks are +x executables, run directly as: [hook_path, *hook_args].
-    The env dict must include correct PATH (set via MachineEvent updates).
+    Handled by ProcessService.on_ProcessEvent, which spawns the subprocess,
+    streams stdout, and emits side-effect events (Binary/Machine) in realtime.
 
-    Uses parallel event concurrency so fire-and-forget background hooks can
-    process alongside the current phase event without waiting for the bus
-    serial lock.
+    Uses ``event_concurrency='parallel'`` so fire-and-forget bg hooks can
+    process alongside the parent event's serial handler chain. Without this,
+    bg ProcessEvents would queue behind the parent and deadlock.
 
-    event_handler_timeout must be set explicitly — otherwise bubus falls back
-    to the bus-level event_timeout (60s), which is too short for subprocesses.
+    ``event_handler_timeout`` must be set per-hook — otherwise bubus uses the
+    bus-level default (60s), which is too short for slow installs like puppeteer.
+    CrawlService/SnapshotService set this to ``hook_timeout + 30s`` to allow
+    overhead for process startup and JSONL parsing.
     """
     event_concurrency: str = 'parallel'
     event_handler_timeout: float = 360.0
@@ -77,7 +112,11 @@ class ProcessEvent(BaseEvent):
 
 
 class ProcessKillEvent(BaseEvent):
-    """Command: SIGTERM a background daemon hook via its PID file."""
+    """Command: SIGTERM a background daemon hook via its PID file.
+
+    Emitted by CrawlService/SnapshotService cleanup handlers. ProcessService
+    reads the PID file and sends SIGTERM. Safe no-op if the hook already exited.
+    """
     plugin_name: str
     hook_name: str
     output_dir: str
@@ -85,7 +124,12 @@ class ProcessKillEvent(BaseEvent):
 
 
 class ProcessCompleted(BaseEvent):
-    """Notification: a hook subprocess finished. Carries full result context."""
+    """Notification: a hook subprocess finished.
+
+    Emitted by ProcessService after the subprocess exits (or times out).
+    Carries the full result context. Currently no handlers listen for this
+    event — it exists for observability and future use (e.g. progress tracking).
+    """
     plugin_name: str
     hook_name: str
     stdout: str
@@ -94,7 +138,7 @@ class ProcessCompleted(BaseEvent):
     output_dir: str
     output_files: list[str] = []
     output_str: str = ''
-    status: str = ''         # 'succeeded', 'failed', etc.
+    status: str = ''         # 'succeeded', 'failed', 'skipped', 'noresults'
     is_background: bool = False
     event_timeout: float = 60.0
 
@@ -102,7 +146,16 @@ class ProcessCompleted(BaseEvent):
 # ── Binary resolution ────────────────────────────────────────────────────────
 
 class BinaryEvent(BaseEvent):
-    """A hook needs a binary resolved/installed."""
+    """A hook needs a binary resolved or installed.
+
+    Emitted by ProcessService when a hook outputs ``{"type": "Binary", ...}``
+    JSONL. Handled by BinaryService, which either registers the path (if abspath
+    is provided) or broadcasts to provider hooks to install it.
+
+    The ``binproviders`` field controls which providers are tried (e.g.
+    "puppeteer" means only the puppeteer provider hook should attempt install).
+    Provider hooks self-select based on this field.
+    """
     name: str
     abspath: str = ''
     binary_id: str = ''
@@ -116,7 +169,16 @@ class BinaryEvent(BaseEvent):
 # ── Machine config update ────────────────────────────────────────────────────
 
 class MachineEvent(BaseEvent):
-    """Update shared machine config."""
+    """Update shared machine config.
+
+    Emitted by ProcessService when a hook outputs ``{"type": "Machine", ...}``
+    JSONL. Handled by MachineService, which updates shared_config and the
+    persistent config store.
+
+    Two formats:
+    - Batch: ``{"type": "Machine", "config": {"KEY1": "val1", "KEY2": "val2"}}``
+    - Single: ``{"type": "Machine", "_method": "update", "key": "config/KEY", "value": "val"}``
+    """
     model_config = ConfigDict(populate_by_name=True)
     method: str = Field('', validation_alias='_method')
     key: str = ''

@@ -1,20 +1,4 @@
-"""SnapshotService — registers per-hook handlers for SnapshotEvent.
-
-SnapshotEvent is emitted by CrawlService as a child of CrawlEvent, so
-snapshot hooks and their bg daemons sit inside the crawl event tree:
-
-    CrawlEvent
-      ├── ...
-      ├── SnapshotEvent (this service handles it)
-      │   ├── ProcessEvent (fg snapshot hooks, serial)
-      │   ├── ProcessEvent (bg snapshot daemons, fire-and-forget)
-      │   └── cleanup: ProcessKillEvent per bg daemon
-      └── ...
-
-A cleanup handler registered LAST on SnapshotEvent sends ProcessKillEvent
-to each bg daemon, giving them time to flush output and exit gracefully
-before the SnapshotEvent hard timeout.
-"""
+"""SnapshotService — orchestrates the snapshot extraction phase."""
 
 from pathlib import Path
 from typing import ClassVar
@@ -29,12 +13,43 @@ from .machine_service import MachineService
 
 
 class SnapshotService(BaseService):
-    """Registers snapshot hook handlers, cleans up bg daemons on completion.
+    """Orchestrates the snapshot phase: extraction hooks, then daemon cleanup.
 
-        SnapshotEvent
-          ├── ProcessEvent (fg snapshot hooks, serial)
-          ├── ProcessEvent (bg snapshot daemons, fire-and-forget)
-          └── cleanup: ProcessKillEvent per bg daemon
+    The SnapshotEvent is emitted by CrawlService as a child of CrawlEvent,
+    so the full snapshot phase sits inside the crawl event tree::
+
+        CrawlEvent
+        ├── ... (crawl hooks)
+        ├── SnapshotEvent                              # emitted by CrawlService
+        │   │
+        │   │  ── Snapshot hook handlers run serially ──
+        │   │
+        │   ├── on_Snapshot__06_wget.finite.bg         # bg: fire-and-forget
+        │   ├── on_Snapshot__09_chrome_launch.daemon.bg # bg: fire-and-forget
+        │   ├── on_Snapshot__10_chrome_tab.daemon.bg   # bg: fire-and-forget
+        │   ├── on_Snapshot__11_chrome_wait             # FG: blocks until Chrome tab ready
+        │   ├── on_Snapshot__30_chrome_navigate         # FG: navigates to URL
+        │   ├── on_Snapshot__54_title                   # FG: extracts page title
+        │   ├── on_Snapshot__58_htmltotext              # FG: html → text
+        │   ├── ...                                    # more extractors
+        │   ├── on_Snapshot__93_hashes                  # FG: compute output hashes
+        │   │
+        │   │  ── After all hook handlers return ──
+        │   │
+        │   └── _cleanup_bg_hooks                      # SIGTERMs snapshot bg daemons
+        │       ├── ProcessKillEvent (chrome_launch)
+        │       ├── ProcessKillEvent (chrome_tab)
+        │       └── ...
+        │
+        └── ... (crawl cleanup)
+
+    The execution model is identical to CrawlService — see CrawlService docstring
+    for details on fg vs bg hooks, config propagation, and bubus behavior.
+
+    Edge case: snapshot bg daemons (chrome_tab, chrome_launch) run throughout the
+    snapshot phase and are killed at cleanup. If a bg daemon exits early with an
+    error, the ProcessEvent still completes (with failed status) but doesn't block
+    the remaining fg hooks from running.
     """
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [SnapshotEvent]
@@ -59,17 +74,24 @@ class SnapshotService(BaseService):
         self._register_hook_handlers()
 
     def _register_hook_handlers(self) -> None:
+        """Register one SnapshotEvent handler per hook, plus cleanup.
+
+        Same pattern as CrawlService._register_hook_handlers — hooks are
+        pre-sorted, handlers registered in order, cleanup handler registered last.
+        """
         for plugin, hook in self.hooks:
             handler = self._make_hook_handler(plugin, hook)
             handler.__name__ = hook.name
             handler.__qualname__ = hook.name
             self.bus.on(SnapshotEvent, handler)
 
-        # Register cleanup handler LAST — runs after all hook handlers finish,
-        # SIGTERMs bg daemons so they can exit before the phase-level timeout.
         self.bus.on(SnapshotEvent, self._cleanup_bg_hooks)
 
     def _make_hook_handler(self, plugin: Plugin, hook: Hook):
+        """Create an async handler that emits a ProcessEvent for one snapshot hook.
+
+        See CrawlService._make_hook_handler for the fg/bg execution model.
+        """
         async def handler(event: BaseEvent, _plugin=plugin, _hook=hook) -> None:
             env = self.machine.get_env_for_plugin(_plugin, run_output_dir=self.output_dir)
             timeout = int(env.get(f"{_plugin.name.upper()}_TIMEOUT", env.get('TIMEOUT', '60')))
@@ -93,7 +115,15 @@ class SnapshotService(BaseService):
         return handler
 
     async def _cleanup_bg_hooks(self, event: BaseEvent) -> None:
-        """SIGTERM background snapshot daemons so they can flush and exit gracefully."""
+        """SIGTERM all background snapshot daemons so they can flush and exit.
+
+        Runs after all snapshot hook handlers have returned. Bg daemons like
+        chrome_tab receive SIGTERM, giving them a chance to write final output
+        (e.g. console logs, network captures) before exiting.
+
+        Hooks that already exited naturally (finite bg hooks) will have no PID
+        file — the kill is a safe no-op for them.
+        """
         for plugin, hook in self.hooks:
             if hook.is_background:
                 plugin_output_dir = self.output_dir / plugin.name
