@@ -5,9 +5,19 @@ propagation between ordered install hooks. Background crawl daemons
 (e.g. Chrome) are fire-and-forget children of the CrawlEvent so bubus
 tracks the full hierarchy and enforces the phase-level timeout.
 
+After all crawl hooks finish, the CrawlService emits SnapshotEvent as a
+child of CrawlEvent (unless crawl_only). This gives the correct hierarchy:
+
+    CrawlEvent
+      ├── ProcessEvent (crawl hooks)
+      ├── SnapshotEvent (child of crawl)
+      │   ├── ProcessEvent (snapshot hooks)
+      │   └── cleanup: kill snapshot bg daemons
+      └── cleanup: kill crawl bg daemons
+
 A cleanup handler registered LAST on CrawlEvent sends ProcessKillEvent
-to each bg daemon, giving them time to flush output and exit gracefully
-before the CrawlEvent hard timeout.
+to each bg crawl daemon, giving them time to flush output and exit
+gracefully before the CrawlEvent hard timeout.
 """
 
 from pathlib import Path
@@ -15,7 +25,7 @@ from typing import ClassVar
 
 from bubus import BaseEvent, EventBus
 
-from ..events import CrawlCompleted, CrawlEvent, ProcessEvent, ProcessKillEvent
+from ..events import CrawlCompleted, CrawlEvent, ProcessEvent, ProcessKillEvent, SnapshotEvent
 from ..models import Snapshot
 from ..plugins import Hook, Plugin
 from .base import BaseService
@@ -23,10 +33,10 @@ from .machine_service import MachineService
 
 
 class CrawlService(BaseService):
-    """Registers a handler per crawl hook that builds env and emits ProcessEvent."""
+    """Registers crawl hook handlers and emits SnapshotEvent as child of CrawlEvent."""
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [CrawlEvent, CrawlCompleted]
-    EMITS: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, ProcessKillEvent]
+    EMITS: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, ProcessKillEvent, SnapshotEvent]
 
     def __init__(
         self,
@@ -37,12 +47,14 @@ class CrawlService(BaseService):
         output_dir: Path,
         machine: MachineService,
         hooks: list[tuple[Plugin, Hook]],
+        crawl_only: bool = False,
     ):
         self.url = url
         self.snapshot = snapshot
         self.output_dir = output_dir
         self.machine = machine
         self.hooks = hooks
+        self.crawl_only = crawl_only
         super().__init__(bus)
         self._register_hook_handlers()
 
@@ -53,8 +65,13 @@ class CrawlService(BaseService):
             handler.__qualname__ = hook.name
             self.bus.on(CrawlEvent, handler)
 
-        # Register cleanup handler LAST — runs after all hook handlers finish,
-        # SIGTERMs bg daemons so they can exit before the phase-level timeout.
+        # After all crawl hooks, emit SnapshotEvent as child of CrawlEvent.
+        if not self.crawl_only:
+            self.bus.on(CrawlEvent, self._emit_snapshot_event)
+
+        # Register cleanup handler LAST — runs after all hook handlers AND
+        # the snapshot phase finish. SIGTERMs crawl bg daemons so they can
+        # exit before the crawl-level hard timeout.
         self.bus.on(CrawlEvent, self._cleanup_bg_hooks)
 
     def _make_hook_handler(self, plugin: Plugin, hook: Hook):
@@ -80,6 +97,14 @@ class CrawlService(BaseService):
                 await self.bus.emit(process_event)
 
         return handler
+
+    async def _emit_snapshot_event(self, event: BaseEvent) -> None:
+        """Emit SnapshotEvent as a child of CrawlEvent."""
+        await self.bus.emit(SnapshotEvent(
+            url=self.url,
+            snapshot_id=self.snapshot.id,
+            output_dir=str(self.output_dir),
+        ))
 
     async def _cleanup_bg_hooks(self, event: BaseEvent) -> None:
         """SIGTERM background crawl daemons so they can flush and exit gracefully."""

@@ -1,22 +1,20 @@
 """
 Event-driven orchestrator for abx-dl using bubus.
 
-Each plugin hook is registered as its own handler on the EventBus, keyed by
-CrawlEvent or SnapshotEvent. The bus uses parallel event concurrency so
-background daemon hooks (fire-and-forget ProcessEvents) process concurrently
-with the phase event, while foreground hooks still run in registration order
-thanks to serial handler execution within each event.
+The orchestrator emits a single CrawlEvent — everything else is driven by
+services reacting to events on the bus, forming a proper parent/child tree:
 
-Background ProcessEvents are proper children of their phase event, so bubus
-enforces the phase-level timeout (e.g. 300s for CrawlEvent) across the whole
-hierarchy and bus.log_tree() shows the full event tree. A cleanup handler
-registered LAST on each phase event SIGTERMs bg daemons after all foreground
-hooks finish, giving them time to flush and exit gracefully before the
-phase-level hard timeout.
+    CrawlEvent
+      ├── ProcessEvent (crawl hooks: install, bg daemons)
+      ├── SnapshotEvent (emitted by CrawlService as child of CrawlEvent)
+      │   ├── ProcessEvent (snapshot hooks)
+      │   └── cleanup: kill snapshot bg daemons
+      └── cleanup: kill crawl bg daemons
+    CrawlCompleted (informational, after everything)
 
-Events follow command/completion pairs:
-  - ProcessEvent (command) → handler streams stdout, emits Binary/Machine in realtime
-  - ProcessCompleted (notification) → carries final result after process exits
+Parallel event concurrency lets bg ProcessEvents (fire-and-forget children)
+process concurrently with their parent event, while handler execution stays
+serial within each event, preserving hook ordering for foreground hooks.
 
 Side-effect cascades (Binary→Machine→config) chain through ``await bus.emit()``
 queue-jumps: when a handler awaits an emitted event, bubus processes it and all
@@ -29,7 +27,7 @@ from typing import Any, Callable
 
 from bubus import EventBus
 
-from .events import CrawlEvent, CrawlCompleted, SnapshotEvent, SnapshotCompleted
+from .events import CrawlEvent, CrawlCompleted
 from .models import Snapshot, VisibleRecord, write_jsonl
 from .plugins import Hook, Plugin, filter_plugins
 
@@ -101,7 +99,7 @@ async def download(
     )
     CrawlService(
         bus, url=url, snapshot=snapshot, output_dir=output_dir,
-        machine=machine_svc, hooks=crawl_hooks,
+        machine=machine_svc, hooks=crawl_hooks, crawl_only=crawl_only,
     )
     SnapshotService(
         bus, url=url, snapshot=snapshot, output_dir=output_dir,
@@ -111,15 +109,11 @@ async def download(
     # --- Drive the lifecycle through the bus ---
     event_kwargs = dict(url=url, snapshot_id=snapshot.id, output_dir=str(output_dir))
     try:
-        # Phase events include bg daemon cleanup as their last handler,
-        # so all children (including bg ProcessEvents) complete before
-        # the phase event itself completes.
+        # CrawlEvent is the root — CrawlService emits SnapshotEvent as a
+        # child after crawl hooks finish (unless crawl_only), then cleans up
+        # crawl bg daemons. The whole tree completes before CrawlEvent returns.
         await bus.emit(CrawlEvent(**event_kwargs))
         await bus.emit(CrawlCompleted(**event_kwargs))
-
-        if not crawl_only:
-            await bus.emit(SnapshotEvent(**event_kwargs))
-            await bus.emit(SnapshotCompleted(**event_kwargs))
 
     finally:
         await bus.stop()
