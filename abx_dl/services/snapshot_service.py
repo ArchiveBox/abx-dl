@@ -1,8 +1,7 @@
 """SnapshotService — registers per-hook handlers for SnapshotEvent.
 
-On SnapshotCompleted, emits ProcessKillEvent for all background daemon hooks
-from both crawl and snapshot phases, since crawl daemons (e.g. Chrome) stay
-alive through the snapshot phase.
+On SnapshotCompleted, emits ProcessKillEvent for background snapshot daemon
+hooks so they are cleaned up after the snapshot phase.
 """
 
 from pathlib import Path
@@ -32,14 +31,12 @@ class SnapshotService(BaseService):
         output_dir: Path,
         machine: MachineService,
         hooks: list[tuple[Plugin, Hook]],
-        crawl_hooks: list[tuple[Plugin, Hook]] | None = None,
     ):
         self.url = url
         self.snapshot = snapshot
         self.output_dir = output_dir
         self.machine = machine
         self.hooks = hooks
-        self.crawl_hooks = crawl_hooks or []
         super().__init__(bus)
         self._register_hook_handlers()
 
@@ -75,9 +72,8 @@ class SnapshotService(BaseService):
         return handler
 
     async def on_SnapshotCompleted(self, event: SnapshotCompleted) -> None:
-        """SIGTERM all background daemon hooks (crawl + snapshot phases)."""
-        all_hooks = list(self.crawl_hooks) + list(self.hooks)
-        for plugin, hook in all_hooks:
+        """SIGTERM background snapshot daemon hooks."""
+        for plugin, hook in self.hooks:
             if hook.is_background:
                 plugin_output_dir = self.output_dir / plugin.name
                 await self.bus.emit(ProcessKillEvent(

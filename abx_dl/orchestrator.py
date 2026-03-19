@@ -98,19 +98,19 @@ async def download(
     )
     SnapshotService(
         bus, url=url, snapshot=snapshot, output_dir=output_dir,
-        machine=machine_svc, hooks=snapshot_hooks, crawl_hooks=crawl_hooks,
+        machine=machine_svc, hooks=snapshot_hooks,
     )
 
     # --- Drive the lifecycle through the bus ---
     event_kwargs = dict(url=url, snapshot_id=snapshot.id, output_dir=str(output_dir))
     try:
         await bus.emit(CrawlEvent(**event_kwargs))
-        await bus.emit(CrawlCompleted(**event_kwargs))   # SIGTERMs bg daemons via ProcessKillEvent
+        await bus.emit(CrawlCompleted(**event_kwargs))   # CrawlService SIGTERMs bg crawl daemons
         await bus.wait_until_idle()                      # drain bg ProcessEvents
 
         if not crawl_only:
             await bus.emit(SnapshotEvent(**event_kwargs))
-            await bus.emit(SnapshotCompleted(**event_kwargs))   # SIGTERMs bg daemons
+            await bus.emit(SnapshotCompleted(**event_kwargs))   # SnapshotService SIGTERMs bg snapshot daemons
             await bus.wait_until_idle()                        # drain bg ProcessEvents
 
     finally:
