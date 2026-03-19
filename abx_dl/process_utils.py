@@ -211,7 +211,7 @@ def _send_signal(pid: int, sig: int) -> bool:
         except (OSError, ProcessLookupError):
             os.kill(pid, sig)
         return True
-    except ProcessLookupError:
+    except (ProcessLookupError, PermissionError):
         return False
 
 
