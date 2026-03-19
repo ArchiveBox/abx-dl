@@ -69,7 +69,7 @@ from typing import Any, Callable
 from bubus import EventBus
 
 from .events import CrawlEvent, CrawlCompleted
-from .models import Snapshot, VisibleRecord, write_jsonl
+from .models import ArchiveResult, Snapshot, VisibleRecord, write_jsonl
 from .models import INSTALL_URL, Hook, Plugin, filter_plugins
 
 
@@ -136,12 +136,13 @@ async def download(
     crawl_hooks.sort(key=lambda x: x[1].sort_key)
     snapshot_hooks.sort(key=lambda x: x[1].sort_key)
 
-    # Shared mutable results list — emit_result() is called by ProcessService
-    # each time a hook produces an ArchiveResult
+    # Shared mutable results list — only ArchiveResults go here (public return value).
+    # The on_result callback receives both Process and ArchiveResult for TUI rendering.
     results: list[VisibleRecord] = []
 
     def emit_result(record: VisibleRecord) -> None:
-        results.append(record)
+        if isinstance(record, ArchiveResult):
+            results.append(record)
         if on_result:
             on_result(record)
 

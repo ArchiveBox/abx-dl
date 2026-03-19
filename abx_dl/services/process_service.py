@@ -205,6 +205,7 @@ class ProcessService(BaseService):
                 output_dir=event.output_dir, status='failed',
                 is_background=event.is_background,
             ))
+            self.emit_result(proc)
             self.emit_result(ar)
             return
 
@@ -261,6 +262,7 @@ class ProcessService(BaseService):
             output_str=output_str, status=status,
             is_background=event.is_background,
         ))
+        self.emit_result(proc)
         self.emit_result(ar)
 
     async def on_ProcessKillEvent(self, event: ProcessKillEvent) -> None:

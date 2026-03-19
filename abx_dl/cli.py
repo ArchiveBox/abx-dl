@@ -334,12 +334,17 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
         task_id = progress.add_task("[cyan]Running plugins...", total=total_hooks)
 
         def on_result(record: VisibleRecord) -> None:
-            if isinstance(record, Process):
-                task = progress.tasks[task_id]
-                if task.total is not None:
-                    progress.update(task_id, total=task.total + 1)
-            progress.update(task_id, advance=1, description=f"[cyan]{escape(_record_hook_name(record))}[/cyan]")
             live_results[_record_key(record)] = record
+            if isinstance(record, Process):
+                # Process records update the live display but don't advance
+                # the progress bar — only ArchiveResults count as completed hooks
+                return
+            # ArchiveResult from a binary install hook (not in total_hooks) —
+            # bump the total so the progress bar doesn't exceed 100%
+            task = progress.tasks[task_id]
+            if task.total is not None and task.completed >= task.total:
+                progress.update(task_id, total=task.total + 1)
+            progress.update(task_id, advance=1, description=f"[cyan]{escape(_record_hook_name(record))}[/cyan]")
 
         with Live(
             status_view,

@@ -1,8 +1,17 @@
 """Base service class for auto-registering event handlers on a bubus EventBus."""
 
-from typing import ClassVar
+from __future__ import annotations
+
+from pathlib import Path
+from typing import TYPE_CHECKING, ClassVar
 
 from bubus import BaseEvent, EventBus
+
+from ..events import ProcessEvent, ProcessKillEvent
+from ..models import Hook, Plugin, Snapshot
+
+if TYPE_CHECKING:
+    from .machine_service import MachineService
 
 
 class BaseService:
@@ -53,3 +62,87 @@ class BaseService:
                     handler = getattr(self, attr_name)
                     self.bus.on(event_cls, handler)
                     break
+
+
+class HookRunnerService(BaseService):
+    """Base class for services that run plugin hooks (CrawlService, SnapshotService).
+
+    Provides shared logic for:
+    - Registering one event handler per hook in sort order
+    - Building and emitting ProcessEvents (fg/bg dispatch)
+    - Cleaning up background hooks via ProcessKillEvent
+
+    Subclasses must set ``EVENT_CLASS`` to the event type they listen to
+    (e.g. CrawlEvent, SnapshotEvent).
+    """
+
+    EVENT_CLASS: ClassVar[type[BaseEvent]]
+
+    url: str
+    snapshot: Snapshot
+    output_dir: Path
+    machine: MachineService
+    hooks: list[tuple[Plugin, Hook]]
+
+    def _register_hook_handlers(self) -> None:
+        """Register one handler per hook, plus cleanup, on ``EVENT_CLASS``.
+
+        Hooks are pre-sorted by ``hook.sort_key`` = ``(order, name)``, so
+        registration order matches the numeric prefix in hook filenames.
+        """
+        for plugin, hook in self.hooks:
+            handler = self._make_hook_handler(plugin, hook)
+            handler.__name__ = hook.name
+            handler.__qualname__ = hook.name
+            self.bus.on(self.EVENT_CLASS, handler)
+
+        self.bus.on(self.EVENT_CLASS, self._cleanup_bg_hooks)
+
+    def _make_hook_handler(self, plugin: Plugin, hook: Hook):
+        """Create an async handler that emits a ProcessEvent for one hook.
+
+        The handler captures ``plugin`` and ``hook`` via closure defaults so each
+        handler is bound to its specific hook even though they share the same
+        factory method.
+
+        The env dict is built fresh each time from ``MachineService.shared_config``,
+        so fg hooks pick up config updates (e.g. CHROME_BINARY path) from earlier hooks.
+        """
+        async def handler(event: BaseEvent, _plugin=plugin, _hook=hook) -> None:
+            env = self.machine.get_env_for_plugin(_plugin, run_output_dir=self.output_dir)
+            timeout = int(env.get(f"{_plugin.name.upper()}_TIMEOUT", env.get('TIMEOUT', '60')))
+            plugin_output_dir = self.output_dir / _plugin.name
+            plugin_output_dir.mkdir(parents=True, exist_ok=True)
+
+            process_event = ProcessEvent(
+                plugin_name=_plugin.name, hook_name=_hook.name,
+                hook_path=str(_hook.path),
+                hook_args=[f'--url={self.url}', f'--snapshot-id={self.snapshot.id}'],
+                is_background=_hook.is_background,
+                output_dir=str(plugin_output_dir), env=env,
+                snapshot_id=self.snapshot.id, timeout=timeout,
+                event_handler_timeout=timeout + 30.0,
+            )
+            if _hook.is_background:
+                # Fire-and-forget: concurrent child of the parent event.
+                self.bus.emit(process_event)
+            else:
+                # Foreground: blocks until subprocess and all side-effect events complete.
+                await self.bus.emit(process_event)
+
+        return handler
+
+    async def _cleanup_bg_hooks(self, event: BaseEvent) -> None:
+        """SIGTERM all background daemons so they can flush and exit.
+
+        Sends ProcessKillEvent for each bg hook. Hooks that already exited
+        (finite bg hooks) will have no PID file — the kill is a safe no-op.
+        """
+        for plugin, hook in self.hooks:
+            if hook.is_background:
+                plugin_output_dir = self.output_dir / plugin.name
+                await self.bus.emit(ProcessKillEvent(
+                    plugin_name=plugin.name,
+                    hook_name=hook.name,
+                    output_dir=str(plugin_output_dir),
+                ))
