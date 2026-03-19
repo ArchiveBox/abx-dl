@@ -379,7 +379,7 @@ def build_env_for_plugin(
     # In some sandboxed environments (e.g. Claude Code), NO_PROXY includes
     # *.googleapis.com and *.google.com, which causes tools like @puppeteer/browsers
     # to bypass the egress proxy and fail DNS resolution for storage.googleapis.com.
-    _no_proxy_strip = {'*.googleapis.com', '*.google.com', '.googleapis.com', '.google.com'}
+    _no_proxy_strip = {'googleapis.com', 'google.com', '*.googleapis.com', '*.google.com', '.googleapis.com', '.google.com'}
     for _key in ('NO_PROXY', 'no_proxy'):
         if _key in env:
             _entries = [e.strip() for e in env[_key].split(',') if e.strip() not in _no_proxy_strip]
