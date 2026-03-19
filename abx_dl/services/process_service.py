@@ -110,10 +110,13 @@ class ProcessService(BaseService):
                             status = record.get('status', status)
                             output_str = record.get('output_str', '')
 
+            async def _stream_and_wait() -> None:
+                await _stream_stdout()
+                await process.wait()
+
             timed_out = False
             try:
-                await asyncio.wait_for(_stream_stdout(), timeout=event.timeout or None)
-                await process.wait()
+                await asyncio.wait_for(_stream_and_wait(), timeout=event.timeout or None)
             except asyncio.TimeoutError:
                 timed_out = True
                 await _kill_process(process)

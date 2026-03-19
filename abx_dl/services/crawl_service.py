@@ -1,9 +1,9 @@
 """CrawlService — registers per-hook handlers for CrawlEvent.
 
-All crawl hooks (including background) are awaited serially to preserve
-config/binary propagation between ordered install hooks. Background crawl
-daemons (e.g. Chrome) stay alive through the snapshot phase and are killed
-by SnapshotService on SnapshotCompleted.
+Foreground crawl hooks are awaited serially to preserve config/binary
+propagation between ordered install hooks. Background crawl daemons
+(e.g. Chrome) are fire-and-forget so they stay alive through the snapshot
+phase; they are killed by SnapshotService on SnapshotCompleted.
 """
 
 from pathlib import Path
@@ -56,7 +56,7 @@ class CrawlService(BaseService):
             plugin_output_dir = self.output_dir / _plugin.name
             plugin_output_dir.mkdir(parents=True, exist_ok=True)
 
-            await self.bus.emit(ProcessEvent(
+            process_event = ProcessEvent(
                 plugin_name=_plugin.name, hook_name=_hook.name,
                 hook_path=str(_hook.path),
                 hook_args=[f'--url={self.url}', f'--snapshot-id={self.snapshot.id}'],
@@ -65,6 +65,10 @@ class CrawlService(BaseService):
                 snapshot_id=self.snapshot.id, timeout=timeout,
                 event_timeout=timeout + 30.0,
                 event_handler_timeout=timeout + 30.0,
-            ))
+            )
+            if _hook.is_background:
+                self.bus.emit(process_event)   # fire-and-forget; daemon stays alive
+            else:
+                await self.bus.emit(process_event)
 
         return handler
