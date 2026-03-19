@@ -19,7 +19,13 @@ def _binary_env_key(name: str) -> str:
 
 
 class BinaryService(BaseService):
-    """Resolves Binary JSONL records by emitting ProcessEvent for provider on_Binary hooks."""
+    """Resolves Binary JSONL records by emitting ProcessEvent for provider hooks.
+
+        BinaryEvent (emitted by ProcessService when hook outputs Binary JSONL)
+          ├── if abspath provided → MachineEvent (register path in config)
+          └── if needs install → ProcessEvent per on_Binary hook
+              └── MachineEvent (on success, register resolved path)
+    """
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [BinaryEvent]
     EMITS: ClassVar[list[type[BaseEvent]]] = [MachineEvent, ProcessEvent]

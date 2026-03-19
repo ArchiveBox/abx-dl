@@ -12,7 +12,11 @@ from .base import BaseService
 
 
 class MachineService(BaseService):
-    """Owns shared_config. All config reads and writes go through this service."""
+    """Owns shared_config. All config reads and writes go through this service.
+
+        MachineEvent (emitted by ProcessService or BinaryService)
+          └── updates shared_config dict + persistent config store
+    """
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [MachineEvent]
 

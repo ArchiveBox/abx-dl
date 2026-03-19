@@ -1,7 +1,15 @@
 """SnapshotService — registers per-hook handlers for SnapshotEvent.
 
-Background snapshot daemons are fire-and-forget children of SnapshotEvent
-so bubus tracks the full hierarchy and enforces the phase-level timeout.
+SnapshotEvent is emitted by CrawlService as a child of CrawlEvent, so
+snapshot hooks and their bg daemons sit inside the crawl event tree:
+
+    CrawlEvent
+      ├── ...
+      ├── SnapshotEvent (this service handles it)
+      │   ├── ProcessEvent (fg snapshot hooks, serial)
+      │   ├── ProcessEvent (bg snapshot daemons, fire-and-forget)
+      │   └── cleanup: ProcessKillEvent per bg daemon
+      └── ...
 
 A cleanup handler registered LAST on SnapshotEvent sends ProcessKillEvent
 to each bg daemon, giving them time to flush output and exit gracefully
@@ -13,7 +21,7 @@ from typing import ClassVar
 
 from bubus import BaseEvent, EventBus
 
-from ..events import ProcessEvent, ProcessKillEvent, SnapshotCompleted, SnapshotEvent
+from ..events import ProcessEvent, ProcessKillEvent, SnapshotEvent
 from ..models import Snapshot
 from ..plugins import Hook, Plugin
 from .base import BaseService
@@ -21,9 +29,15 @@ from .machine_service import MachineService
 
 
 class SnapshotService(BaseService):
-    """Registers a handler per snapshot hook that builds env and emits ProcessEvent."""
+    """Registers snapshot hook handlers, cleans up bg daemons on completion.
 
-    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [SnapshotEvent, SnapshotCompleted]
+        SnapshotEvent
+          ├── ProcessEvent (fg snapshot hooks, serial)
+          ├── ProcessEvent (bg snapshot daemons, fire-and-forget)
+          └── cleanup: ProcessKillEvent per bg daemon
+    """
+
+    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [SnapshotEvent]
     EMITS: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, ProcessKillEvent]
 
     def __init__(
@@ -69,7 +83,6 @@ class SnapshotService(BaseService):
                 is_background=_hook.is_background,
                 output_dir=str(plugin_output_dir), env=env,
                 snapshot_id=self.snapshot.id, timeout=timeout,
-                event_timeout=timeout + 30.0,
                 event_handler_timeout=timeout + 30.0,
             )
             if _hook.is_background:
@@ -89,7 +102,3 @@ class SnapshotService(BaseService):
                     hook_name=hook.name,
                     output_dir=str(plugin_output_dir),
                 ))
-
-    async def on_SnapshotCompleted(self, event: SnapshotCompleted) -> None:
-        """SnapshotCompleted is informational — cleanup already happened in SnapshotEvent."""
-        pass

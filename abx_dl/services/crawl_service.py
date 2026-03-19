@@ -9,11 +9,12 @@ After all crawl hooks finish, the CrawlService emits SnapshotEvent as a
 child of CrawlEvent (unless crawl_only). This gives the correct hierarchy:
 
     CrawlEvent
-      ├── ProcessEvent (crawl hooks)
+      ├── ProcessEvent (crawl hooks: install, bg daemons)
       ├── SnapshotEvent (child of crawl)
       │   ├── ProcessEvent (snapshot hooks)
       │   └── cleanup: kill snapshot bg daemons
       └── cleanup: kill crawl bg daemons
+    CrawlCompleted (informational, emitted by orchestrator after CrawlEvent)
 
 A cleanup handler registered LAST on CrawlEvent sends ProcessKillEvent
 to each bg crawl daemon, giving them time to flush output and exit
@@ -25,7 +26,7 @@ from typing import ClassVar
 
 from bubus import BaseEvent, EventBus
 
-from ..events import CrawlCompleted, CrawlEvent, ProcessEvent, ProcessKillEvent, SnapshotEvent
+from ..events import CrawlEvent, ProcessEvent, ProcessKillEvent, SnapshotEvent
 from ..models import Snapshot
 from ..plugins import Hook, Plugin
 from .base import BaseService
@@ -33,9 +34,17 @@ from .machine_service import MachineService
 
 
 class CrawlService(BaseService):
-    """Registers crawl hook handlers and emits SnapshotEvent as child of CrawlEvent."""
+    """Registers crawl hook handlers and emits SnapshotEvent as child of CrawlEvent.
 
-    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [CrawlEvent, CrawlCompleted]
+        CrawlEvent
+          ├── ProcessEvent (crawl hooks: install, bg daemons)
+          ├── SnapshotEvent (child of crawl)
+          │   ├── ProcessEvent (snapshot hooks)
+          │   └── cleanup: kill snapshot bg daemons
+          └── cleanup: kill crawl bg daemons
+    """
+
+    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [CrawlEvent]
     EMITS: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, ProcessKillEvent, SnapshotEvent]
 
     def __init__(
@@ -88,7 +97,6 @@ class CrawlService(BaseService):
                 is_background=_hook.is_background,
                 output_dir=str(plugin_output_dir), env=env,
                 snapshot_id=self.snapshot.id, timeout=timeout,
-                event_timeout=timeout + 30.0,
                 event_handler_timeout=timeout + 30.0,
             )
             if _hook.is_background:
@@ -116,7 +124,3 @@ class CrawlService(BaseService):
                     hook_name=hook.name,
                     output_dir=str(plugin_output_dir),
                 ))
-
-    async def on_CrawlCompleted(self, event: CrawlCompleted) -> None:
-        """CrawlCompleted is informational — cleanup already happened in CrawlEvent."""
-        pass

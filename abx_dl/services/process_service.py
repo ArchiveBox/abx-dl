@@ -19,6 +19,14 @@ from .base import BaseService
 class ProcessService(BaseService):
     """Owns all hook subprocess execution.
 
+        ProcessEvent
+          ├── stream stdout → emit BinaryEvent / MachineEvent in realtime
+          ├── on exit → ProcessCompleted + ArchiveResult
+          └── (side-effect events are children of the ProcessEvent)
+
+        ProcessKillEvent
+          └── SIGTERM bg daemon via PID file
+
     Stdout is streamed line-by-line: Binary/Machine JSONL events are emitted
     in realtime as the process writes them, so config and binary propagation
     works even for long-running or daemon hooks.
