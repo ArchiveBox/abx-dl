@@ -105,8 +105,18 @@ def validate_pid_file(pid_file: Path, cmd_file: Optional[Path] = None, tolerance
             recorded_argv = _read_recorded_argv(cmd_file)
             recorded_exec = _resolve_recorded_exec(recorded_argv[0]) if recorded_argv else ''
             process_exec = _resolve_live_exec(proc_argv[0]) if proc_argv else ''
+            shebang_rewrite = False
             if recorded_exec and process_exec and recorded_exec != process_exec:
-                return False
+                # Shebang rewrite: kernel turns "./script.py" into "python3 ./script.py",
+                # shifting argv by 1. Check if the recorded script appears as proc_argv[1].
+                if len(proc_argv) > 1:
+                    live_script = _resolve_live_exec(proc_argv[1])
+                    if live_script and live_script == recorded_exec:
+                        shebang_rewrite = True
+                    else:
+                        return False
+                else:
+                    return False
             if not recorded_exec:
                 recorded_exec_name = _normalize_exec_name(recorded_argv[0]) if recorded_argv else ''
                 process_exec_name = _normalize_exec_name(proc_argv[0]) if proc_argv else _normalize_exec_name(proc.name())
@@ -114,7 +124,8 @@ def validate_pid_file(pid_file: Path, cmd_file: Optional[Path] = None, tolerance
                     return False
 
             # If the hook launches an interpreter + script, validate the script path too.
-            if len(recorded_argv) > 1 and len(proc_argv) > 1:
+            # Skip when shebang rewrite was detected (argv already shifted by 1).
+            if not shebang_rewrite and len(recorded_argv) > 1 and len(proc_argv) > 1:
                 recorded_entrypoint = _normalize_recorded_arg(recorded_argv[1])
                 process_entrypoint = _normalize_recorded_arg(proc_argv[1])
                 if recorded_entrypoint and process_entrypoint and recorded_entrypoint != process_entrypoint:

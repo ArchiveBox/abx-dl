@@ -1,7 +1,11 @@
 """SnapshotService — registers per-hook handlers for SnapshotEvent.
 
-On SnapshotCompleted, emits ProcessKillEvent for background snapshot daemon
-hooks so they are cleaned up after the snapshot phase.
+Background snapshot daemons are fire-and-forget children of SnapshotEvent
+so bubus tracks the full hierarchy and enforces the phase-level timeout.
+
+A cleanup handler registered LAST on SnapshotEvent sends ProcessKillEvent
+to each bg daemon, giving them time to flush output and exit gracefully
+before the SnapshotEvent hard timeout.
 """
 
 from pathlib import Path
@@ -47,6 +51,10 @@ class SnapshotService(BaseService):
             handler.__qualname__ = hook.name
             self.bus.on(SnapshotEvent, handler)
 
+        # Register cleanup handler LAST — runs after all hook handlers finish,
+        # SIGTERMs bg daemons so they can exit before the phase-level timeout.
+        self.bus.on(SnapshotEvent, self._cleanup_bg_hooks)
+
     def _make_hook_handler(self, plugin: Plugin, hook: Hook):
         async def handler(event: BaseEvent, _plugin=plugin, _hook=hook) -> None:
             env = self.machine.get_env_for_plugin(_plugin, run_output_dir=self.output_dir)
@@ -65,14 +73,14 @@ class SnapshotService(BaseService):
                 event_handler_timeout=timeout + 30.0,
             )
             if _hook.is_background:
-                self.bus.emit(process_event)   # fire-and-forget; parallel event concurrency
+                self.bus.emit(process_event)   # fire-and-forget child of SnapshotEvent
             else:
                 await self.bus.emit(process_event)
 
         return handler
 
-    async def on_SnapshotCompleted(self, event: SnapshotCompleted) -> None:
-        """SIGTERM background snapshot daemon hooks."""
+    async def _cleanup_bg_hooks(self, event: BaseEvent) -> None:
+        """SIGTERM background snapshot daemons so they can flush and exit gracefully."""
         for plugin, hook in self.hooks:
             if hook.is_background:
                 plugin_output_dir = self.output_dir / plugin.name
@@ -81,3 +89,7 @@ class SnapshotService(BaseService):
                     hook_name=hook.name,
                     output_dir=str(plugin_output_dir),
                 ))
+
+    async def on_SnapshotCompleted(self, event: SnapshotCompleted) -> None:
+        """SnapshotCompleted is informational — cleanup already happened in SnapshotEvent."""
+        pass

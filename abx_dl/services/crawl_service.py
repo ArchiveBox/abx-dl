@@ -2,9 +2,12 @@
 
 Foreground crawl hooks are awaited serially to preserve config/binary
 propagation between ordered install hooks. Background crawl daemons
-(e.g. Chrome) are fire-and-forget so they stay alive through the snapshot
-phase. On CrawlCompleted (crawl_only flow) or SnapshotCompleted (full flow),
-background daemons are killed via ProcessKillEvent.
+(e.g. Chrome) are fire-and-forget children of the CrawlEvent so bubus
+tracks the full hierarchy and enforces the phase-level timeout.
+
+A cleanup handler registered LAST on CrawlEvent sends ProcessKillEvent
+to each bg daemon, giving them time to flush output and exit gracefully
+before the CrawlEvent hard timeout.
 """
 
 from pathlib import Path
@@ -50,6 +53,10 @@ class CrawlService(BaseService):
             handler.__qualname__ = hook.name
             self.bus.on(CrawlEvent, handler)
 
+        # Register cleanup handler LAST — runs after all hook handlers finish,
+        # SIGTERMs bg daemons so they can exit before the phase-level timeout.
+        self.bus.on(CrawlEvent, self._cleanup_bg_hooks)
+
     def _make_hook_handler(self, plugin: Plugin, hook: Hook):
         async def handler(event: BaseEvent, _plugin=plugin, _hook=hook) -> None:
             env = self.machine.get_env_for_plugin(_plugin, run_output_dir=self.output_dir)
@@ -68,14 +75,14 @@ class CrawlService(BaseService):
                 event_handler_timeout=timeout + 30.0,
             )
             if _hook.is_background:
-                self.bus.emit(process_event)   # fire-and-forget; daemon stays alive
+                self.bus.emit(process_event)   # fire-and-forget child of CrawlEvent
             else:
                 await self.bus.emit(process_event)
 
         return handler
 
-    async def on_CrawlCompleted(self, event: CrawlCompleted) -> None:
-        """SIGTERM background crawl daemons now that the crawl phase is done."""
+    async def _cleanup_bg_hooks(self, event: BaseEvent) -> None:
+        """SIGTERM background crawl daemons so they can flush and exit gracefully."""
         for plugin, hook in self.hooks:
             if hook.is_background:
                 plugin_output_dir = self.output_dir / plugin.name
@@ -84,3 +91,7 @@ class CrawlService(BaseService):
                     hook_name=hook.name,
                     output_dir=str(plugin_output_dir),
                 ))
+
+    async def on_CrawlCompleted(self, event: CrawlCompleted) -> None:
+        """CrawlCompleted is informational — cleanup already happened in CrawlEvent."""
+        pass

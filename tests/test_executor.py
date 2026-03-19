@@ -9,7 +9,10 @@ from abx_dl.plugins import discover_plugins
 
 def _write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if content and not content.startswith('#!'):
+        content = '#!/usr/bin/env python3\n' + content
     path.write_text(content)
+    path.chmod(0o755)
 
 
 def _run_download(*args, **kwargs):

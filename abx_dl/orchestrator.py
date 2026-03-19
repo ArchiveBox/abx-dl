@@ -2,12 +2,17 @@
 Event-driven orchestrator for abx-dl using bubus.
 
 Each plugin hook is registered as its own handler on the EventBus, keyed by
-CrawlEvent or SnapshotEvent. The bus's default serial handler execution ensures
-foreground hooks run in registration order (sorted by hook order). Background
-hooks fire-and-forget their ProcessEvent (parallel event concurrency lets it
-process alongside the phase event). On Completed events, phase services emit
-ProcessKillEvent to SIGTERM daemon hooks; wait_until_idle drains any remaining
-background ProcessEvents.
+CrawlEvent or SnapshotEvent. The bus uses parallel event concurrency so
+background daemon hooks (fire-and-forget ProcessEvents) process concurrently
+with the phase event, while foreground hooks still run in registration order
+thanks to serial handler execution within each event.
+
+Background ProcessEvents are proper children of their phase event, so bubus
+enforces the phase-level timeout (e.g. 300s for CrawlEvent) across the whole
+hierarchy and bus.log_tree() shows the full event tree. A cleanup handler
+registered LAST on each phase event SIGTERMs bg daemons after all foreground
+hooks finish, giving them time to flush and exit gracefully before the
+phase-level hard timeout.
 
 Events follow command/completion pairs:
   - ProcessEvent (command) → handler streams stdout, emits Binary/Machine in realtime
@@ -78,8 +83,10 @@ async def download(
         if on_result:
             on_result(record)
 
-    # --- Create event bus and register services ---
-    bus = EventBus(name='AbxDl')
+    # --- Create event bus ---
+    # Parallel event concurrency lets bg ProcessEvents (children of the phase
+    # event) process concurrently with the phase event's foreground handlers.
+    bus = EventBus(name='AbxDl', event_concurrency='parallel')
 
     from .services import MachineService, BinaryService, ProcessService, CrawlService, SnapshotService
 
@@ -104,14 +111,15 @@ async def download(
     # --- Drive the lifecycle through the bus ---
     event_kwargs = dict(url=url, snapshot_id=snapshot.id, output_dir=str(output_dir))
     try:
+        # Phase events include bg daemon cleanup as their last handler,
+        # so all children (including bg ProcessEvents) complete before
+        # the phase event itself completes.
         await bus.emit(CrawlEvent(**event_kwargs))
-        await bus.emit(CrawlCompleted(**event_kwargs))   # CrawlService SIGTERMs bg crawl daemons
-        await bus.wait_until_idle()                      # drain bg ProcessEvents
+        await bus.emit(CrawlCompleted(**event_kwargs))
 
         if not crawl_only:
             await bus.emit(SnapshotEvent(**event_kwargs))
-            await bus.emit(SnapshotCompleted(**event_kwargs))   # SnapshotService SIGTERMs bg snapshot daemons
-            await bus.wait_until_idle()                        # drain bg ProcessEvents
+            await bus.emit(SnapshotCompleted(**event_kwargs))
 
     finally:
         await bus.stop()
