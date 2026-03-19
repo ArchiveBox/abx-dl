@@ -207,10 +207,10 @@ def test_download_finalizes_background_hooks_after_sigterm(tmp_path: Path) -> No
         if result.plugin == 'bgdemo' and result.hook_name == 'on_Snapshot__05_wait.bg'
     ]
 
-    assert [result.status for result in results] == ['started', 'succeeded']
-    assert results[-1].output_str == 'bg cleaned up'
-    assert results[0].process_id == results[-1].process_id
-    assert results[0].start_ts == results[-1].start_ts
+    # Only the hook's own SIGTERM handler emits the ArchiveResult — no synthetic records.
+    assert len(results) == 1
+    assert results[0].status == 'succeeded'
+    assert results[0].output_str == 'bg cleaned up'
 
     index_lines = [json.loads(line) for line in (tmp_path / 'run' / 'index.jsonl').read_text().splitlines()]
     final_result = next(

@@ -74,17 +74,6 @@ class ProcessService(BaseService):
                 )
             write_pid_file_with_mtime(pid_file, process.pid, time.time())
 
-            # For bg daemons, emit a preliminary "started" result so callers
-            # know the daemon launched before it finishes (or gets SIGTERM'd).
-            if event.is_background:
-                started_ar = ArchiveResult(
-                    snapshot_id=event.snapshot_id, plugin=event.plugin_name,
-                    hook_name=event.hook_name, status='started',
-                    process_id=proc.id, start_ts=proc.started_at,
-                )
-                write_jsonl(self.index_path, started_ar, also_print=self.emit_jsonl)
-                self.emit_result(started_ar)
-
             # Stream stdout line-by-line, emitting side-effect events in realtime
             stdout_lines: list[str] = []
             status = 'succeeded'
