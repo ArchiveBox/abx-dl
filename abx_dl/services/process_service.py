@@ -2,8 +2,6 @@
 
 import asyncio
 import json
-import os
-import signal
 import time
 from pathlib import Path
 from typing import Any, Callable, ClassVar
@@ -12,7 +10,7 @@ from bubus import BaseEvent, EventBus
 
 from ..events import BinaryEvent, MachineEvent, ProcessCompleted, ProcessEvent, ProcessKillEvent
 from ..models import ArchiveResult, Process, VisibleRecord, write_jsonl, now_iso
-from ..process_utils import write_pid_file_with_mtime, write_cmd_file, safe_kill_process
+from ..process_utils import write_pid_file_with_mtime, write_cmd_file, graceful_kill_process, graceful_kill_by_pid_file
 from .base import BaseService
 
 
@@ -180,7 +178,7 @@ class ProcessService(BaseService):
                 await asyncio.wait_for(_stream_and_wait(), timeout=event.timeout or None)
             except asyncio.TimeoutError:
                 timed_out = True
-                await _kill_process(process)
+                await graceful_kill_process(process)
 
             returncode = process.returncode or 0
 
@@ -190,7 +188,7 @@ class ProcessService(BaseService):
             # (e.g. if BinaryEvent(**record) raises ValidationError on malformed
             # JSONL, or if bus.emit() fails during the streaming phase).
             if 'process' in locals():
-                await _kill_process(process)
+                await graceful_kill_process(process)
             proc.exit_code = -1
             proc.stderr = f'{type(e).__name__}: {e}'
             proc.ended_at = now_iso()
@@ -266,55 +264,19 @@ class ProcessService(BaseService):
         self.emit_result(ar)
 
     async def on_ProcessKillEvent(self, event: ProcessKillEvent) -> None:
-        """SIGTERM a background daemon process via its PID file.
+        """Gracefully shut down a background daemon via its PID file.
 
-        Called by CrawlService/SnapshotService cleanup handlers. Reads the PID
-        from ``{hook_name}.pid`` and sends SIGTERM. If the hook already exited
-        (PID file missing or stale), this is a safe no-op.
+        Called by CrawlService/SnapshotService cleanup handlers. Validates the
+        PID file (mtime + command check), sends SIGTERM, waits up to 15s for
+        clean exit, then escalates to SIGKILL if the process is still alive.
+
+        The 15s grace period is important for Chrome, which needs time to flush
+        its user_data_dir (cookies, local storage, session state) on shutdown.
         """
         output_dir = Path(event.output_dir)
         pid_file = output_dir / f'{event.hook_name}.pid'
         cmd_file = output_dir / f'{event.hook_name}.sh'
-        safe_kill_process(pid_file, cmd_file, signal_num=signal.SIGTERM)
-
-
-# ── Process cleanup ────────────────────────────────────────────────────────
-
-async def _kill_process(process: asyncio.subprocess.Process) -> None:
-    """Graceful shutdown: SIGTERM → wait 2s → SIGKILL → wait 1s.
-
-    Tries process group kill first (for bg hooks with start_new_session=True),
-    falls back to direct PID kill if the process group doesn't exist.
-    """
-    pid = process.pid
-    if pid is None:
-        return
-    try:
-        try:
-            os.killpg(pid, signal.SIGTERM)
-        except (OSError, ProcessLookupError):
-            os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
-
-    try:
-        await asyncio.wait_for(process.wait(), timeout=2.0)
-        return
-    except asyncio.TimeoutError:
-        pass
-
-    try:
-        try:
-            os.killpg(pid, signal.SIGKILL)
-        except (OSError, ProcessLookupError):
-            os.kill(pid, signal.SIGKILL)
-    except ProcessLookupError:
-        return
-
-    try:
-        await asyncio.wait_for(process.wait(), timeout=1.0)
-    except asyncio.TimeoutError:
-        pass
+        await graceful_kill_by_pid_file(pid_file, cmd_file)
 
 
 # ── Pure helpers ────────────────────────────────────────────────────────────
