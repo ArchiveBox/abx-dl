@@ -70,7 +70,7 @@ from bubus import EventBus
 
 from .events import CrawlEvent, CrawlCompleted
 from .models import Snapshot, VisibleRecord, write_jsonl
-from .plugins import Hook, Plugin, filter_plugins
+from .models import INSTALL_URL, Hook, Plugin, filter_plugins
 
 
 async def download(

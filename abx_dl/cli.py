@@ -19,7 +19,7 @@ from .config import get_config, set_config, CONFIG_FILE
 from .dependencies import load_binary
 from .orchestrator import download
 from .models import ArchiveResult, Process
-from .plugins import discover_plugins, filter_plugins
+from .models import INSTALL_URL, discover_plugins, filter_plugins
 
 console = Console()
 stderr_console = Console(stderr=True)
@@ -384,11 +384,10 @@ def _run_plugin_install(selected) -> int:
                 failed_processes_by_hook[(record.plugin or '', _record_hook_name(record))] = record
 
         asyncio.run(download(
-            'https://example.com',
+            INSTALL_URL,
             selected,
             Path(temp_dir),
             auto_install=True,
-            crawl_only=True,
             emit_jsonl=False,
             on_result=on_record,
         ))

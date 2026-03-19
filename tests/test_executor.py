@@ -4,7 +4,7 @@ from pathlib import Path
 
 from abx_dl.orchestrator import download
 from abx_dl.models import ArchiveResult
-from abx_dl.plugins import discover_plugins
+from abx_dl.models import discover_plugins
 
 
 def _write(path: Path, content: str) -> None:

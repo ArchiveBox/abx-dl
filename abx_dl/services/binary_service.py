@@ -8,7 +8,7 @@ from bubus import BaseEvent, EventBus
 
 from ..events import BinaryEvent, MachineEvent, ProcessEvent
 from ..models import VisibleRecord
-from ..plugins import Plugin
+from ..models import Plugin
 from .base import BaseService
 from .machine_service import MachineService
 

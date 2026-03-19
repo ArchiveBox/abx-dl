@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from abx_dl.plugins import discover_plugins, parse_hook_filename
+from abx_dl.models import discover_plugins, parse_hook_filename
 
 
 def test_parse_hook_filename_marks_bg_hooks() -> None:

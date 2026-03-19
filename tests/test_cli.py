@@ -11,7 +11,7 @@ from rich.console import Console
 import abx_dl.cli as cli_module
 from abx_dl.cli import _build_archive_results_table, _compact_output, _format_archive_result_line, _format_elapsed, cli as cli_group
 from abx_dl.models import ArchiveResult, Process
-from abx_dl.plugins import discover_plugins
+from abx_dl.models import discover_plugins
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]

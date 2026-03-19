@@ -7,7 +7,7 @@ from bubus import BaseEvent, EventBus
 
 from ..config import build_env_for_plugin, set_config
 from ..events import MachineEvent
-from ..plugins import Plugin
+from ..models import Plugin
 from .base import BaseService
 
 

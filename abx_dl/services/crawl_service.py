@@ -7,7 +7,7 @@ from bubus import BaseEvent, EventBus
 
 from ..events import CrawlEvent, ProcessEvent, ProcessKillEvent, SnapshotEvent
 from ..models import Snapshot
-from ..plugins import Hook, Plugin
+from ..models import INSTALL_URL, Hook, Plugin
 from .base import BaseService
 from .machine_service import MachineService
 
@@ -92,7 +92,11 @@ class CrawlService(BaseService):
         self.output_dir = output_dir
         self.machine = machine
         self.hooks = hooks
-        self.crawl_only = crawl_only
+        # Skip the snapshot phase if explicitly requested OR if the URL is the
+        # special install sentinel. This lets `abx install` reuse the normal
+        # crawl flow (install hooks, binary resolution, config propagation)
+        # without triggering any snapshot extraction hooks.
+        self.crawl_only = crawl_only or (url == INSTALL_URL)
         super().__init__(bus)
         self._register_hook_handlers()
 

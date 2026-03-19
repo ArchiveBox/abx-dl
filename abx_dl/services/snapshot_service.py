@@ -7,7 +7,7 @@ from bubus import BaseEvent, EventBus
 
 from ..events import ProcessEvent, ProcessKillEvent, SnapshotEvent
 from ..models import Snapshot
-from ..plugins import Hook, Plugin
+from ..models import Hook, Plugin
 from .base import BaseService
 from .machine_service import MachineService
 
