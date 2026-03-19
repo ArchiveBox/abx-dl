@@ -84,7 +84,16 @@ async def download(
     # --- Create event bus ---
     # Parallel event concurrency lets bg ProcessEvents (children of the phase
     # event) process concurrently with the phase event's foreground handlers.
-    bus = EventBus(name='AbxDl', event_concurrency='parallel', max_history_size=1000, max_history_drop=True)
+    timeout = int((config_overrides or {}).get('TIMEOUT', 60))
+    bus = EventBus(
+        name='AbxDl',
+        event_concurrency='parallel',
+        max_history_size=1000,
+        max_history_drop=True,
+        event_timeout=float(timeout) + 120.0,          # hard timeout for any single event
+        event_slow_timeout=float(timeout) + 60.0,      # slow warning threshold
+        event_handler_slow_timeout=60.0,                # slow handler warning
+    )
 
     from .services import MachineService, BinaryService, ProcessService, CrawlService, SnapshotService
 
