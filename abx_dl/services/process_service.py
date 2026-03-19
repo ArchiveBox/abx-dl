@@ -180,7 +180,7 @@ class ProcessService(BaseService):
                 timed_out = True
                 await graceful_kill_process(process)
 
-            returncode = process.returncode or 0
+            returncode = process.returncode if process.returncode is not None else 0
 
         except Exception as e:
             # Kill the subprocess if it was created — without this, bg hooks
