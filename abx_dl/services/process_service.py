@@ -185,7 +185,12 @@ class ProcessService(BaseService):
             returncode = process.returncode or 0
 
         except Exception as e:
-            # Subprocess failed to start or other unexpected error
+            # Kill the subprocess if it was created — without this, bg hooks
+            # started with start_new_session=True would leak as orphan processes
+            # (e.g. if BinaryEvent(**record) raises ValidationError on malformed
+            # JSONL, or if bus.emit() fails during the streaming phase).
+            if 'process' in locals():
+                await _kill_process(process)
             proc.exit_code = -1
             proc.stderr = f'{type(e).__name__}: {e}'
             proc.ended_at = now_iso()
