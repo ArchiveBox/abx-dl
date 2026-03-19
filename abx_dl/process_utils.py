@@ -184,7 +184,11 @@ def is_process_alive(pid: int) -> bool:
     try:
         os.kill(pid, 0)
         return True
-    except (OSError, ProcessLookupError):
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # process exists but belongs to another user
+    except OSError:
         return False
 
 
