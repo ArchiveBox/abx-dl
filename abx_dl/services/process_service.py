@@ -36,8 +36,9 @@ class ProcessService(BaseService):
         │   - Every line → ProcessStdoutEvent
         │     (each service parses and handles its own types)
         │
-        ├── Wait for process exit (with timeout)
-        │   - On timeout: SIGTERM → wait 2s → SIGKILL
+        ├── Wait for process exit
+        │   - FG hooks: per-plugin timeout, then SIGTERM → wait → SIGKILL
+        │   - BG daemons: no timeout (run until ProcessKillEvent)
         │
         └── Finalize:
             - Write Process record to index.jsonl
@@ -170,8 +171,12 @@ class ProcessService(BaseService):
                 await process.wait()
 
             timed_out = False
+            # Background daemons run until explicitly killed via
+            # ProcessKillEvent during cleanup — no timeout.
+            # Foreground hooks use the per-plugin timeout.
+            effective_timeout = None if event.is_background else (event.timeout or None)
             try:
-                await asyncio.wait_for(_stream_and_wait(), timeout=event.timeout or None)
+                await asyncio.wait_for(_stream_and_wait(), timeout=effective_timeout)
             except asyncio.TimeoutError:
                 timed_out = True
                 await graceful_kill_process(process)
