@@ -340,7 +340,7 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
                 cmd=[], plugin=event.plugin_name, hook_name=event.hook_name,
                 exit_code=event.exit_code, stdout=event.stdout, stderr=event.stderr,
                 started_at=event.start_ts or None, ended_at=event.end_ts or None,
-                timeout=int(event.event_timeout or timeout_seconds),
+                timeout=int(event.timeout if hasattr(event, 'timeout') else timeout_seconds),
             )
             live_results[proc.id] = proc
 
