@@ -7,37 +7,30 @@ lifecycle. Everything else is driven by services reacting to events.
 
 Full event tree for a typical run::
 
-    CrawlEvent                              # emitted here by download()
+    CrawlEvent                                  # emitted here by download()
     │
-    │  ── Crawl hooks (sorted by order) ──
-    │
-    ├── ProcessEvent  (bg: wget_install)          ╮
-    ├── ProcessEvent  (bg: trafilatura_install)    │ bg hooks fire concurrently
-    ├── ProcessEvent  (bg: chrome_install)         │ as children of CrawlEvent
-    ├── ProcessEvent  (bg: chrome_launch daemon)   ╯
-    ├── ProcessEvent  (FG: chrome_wait)       ← blocks until Chrome is ready
-    │   │
-    │   │  (side-effect chain from chrome_install, happening concurrently):
-    │   │  ProcessEvent → BinaryEvent → ProcessEvent (puppeteer install)
-    │   │      → BinaryEvent(abspath=...) → MachineEvent(CHROME_BINARY=...)
-    │   │
-    ├── SnapshotEvent                         ← emitted by CrawlService.on_CrawlEvent
-    │   ├── ProcessEvent  (bg: wget download)
+    ├── CrawlSetupEvent                         # on_Crawl hooks run here
+    │   ├── ProcessEvent  (bg: wget_install)
+    │   ├── ProcessEvent  (bg: chrome_install)
     │   ├── ProcessEvent  (bg: chrome_launch)
-    │   ├── ProcessEvent  (bg: chrome_tab)
-    │   ├── ProcessEvent  (FG: chrome_wait)   ← blocks until tab ready
-    │   ├── ProcessEvent  (FG: chrome_navigate)
-    │   ├── ProcessEvent  (FG: title)
-    │   ├── ProcessEvent  (FG: htmltotext)
-    │   ├── ProcessEvent  (FG: trafilatura)
-    │   ├── ProcessEvent  (FG: hashes)
-    │   └── SnapshotCleanupEvent              ← snapshot bg cleanup
-    │       └── ProcessKillEvent × N
+    │   ├── ProcessEvent  (FG: chrome_wait)
+    │   │   │  (side-effect chain from chrome_install):
+    │   │   │  BinaryEvent → ProcessEvent (puppeteer install)
+    │   │   │      → BinaryEvent(abspath) → MachineEvent
+    │   │   └── ...
+    │   └── ...
     │
-    ├── CrawlCleanupEvent                     ← crawl bg cleanup
+    ├── CrawlSetupCompletedEvent                # triggers snapshot phase
+    │   └── SnapshotEvent
+    │       ├── ProcessEvent  (on_Snapshot hooks)
+    │       ├── SnapshotCleanupEvent
+    │       │   └── ProcessKillEvent × N
+    │       └── SnapshotCompletedEvent
+    │
+    ├── CrawlCleanupEvent                       # SIGTERMs bg crawl daemons
     │   └── ProcessKillEvent × N
     │
-    CrawlCompleted                            ← informational, after everything
+    └── CrawlCompletedEvent                     # informational
 
 Key bubus concepts used:
 
@@ -70,7 +63,7 @@ from typing import Any, Callable
 
 from bubus import EventBus
 
-from .events import CrawlEvent, CrawlCompleted
+from .events import CrawlEvent
 from .models import ArchiveResult, Snapshot, VisibleRecord, write_jsonl
 from .models import INSTALL_URL, Hook, Plugin, filter_plugins
 
@@ -194,15 +187,14 @@ async def download(
     )
 
     # --- Drive the lifecycle ---
-    # Emitting CrawlEvent triggers the entire cascade: crawl hooks → snapshot
-    # hooks → cleanup. The await returns only after the full tree completes.
-    event_kwargs = dict(url=url, snapshot_id=snapshot.id, output_dir=str(output_dir))
+    # Emitting CrawlEvent triggers the entire cascade:
+    # CrawlSetupEvent → CrawlSetupCompletedEvent → SnapshotEvent →
+    # SnapshotCleanupEvent → SnapshotCompletedEvent → CrawlCleanupEvent →
+    # CrawlCompletedEvent. The await returns after the full tree completes.
     try:
-        await bus.emit(CrawlEvent(**event_kwargs))
-        # CrawlCompleted is informational — no handlers react to it, but it
-        # appears in the event tree and can be used for logging/monitoring.
-        await bus.emit(CrawlCompleted(**event_kwargs))
-
+        await bus.emit(CrawlEvent(
+            url=url, snapshot_id=snapshot.id, output_dir=str(output_dir),
+        ))
     finally:
         await bus.stop()
 

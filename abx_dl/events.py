@@ -2,25 +2,30 @@
 
 Events form a hierarchy during execution::
 
-    CrawlEvent
-    ├── ProcessEvent (crawl hooks)
-    │   ├── BinaryEvent → ProcessEvent (provider install) → MachineEvent
-    │   └── ProcessCompleted
-    ├── SnapshotEvent
-    │   ├── ProcessEvent (snapshot hooks)
+    CrawlEvent                                      # orchestrator.download()
+    ├── CrawlSetupEvent                             # crawl hooks run here
+    │   ├── ProcessEvent (on_Crawl hooks)
+    │   │   ├── BinaryEvent → ProcessEvent (provider install) → MachineEvent
     │   │   └── ProcessCompleted
-    │   └── SnapshotCleanupEvent
-    │       └── ProcessKillEvent × N (snapshot bg cleanup)
+    │   └── ...
+    ├── CrawlSetupCompletedEvent                    # triggers snapshot phase
+    │   └── SnapshotEvent
+    │       ├── ProcessEvent (on_Snapshot hooks)
+    │       │   └── ProcessCompleted
+    │       ├── SnapshotCleanupEvent
+    │       │   └── ProcessKillEvent × N
+    │       └── SnapshotCompletedEvent
     ├── CrawlCleanupEvent
-    │   └── ProcessKillEvent × N (crawl bg cleanup)
-    └── CrawlCompleted
+    │   └── ProcessKillEvent × N
+    └── CrawlCompletedEvent
 
 Event types:
-- **Command events** trigger actions: CrawlEvent, SnapshotEvent, ProcessEvent,
-  ProcessKillEvent, BinaryEvent, MachineEvent, CrawlCleanupEvent,
-  SnapshotCleanupEvent
-- **Completion events** notify results: CrawlCompleted, SnapshotCompleted,
-  ProcessCompleted
+- **Lifecycle events** drive phases: CrawlEvent, CrawlSetupEvent,
+  CrawlSetupCompletedEvent, SnapshotEvent, SnapshotCleanupEvent,
+  SnapshotCompletedEvent, CrawlCleanupEvent, CrawlCompletedEvent
+- **Command events** trigger actions: ProcessEvent, ProcessKillEvent,
+  BinaryEvent, MachineEvent
+- **Completion events** notify results: ProcessCompleted
 
 bubus behavior:
 - Each event has ``event_timeout`` — the hard deadline for the event and all its
@@ -37,13 +42,38 @@ from bubus import BaseEvent
 from pydantic import ConfigDict, Field
 
 
-# ── Crawl / Snapshot lifecycle ───────────────────────────────────────────────
+# ── Crawl lifecycle ──────────────────────────────────────────────────────────
 
 class CrawlEvent(BaseEvent):
-    """Root event: triggers all on_Crawl hook handlers (install + daemons).
+    """Root event: kicks off the full crawl → snapshot → cleanup lifecycle.
 
-    Emitted once by orchestrator.download(). The entire crawl + snapshot
-    lifecycle runs as children of this event.
+    Emitted once by orchestrator.download(). CrawlService.on_CrawlEvent
+    handles this by emitting the lifecycle chain:
+    CrawlSetupEvent → CrawlSetupCompletedEvent → CrawlCleanupEvent → CrawlCompletedEvent
+    """
+    url: str
+    snapshot_id: str
+    output_dir: str
+    event_timeout: float = 300.0
+
+
+class CrawlSetupEvent(BaseEvent):
+    """Phase: run all on_Crawl hooks (installs, daemons, config propagation).
+
+    Emitted by CrawlService.on_CrawlEvent. Per-hook handlers are registered
+    on this event, so they run serially in hook sort order.
+    """
+    url: str
+    snapshot_id: str
+    output_dir: str
+    event_timeout: float = 300.0
+
+
+class CrawlSetupCompletedEvent(BaseEvent):
+    """Phase: crawl hooks finished, triggers snapshot extraction.
+
+    Emitted by CrawlService.on_CrawlEvent after CrawlSetupEvent completes.
+    CrawlService.on_CrawlSetupCompletedEvent emits SnapshotEvent (unless crawl_only).
     """
     url: str
     snapshot_id: str
@@ -52,33 +82,30 @@ class CrawlEvent(BaseEvent):
 
 
 class CrawlCleanupEvent(BaseEvent):
-    """Command: SIGTERM all background crawl daemons.
+    """Phase: SIGTERM all background crawl daemons.
 
-    Emitted by CrawlService after all crawl hooks and the snapshot phase
-    complete. Handled by CrawlService.on_CrawlCleanupEvent.
+    Emitted by CrawlService.on_CrawlEvent after snapshot phase completes.
     """
     snapshot_id: str
     output_dir: str
     event_timeout: float = 30.0
 
 
-class CrawlCompleted(BaseEvent):
-    """Informational: emitted after the full CrawlEvent tree completes.
-
-    No handlers react to this — it exists for logging, monitoring, and
-    to mark the end of the event tree in bus.log_tree() output.
-    """
+class CrawlCompletedEvent(BaseEvent):
+    """Informational: the full crawl lifecycle has finished."""
     url: str
     snapshot_id: str
     output_dir: str
     event_timeout: float = 10.0
 
 
-class SnapshotEvent(BaseEvent):
-    """Triggers all on_Snapshot hook handlers (extraction + indexing).
+# ── Snapshot lifecycle ───────────────────────────────────────────────────────
 
-    Emitted by CrawlService.on_CrawlEvent as a child of CrawlEvent,
-    so the entire snapshot phase sits inside the crawl event tree.
+class SnapshotEvent(BaseEvent):
+    """Phase: run all on_Snapshot hooks (extraction + indexing).
+
+    Emitted by CrawlService.on_CrawlSetupCompletedEvent as a child of
+    CrawlSetupCompletedEvent. Per-hook handlers are registered on this event.
     """
     url: str
     snapshot_id: str
@@ -87,18 +114,17 @@ class SnapshotEvent(BaseEvent):
 
 
 class SnapshotCleanupEvent(BaseEvent):
-    """Command: SIGTERM all background snapshot daemons.
+    """Phase: SIGTERM all background snapshot daemons.
 
-    Emitted by SnapshotService after all snapshot hooks complete.
-    Handled by SnapshotService.on_SnapshotCleanupEvent.
+    Emitted by SnapshotService.on_SnapshotEvent after all snapshot hooks complete.
     """
     snapshot_id: str
     output_dir: str
     event_timeout: float = 30.0
 
 
-class SnapshotCompleted(BaseEvent):
-    """Informational: emitted after all snapshot hooks complete."""
+class SnapshotCompletedEvent(BaseEvent):
+    """Informational: the snapshot phase has finished."""
     url: str
     snapshot_id: str
     output_dir: str
@@ -139,8 +165,8 @@ class ProcessEvent(BaseEvent):
 class ProcessKillEvent(BaseEvent):
     """Command: SIGTERM a background daemon hook via its PID file.
 
-    Emitted by CrawlService/SnapshotService cleanup handlers. ProcessService
-    reads the PID file and sends SIGTERM. Safe no-op if the hook already exited.
+    Emitted by cleanup event handlers. ProcessService reads the PID file
+    and sends SIGTERM. Safe no-op if the hook already exited.
     """
     plugin_name: str
     hook_name: str
