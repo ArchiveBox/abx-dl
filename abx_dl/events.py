@@ -5,7 +5,7 @@ Events form a hierarchy during execution::
     CrawlEvent                                      # orchestrator.download()
     ├── CrawlSetupEvent                             # crawl hooks run here
     │   ├── ProcessEvent (on_Crawl hooks)
-    │   │   ├── ProcessRecordOutputtedEvent         # for each JSONL line
+    │   │   ├── ProcessStdoutEvent                   # for each stdout line
     │   │   │   ├── BinaryEvent (via BinaryService)
     │   │   │   │   ├── BinaryLoadedEvent (already installed)
     │   │   │   │   └── ProcessEvent (provider install) → BinaryInstalledEvent
@@ -15,7 +15,7 @@ Events form a hierarchy during execution::
     ├── CrawlStartEvent                    # triggers snapshot phase
     │   └── SnapshotEvent (depth=1)
     │       ├── ProcessEvent (on_Snapshot hooks)
-    │       │   ├── ProcessRecordOutputtedEvent
+    │       │   ├── ProcessStdoutEvent
     │       │   │   ├── SnapshotEvent (depth>1, ignored by abx-dl)
     │       │   │   └── ArchiveResultEvent (inline)
     │       │   └── ProcessCompletedEvent
@@ -31,8 +31,8 @@ Event types:
 - **Lifecycle events** drive phases: CrawlEvent, CrawlSetupEvent,
   CrawlStartEvent, SnapshotEvent, SnapshotCleanupEvent,
   SnapshotCompletedEvent, CrawlCleanupEvent, CrawlCompletedEvent
-- **Routing events** decouple services: ProcessRecordOutputtedEvent
-  carries raw JSONL from stdout; each service handles its own type
+- **Routing events** decouple services: ProcessStdoutEvent
+  carries each stdout line; each service parses and handles its own type
 - **Command events** trigger actions: ProcessEvent, ProcessKillEvent,
   BinaryEvent, MachineEvent
 - **Completion events** notify results: ProcessCompletedEvent,
@@ -119,7 +119,7 @@ class SnapshotEvent(BaseEvent):
     Emitted by CrawlService.on_CrawlStartEvent as a child of
     CrawlStartEvent. Per-hook handlers are registered on this event.
 
-    Also emitted by SnapshotService.on_ProcessRecordOutputtedEvent when a hook
+    Also emitted by SnapshotService.on_ProcessStdoutEvent when a hook
     outputs ``{"type": "Snapshot", ...}`` JSONL (discovered URLs during crawling).
     In abx-dl, SnapshotService ignores events with ``depth > 1``.
     ArchiveBox handles recursive crawling by processing all depths.
@@ -156,7 +156,7 @@ class ProcessEvent(BaseEvent):
     """Command: run a hook subprocess.
 
     Handled by ProcessService.on_ProcessEvent, which spawns the subprocess,
-    streams stdout, and emits ProcessRecordOutputtedEvent for each typed JSONL
+    streams stdout, and emits ProcessStdoutEvent for each stdout
     record. Each service then handles its own record types independently.
 
     Uses ``event_concurrency='parallel'`` so fire-and-forget bg hooks can
@@ -217,26 +217,24 @@ class ProcessCompletedEvent(BaseEvent):
     event_timeout: float | None =60.0
 
 
-class ProcessRecordOutputtedEvent(BaseEvent):
-    """A hook subprocess outputted a typed JSON record to stdout.
+class ProcessStdoutEvent(BaseEvent):
+    """A hook subprocess outputted a line to stdout.
 
-    Emitted by ProcessService for each parsed JSONL line that has a ``type``
-    field. ProcessService does not interpret the record — it routes it to
-    this event so each service can handle its own record types:
+    Emitted by ProcessService for every stdout line. Each consuming service
+    parses the line and checks for the JSON shape it cares about:
 
-    - BinaryService: ``type=Binary`` → emits BinaryEvent
-    - MachineService: ``type=Machine`` → emits MachineEvent
-    - SnapshotService: ``type=Snapshot`` → emits SnapshotEvent
-    - ArchiveResultService: ``type=ArchiveResult`` → emits ArchiveResultEvent
+    - BinaryService: ``{"type": "Binary", ...}`` → emits BinaryEvent
+    - MachineService: ``{"type": "Machine", ...}`` → emits MachineEvent
+    - SnapshotService: ``{"type": "Snapshot", ...}`` → emits SnapshotEvent
+    - ArchiveResultService: ``{"type": "ArchiveResult", ...}`` → emits ArchiveResultEvent
 
-    The ``record`` dict has the ``type`` key already stripped. Context fields
-    from the parent ProcessEvent are passed through for services that need them.
+    Context fields from the parent ProcessEvent are passed through for
+    services that need them.
 
     Uses ``await bus.emit()`` (queue-jump) so the emitted typed event and its
     entire handler chain complete before the next stdout line is read.
     """
-    record_type: str
-    record: dict[str, Any]
+    line: str
     plugin_name: str = ''
     hook_name: str = ''
     output_dir: str = ''
@@ -253,7 +251,7 @@ class ProcessRecordOutputtedEvent(BaseEvent):
 class BinaryEvent(BaseEvent):
     """A hook needs a binary resolved or installed.
 
-    Emitted by BinaryService.on_ProcessRecordOutputtedEvent when a hook outputs
+    Emitted by BinaryService.on_ProcessStdoutEvent when a hook outputs
     ``{"type": "Binary", ...}`` JSONL. Handled by BinaryService's provider hooks
     and on_BinaryEvent, which either registers the path (if abspath is provided)
     or broadcasts to provider hooks to install it.
@@ -309,7 +307,7 @@ class BinaryInstalledEvent(BaseEvent):
 class MachineEvent(BaseEvent):
     """Update shared machine config.
 
-    Emitted by MachineService.on_ProcessRecordOutputtedEvent when a hook outputs
+    Emitted by MachineService.on_ProcessStdoutEvent when a hook outputs
     ``{"type": "Machine", ...}`` JSONL. Handled by MachineService.on_MachineEvent,
     which updates shared_config and the persistent config store.
 
@@ -333,7 +331,7 @@ class ArchiveResultEvent(BaseEvent):
     Emitted by ArchiveResultService in two cases:
 
     1. **Inline from stdout**: when a hook outputs ``{"type": "ArchiveResult", ...}``
-       JSONL during execution (via ProcessRecordOutputtedEvent routing). Process
+       JSONL during execution (via ProcessStdoutEvent routing). Process
        metadata fields (process_id, output_files, start_ts, end_ts) are empty
        at this stage — they get populated on ProcessCompletedEvent.
 

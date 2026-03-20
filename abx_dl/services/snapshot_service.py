@@ -5,10 +5,12 @@ from typing import ClassVar
 
 from bubus import BaseEvent, EventBus
 
+import json
+
 from ..events import (
     ProcessEvent,
     ProcessKillEvent,
-    ProcessRecordOutputtedEvent,
+    ProcessStdoutEvent,
     SnapshotCleanupEvent,
     SnapshotCompletedEvent,
     SnapshotEvent,
@@ -34,7 +36,7 @@ class SnapshotService(BaseService):
         │       │
         │       ├── on_Snapshot__06_wget.finite.bg
         │       │   └── ProcessEvent
-        │       │       ├── ProcessRecordOutputtedEvent
+        │       │       ├── ProcessStdoutEvent
         │       │       │   ├── SnapshotEvent (depth>1, discovered URL — ignored)
         │       │       │   └── ArchiveResultEvent (inline)
         │       │       └── ProcessCompletedEvent
@@ -58,7 +60,7 @@ class SnapshotService(BaseService):
     """
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [
-        ProcessRecordOutputtedEvent, SnapshotEvent, SnapshotCleanupEvent,
+        ProcessStdoutEvent, SnapshotEvent, SnapshotCleanupEvent,
     ]
     EMITS: ClassVar[list[type[BaseEvent]]] = [
         SnapshotEvent, ProcessEvent, ProcessKillEvent, SnapshotCleanupEvent, SnapshotCompletedEvent,
@@ -84,11 +86,11 @@ class SnapshotService(BaseService):
     def _attach_handlers(self) -> None:
         """Register handlers in correct order.
 
-        1. ProcessRecordOutputtedEvent → SnapshotEvent routing
+        1. ProcessStdoutEvent → SnapshotEvent routing
         2. Per-hook handlers on SnapshotEvent (each wrapped with depth>1 guard)
         3. on_SnapshotEvent last (cleanup + completion)
         """
-        self.bus.on(ProcessRecordOutputtedEvent, self.on_ProcessRecordOutputtedEvent)
+        self.bus.on(ProcessStdoutEvent, self.on_ProcessStdoutEvent)
 
         for plugin, hook in self.hooks:
             inner = make_hook_handler(
@@ -109,15 +111,18 @@ class SnapshotService(BaseService):
         self.bus.on(SnapshotEvent, self.on_SnapshotEvent)
         self.bus.on(SnapshotCleanupEvent, self.on_SnapshotCleanupEvent)
 
-    async def on_ProcessRecordOutputtedEvent(self, event: ProcessRecordOutputtedEvent) -> None:
+    async def on_ProcessStdoutEvent(self, event: ProcessStdoutEvent) -> None:
         """Route type=Snapshot records to SnapshotEvent.
 
         Discovered URLs default to depth=2 since any hook-discovered URL
         is at least one level deep from the root snapshot.
         """
-        if event.record_type != 'Snapshot':
+        try:
+            record = json.loads(event.line)
+        except (json.JSONDecodeError, ValueError):
             return
-        record = event.record
+        if not isinstance(record, dict) or record.get('type') != 'Snapshot':
+            return
         await self.bus.emit(SnapshotEvent(
             url=record.get('url', ''),
             snapshot_id=record.get('id', record.get('snapshot_id', '')),

@@ -1,11 +1,12 @@
 """ArchiveResultService — owns ArchiveResult construction from hook output."""
 
+import json
 from pathlib import Path
 from typing import ClassVar
 
 from bubus import BaseEvent, EventBus
 
-from ..events import ArchiveResultEvent, ProcessCompletedEvent, ProcessRecordOutputtedEvent
+from ..events import ArchiveResultEvent, ProcessCompletedEvent, ProcessStdoutEvent
 from ..models import ArchiveResult, write_jsonl
 from .base import BaseService
 
@@ -18,7 +19,7 @@ class ArchiveResultService(BaseService):
 
     Listens for two events:
 
-    1. **ProcessRecordOutputtedEvent** (type=ArchiveResult): the hook's
+    1. **ProcessStdoutEvent** (type=ArchiveResult): the hook's
        self-reported result. Emits an ArchiveResultEvent and writes it to
        index.jsonl immediately.
 
@@ -34,7 +35,7 @@ class ArchiveResultService(BaseService):
     """
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [
-        ProcessRecordOutputtedEvent, ProcessCompletedEvent,
+        ProcessStdoutEvent, ProcessCompletedEvent,
     ]
     EMITS: ClassVar[list[type[BaseEvent]]] = [ArchiveResultEvent]
 
@@ -43,11 +44,14 @@ class ArchiveResultService(BaseService):
         self.emit_jsonl = emit_jsonl
         super().__init__(bus)
 
-    async def on_ProcessRecordOutputtedEvent(self, event: ProcessRecordOutputtedEvent) -> None:
+    async def on_ProcessStdoutEvent(self, event: ProcessStdoutEvent) -> None:
         """Handle inline ArchiveResult records from hook stdout."""
-        if event.record_type != 'ArchiveResult':
+        try:
+            record = json.loads(event.line)
+        except (json.JSONDecodeError, ValueError):
             return
-        record = event.record
+        if not isinstance(record, dict) or record.get('type') != 'ArchiveResult':
+            return
 
         ar = ArchiveResult(
             snapshot_id=record.get('snapshot_id', event.snapshot_id),

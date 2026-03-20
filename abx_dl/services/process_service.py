@@ -1,14 +1,13 @@
 """ProcessService — owns all hook subprocess execution and JSONL output parsing."""
 
 import asyncio
-import json
 import time
 from pathlib import Path
 from typing import ClassVar
 
 from bubus import BaseEvent, EventBus
 
-from ..events import ProcessCompletedEvent, ProcessEvent, ProcessKillEvent, ProcessRecordOutputtedEvent
+from ..events import ProcessCompletedEvent, ProcessEvent, ProcessKillEvent, ProcessStdoutEvent
 from ..models import Process, write_jsonl, now_iso
 from ..process_utils import write_pid_file_with_mtime, write_cmd_file, graceful_kill_process, graceful_kill_by_pid_file
 from .base import BaseService
@@ -19,8 +18,8 @@ class ProcessService(BaseService):
 
     This is the only service that spawns subprocesses. Every hook execution
     flows through here via ProcessEvent. ProcessService does NOT interpret
-    record types — it emits ProcessRecordOutputtedEvent for each typed JSONL
-    line, and each service handles its own record types independently.
+    stdout — it emits ProcessStdoutEvent for every stdout line, and each
+    consuming service parses lines for the shapes it cares about.
 
     Subprocess lifecycle::
 
@@ -34,10 +33,8 @@ class ProcessService(BaseService):
         │   - PID written to {hook_name}.pid (for daemon kill)
         │
         ├── Stream stdout line-by-line (realtime):
-        │   - Lines starting with '{' are parsed as JSON
-        │   - Any JSON with a "type" field → ProcessRecordOutputtedEvent
-        │     (each service handles its own types via on_ProcessRecordOutputtedEvent)
-        │   - Non-JSON lines are logged but not parsed
+        │   - Every line → ProcessStdoutEvent
+        │     (each service parses and handles its own types)
         │
         ├── Wait for process exit (with timeout)
         │   - On timeout: SIGTERM → wait 2s → SIGKILL
@@ -46,8 +43,8 @@ class ProcessService(BaseService):
             - Write Process record to index.jsonl
             - Emit ProcessCompletedEvent (raw process info)
 
-    Realtime event emission is critical: ProcessRecordOutputtedEvent is emitted
-    with ``await self.bus.emit()`` (queue-jump), so the entire handler chain
+    Realtime event emission is critical: ProcessStdoutEvent is emitted with
+    ``await self.bus.emit()`` (queue-jump), so the entire handler chain
     (e.g. BinaryEvent → provider install → MachineEvent) completes before the
     next stdout line is read.
 
@@ -66,9 +63,9 @@ class ProcessService(BaseService):
     - ``{hook_name}.sh`` — command line for debugging
 
     bubus details:
-    - ProcessRecordOutputtedEvent is emitted with ``await``, making it a
-      synchronous child. The typed event emitted by the handling service
-      (and its entire chain) completes before the next line is processed.
+    - ProcessStdoutEvent is emitted with ``await``, making it a
+      synchronous child. Each consuming service's handler chain completes
+      before the next line is processed.
     - ProcessCompletedEvent is emitted with ``await`` as an informational child.
       ArchiveResultService handles it to build the final ArchiveResult.
     - Background hooks use ``start_new_session=True`` so SIGTERM to the parent
@@ -77,7 +74,7 @@ class ProcessService(BaseService):
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, ProcessKillEvent]
     EMITS: ClassVar[list[type[BaseEvent]]] = [
-        ProcessRecordOutputtedEvent, ProcessCompletedEvent,
+        ProcessStdoutEvent, ProcessCompletedEvent,
     ]
 
     def __init__(
@@ -132,11 +129,11 @@ class ProcessService(BaseService):
             stdout_lines: list[str] = []
 
             async def _stream_stdout() -> None:
-                """Read stdout line-by-line, routing typed JSONL to the bus.
+                """Read stdout line-by-line, emitting each line to the bus.
 
-                JSON lines with a "type" field are emitted as
-                ProcessRecordOutputtedEvent. Each service handles its own
-                record types (Binary, Machine, Snapshot, ArchiveResult, etc.).
+                Every line is emitted as a ProcessStdoutEvent. Each consuming
+                service parses the line and checks for the JSON shape it
+                cares about (Binary, Machine, Snapshot, ArchiveResult, etc.).
                 """
                 assert process.stdout is not None
                 with open(stdout_file, 'w') as out_fh:
@@ -146,23 +143,6 @@ class ProcessService(BaseService):
                         out_fh.flush()
                         stdout_lines.append(line)
 
-                        stripped = line.strip()
-                        if not stripped.startswith('{'):
-                            continue
-                        try:
-                            record = json.loads(stripped)
-                        except json.JSONDecodeError:
-                            continue
-                        if not isinstance(record, dict):
-                            continue
-
-                        record_type = record.pop('type', '')
-                        if not record_type:
-                            continue
-
-                        # Route to services — await = queue-jump: the entire
-                        # handler chain (e.g. BinaryEvent → provider install)
-                        # completes before we read the next stdout line
                         output_dir = Path(event.output_dir)
                         current_files = [
                             str(f.relative_to(output_dir))
@@ -170,9 +150,11 @@ class ProcessService(BaseService):
                             if f.is_file()
                         ] if output_dir.is_dir() else []
 
-                        await self.bus.emit(ProcessRecordOutputtedEvent(
-                            record_type=record_type,
-                            record=record,
+                        # Route to services — await = queue-jump: the entire
+                        # handler chain (e.g. BinaryEvent → provider install)
+                        # completes before we read the next stdout line
+                        await self.bus.emit(ProcessStdoutEvent(
+                            line=line.strip(),
                             plugin_name=event.plugin_name,
                             hook_name=event.hook_name,
                             output_dir=event.output_dir,

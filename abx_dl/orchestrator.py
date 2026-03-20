@@ -14,7 +14,7 @@ Full event tree for a typical run::
     │   ├── ProcessEvent  (bg: chrome_install)
     │   ├── ProcessEvent  (bg: chrome_launch)
     │   ├── ProcessEvent  (FG: chrome_wait)
-    │   │   ├── ProcessRecordOutputtedEvent
+    │   │   ├── ProcessStdoutEvent
     │   │   │   │  (side-effect chain from chrome_install):
     │   │   │   │  BinaryEvent → provider hooks → BinaryInstalledEvent
     │   │   │   │      → BinaryEvent(abspath) → MachineEvent → BinaryLoadedEvent
@@ -24,7 +24,7 @@ Full event tree for a typical run::
     ├── CrawlStartEvent                # triggers snapshot phase
     │   └── SnapshotEvent (depth=1)
     │       ├── ProcessEvent  (on_Snapshot hooks)
-    │       │   ├── ProcessRecordOutputtedEvent
+    │       │   ├── ProcessStdoutEvent
     │       │   │   ├── SnapshotEvent (depth>1, ignored by abx-dl)
     │       │   │   └── ArchiveResultEvent (from hook JSONL)
     │       │   └── ProcessCompletedEvent
@@ -63,7 +63,7 @@ Key bubus concepts used:
 - **Queue-jump** (``await bus.emit(...)``): the emitted event and ALL its
   descendants complete synchronously before the await returns. This is how
   config propagation works: hook outputs Binary JSONL → ProcessService emits
-  ProcessRecordOutputtedEvent → BinaryService emits BinaryEvent → provider
+  ProcessStdoutEvent → BinaryService emits BinaryEvent → provider
   hooks install it → MachineEvent updates config → all before the next
   stdout line is read.
 

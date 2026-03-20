@@ -6,7 +6,7 @@ from typing import ClassVar
 
 from bubus import BaseEvent, EventBus
 
-from ..events import BinaryEvent, BinaryInstalledEvent, BinaryLoadedEvent, MachineEvent, ProcessEvent, ProcessRecordOutputtedEvent
+from ..events import BinaryEvent, BinaryInstalledEvent, BinaryLoadedEvent, MachineEvent, ProcessEvent, ProcessStdoutEvent
 from ..models import Hook, Plugin
 from .base import BaseService
 from .machine_service import MachineService
@@ -26,8 +26,8 @@ class BinaryService(BaseService):
         {"type": "Binary", "name": "chromium", "binproviders": "puppeteer",
          "overrides": {"puppeteer": ["chromium@latest", "--install-deps"]}}
 
-    ProcessService routes this via ProcessRecordOutputtedEvent.
-    on_ProcessRecordOutputtedEvent picks up type=Binary records and emits
+    ProcessService routes this via ProcessStdoutEvent.
+    on_ProcessStdoutEvent picks up type=Binary records and emits
     BinaryEvent, which triggers the provider hook chain.
 
     Handler registration order (all on BinaryEvent)::
@@ -50,7 +50,7 @@ class BinaryService(BaseService):
     early-exit check works correctly.
     """
 
-    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [ProcessRecordOutputtedEvent, BinaryEvent]
+    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [ProcessStdoutEvent, BinaryEvent]
     EMITS: ClassVar[list[type[BaseEvent]]] = [
         BinaryEvent, MachineEvent, ProcessEvent, BinaryLoadedEvent, BinaryInstalledEvent,
     ]
@@ -81,11 +81,11 @@ class BinaryService(BaseService):
     def _attach_handlers(self) -> None:
         """Register handlers in correct order.
 
-        1. ProcessRecordOutputtedEvent → BinaryEvent routing
+        1. ProcessStdoutEvent → BinaryEvent routing
         2. Provider hooks on BinaryEvent (try to install)
         3. on_BinaryEvent last (emits BinaryLoadedEvent or BinaryInstalledEvent)
         """
-        self.bus.on(ProcessRecordOutputtedEvent, self.on_ProcessRecordOutputtedEvent)
+        self.bus.on(ProcessStdoutEvent, self.on_ProcessStdoutEvent)
 
         for plugin, hook in self.binary_hooks:
             handler = self._make_provider_hook_handler(plugin, hook)
@@ -136,11 +136,15 @@ class BinaryService(BaseService):
 
         return handler
 
-    async def on_ProcessRecordOutputtedEvent(self, event: ProcessRecordOutputtedEvent) -> None:
+    async def on_ProcessStdoutEvent(self, event: ProcessStdoutEvent) -> None:
         """Route type=Binary records to BinaryEvent."""
-        if event.record_type != 'Binary':
+        try:
+            record = json.loads(event.line)
+        except (json.JSONDecodeError, ValueError):
             return
-        await self.bus.emit(BinaryEvent(**event.record))
+        if not isinstance(record, dict) or record.pop('type', '') != 'Binary':
+            return
+        await self.bus.emit(BinaryEvent(**record))
 
     async def on_BinaryEvent(self, event: BinaryEvent) -> None:
         """Handle binary resolution — runs after all provider hooks.
