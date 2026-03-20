@@ -1,5 +1,7 @@
 """SnapshotService — orchestrates the snapshot extraction phase."""
 
+import asyncio
+
 from pathlib import Path
 from typing import ClassVar
 
@@ -29,15 +31,15 @@ class SnapshotService(BaseService):
         CrawlEvent
         ├── CrawlSetupEvent (crawl hooks)
         ├── CrawlStartEvent
-        │   └── SnapshotEvent (depth=1)                    # triggers this service
+        │   └── SnapshotEvent (depth=0)                    # triggers this service
         │       │
         │       │  ── Snapshot hook handlers run serially ──
-        │       │  (each wrapped with depth>1 guard)
+        │       │  (each wrapped with depth>0 guard)
         │       │
         │       ├── on_Snapshot__06_wget.finite.bg
         │       │   └── ProcessEvent
         │       │       ├── ProcessStdoutEvent
-        │       │       │   ├── SnapshotEvent (depth>1, discovered URL — ignored)
+        │       │       │   ├── SnapshotEvent (depth>0, discovered URL — ignored)
         │       │       │   └── ArchiveResultEvent (inline)
         │       │       └── ProcessCompletedEvent
         │       │           └── ArchiveResultEvent (enriched)
@@ -54,7 +56,7 @@ class SnapshotService(BaseService):
         ├── CrawlCleanupEvent
         └── CrawlCompletedEvent
 
-    Depth guard: SnapshotEvents with depth > 1 are silently ignored by
+    Depth guard: SnapshotEvents with depth > 0 are silently ignored by
     abx-dl. These represent discovered URLs from hook output (recursive
     crawling). ArchiveBox handles them by queueing new snapshots.
     """
@@ -89,7 +91,7 @@ class SnapshotService(BaseService):
         """Register handlers in correct order.
 
         1. ProcessStdoutEvent → SnapshotEvent routing
-        2. Per-hook handlers on SnapshotEvent (each wrapped with depth>1 guard)
+        2. Per-hook handlers on SnapshotEvent (each wrapped with depth>0 guard)
         3. on_SnapshotEvent last (cleanup + completion)
         """
         self.bus.on(ProcessStdoutEvent, self.on_ProcessStdoutEvent)
@@ -103,7 +105,7 @@ class SnapshotService(BaseService):
             )
 
             async def guarded(event: SnapshotEvent, _inner=inner) -> None:
-                if event.depth > 1:
+                if event.depth > 0:
                     return
                 await _inner(event)
 
@@ -117,7 +119,7 @@ class SnapshotService(BaseService):
     async def on_ProcessStdoutEvent(self, event: ProcessStdoutEvent) -> None:
         """Route type=Snapshot records to SnapshotEvent.
 
-        Discovered URLs default to depth=2 since any hook-discovered URL
+        Discovered URLs default to depth=1 since any hook-discovered URL
         is at least one level deep from the root snapshot.
         """
         try:
@@ -130,16 +132,16 @@ class SnapshotService(BaseService):
             url=record.get('url', ''),
             snapshot_id=record.get('id', record.get('snapshot_id', '')),
             output_dir=event.output_dir,
-            depth=int(record.get('depth', 2)),
+            depth=int(record.get('depth', 1)),
         ))
 
     async def on_SnapshotEvent(self, event: SnapshotEvent) -> None:
         """Emit cleanup and completion after all snapshot hooks have run.
 
-        Ignores SnapshotEvents with depth > 1 — abx-dl does not support
+        Ignores SnapshotEvents with depth > 0 — abx-dl does not support
         recursive crawling. ArchiveBox overrides this to process all depths.
         """
-        if event.depth > 1:
+        if event.depth > 0:
             return
         url = self.url
         snapshot_id = self.snapshot.id
@@ -153,15 +155,18 @@ class SnapshotService(BaseService):
         Each daemon gets its plugin's timeout (PLUGINNAME_TIMEOUT) as the
         grace period before SIGKILL.
         """
+        pending_kills = []
         for plugin, hook in self.hooks:
             if hook.is_background:
                 env = self.machine.get_env_for_plugin(plugin, run_output_dir=self.output_dir)
                 grace = float(env.get(f"{plugin.name.upper()}_TIMEOUT", env.get('TIMEOUT', '60')))
                 plugin_output_dir = self.output_dir / plugin.name
-                await self.bus.emit(ProcessKillEvent(
+                pending_kills.append(self.bus.emit(ProcessKillEvent(
                     plugin_name=plugin.name,
                     hook_name=hook.name,
                     output_dir=str(plugin_output_dir),
                     grace_period=grace,
                     event_timeout=grace + 10.0,
-                ))
+                )))
+        if pending_kills:
+            await asyncio.gather(*pending_kills)

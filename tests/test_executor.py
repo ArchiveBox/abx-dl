@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 from abx_dl.orchestrator import create_bus, download
-from abx_dl.events import BinaryInstalledEvent, ArchiveResultEvent
+from abx_dl.events import ArchiveResultEvent, BinaryInstalledEvent, SnapshotEvent
 from abx_dl.models import ArchiveResult
 from abx_dl.models import discover_plugins
 
@@ -61,7 +61,7 @@ def test_download_dispatches_binary_hooks_and_applies_machine_updates(tmp_path: 
         + '\n',
     )
     _write(
-        plugins_root / 'consumer' / 'on_Crawl__01_check.py',
+        plugins_root / 'consumer' / 'on_Snapshot__01_check.py',
         '\n'.join(
             [
                 'import json',
@@ -86,7 +86,7 @@ def test_download_dispatches_binary_hooks_and_applies_machine_updates(tmp_path: 
     # producer hook is an on_Crawl hook (emits Binary/Machine records) — these
     # don't produce ArchiveResults (only on_Snapshot hooks do)
 
-    # consumer hook explicitly emits an ArchiveResult with the env vars it sees
+    # consumer hook emits an ArchiveResult during snapshot after crawl setup propagated env vars
     consumer_result = next(result for result in results if result.plugin == 'consumer')
     assert consumer_result.status == 'succeeded'
     assert consumer_result.output_str.endswith('|ready|' + str(tmp_path / 'run' / 'provider' / 'lib' / 'node_modules'))
@@ -145,7 +145,7 @@ def test_download_applies_side_effects_from_completed_background_hooks(tmp_path:
         + '\n',
     )
     _write(
-        plugins_root / 'consumer' / 'on_Crawl__02_check.py',
+        plugins_root / 'consumer' / 'on_Snapshot__02_check.py',
         '\n'.join(
             [
                 'import json',
@@ -666,7 +666,7 @@ def test_binary_installed_events(tmp_path: Path) -> None:
 
     # Consumer hook verifies both binaries are available via env vars
     _write(
-        plugins_root / 'consumer' / 'on_Crawl__01_check.py',
+        plugins_root / 'consumer' / 'on_Snapshot__01_check.py',
         '\n'.join(
             [
                 'import json',
@@ -757,3 +757,52 @@ def test_archive_result_events_no_synthetic_when_inline_reported(tmp_path: Path)
     assert len(demo_results) == 1, (
         f'Expected 1 ArchiveResult in results list, got {len(demo_results)}'
     )
+
+
+def test_nested_snapshot_events_are_emitted_but_ignored_by_snapshot_hooks(tmp_path: Path) -> None:
+    plugins_root = tmp_path / 'plugins'
+    bus = create_bus(total_timeout=60.0)
+    seen_snapshot_events: list[tuple[int, str]] = []
+
+    async def on_snapshot(event: SnapshotEvent) -> None:
+        seen_snapshot_events.append((event.depth, event.url))
+
+    bus.on(SnapshotEvent, on_snapshot)
+
+    _write(
+        plugins_root / 'producer' / 'on_Snapshot__10_emit_nested.py',
+        '\n'.join(
+            [
+                'import json',
+                'print(json.dumps({"type": "Snapshot", "url": "https://example.com/child", "depth": 1}))',
+                'print(json.dumps({"type": "ArchiveResult", "status": "succeeded", "output_str": "producer"}))',
+            ]
+        )
+        + '\n',
+    )
+    _write(
+        plugins_root / 'observer' / 'on_Snapshot__20_record.py',
+        '\n'.join(
+            [
+                'import json',
+                'print(json.dumps({"type": "ArchiveResult", "status": "succeeded", "output_str": "observer"}))',
+            ]
+        )
+        + '\n',
+    )
+
+    plugins = discover_plugins(plugins_root)
+    results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True, bus=bus)
+
+    assert seen_snapshot_events == [
+        (0, 'https://example.com'),
+        (1, 'https://example.com/child'),
+    ]
+
+    producer_results = [result for result in results if result.plugin == 'producer']
+    observer_results = [result for result in results if result.plugin == 'observer']
+
+    assert len(producer_results) == 1
+    assert producer_results[0].output_str == 'producer'
+    assert len(observer_results) == 1
+    assert observer_results[0].output_str == 'observer'

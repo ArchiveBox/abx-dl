@@ -21,10 +21,10 @@ Full event tree for a typical run::
     │   └── ...
     │
     ├── CrawlStartEvent                # triggers snapshot phase
-    │   └── SnapshotEvent (depth=1)
+    │   └── SnapshotEvent (depth=0)
     │       ├── ProcessEvent  (on_Snapshot hooks)
     │       │   ├── ProcessStdoutEvent
-    │       │   │   ├── SnapshotEvent (depth>1, ignored by abx-dl)
+    │       │   │   ├── SnapshotEvent (depth>0, ignored by abx-dl)
     │       │   │   └── ArchiveResultEvent (from hook JSONL)
     │       │   └── ProcessCompletedEvent
     │       │       └── ArchiveResultEvent (synthetic, only if hook didn't report one)
@@ -149,6 +149,9 @@ def create_bus(*, total_timeout: float = 60.0, **kwargs) -> EventBus:
         # entries instead of rejecting new events when the buffer fills
         max_history_size=1000,
         max_history_drop=True,
+        # Normal abx-dl processing legitimately nests several queue-jumped
+        # handler chains (stdout -> typed event -> follow-up process/event work).
+        max_handler_recursion_depth=6,
         # Total timeout covers both crawl and snapshot phases.
         # Individual hooks set their own timeouts via event_handler_timeout
         # on their ProcessEvent.

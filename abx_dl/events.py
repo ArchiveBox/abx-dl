@@ -7,15 +7,15 @@ Events form a hierarchy during execution::
     │   ├── ProcessEvent (on_Crawl hooks)
     │   │   ├── ProcessStdoutEvent                   # for each stdout line
     │   │   │   ├── BinaryEvent (via BinaryService)
-    │   │   │   │   └── ProcessEvent (provider hook) → BinaryInstalledEvent
+    │   │   │   │   └── BinaryProcessEvent (provider hook) → BinaryInstalledEvent
     │   │   │   └── MachineEvent (via MachineService)
     │   │   └── ProcessCompletedEvent
     │   └── ...
     ├── CrawlStartEvent                    # triggers snapshot phase
-    │   └── SnapshotEvent (depth=1)
+    │   └── SnapshotEvent (depth=0)
     │       ├── ProcessEvent (on_Snapshot hooks)
     │       │   ├── ProcessStdoutEvent
-    │       │   │   ├── SnapshotEvent (depth>1, ignored by abx-dl)
+    │       │   │   ├── SnapshotEvent (depth>0, ignored by abx-dl)
     │       │   │   └── ArchiveResultEvent (inline)
     │       │   └── ProcessCompletedEvent
     │       │       └── ArchiveResultEvent (synthetic, on_Snapshot only)
@@ -120,13 +120,13 @@ class SnapshotEvent(BaseEvent):
 
     Also emitted by SnapshotService.on_ProcessStdoutEvent when a hook
     outputs ``{"type": "Snapshot", ...}`` JSONL (discovered URLs during crawling).
-    In abx-dl, SnapshotService ignores events with ``depth > 1``.
+    In abx-dl, SnapshotService ignores events with ``depth > 0``.
     ArchiveBox handles recursive crawling by processing all depths.
     """
     url: str
     snapshot_id: str
     output_dir: str
-    depth: int = 1
+    depth: int = 0
     event_timeout: float | None =300.0
 
 
@@ -179,6 +179,14 @@ class ProcessEvent(BaseEvent):
     snapshot_id: str = ''
     timeout: int = 60
     event_timeout: float | None =360.0
+
+
+class BinaryProcessEvent(ProcessEvent):
+    """Command: run a binary provider hook subprocess.
+
+    Uses a separate event type from ProcessEvent so nested provider installs do
+    not trip bubus' same-handler recursion guard for ProcessService.
+    """
 
 
 class ProcessKillEvent(BaseEvent):
@@ -263,10 +271,15 @@ class BinaryEvent(BaseEvent):
     Provider hooks self-select based on this field.
     """
     name: str
+    plugin_name: str = ''
+    hook_name: str = ''
     abspath: str = ''
+    version: str = ''
+    sha256: str = ''
     binary_id: str = ''
     machine_id: str = ''
     binproviders: str = ''
+    binprovider: str = ''
     overrides: dict[str, Any] | None = None
     custom_cmd: str = ''
     event_timeout: float | None =300.0
@@ -280,6 +293,8 @@ class BinaryInstalledEvent(BaseEvent):
     freshly installed by another provider (apt, pip, npm, etc.).
     """
     name: str
+    plugin_name: str = ''
+    hook_name: str = ''
     abspath: str
     version: str = ''
     sha256: str = ''

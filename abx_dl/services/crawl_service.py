@@ -1,5 +1,7 @@
 """CrawlService — orchestrates the crawl phase by dispatching plugin hooks."""
 
+import asyncio
+
 from pathlib import Path
 from typing import ClassVar
 
@@ -123,6 +125,7 @@ class CrawlService(BaseService):
             url=self.url,
             snapshot_id=self.snapshot.id,
             output_dir=str(self.output_dir),
+            depth=0,
         ))
 
     async def on_CrawlCleanupEvent(self, event: CrawlCleanupEvent) -> None:
@@ -131,15 +134,18 @@ class CrawlService(BaseService):
         Each daemon gets its plugin's timeout (PLUGINNAME_TIMEOUT) as the
         grace period before SIGKILL.
         """
+        pending_kills = []
         for plugin, hook in self.hooks:
             if hook.is_background:
                 env = self.machine.get_env_for_plugin(plugin, run_output_dir=self.output_dir)
                 grace = float(env.get(f"{plugin.name.upper()}_TIMEOUT", env.get('TIMEOUT', '60')))
                 plugin_output_dir = self.output_dir / plugin.name
-                await self.bus.emit(ProcessKillEvent(
+                pending_kills.append(self.bus.emit(ProcessKillEvent(
                     plugin_name=plugin.name,
                     hook_name=hook.name,
                     output_dir=str(plugin_output_dir),
                     grace_period=grace,
                     event_timeout=grace + 10.0,
-                ))
+                )))
+        if pending_kills:
+            await asyncio.gather(*pending_kills)

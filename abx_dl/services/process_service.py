@@ -7,7 +7,7 @@ from typing import ClassVar
 
 from bubus import BaseEvent, EventBus
 
-from ..events import ProcessCompletedEvent, ProcessEvent, ProcessKillEvent, ProcessStdoutEvent
+from ..events import BinaryProcessEvent, ProcessCompletedEvent, ProcessEvent, ProcessKillEvent, ProcessStdoutEvent
 from ..models import Process, write_jsonl, now_iso
 from ..process_utils import write_pid_file_with_mtime, write_cmd_file, graceful_kill_process, graceful_kill_by_pid_file
 from .base import BaseService
@@ -75,7 +75,7 @@ class ProcessService(BaseService):
       process group doesn't accidentally kill them.
     """
 
-    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, ProcessKillEvent]
+    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, BinaryProcessEvent, ProcessKillEvent]
     EMITS: ClassVar[list[type[BaseEvent]]] = [
         ProcessStdoutEvent, ProcessCompletedEvent,
     ]
@@ -98,6 +98,12 @@ class ProcessService(BaseService):
     # ── Event handlers ──────────────────────────────────────────────────────
 
     async def on_ProcessEvent(self, event: ProcessEvent) -> None:
+        await self._run_process_event(event)
+
+    async def on_BinaryProcessEvent(self, event: BinaryProcessEvent) -> None:
+        await self._run_process_event(event)
+
+    async def _run_process_event(self, event: ProcessEvent) -> None:
         """Run a hook subprocess, stream its output, and emit completion events."""
         plugin_output_dir = Path(event.output_dir)
         plugin_output_dir.mkdir(parents=True, exist_ok=True)

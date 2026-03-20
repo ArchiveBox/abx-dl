@@ -6,7 +6,7 @@ from typing import ClassVar
 
 from bubus import BaseEvent, EventBus
 
-from ..events import BinaryEvent, BinaryInstalledEvent, MachineEvent, ProcessEvent, ProcessStdoutEvent
+from ..events import BinaryEvent, BinaryInstalledEvent, BinaryProcessEvent, MachineEvent, ProcessStdoutEvent
 from ..models import Hook, Plugin
 from .base import BaseService
 from .machine_service import MachineService
@@ -50,7 +50,7 @@ class BinaryService(BaseService):
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [ProcessStdoutEvent, BinaryEvent]
     EMITS: ClassVar[list[type[BaseEvent]]] = [
-        BinaryEvent, MachineEvent, ProcessEvent, BinaryInstalledEvent,
+        BinaryEvent, MachineEvent, BinaryProcessEvent, BinaryInstalledEvent,
     ]
 
     def __init__(
@@ -124,7 +124,7 @@ class BinaryService(BaseService):
                 _plugin, run_output_dir=self.output_dir,
             )
             machine_id = plugin_env.get('MACHINE_ID', '')
-            await self.bus.emit(ProcessEvent(
+            await self.bus.emit(BinaryProcessEvent(
                 plugin_name=_plugin.name, hook_name=_hook.name,
                 hook_path=str(_hook.path),
                 hook_args=hook_args + [f'--machine-id={machine_id}'],
@@ -142,7 +142,11 @@ class BinaryService(BaseService):
             return
         if not isinstance(record, dict) or record.pop('type', '') != 'Binary':
             return
-        await self.bus.emit(BinaryEvent(**record))
+        await self.bus.emit(BinaryEvent(
+            plugin_name=event.plugin_name,
+            hook_name=event.hook_name,
+            **record,
+        ))
 
     async def on_BinaryEvent(self, event: BinaryEvent) -> None:
         """Handle binary resolution — runs after all provider hooks.
@@ -166,7 +170,11 @@ class BinaryService(BaseService):
             ))
             await self.bus.emit(BinaryInstalledEvent(
                 name=event.name,
+                plugin_name=event.plugin_name,
+                hook_name=event.hook_name,
                 abspath=event.abspath,
+                version=event.version,
+                sha256=event.sha256,
                 binprovider=binprovider,
                 binary_id=event.binary_id,
                 machine_id=event.machine_id,
@@ -185,7 +193,11 @@ class BinaryService(BaseService):
                     return
                 await self.bus.emit(BinaryInstalledEvent(
                     name=event.name,
+                    plugin_name=event.plugin_name,
+                    hook_name=event.hook_name,
                     abspath=abspath,
+                    version=event.version,
+                    sha256=event.sha256,
                     binprovider=binprovider,
                     binary_id=event.binary_id,
                     machine_id=event.machine_id,
