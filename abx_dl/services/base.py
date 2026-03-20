@@ -68,19 +68,14 @@ class HookRunnerService(BaseService):
     """Base class for services that run plugin hooks (CrawlService, SnapshotService).
 
     Provides shared logic for:
-    - Registering one event handler per hook in sort order
     - Building and emitting ProcessEvents (fg/bg dispatch)
     - Cleaning up background hooks via ProcessKillEvent
 
-    Subclasses must set ``EVENT_CLASS`` to the event type they listen to
-    (e.g. CrawlEvent, SnapshotEvent).
-
     Unlike plain BaseService, hook runner services skip auto-discovery of ``on_*``
     methods. Registration order matters (hooks → post-hooks → cleanup), so
-    subclasses control it explicitly via ``_register_hook_handlers()``.
+    subclasses control it explicitly via ``_register_hook_handlers()``, using
+    explicit event classes (e.g. ``bus.on(CrawlEvent, handler)``).
     """
-
-    EVENT_CLASS: ClassVar[type[BaseEvent]]
 
     url: str
     snapshot: Snapshot
@@ -91,20 +86,6 @@ class HookRunnerService(BaseService):
     def _attach_handlers(self) -> None:
         """No-op — HookRunnerService subclasses register handlers explicitly
         via ``_register_hook_handlers()`` to control ordering."""
-
-    def _register_hook_handlers(self) -> None:
-        """Register one handler per hook, plus cleanup, on ``EVENT_CLASS``.
-
-        Hooks are pre-sorted by ``hook.sort_key`` = ``(order, name)``, so
-        registration order matches the numeric prefix in hook filenames.
-        """
-        for plugin, hook in self.hooks:
-            handler = self._make_hook_handler(plugin, hook)
-            handler.__name__ = hook.name
-            handler.__qualname__ = hook.name
-            self.bus.on(self.EVENT_CLASS, handler)
-
-        self.bus.on(self.EVENT_CLASS, self._cleanup_bg_hooks)
 
     def _make_hook_handler(self, plugin: Plugin, hook: Hook):
         """Create an async handler that emits a ProcessEvent for one hook.

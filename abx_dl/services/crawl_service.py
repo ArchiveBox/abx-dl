@@ -42,7 +42,6 @@ class CrawlService(HookRunnerService):
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [CrawlEvent]
     EMITS: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, ProcessKillEvent, SnapshotEvent]
-    EVENT_CLASS = CrawlEvent
 
     def __init__(
         self,
@@ -77,10 +76,10 @@ class CrawlService(HookRunnerService):
             handler = self._make_hook_handler(plugin, hook)
             handler.__name__ = hook.name
             handler.__qualname__ = hook.name
-            self.bus.on(self.EVENT_CLASS, handler)
+            self.bus.on(CrawlEvent, handler)
 
-        self.bus.on(self.EVENT_CLASS, self.on_CrawlEvent)
-        self.bus.on(self.EVENT_CLASS, self._cleanup_bg_hooks)
+        self.bus.on(CrawlEvent, self.on_CrawlEvent)
+        self.bus.on(CrawlEvent, self._cleanup_bg_hooks)
 
     async def on_CrawlEvent(self, event: BaseEvent) -> None:
         """Start the snapshot extraction phase after all crawl hooks complete.

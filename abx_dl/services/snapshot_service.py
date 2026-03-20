@@ -48,7 +48,6 @@ class SnapshotService(HookRunnerService):
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [SnapshotEvent]
     EMITS: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, ProcessKillEvent]
-    EVENT_CLASS = SnapshotEvent
 
     def __init__(
         self,
@@ -67,3 +66,13 @@ class SnapshotService(HookRunnerService):
         self.hooks = hooks
         super().__init__(bus)
         self._register_hook_handlers()
+
+    def _register_hook_handlers(self) -> None:
+        """Register snapshot hook handlers, then cleanup, on SnapshotEvent."""
+        for plugin, hook in self.hooks:
+            handler = self._make_hook_handler(plugin, hook)
+            handler.__name__ = hook.name
+            handler.__qualname__ = hook.name
+            self.bus.on(SnapshotEvent, handler)
+
+        self.bus.on(SnapshotEvent, self._cleanup_bg_hooks)
