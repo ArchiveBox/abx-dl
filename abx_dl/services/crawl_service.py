@@ -109,7 +109,7 @@ class CrawlService(BaseService):
         output_dir = str(self.output_dir)
         await self.bus.emit(CrawlSetupEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir, event_timeout=self.phase_timeout))
         await self.bus.emit(CrawlStartEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir))
-        await self.bus.emit(CrawlCleanupEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir))
+        await self.bus.emit(CrawlCleanupEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir, event_timeout=self.phase_timeout))
         await self.bus.emit(CrawlCompletedEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir))
 
     async def on_CrawlStartEvent(self, event: CrawlStartEvent) -> None:
