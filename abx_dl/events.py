@@ -9,11 +9,8 @@ Events form a hierarchy during execution::
     │   │   │   ├── BinaryEvent (via BinaryService)
     │   │   │   │   ├── BinaryLoadedEvent (already installed)
     │   │   │   │   └── ProcessEvent (provider install) → BinaryInstalledEvent
-    │   │   │   ├── MachineEvent (via MachineService)
-    │   │   │   ├── SnapshotEvent (via SnapshotService, depth>1)
-    │   │   │   └── ArchiveResultEvent (via ArchiveResultService, inline)
+    │   │   │   └── MachineEvent (via MachineService)
     │   │   └── ProcessCompletedEvent
-    │   │       └── ArchiveResultEvent (enriched with process metadata)
     │   └── ...
     ├── CrawlStartEvent                    # triggers snapshot phase
     │   └── SnapshotEvent (depth=1)

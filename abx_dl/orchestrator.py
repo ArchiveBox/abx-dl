@@ -18,9 +18,7 @@ Full event tree for a typical run::
     │   │   │   │  (side-effect chain from chrome_install):
     │   │   │   │  BinaryEvent → provider hooks → BinaryInstalledEvent
     │   │   │   │      → BinaryEvent(abspath) → MachineEvent → BinaryLoadedEvent
-    │   │   │   └── ArchiveResultEvent (inline, via ArchiveResultService)
     │   │   └── ProcessCompletedEvent
-    │   │       └── ArchiveResultEvent (enriched with process metadata)
     │   └── ...
     │
     ├── CrawlStartEvent                # triggers snapshot phase
@@ -41,6 +39,9 @@ Full event tree for a typical run::
     └── CrawlCompletedEvent                     # informational
 
 Result collection:
+- ArchiveResultEvents are only emitted during the snapshot phase (under
+  CrawlStartEvent → SnapshotEvent). CrawlSetupEvent only produces Binary,
+  Machine, and Process events — never ArchiveResults or Snapshots.
 - ArchiveResultService emits ArchiveResultEvent in two contexts: inline
   (from hook stdout, no process_id) and enriched (on ProcessCompletedEvent,
   with process_id set). The orchestrator collects the enriched ones.
