@@ -125,7 +125,7 @@ def compute_phase_timeout(hooks: list[tuple[Plugin, Hook]], config: dict[str, An
     return max(float(total), 60.0)
 
 
-def create_bus(*, total_timeout: float = 60.0) -> EventBus:
+def create_bus(*, total_timeout: float = 60.0, **kwargs) -> EventBus:
     """Create a configured EventBus for a download run.
 
     Callers should subscribe to events on the bus before passing it to
@@ -137,8 +137,10 @@ def create_bus(*, total_timeout: float = 60.0) -> EventBus:
     Args:
         total_timeout: Total timeout for the entire run (sum of all phase
             timeouts). Computed by ``compute_phase_timeout`` in download().
+        **kwargs: Extra keyword arguments passed through to the ``EventBus``
+            constructor (e.g. ``name``, ``middlewares``).
     """
-    return EventBus(
+    defaults = dict(
         name='AbxDl',
         # parallel event concurrency lets bg ProcessEvents (fire-and-forget
         # children) process concurrently with the parent event's serial handlers
@@ -154,6 +156,8 @@ def create_bus(*, total_timeout: float = 60.0) -> EventBus:
         event_slow_timeout=total_timeout * 0.8,
         event_handler_slow_timeout=60.0,
     )
+    defaults.update(kwargs)
+    return EventBus(**defaults)
 
 
 async def download(

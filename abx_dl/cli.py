@@ -330,6 +330,7 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
         compute_phase_timeout(crawl_hooks, config_overrides)
         + compute_phase_timeout(snapshot_hooks, config_overrides)
     )
+    total_hooks = len(crawl_hooks) + len(snapshot_hooks)
     live_results: dict[str, VisibleRecord] = {}
     bus = create_bus(total_timeout=total_timeout)
 
@@ -345,6 +346,10 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
         status_view = _LiveStatusView(live_results, progress, timeout_seconds)
         task_id = progress.add_task("[cyan]Running plugins...", total=total_hooks)
 
+        async def on_ProcessCompletedEvent(event: ProcessCompletedEvent) -> None:
+            """Advance progress for every completed hook (fg and bg)."""
+            progress.update(task_id, advance=1, description=f"[cyan]{escape(event.hook_name)}[/cyan]")
+
         async def on_ArchiveResultEvent(event: ArchiveResultEvent) -> None:
             ar = ArchiveResult(
                 snapshot_id=event.snapshot_id, plugin=event.plugin,
@@ -355,13 +360,8 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
                 error=event.error or None,
             )
             live_results[_record_key(ar)] = ar
-            # ArchiveResult from a binary install hook (not in total_hooks) —
-            # bump the total so the progress bar doesn't exceed 100%
-            task = progress.tasks[task_id]
-            if task.total is not None and task.completed >= task.total:
-                progress.update(task_id, total=task.total + 1)
-            progress.update(task_id, advance=1, description=f"[cyan]{escape(_record_hook_name(ar))}[/cyan]")
 
+        bus.on(ProcessCompletedEvent, on_ProcessCompletedEvent)
         bus.on(ArchiveResultEvent, on_ArchiveResultEvent)
 
         with Live(
