@@ -76,6 +76,10 @@ class BinaryService(BaseService):
             ],
             key=lambda x: x[1].sort_key,
         )
+        # Track binaries discovered by the env provider (already present on
+        # disk). These should only emit BinaryLoadedEvent, not
+        # BinaryInstalledEvent, since nothing was actually installed.
+        self._discovered_binaries: set[str] = set()
         super().__init__(bus)
 
     def _attach_handlers(self) -> None:
@@ -167,17 +171,22 @@ class BinaryService(BaseService):
                 key=f'config/{_binary_env_key(event.name)}',
                 value=event.abspath,
             ))
+            # env provider discovers pre-existing binaries — mark them so we
+            # don't emit BinaryInstalledEvent (nothing was actually installed)
+            binprovider = getattr(event, 'binprovider', '') or ''
+            if binprovider == 'env':
+                self._discovered_binaries.add(event.name)
             await self.bus.emit(BinaryLoadedEvent(
                 name=event.name,
                 abspath=event.abspath,
-                binprovider=getattr(event, 'binprovider', '') or '',
+                binprovider=binprovider,
                 binary_id=event.binary_id,
                 machine_id=event.machine_id,
             ))
         else:
             # No abspath — check if a provider resolved it
             abspath = self.machine.shared_config.get(_binary_env_key(event.name), '')
-            if abspath:
+            if abspath and event.name not in self._discovered_binaries:
                 await self.bus.emit(BinaryInstalledEvent(
                     name=event.name,
                     abspath=abspath,
