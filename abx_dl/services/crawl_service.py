@@ -29,7 +29,7 @@ class CrawlService(HookRunnerService):
         │
         │  ── After all hook handlers return ──
         │
-        ├── _emit_snapshot_event                   # FG: emits SnapshotEvent (blocks)
+        ├── on_CrawlEvent                            # FG: emits SnapshotEvent (blocks)
         │   └── SnapshotEvent (full snapshot phase runs here)
         │
         └── _cleanup_bg_hooks                      # FG: SIGTERMs all bg crawl daemons
@@ -71,8 +71,7 @@ class CrawlService(HookRunnerService):
     def _register_hook_handlers(self) -> None:
         """Register crawl hook handlers, then snapshot emission, then cleanup.
 
-        Extends the base to insert ``_emit_snapshot_event`` before cleanup
-        (unless ``crawl_only`` is set).
+        Order: per-hook handlers → on_CrawlEvent (snapshot phase) → cleanup.
         """
         for plugin, hook in self.hooks:
             handler = self._make_hook_handler(plugin, hook)
@@ -80,18 +79,19 @@ class CrawlService(HookRunnerService):
             handler.__qualname__ = hook.name
             self.bus.on(self.EVENT_CLASS, handler)
 
-        if not self.crawl_only:
-            self.bus.on(self.EVENT_CLASS, self._emit_snapshot_event)
-
+        self.bus.on(self.EVENT_CLASS, self.on_CrawlEvent)
         self.bus.on(self.EVENT_CLASS, self._cleanup_bg_hooks)
 
-    async def _emit_snapshot_event(self, event: BaseEvent) -> None:
-        """Start the snapshot extraction phase as a child of CrawlEvent.
+    async def on_CrawlEvent(self, event: BaseEvent) -> None:
+        """Start the snapshot extraction phase after all crawl hooks complete.
 
-        Runs after all crawl hook handlers have returned. Bg crawl hooks may
-        still be running concurrently. The SnapshotEvent is awaited, so the
-        entire snapshot phase completes before this handler returns.
+        Bg crawl hooks may still be running concurrently. The SnapshotEvent
+        is awaited, so the entire snapshot phase completes before this returns.
+
+        Skipped when ``crawl_only`` is set (e.g. ``abx install`` or explicit flag).
         """
+        if self.crawl_only:
+            return
         await self.bus.emit(SnapshotEvent(
             url=self.url,
             snapshot_id=self.snapshot.id,

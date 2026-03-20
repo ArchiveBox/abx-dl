@@ -74,6 +74,10 @@ class HookRunnerService(BaseService):
 
     Subclasses must set ``EVENT_CLASS`` to the event type they listen to
     (e.g. CrawlEvent, SnapshotEvent).
+
+    Unlike plain BaseService, hook runner services skip auto-discovery of ``on_*``
+    methods. Registration order matters (hooks → post-hooks → cleanup), so
+    subclasses control it explicitly via ``_register_hook_handlers()``.
     """
 
     EVENT_CLASS: ClassVar[type[BaseEvent]]
@@ -83,6 +87,10 @@ class HookRunnerService(BaseService):
     output_dir: Path
     machine: MachineService
     hooks: list[tuple[Plugin, Hook]]
+
+    def _attach_handlers(self) -> None:
+        """No-op — HookRunnerService subclasses register handlers explicitly
+        via ``_register_hook_handlers()`` to control ordering."""
 
     def _register_hook_handlers(self) -> None:
         """Register one handler per hook, plus cleanup, on ``EVENT_CLASS``.
