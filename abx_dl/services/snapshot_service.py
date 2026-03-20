@@ -8,15 +8,15 @@ from bubus import BaseEvent, EventBus
 from ..events import ProcessEvent, ProcessKillEvent, SnapshotCleanupEvent, SnapshotEvent
 from ..models import Snapshot
 from ..models import Hook, Plugin
-from .base import HookRunnerService
+from .base import BaseService, make_hook_handler
 from .machine_service import MachineService
 
 
-class SnapshotService(HookRunnerService):
+class SnapshotService(BaseService):
     """Orchestrates the snapshot phase: extraction hooks, then daemon cleanup.
 
-    The SnapshotEvent is emitted by CrawlService as a child of CrawlEvent,
-    so the full snapshot phase sits inside the crawl event tree::
+    The SnapshotEvent is emitted by CrawlService.on_CrawlEvent as a child of
+    CrawlEvent, so the full snapshot phase sits inside the crawl event tree::
 
         CrawlEvent
         ├── ... (crawl hooks)
@@ -43,7 +43,9 @@ class SnapshotService(HookRunnerService):
         │
         └── ... (crawl cleanup)
 
-    See HookRunnerService for the shared fg/bg execution model and config propagation.
+    Registration order matters — hooks must run before cleanup emission. This
+    service registers all handlers explicitly via ``bus.on(SnapshotEvent, ...)``,
+    overriding BaseService's auto-discovery.
     """
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [SnapshotEvent, SnapshotCleanupEvent]
@@ -65,18 +67,24 @@ class SnapshotService(HookRunnerService):
         self.machine = machine
         self.hooks = hooks
         super().__init__(bus)
-        self._register_hook_handlers()
-        self.bus.on(SnapshotCleanupEvent, self.on_SnapshotCleanupEvent)
 
-    def _register_hook_handlers(self) -> None:
-        """Register snapshot hook handlers, then cleanup emission, on SnapshotEvent."""
+    def _attach_handlers(self) -> None:
+        """Register snapshot hook handlers, then cleanup emission, on SnapshotEvent.
+
+        Overrides BaseService auto-discovery to control registration order.
+        """
         for plugin, hook in self.hooks:
-            handler = self._make_hook_handler(plugin, hook)
+            handler = make_hook_handler(
+                self, plugin, hook,
+                url=self.url, snapshot=self.snapshot,
+                output_dir=self.output_dir, machine=self.machine,
+            )
             handler.__name__ = hook.name
             handler.__qualname__ = hook.name
             self.bus.on(SnapshotEvent, handler)
 
         self.bus.on(SnapshotEvent, self._emit_cleanup)
+        self.bus.on(SnapshotCleanupEvent, self.on_SnapshotCleanupEvent)
 
     async def _emit_cleanup(self, event: BaseEvent) -> None:
         """Emit SnapshotCleanupEvent to SIGTERM all bg snapshot daemons."""

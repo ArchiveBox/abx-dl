@@ -8,11 +8,11 @@ from bubus import BaseEvent, EventBus
 from ..events import CrawlCleanupEvent, CrawlEvent, ProcessEvent, ProcessKillEvent, SnapshotEvent
 from ..models import Snapshot
 from ..models import INSTALL_URL, Hook, Plugin
-from .base import HookRunnerService
+from .base import BaseService, make_hook_handler
 from .machine_service import MachineService
 
 
-class CrawlService(HookRunnerService):
+class CrawlService(BaseService):
     """Orchestrates the crawl phase: installs, daemons, then snapshot extraction.
 
     Lifecycle (all within a single CrawlEvent)::
@@ -29,7 +29,7 @@ class CrawlService(HookRunnerService):
         │
         │  ── After all hook handlers return ──
         │
-        ├── on_CrawlEvent                            # FG: emits SnapshotEvent (blocks)
+        ├── on_CrawlEvent                         # FG: emits SnapshotEvent (blocks)
         │   └── SnapshotEvent (full snapshot phase runs here)
         │
         └── CrawlCleanupEvent                     # FG: SIGTERMs all bg crawl daemons
@@ -37,7 +37,10 @@ class CrawlService(HookRunnerService):
             ├── ProcessKillEvent (wget_install)
             └── ...
 
-    See HookRunnerService for the shared fg/bg execution model and config propagation.
+    Registration order matters — hooks must run before snapshot emission, which
+    must run before cleanup. This service registers all handlers explicitly via
+    ``bus.on(CrawlEvent, ...)`` to control ordering, overriding BaseService's
+    auto-discovery.
     """
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [CrawlEvent, CrawlCleanupEvent]
@@ -65,22 +68,26 @@ class CrawlService(HookRunnerService):
         # without triggering any snapshot extraction hooks.
         self.crawl_only = crawl_only or (url == INSTALL_URL)
         super().__init__(bus)
-        self._register_hook_handlers()
-        self.bus.on(CrawlCleanupEvent, self.on_CrawlCleanupEvent)
 
-    def _register_hook_handlers(self) -> None:
+    def _attach_handlers(self) -> None:
         """Register crawl hook handlers, then snapshot emission, then cleanup.
 
-        Order: per-hook handlers → on_CrawlEvent (snapshot phase) → cleanup emission.
+        Order: per-hook handlers → on_CrawlEvent (snapshot) → cleanup emission.
+        Overrides BaseService auto-discovery to control registration order.
         """
         for plugin, hook in self.hooks:
-            handler = self._make_hook_handler(plugin, hook)
+            handler = make_hook_handler(
+                self, plugin, hook,
+                url=self.url, snapshot=self.snapshot,
+                output_dir=self.output_dir, machine=self.machine,
+            )
             handler.__name__ = hook.name
             handler.__qualname__ = hook.name
             self.bus.on(CrawlEvent, handler)
 
         self.bus.on(CrawlEvent, self.on_CrawlEvent)
         self.bus.on(CrawlEvent, self._emit_cleanup)
+        self.bus.on(CrawlCleanupEvent, self.on_CrawlCleanupEvent)
 
     async def on_CrawlEvent(self, event: BaseEvent) -> None:
         """Start the snapshot extraction phase after all crawl hooks complete.

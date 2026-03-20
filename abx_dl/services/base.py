@@ -64,59 +64,43 @@ class BaseService:
                     break
 
 
-class HookRunnerService(BaseService):
-    """Base class for services that run plugin hooks (CrawlService, SnapshotService).
+def make_hook_handler(
+    service: BaseService,
+    plugin: Plugin,
+    hook: Hook,
+    *,
+    url: str,
+    snapshot: Snapshot,
+    output_dir: Path,
+    machine: MachineService,
+):
+    """Create an async handler that emits a ProcessEvent for one hook.
 
-    Provides shared logic for building and emitting ProcessEvents (fg/bg dispatch).
-    Cleanup is handled via dedicated cleanup events (CrawlCleanupEvent,
-    SnapshotCleanupEvent) — see each subclass for details.
+    The handler captures ``plugin`` and ``hook`` via closure defaults so each
+    handler is bound to its specific hook even though they share the same
+    factory function.
 
-    Unlike plain BaseService, hook runner services skip auto-discovery of ``on_*``
-    methods. Registration order matters (hooks → post-hooks → cleanup emission),
-    so subclasses control it explicitly via ``_register_hook_handlers()``, using
-    explicit event classes (e.g. ``bus.on(CrawlEvent, handler)``).
+    The env dict is built fresh each time from ``MachineService.shared_config``,
+    so fg hooks pick up config updates (e.g. CHROME_BINARY path) from earlier hooks.
     """
+    async def handler(event: BaseEvent, _plugin=plugin, _hook=hook) -> None:
+        env = machine.get_env_for_plugin(_plugin, run_output_dir=output_dir)
+        timeout = int(env.get(f"{_plugin.name.upper()}_TIMEOUT", env.get('TIMEOUT', '60')))
+        plugin_output_dir = output_dir / _plugin.name
+        plugin_output_dir.mkdir(parents=True, exist_ok=True)
 
-    url: str
-    snapshot: Snapshot
-    output_dir: Path
-    machine: MachineService
-    hooks: list[tuple[Plugin, Hook]]
+        process_event = ProcessEvent(
+            plugin_name=_plugin.name, hook_name=_hook.name,
+            hook_path=str(_hook.path),
+            hook_args=[f'--url={url}', f'--snapshot-id={snapshot.id}'],
+            is_background=_hook.is_background,
+            output_dir=str(plugin_output_dir), env=env,
+            snapshot_id=snapshot.id, timeout=timeout,
+            event_handler_timeout=timeout + 30.0,
+        )
+        if _hook.is_background:
+            service.bus.emit(process_event)
+        else:
+            await service.bus.emit(process_event)
 
-    def _attach_handlers(self) -> None:
-        """No-op — HookRunnerService subclasses register handlers explicitly
-        via ``_register_hook_handlers()`` to control ordering."""
-
-    def _make_hook_handler(self, plugin: Plugin, hook: Hook):
-        """Create an async handler that emits a ProcessEvent for one hook.
-
-        The handler captures ``plugin`` and ``hook`` via closure defaults so each
-        handler is bound to its specific hook even though they share the same
-        factory method.
-
-        The env dict is built fresh each time from ``MachineService.shared_config``,
-        so fg hooks pick up config updates (e.g. CHROME_BINARY path) from earlier hooks.
-        """
-        async def handler(event: BaseEvent, _plugin=plugin, _hook=hook) -> None:
-            env = self.machine.get_env_for_plugin(_plugin, run_output_dir=self.output_dir)
-            timeout = int(env.get(f"{_plugin.name.upper()}_TIMEOUT", env.get('TIMEOUT', '60')))
-            plugin_output_dir = self.output_dir / _plugin.name
-            plugin_output_dir.mkdir(parents=True, exist_ok=True)
-
-            process_event = ProcessEvent(
-                plugin_name=_plugin.name, hook_name=_hook.name,
-                hook_path=str(_hook.path),
-                hook_args=[f'--url={self.url}', f'--snapshot-id={self.snapshot.id}'],
-                is_background=_hook.is_background,
-                output_dir=str(plugin_output_dir), env=env,
-                snapshot_id=self.snapshot.id, timeout=timeout,
-                event_handler_timeout=timeout + 30.0,
-            )
-            if _hook.is_background:
-                # Fire-and-forget: concurrent child of the parent event.
-                self.bus.emit(process_event)
-            else:
-                # Foreground: blocks until subprocess and all side-effect events complete.
-                await self.bus.emit(process_event)
-
-        return handler
+    return handler
