@@ -83,11 +83,11 @@ class SnapshotService(BaseService):
             handler.__qualname__ = hook.name
             self.bus.on(SnapshotEvent, handler)
 
-        self.bus.on(SnapshotEvent, self._emit_cleanup)
+        self.bus.on(SnapshotEvent, self.on_SnapshotEvent)
         self.bus.on(SnapshotCleanupEvent, self.on_SnapshotCleanupEvent)
 
-    async def _emit_cleanup(self, event: BaseEvent) -> None:
-        """Emit SnapshotCleanupEvent to SIGTERM all bg snapshot daemons."""
+    async def on_SnapshotEvent(self, event: BaseEvent) -> None:
+        """Emit cleanup after all snapshot hook handlers have run."""
         await self.bus.emit(SnapshotCleanupEvent(
             snapshot_id=self.snapshot.id,
             output_dir=str(self.output_dir),

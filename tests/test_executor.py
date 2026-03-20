@@ -432,3 +432,68 @@ def test_output_str_absolute_paths_are_stored_relative_to_hook_output_dir(tmp_pa
     ]
 
     assert [result.output_str for result in results] == ['media.mp4']
+
+
+def test_cleanup_runs_after_all_hooks_not_interleaved(tmp_path: Path) -> None:
+    """Verify that cleanup events fire after all hooks, not interleaved.
+
+    A bg daemon hook writes a marker file on SIGTERM. A fg hook runs after it.
+    The cleanup (SIGTERM) must happen only after ALL hooks have run, so the
+    marker file must NOT exist when the fg hook runs but MUST exist after
+    download() returns.
+    """
+    plugins_root = tmp_path / 'plugins'
+    marker = tmp_path / 'run' / 'bgdemo' / 'sigtermed.marker'
+
+    # bg daemon that creates a marker file when SIGTERMed
+    _write(
+        plugins_root / 'bgdemo' / 'on_Snapshot__05_daemon.bg.py',
+        '\n'.join(
+            [
+                'import json',
+                'import signal',
+                'import sys',
+                'import time',
+                'from pathlib import Path',
+                '',
+                'def handle_sigterm(signum, frame):',
+                f'    Path({str(marker)!r}).write_text("killed")',
+                '    print(json.dumps({"type": "ArchiveResult", "status": "succeeded", "output_str": "daemon cleaned up"}), flush=True)',
+                '    sys.exit(0)',
+                '',
+                'signal.signal(signal.SIGTERM, handle_sigterm)',
+                'print("[*] daemon ready", flush=True)',
+                'while True:',
+                '    time.sleep(0.1)',
+            ]
+        )
+        + '\n',
+    )
+
+    # fg hook that checks the marker file does NOT exist yet (cleanup hasn't fired)
+    _write(
+        plugins_root / 'checker' / 'on_Snapshot__10_check.py',
+        '\n'.join(
+            [
+                'import json',
+                'from pathlib import Path',
+                f'marker_exists = Path({str(marker)!r}).exists()',
+                'print(json.dumps({"type": "ArchiveResult", "status": "succeeded", "output_str": f"marker_during_hooks={marker_exists}"}))',
+            ]
+        )
+        + '\n',
+    )
+
+    plugins = discover_plugins(plugins_root)
+    results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
+
+    # The fg hook must see no marker (cleanup hasn't happened yet)
+    checker_result = next(r for r in results if r.plugin == 'checker')
+    assert checker_result.output_str == 'marker_during_hooks=False', (
+        'Cleanup fired before fg hooks finished — ordering is broken'
+    )
+
+    # After download() returns, the marker must exist (cleanup did fire)
+    assert marker.exists(), (
+        'Cleanup event never SIGTERMed the bg daemon — cleanup event not emitted'
+    )

@@ -86,27 +86,21 @@ class CrawlService(BaseService):
             self.bus.on(CrawlEvent, handler)
 
         self.bus.on(CrawlEvent, self.on_CrawlEvent)
-        self.bus.on(CrawlEvent, self._emit_cleanup)
         self.bus.on(CrawlCleanupEvent, self.on_CrawlCleanupEvent)
 
     async def on_CrawlEvent(self, event: BaseEvent) -> None:
-        """Start the snapshot extraction phase after all crawl hooks complete.
+        """Run the snapshot phase (unless crawl_only), then emit cleanup.
 
-        Bg crawl hooks may still be running concurrently. The SnapshotEvent
-        is awaited, so the entire snapshot phase completes before this returns.
-
-        Skipped when ``crawl_only`` is set (e.g. ``abx install`` or explicit flag).
+        Runs after all per-hook handlers. Bg crawl hooks may still be running
+        concurrently. Both SnapshotEvent and CrawlCleanupEvent are awaited,
+        so everything completes before this handler returns.
         """
-        if self.crawl_only:
-            return
-        await self.bus.emit(SnapshotEvent(
-            url=self.url,
-            snapshot_id=self.snapshot.id,
-            output_dir=str(self.output_dir),
-        ))
-
-    async def _emit_cleanup(self, event: BaseEvent) -> None:
-        """Emit CrawlCleanupEvent to SIGTERM all bg crawl daemons."""
+        if not self.crawl_only:
+            await self.bus.emit(SnapshotEvent(
+                url=self.url,
+                snapshot_id=self.snapshot.id,
+                output_dir=str(self.output_dir),
+            ))
         await self.bus.emit(CrawlCleanupEvent(
             snapshot_id=self.snapshot.id,
             output_dir=str(self.output_dir),
