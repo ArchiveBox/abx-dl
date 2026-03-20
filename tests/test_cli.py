@@ -1257,4 +1257,4 @@ def test_readme_dl_command_downloads_example_dot_com_with_real_output(tmp_path: 
         record for record in index_records
         if record.get('type') == 'ArchiveResult' and record.get('plugin') == 'wget'
     ]
-    assert any(record.get('output_str') == 'example.com/index.html' for record in wget_results)
+    assert any(record.get('output_str') == 'wget/example.com/index.html' for record in wget_results)
