@@ -4,7 +4,7 @@ requires-python = ">=3.11"
 
 [[package]]
 name = "abx-dl"
-version = "1.9.17"
+version = "1.10.7"
 source = { editable = "." }
 dependencies = [
     { name = "abx-pkg" },
@@ -31,7 +31,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "abx-pkg", specifier = ">=1.9.10" },
-    { name = "abx-plugins", specifier = ">=1.9.17" },
+    { name = "abx-plugins", specifier = ">=1.10.5" },
     { name = "abxbus", specifier = ">=2.4.2" },
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=7.1.1" },
     { name = "flask", marker = "extra == 'dev'", specifier = ">=3.0" },
