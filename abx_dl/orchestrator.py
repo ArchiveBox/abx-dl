@@ -15,14 +15,21 @@ Full event tree for a typical run::
     │   ├── ProcessEvent  (bg: chrome_launch)
     │   ├── ProcessEvent  (FG: chrome_wait)
     │   │   │  (side-effect chain from chrome_install):
-    │   │   │  BinaryEvent → ProcessEvent (puppeteer install)
-    │   │   │      → BinaryEvent(abspath) → MachineEvent
+    │   │   │  BinaryEvent → provider hooks → BinaryInstalledEvent
+    │   │   │      → BinaryEvent(abspath) → MachineEvent → BinaryLoadedEvent
+    │   │   ├── ArchiveResultEvent (inline, final=False)
+    │   │   ├── ProcessCompletedEvent
+    │   │   ├── ArchiveResultEvent (final=True → collected by orchestrator)
     │   │   └── ...
     │   └── ...
     │
     ├── CrawlStartEvent                # triggers snapshot phase
-    │   └── SnapshotEvent
+    │   └── SnapshotEvent (depth=1)
     │       ├── ProcessEvent  (on_Snapshot hooks)
+    │       │   ├── SnapshotEvent (depth>1, ignored by abx-dl)
+    │       │   ├── ArchiveResultEvent (inline, final=False)
+    │       │   ├── ProcessCompletedEvent
+    │       │   └── ArchiveResultEvent (final=True → collected)
     │       ├── SnapshotCleanupEvent
     │       │   └── ProcessKillEvent × N
     │       └── SnapshotCompletedEvent
@@ -31,6 +38,15 @@ Full event tree for a typical run::
     │   └── ProcessKillEvent × N
     │
     └── CrawlCompletedEvent                     # informational
+
+Result collection:
+- ArchiveResult records flow through the bus via ArchiveResultEvent(final=True).
+  The orchestrator registers a handler that constructs ArchiveResult models
+  from final events and appends them to the results list.
+- Process records flow through the on_process callback from ProcessService
+  to the on_result callback (for TUI display).
+- Inline ArchiveResultEvents (final=False) are informational — consumed by
+  ArchiveBox to write DB rows but ignored by the orchestrator's collector.
 
 Key bubus concepts used:
 
@@ -85,8 +101,9 @@ async def download(
     This is the only public function in the orchestrator. It:
     1. Discovers and sorts hooks from selected plugins
     2. Creates the EventBus and wires up all services
-    3. Emits CrawlEvent (which cascades through the entire lifecycle)
-    4. Returns all ArchiveResult/Process/Snapshot records produced
+    3. Registers a bus handler for ArchiveResultEvent(final=True) to collect results
+    4. Emits CrawlEvent (which cascades through the entire lifecycle)
+    5. Returns all ArchiveResult records collected from ArchiveResultEvents
 
     Args:
         url: The URL to download/archive.
@@ -97,10 +114,13 @@ async def download(
         auto_install: Whether to auto-install missing binaries.
         crawl_only: If True, skip the snapshot phase (only run on_Crawl hooks).
         emit_jsonl: Whether to print JSONL to stdout. Defaults to True if not a TTY.
-        on_result: Callback invoked for each ArchiveResult as it's produced.
+        on_result: Callback invoked for each Process and ArchiveResult record.
+            Process records come from ProcessService's on_process callback.
+            ArchiveResult records come from the ArchiveResultEvent bus handler.
 
     Returns:
-        List of all VisibleRecord objects (Snapshot, Process, ArchiveResult) produced.
+        List of ArchiveResult records produced (collected from final
+        ArchiveResultEvents on the bus).
     """
 
     output_dir = output_dir or Path.cwd()

@@ -26,11 +26,17 @@ class SnapshotService(BaseService):
         CrawlEvent
         ├── CrawlSetupEvent (crawl hooks)
         ├── CrawlStartEvent
-        │   └── SnapshotEvent                              # triggers this service
+        │   └── SnapshotEvent (depth=1)                    # triggers this service
         │       │
         │       │  ── Snapshot hook handlers run serially ──
+        │       │  (each wrapped with depth>1 guard)
         │       │
         │       ├── on_Snapshot__06_wget.finite.bg
+        │       │   └── ProcessEvent
+        │       │       ├── SnapshotEvent (depth>1, discovered URL — ignored)
+        │       │       ├── ArchiveResultEvent (inline, final=False)
+        │       │       ├── ProcessCompletedEvent
+        │       │       └── ArchiveResultEvent (final=True)
         │       ├── on_Snapshot__09_chrome_launch.daemon.bg
         │       ├── on_Snapshot__54_title
         │       ├── on_Snapshot__93_hashes
@@ -43,6 +49,10 @@ class SnapshotService(BaseService):
         │
         ├── CrawlCleanupEvent
         └── CrawlCompletedEvent
+
+    Depth guard: SnapshotEvents with depth > 1 are silently ignored by
+    abx-dl. These represent discovered URLs from hook output (recursive
+    crawling). ArchiveBox handles them by queueing new snapshots.
     """
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [

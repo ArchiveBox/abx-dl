@@ -2,7 +2,10 @@ import asyncio
 import json
 from pathlib import Path
 
+from bubus import EventBus
+
 from abx_dl.orchestrator import download
+from abx_dl.events import BinaryInstalledEvent, BinaryLoadedEvent, ArchiveResultEvent
 from abx_dl.models import ArchiveResult
 from abx_dl.models import discover_plugins
 
@@ -496,4 +499,208 @@ def test_cleanup_runs_after_all_hooks_not_interleaved(tmp_path: Path) -> None:
     # After download() returns, the marker must exist (cleanup did fire)
     assert marker.exists(), (
         'Cleanup event never SIGTERMed the bg daemon — cleanup event not emitted'
+    )
+
+
+def test_binary_loaded_vs_installed_events(tmp_path: Path, monkeypatch) -> None:
+    """Verify BinaryLoadedEvent for pre-existing and BinaryInstalledEvent for provider-installed.
+
+    Sets up two binaries in the same run:
+    - "preloaded": hook outputs Binary with abspath already set (detected on disk)
+    - "installme": hook outputs Binary without abspath (needs provider to install)
+
+    Expected event flow:
+    - preloaded: BinaryLoadedEvent only (no install needed)
+    - installme: BinaryLoadedEvent (from provider's nested BinaryEvent with abspath)
+                 + BinaryInstalledEvent (from original event after provider resolved it)
+
+    Uses monkeypatched EventBus.__init__ to capture informational events.
+    """
+    plugins_root = tmp_path / 'plugins'
+    captured: list[tuple[str, str, str]] = []
+
+    _orig_init = EventBus.__init__
+
+    def _capturing_init(self, *a, **kw):
+        _orig_init(self, *a, **kw)
+
+        async def on_loaded(e: BinaryLoadedEvent) -> None:
+            captured.append(('loaded', e.name, e.abspath))
+
+        async def on_installed(e: BinaryInstalledEvent) -> None:
+            captured.append(('installed', e.name, e.abspath))
+
+        self.on(BinaryLoadedEvent, on_loaded)
+        self.on(BinaryInstalledEvent, on_installed)
+
+    monkeypatch.setattr(EventBus, '__init__', _capturing_init)
+
+    # Hook that emits two Binary requests: one pre-existing, one needing install
+    preloaded_path = str(tmp_path / 'bin' / 'preloaded')
+    (tmp_path / 'bin').mkdir()
+    Path(preloaded_path).write_text('stub')
+
+    _write(
+        plugins_root / 'emitter' / 'on_Crawl__00_emit.py',
+        '\n'.join(
+            [
+                'import json',
+                # Pre-existing binary — abspath already known
+                f'print(json.dumps({{"type": "Binary", "name": "preloaded", "abspath": {preloaded_path!r}}}))',
+                # Binary that needs provider installation
+                'print(json.dumps({"type": "Binary", "name": "installme", "binproviders": "provider"}))',
+            ]
+        )
+        + '\n',
+    )
+
+    # Provider hook that "installs" the binary
+    _write(
+        plugins_root / 'provider' / 'on_Binary__10_provider_install.py',
+        '\n'.join(
+            [
+                'import json',
+                'import argparse',
+                'from pathlib import Path',
+                'parser = argparse.ArgumentParser()',
+                'parser.add_argument("--name", required=True)',
+                'parser.add_argument("--binary-id", required=True)',
+                'parser.add_argument("--machine-id", required=True)',
+                'parser.add_argument("--binproviders", default="*")',
+                'parser.add_argument("--overrides", default=None)',
+                'parser.add_argument("--custom-cmd", default=None)',
+                'args = parser.parse_args()',
+                'bin_path = Path.cwd() / "bin" / args.name',
+                'bin_path.parent.mkdir(parents=True, exist_ok=True)',
+                'bin_path.write_text("installed")',
+                'print(json.dumps({"type": "Binary", "name": args.name, "abspath": str(bin_path),'
+                ' "binary_id": args.binary_id, "machine_id": args.machine_id,'
+                ' "binprovider": "provider"}))',
+            ]
+        )
+        + '\n',
+    )
+
+    # Consumer hook verifies both binaries are available via env vars
+    _write(
+        plugins_root / 'consumer' / 'on_Crawl__01_check.py',
+        '\n'.join(
+            [
+                'import json',
+                'import os',
+                'print(json.dumps({',
+                '    "type": "ArchiveResult",',
+                '    "status": "succeeded",',
+                '    "output_str": "|".join([',
+                '        os.environ.get("PRELOADED_BINARY", "missing"),',
+                '        os.environ.get("INSTALLME_BINARY", "missing"),',
+                '    ]),',
+                '}))',
+            ]
+        )
+        + '\n',
+    )
+
+    plugins = discover_plugins(plugins_root)
+    results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
+
+    # --- Verify informational events ---
+
+    loaded_preloaded = [e for e in captured if e[0] == 'loaded' and e[1] == 'preloaded']
+    installed_preloaded = [e for e in captured if e[0] == 'installed' and e[1] == 'preloaded']
+
+    assert len(loaded_preloaded) == 1, (
+        f'Expected exactly 1 BinaryLoadedEvent for preloaded, got {len(loaded_preloaded)}: {loaded_preloaded}'
+    )
+    assert loaded_preloaded[0][2] == preloaded_path, (
+        f'BinaryLoadedEvent abspath mismatch: {loaded_preloaded[0][2]!r} != {preloaded_path!r}'
+    )
+    assert len(installed_preloaded) == 0, (
+        f'Pre-existing binary should not emit BinaryInstalledEvent, got: {installed_preloaded}'
+    )
+
+    loaded_installme = [e for e in captured if e[0] == 'loaded' and e[1] == 'installme']
+    installed_installme = [e for e in captured if e[0] == 'installed' and e[1] == 'installme']
+
+    assert len(loaded_installme) == 1, (
+        f'Expected 1 BinaryLoadedEvent for installme (from provider nested event), '
+        f'got {len(loaded_installme)}: {loaded_installme}'
+    )
+    assert len(installed_installme) == 1, (
+        f'Expected 1 BinaryInstalledEvent for installme, got {len(installed_installme)}: {installed_installme}'
+    )
+    # Both events should report the same resolved path
+    assert loaded_installme[0][2] == installed_installme[0][2], (
+        f'BinaryLoadedEvent path {loaded_installme[0][2]!r} != '
+        f'BinaryInstalledEvent path {installed_installme[0][2]!r}'
+    )
+
+    # --- Verify config propagation (both binaries visible to subsequent hooks) ---
+
+    consumer = next(r for r in results if r.plugin == 'consumer')
+    parts = consumer.output_str.split('|')
+    assert parts[0] == preloaded_path, (
+        f'PRELOADED_BINARY env var mismatch: {parts[0]!r}'
+    )
+    assert parts[1] != 'missing', (
+        f'INSTALLME_BINARY not set in consumer env — install chain broken'
+    )
+
+
+def test_archive_result_events_final_vs_informational(tmp_path: Path, monkeypatch) -> None:
+    """Verify ArchiveResultEvent(final=True) emitted at completion, not inline.
+
+    A hook outputs an inline ArchiveResult (informational, final=False) during
+    execution. After the process completes, a final ArchiveResultEvent
+    (final=True) is emitted with full fields. The orchestrator only collects
+    the final one into the results list.
+    """
+    plugins_root = tmp_path / 'plugins'
+    ar_events: list[tuple[bool, str, str]] = []
+
+    _orig_init = EventBus.__init__
+
+    def _capturing_init(self, *a, **kw):
+        _orig_init(self, *a, **kw)
+
+        async def on_ar(e: ArchiveResultEvent) -> None:
+            ar_events.append((e.final, e.hook_name, e.status))
+
+        self.on(ArchiveResultEvent, on_ar)
+
+    monkeypatch.setattr(EventBus, '__init__', _capturing_init)
+
+    _write(
+        plugins_root / 'demo' / 'on_Snapshot__10_emit.py',
+        '\n'.join(
+            [
+                'import json',
+                # Inline ArchiveResult during execution (informational)
+                'print(json.dumps({"type": "ArchiveResult", "status": "succeeded", "output_str": "partial"}))',
+            ]
+        )
+        + '\n',
+    )
+
+    plugins = discover_plugins(plugins_root)
+    results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
+
+    # Should have at least 2 ArchiveResultEvents for this hook:
+    # 1 inline (final=False), 1 at completion (final=True)
+    demo_events = [e for e in ar_events if e[1] == 'on_Snapshot__10_emit']
+    inline = [e for e in demo_events if not e[0]]
+    final = [e for e in demo_events if e[0]]
+
+    assert len(inline) >= 1, (
+        f'Expected at least 1 inline ArchiveResultEvent, got {len(inline)}'
+    )
+    assert len(final) == 1, (
+        f'Expected exactly 1 final ArchiveResultEvent, got {len(final)}: {final}'
+    )
+    assert final[0][2] == 'succeeded'
+
+    # Only the final event should produce results in the return list
+    demo_results = [r for r in results if isinstance(r, ArchiveResult) and r.hook_name == 'on_Snapshot__10_emit']
+    assert len(demo_results) == 1, (
+        f'Expected 1 ArchiveResult in results list (from final event only), got {len(demo_results)}'
     )
