@@ -8,17 +8,19 @@ from typing import Callable, ClassVar
 
 from bubus import BaseEvent, EventBus
 
-from ..events import ArchiveResultEvent, BinaryEvent, MachineEvent, ProcessCompletedEvent, ProcessEvent, ProcessKillEvent, SnapshotEvent
+from ..events import ArchiveResultEvent, ProcessCompletedEvent, ProcessEvent, ProcessKillEvent, ProcessRecordOutputtedEvent
 from ..models import ArchiveResult, Process, write_jsonl, now_iso
 from ..process_utils import write_pid_file_with_mtime, write_cmd_file, graceful_kill_process, graceful_kill_by_pid_file
 from .base import BaseService
 
 
 class ProcessService(BaseService):
-    """Runs hook subprocesses and parses their JSONL output into bus events.
+    """Runs hook subprocesses and routes their JSONL output to the bus.
 
     This is the only service that spawns subprocesses. Every hook execution
-    flows through here via ProcessEvent.
+    flows through here via ProcessEvent. ProcessService does NOT interpret
+    record types — it emits ProcessRecordOutputtedEvent for each typed JSONL
+    line, and each service handles its own record types independently.
 
     Subprocess lifecycle::
 
@@ -33,10 +35,9 @@ class ProcessService(BaseService):
         │
         ├── Stream stdout line-by-line (realtime):
         │   - Lines starting with '{' are parsed as JSON
-        │   - {"type": "Binary", ...}    → emit BinaryEvent (triggers install chain)
-        │   - {"type": "Machine", ...}   → emit MachineEvent (updates shared config)
-        │   - {"type": "Snapshot", ...}  → emit SnapshotEvent (discovered URL)
-        │   - {"type": "ArchiveResult", ...} → emit ArchiveResultEvent + capture status
+        │   - Any JSON with a "type" field → ProcessRecordOutputtedEvent
+        │     (each service handles its own types via on_ProcessRecordOutputtedEvent)
+        │   - ArchiveResult records also capture status/output_str for finalization
         │   - Non-JSON lines are logged but not parsed
         │
         ├── Wait for process exit (with timeout)
@@ -48,12 +49,10 @@ class ProcessService(BaseService):
             - Emit ArchiveResultEvent(final=True)
             - Call on_process() callback for Process record
 
-    Realtime event emission is critical: when a hook outputs Binary/Machine JSONL,
-    the corresponding event is emitted immediately (via ``await self.bus.emit()``).
-    This triggers a bubus "queue-jump" — the BinaryEvent and its entire install
-    chain complete synchronously before the next stdout line is read. This is how
-    a Crawl install hook can request a binary, have it installed by provider hooks,
-    and see the result in config — all within a single ProcessEvent.
+    Realtime event emission is critical: ProcessRecordOutputtedEvent is emitted
+    with ``await self.bus.emit()`` (queue-jump), so the entire handler chain
+    (e.g. BinaryEvent → provider install → MachineEvent) completes before the
+    next stdout line is read.
 
     State:
     - No mutable state beyond constructor args. Each ProcessEvent is handled
@@ -66,10 +65,9 @@ class ProcessService(BaseService):
     - ``{hook_name}.sh`` — command line for debugging
 
     bubus details:
-    - Side-effect events (BinaryEvent, MachineEvent, SnapshotEvent,
-      ArchiveResultEvent) are emitted with ``await``, making them synchronous
-      children of the ProcessEvent. They complete before the next stdout line
-      is processed.
+    - ProcessRecordOutputtedEvent is emitted with ``await``, making it a
+      synchronous child. The typed event emitted by the handling service
+      (and its entire chain) completes before the next line is processed.
     - ProcessCompletedEvent and final ArchiveResultEvent are also emitted with
       ``await`` as informational children.
     - Background hooks use ``start_new_session=True`` so SIGTERM to the parent
@@ -78,7 +76,7 @@ class ProcessService(BaseService):
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, ProcessKillEvent]
     EMITS: ClassVar[list[type[BaseEvent]]] = [
-        ProcessCompletedEvent, ArchiveResultEvent, BinaryEvent, MachineEvent, SnapshotEvent,
+        ProcessRecordOutputtedEvent, ProcessCompletedEvent, ArchiveResultEvent,
     ]
 
     def __init__(
@@ -136,13 +134,14 @@ class ProcessService(BaseService):
             output_str = ''
 
             async def _stream_stdout() -> None:
-                """Read stdout line-by-line, emitting side-effect events in realtime.
+                """Read stdout line-by-line, routing typed JSONL to the bus.
 
-                JSON lines with "type" field trigger immediate event emission:
-                - Binary → BinaryEvent (may trigger full install chain via queue-jump)
-                - Machine → MachineEvent (updates shared config immediately)
-                - Snapshot → SnapshotEvent (discovered URL for recursive crawling)
-                - ArchiveResult → ArchiveResultEvent (informational) + capture status
+                JSON lines with a "type" field are emitted as
+                ProcessRecordOutputtedEvent. Each service handles its own
+                record types (Binary, Machine, Snapshot, ArchiveResult, etc.).
+
+                ArchiveResult records also capture status/output_str locally
+                for use in the finalization phase.
                 """
                 nonlocal status, output_str
                 assert process.stdout is not None
@@ -163,38 +162,26 @@ class ProcessService(BaseService):
                         if not isinstance(record, dict):
                             continue
 
-                        record_type = record.get('type')
-                        if record_type == 'Binary':
-                            record.pop('type')
-                            # await = queue-jump: entire binary install chain
-                            # completes before we read the next stdout line
-                            await self.bus.emit(BinaryEvent(**record))
-                        elif record_type == 'Machine':
-                            record.pop('type')
-                            await self.bus.emit(MachineEvent(**record))
-                        elif record_type == 'Snapshot':
-                            # Discovered URL — emit SnapshotEvent for potential
-                            # recursive crawling. Default depth=2 since any
-                            # hook-discovered URL is at least one level deep.
-                            await self.bus.emit(SnapshotEvent(
-                                url=record.get('url', ''),
-                                snapshot_id=record.get('id', record.get('snapshot_id', '')),
-                                output_dir=event.output_dir,
-                                depth=int(record.get('depth', 2)),
-                            ))
-                        elif record_type == 'ArchiveResult':
+                        record_type = record.pop('type', '')
+                        if not record_type:
+                            continue
+
+                        # Capture ArchiveResult status/output_str for finalization
+                        if record_type == 'ArchiveResult':
                             status = record.get('status', status)
                             output_str = record.get('output_str', '')
-                            # Emit informational event (inline, not final)
-                            await self.bus.emit(ArchiveResultEvent(
-                                snapshot_id=record.get('snapshot_id', event.snapshot_id),
-                                plugin=record.get('plugin', event.plugin_name),
-                                id=record.get('id', ''),
-                                hook_name=record.get('hook_name', event.hook_name),
-                                status=status,
-                                output_str=output_str,
-                                error=record.get('error', ''),
-                            ))
+
+                        # Route to services — await = queue-jump: the entire
+                        # handler chain (e.g. BinaryEvent → provider install)
+                        # completes before we read the next stdout line
+                        await self.bus.emit(ProcessRecordOutputtedEvent(
+                            record_type=record_type,
+                            record=record,
+                            plugin_name=event.plugin_name,
+                            hook_name=event.hook_name,
+                            output_dir=event.output_dir,
+                            snapshot_id=event.snapshot_id,
+                        ))
 
             async def _stream_and_wait() -> None:
                 await _stream_stdout()

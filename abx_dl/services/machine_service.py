@@ -6,7 +6,7 @@ from typing import Any, ClassVar
 from bubus import BaseEvent, EventBus
 
 from ..config import build_env_for_plugin, set_config
-from ..events import MachineEvent
+from ..events import MachineEvent, ProcessRecordOutputtedEvent
 from ..models import Plugin
 from .base import BaseService
 
@@ -27,8 +27,8 @@ class MachineService(BaseService):
     Config update flow::
 
         Hook stdout: {"type": "Machine", "config": {"CHROME_BINARY": "/path/to/chrome"}}
-            → ProcessService._stream_stdout() parses JSON
-            → ProcessService emits MachineEvent(config={"CHROME_BINARY": "/path/to/chrome"})
+            → ProcessService emits ProcessRecordOutputtedEvent(record_type='Machine')
+            → MachineService.on_ProcessRecordOutputtedEvent() emits MachineEvent
             → MachineService.on_MachineEvent() updates shared_config + persistent store
 
     Persistent store: ``~/.config/abx/config.env`` is updated via ``set_config()``
@@ -40,11 +40,18 @@ class MachineService(BaseService):
     2. Single: ``{"type": "Machine", "_method": "update", "key": "config/KEY", "value": "val"}``
     """
 
-    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [MachineEvent]
+    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [ProcessRecordOutputtedEvent, MachineEvent]
+    EMITS: ClassVar[list[type[BaseEvent]]] = [MachineEvent]
 
     def __init__(self, bus: EventBus, *, initial_config: dict[str, Any] | None = None):
         self.shared_config: dict[str, Any] = dict(initial_config) if initial_config else {}
         super().__init__(bus)
+
+    async def on_ProcessRecordOutputtedEvent(self, event: ProcessRecordOutputtedEvent) -> None:
+        """Route type=Machine records to MachineEvent."""
+        if event.record_type != 'Machine':
+            return
+        await self.bus.emit(MachineEvent(**event.record))
 
     async def on_MachineEvent(self, event: MachineEvent) -> None:
         """Apply a config update to shared_config and the persistent store.

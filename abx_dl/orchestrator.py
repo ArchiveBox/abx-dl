@@ -14,10 +14,11 @@ Full event tree for a typical run::
     │   ├── ProcessEvent  (bg: chrome_install)
     │   ├── ProcessEvent  (bg: chrome_launch)
     │   ├── ProcessEvent  (FG: chrome_wait)
-    │   │   │  (side-effect chain from chrome_install):
-    │   │   │  BinaryEvent → provider hooks → BinaryInstalledEvent
-    │   │   │      → BinaryEvent(abspath) → MachineEvent → BinaryLoadedEvent
-    │   │   ├── ArchiveResultEvent (inline, final=False)
+    │   │   ├── ProcessRecordOutputtedEvent
+    │   │   │   │  (side-effect chain from chrome_install):
+    │   │   │   │  BinaryEvent → provider hooks → BinaryInstalledEvent
+    │   │   │   │      → BinaryEvent(abspath) → MachineEvent → BinaryLoadedEvent
+    │   │   │   └── ArchiveResultEvent (inline, final=False)
     │   │   ├── ProcessCompletedEvent
     │   │   ├── ArchiveResultEvent (final=True → collected by orchestrator)
     │   │   └── ...
@@ -26,8 +27,9 @@ Full event tree for a typical run::
     ├── CrawlStartEvent                # triggers snapshot phase
     │   └── SnapshotEvent (depth=1)
     │       ├── ProcessEvent  (on_Snapshot hooks)
-    │       │   ├── SnapshotEvent (depth>1, ignored by abx-dl)
-    │       │   ├── ArchiveResultEvent (inline, final=False)
+    │       │   ├── ProcessRecordOutputtedEvent
+    │       │   │   ├── SnapshotEvent (depth>1, ignored by abx-dl)
+    │       │   │   └── ArchiveResultEvent (inline, final=False)
     │       │   ├── ProcessCompletedEvent
     │       │   └── ArchiveResultEvent (final=True → collected)
     │       ├── SnapshotCleanupEvent
@@ -61,8 +63,9 @@ Key bubus concepts used:
 - **Queue-jump** (``await bus.emit(...)``): the emitted event and ALL its
   descendants complete synchronously before the await returns. This is how
   config propagation works: hook outputs Binary JSONL → ProcessService emits
-  BinaryEvent → provider hooks install it → MachineEvent updates config →
-  all before the next stdout line is read.
+  ProcessRecordOutputtedEvent → BinaryService emits BinaryEvent → provider
+  hooks install it → MachineEvent updates config → all before the next
+  stdout line is read.
 
 - **Fire-and-forget** (``bus.emit(...)`` without await): the event becomes a
   concurrent child of the current event. It runs in the background and is
@@ -202,7 +205,7 @@ async def download(
 
     # --- Wire up services ---
     # Import here to avoid circular imports (services import events/models)
-    from .services import MachineService, BinaryService, ProcessService, CrawlService, SnapshotService
+    from .services import MachineService, BinaryService, ProcessService, ArchiveResultService, CrawlService, SnapshotService
 
     machine_svc = MachineService(bus, initial_config=config_overrides)
     BinaryService(
@@ -213,7 +216,8 @@ async def download(
         bus, index_path=index_path, output_dir=output_dir, emit_jsonl=emit_jsonl,
         stderr_is_tty=stderr_is_tty, on_process=on_process,
     )
-    # ArchiveResult records flow through the bus (replaces callback-based approach)
+    ArchiveResultService(bus)
+    # Collect final ArchiveResult records from the bus
     bus.on(ArchiveResultEvent, _on_archive_result_event)
     CrawlService(
         bus, url=url, snapshot=snapshot, output_dir=output_dir,

@@ -5,20 +5,22 @@ Events form a hierarchy during execution::
     CrawlEvent                                      # orchestrator.download()
     ├── CrawlSetupEvent                             # crawl hooks run here
     │   ├── ProcessEvent (on_Crawl hooks)
-    │   │   ├── BinaryEvent
-    │   │   │   ├── BinaryLoadedEvent (already installed)
-    │   │   │   └── ProcessEvent (provider install) → BinaryInstalledEvent
-    │   │   ├── MachineEvent
-    │   │   ├── SnapshotEvent (discovered URL, depth>1)
-    │   │   ├── ArchiveResultEvent (inline from stdout)
+    │   │   ├── ProcessRecordOutputtedEvent         # for each JSONL line
+    │   │   │   ├── BinaryEvent (via BinaryService)
+    │   │   │   │   ├── BinaryLoadedEvent (already installed)
+    │   │   │   │   └── ProcessEvent (provider install) → BinaryInstalledEvent
+    │   │   │   ├── MachineEvent (via MachineService)
+    │   │   │   ├── SnapshotEvent (via SnapshotService, depth>1)
+    │   │   │   └── ArchiveResultEvent (via ArchiveResultService, inline)
     │   │   ├── ProcessCompletedEvent
     │   │   └── ArchiveResultEvent (final=True, replaces callback)
     │   └── ...
     ├── CrawlStartEvent                    # triggers snapshot phase
     │   └── SnapshotEvent (depth=1)
     │       ├── ProcessEvent (on_Snapshot hooks)
-    │       │   ├── SnapshotEvent (discovered URL, depth>1)
-    │       │   ├── ArchiveResultEvent (inline from stdout)
+    │       │   ├── ProcessRecordOutputtedEvent
+    │       │   │   ├── SnapshotEvent (depth>1, ignored by abx-dl)
+    │       │   │   └── ArchiveResultEvent (inline)
     │       │   ├── ProcessCompletedEvent
     │       │   └── ArchiveResultEvent (final=True)
     │       ├── SnapshotCleanupEvent
@@ -32,6 +34,8 @@ Event types:
 - **Lifecycle events** drive phases: CrawlEvent, CrawlSetupEvent,
   CrawlStartEvent, SnapshotEvent, SnapshotCleanupEvent,
   SnapshotCompletedEvent, CrawlCleanupEvent, CrawlCompletedEvent
+- **Routing events** decouple services: ProcessRecordOutputtedEvent
+  carries raw JSONL from stdout; each service handles its own type
 - **Command events** trigger actions: ProcessEvent, ProcessKillEvent,
   BinaryEvent, MachineEvent
 - **Completion events** notify results: ProcessCompletedEvent,
@@ -118,8 +122,8 @@ class SnapshotEvent(BaseEvent):
     Emitted by CrawlService.on_CrawlStartEvent as a child of
     CrawlStartEvent. Per-hook handlers are registered on this event.
 
-    Also emitted by ProcessService when a hook outputs
-    ``{"type": "Snapshot", ...}`` JSONL (discovered URLs during crawling).
+    Also emitted by SnapshotService.on_ProcessRecordOutputtedEvent when a hook
+    outputs ``{"type": "Snapshot", ...}`` JSONL (discovered URLs during crawling).
     In abx-dl, SnapshotService ignores events with ``depth > 1``.
     ArchiveBox handles recursive crawling by processing all depths.
     """
@@ -155,7 +159,8 @@ class ProcessEvent(BaseEvent):
     """Command: run a hook subprocess.
 
     Handled by ProcessService.on_ProcessEvent, which spawns the subprocess,
-    streams stdout, and emits side-effect events (Binary/Machine) in realtime.
+    streams stdout, and emits ProcessRecordOutputtedEvent for each typed JSONL
+    record. Each service then handles its own record types independently.
 
     Uses ``event_concurrency='parallel'`` so fire-and-forget bg hooks can
     process alongside the parent event's serial handler chain. Without this,
@@ -212,14 +217,42 @@ class ProcessCompletedEvent(BaseEvent):
     event_timeout: float = 60.0
 
 
+class ProcessRecordOutputtedEvent(BaseEvent):
+    """A hook subprocess outputted a typed JSON record to stdout.
+
+    Emitted by ProcessService for each parsed JSONL line that has a ``type``
+    field. ProcessService does not interpret the record — it routes it to
+    this event so each service can handle its own record types:
+
+    - BinaryService: ``type=Binary`` → emits BinaryEvent
+    - MachineService: ``type=Machine`` → emits MachineEvent
+    - SnapshotService: ``type=Snapshot`` → emits SnapshotEvent
+    - ArchiveResultService: ``type=ArchiveResult`` → emits ArchiveResultEvent
+
+    The ``record`` dict has the ``type`` key already stripped. Context fields
+    from the parent ProcessEvent are passed through for services that need them.
+
+    Uses ``await bus.emit()`` (queue-jump) so the emitted typed event and its
+    entire handler chain complete before the next stdout line is read.
+    """
+    record_type: str
+    record: dict[str, Any]
+    plugin_name: str = ''
+    hook_name: str = ''
+    output_dir: str = ''
+    snapshot_id: str = ''
+    event_timeout: float = 360.0
+
+
 # ── Binary resolution ────────────────────────────────────────────────────────
 
 class BinaryEvent(BaseEvent):
     """A hook needs a binary resolved or installed.
 
-    Emitted by ProcessService when a hook outputs ``{"type": "Binary", ...}``
-    JSONL. Handled by BinaryService, which either registers the path (if abspath
-    is provided) or broadcasts to provider hooks to install it.
+    Emitted by BinaryService.on_ProcessRecordOutputtedEvent when a hook outputs
+    ``{"type": "Binary", ...}`` JSONL. Handled by BinaryService's provider hooks
+    and on_BinaryEvent, which either registers the path (if abspath is provided)
+    or broadcasts to provider hooks to install it.
 
     The ``binproviders`` field controls which providers are tried (e.g.
     "puppeteer" means only the puppeteer provider hook should attempt install).
@@ -272,9 +305,9 @@ class BinaryInstalledEvent(BaseEvent):
 class MachineEvent(BaseEvent):
     """Update shared machine config.
 
-    Emitted by ProcessService when a hook outputs ``{"type": "Machine", ...}``
-    JSONL. Handled by MachineService, which updates shared_config and the
-    persistent config store.
+    Emitted by MachineService.on_ProcessRecordOutputtedEvent when a hook outputs
+    ``{"type": "Machine", ...}`` JSONL. Handled by MachineService.on_MachineEvent,
+    which updates shared_config and the persistent config store.
 
     Two formats:
     - Batch: ``{"type": "Machine", "config": {"KEY1": "val1", "KEY2": "val2"}}``
@@ -295,10 +328,10 @@ class ArchiveResultEvent(BaseEvent):
 
     Emitted in two contexts:
 
-    1. **Inline from stdout** (``final=False``): ProcessService emits this when
-       a hook outputs ``{"type": "ArchiveResult", ...}`` JSONL during execution.
-       Each line represents an individual extracted result. Consumed by ArchiveBox
-       to write DB rows for each extracted result.
+    1. **Inline from stdout** (``final=False``): ArchiveResultService emits this
+       when a hook outputs ``{"type": "ArchiveResult", ...}`` JSONL during
+       execution (via ProcessRecordOutputtedEvent routing). Each line represents
+       an individual extracted result. Consumed by ArchiveBox to write DB rows.
 
     2. **Process completion** (``final=True``): ProcessService emits this after
        a hook subprocess finishes, with all fields populated from the final
