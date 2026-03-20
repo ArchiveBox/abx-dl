@@ -241,6 +241,8 @@ class ProcessRecordOutputtedEvent(BaseEvent):
     hook_name: str = ''
     output_dir: str = ''
     snapshot_id: str = ''
+    process_id: str = ''
+    start_ts: str = ''
     event_timeout: float | None =360.0
 
 

@@ -170,6 +170,8 @@ class ProcessService(BaseService):
                             hook_name=event.hook_name,
                             output_dir=event.output_dir,
                             snapshot_id=event.snapshot_id,
+                            process_id=proc.id,
+                            start_ts=proc.started_at or '',
                         ))
 
             async def _stream_and_wait() -> None:
