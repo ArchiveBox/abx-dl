@@ -16,10 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 
-try:
-    import psutil
-except ImportError:
-    psutil = None  # type: ignore[assignment]
+import psutil
 
 
 # Grace period before escalating from SIGTERM to SIGKILL. Chrome needs up to
@@ -93,11 +90,9 @@ def validate_pid_file(pid_file: Path, cmd_file: Optional[Path] = None, tolerance
     - PID file doesn't exist
     - PID was reused by a different process (mtime mismatch)
     - Running process doesn't match recorded command
-    - psutil is unavailable or raises an error
+    - psutil raises an error (NoSuchProcess, AccessDenied, etc.)
     """
     if not pid_file.exists():
-        return False
-    if psutil is None:
         return False
 
     try:
