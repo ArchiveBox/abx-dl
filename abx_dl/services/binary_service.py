@@ -175,6 +175,14 @@ class BinaryService(BaseService):
             # No abspath — check if a provider resolved it via shared_config
             abspath = self.machine.shared_config.get(_binary_env_key(event.name), '')
             if abspath:
+                existing = await self.bus.find(
+                    BinaryInstalledEvent,
+                    child_of=event,
+                    name=event.name,
+                    abspath=abspath,
+                )
+                if existing is not None:
+                    return
                 await self.bus.emit(BinaryInstalledEvent(
                     name=event.name,
                     abspath=abspath,

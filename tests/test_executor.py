@@ -604,14 +604,14 @@ def test_binary_installed_events(tmp_path: Path) -> None:
     preloaded_events = [(n, p) for n, p in captured if n == 'preloaded']
     installme_events = [(n, p) for n, p in captured if n == 'installme']
 
-    assert len(preloaded_events) >= 1, (
+    assert len(preloaded_events) == 1, (
         f'Expected BinaryInstalledEvent for preloaded, got: {preloaded_events}'
     )
     assert preloaded_events[0][1] == preloaded_path, (
         f'BinaryInstalledEvent abspath mismatch: {preloaded_events[0][1]!r} != {preloaded_path!r}'
     )
 
-    assert len(installme_events) >= 1, (
+    assert len(installme_events) == 1, (
         f'Expected BinaryInstalledEvent for installme, got: {installme_events}'
     )
 
