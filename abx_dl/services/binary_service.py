@@ -2,12 +2,11 @@
 
 import json
 from pathlib import Path
-from typing import Callable, ClassVar
+from typing import ClassVar
 
 from bubus import BaseEvent, EventBus
 
 from ..events import BinaryEvent, BinaryInstalledEvent, BinaryLoadedEvent, MachineEvent, ProcessEvent
-from ..models import VisibleRecord
 from ..models import Hook, Plugin
 from .base import BaseService
 from .machine_service import MachineService
@@ -31,16 +30,19 @@ class BinaryService(BaseService):
 
     Handler registration order (all on BinaryEvent)::
 
-        on_BinaryEvent          — if abspath is set, emit BinaryLoadedEvent
-        on_Binary__10_npm_...   — pre-registered provider hook handler
-        on_Binary__11_pip_...   — pre-registered provider hook handler
-        on_Binary__12_brew_...  — pre-registered provider hook handler
-        on_Binary__13_apt_...   — pre-registered provider hook handler
+        on_Binary__10_npm_...   — provider hook handler
+        on_Binary__11_pip_...   — provider hook handler
+        on_Binary__12_brew_...  — provider hook handler
+        on_Binary__13_apt_...   — provider hook handler
         ...
+        on_BinaryEvent          — runs last: emits BinaryLoadedEvent or
+                                  BinaryInstalledEvent depending on outcome
 
-    After provider hooks run, if the binary was resolved, BinaryInstalledEvent
-    is emitted. Each provider handler checks early-exit: if a prior provider
-    already resolved the binary, the handler is a no-op.
+    Provider hooks skip early if the binary is already resolved (abspath set on
+    the event, or env key already in shared_config from a prior provider).
+    on_BinaryEvent runs last and branches:
+    - abspath set → register path via MachineEvent + emit BinaryLoadedEvent
+    - no abspath but config resolved → emit BinaryInstalledEvent
 
     bubus detail: all handlers run serially in registration order, so the
     early-exit check works correctly.
@@ -59,12 +61,10 @@ class BinaryService(BaseService):
         plugins: dict[str, Plugin],
         auto_install: bool,
         output_dir: Path,
-        emit_result: Callable[[VisibleRecord], None],
     ):
         self.machine = machine
         self.auto_install = auto_install
         self.output_dir = output_dir
-        self.emit_result = emit_result
         # Pre-collect all binary hooks at init time (sorted by order across all plugins)
         self.binary_hooks: list[tuple[Plugin, Hook]] = sorted(
             [
@@ -75,25 +75,24 @@ class BinaryService(BaseService):
             key=lambda x: x[1].sort_key,
         )
         super().__init__(bus)
-        self._register_binary_hook_handlers()
 
-    def _register_binary_hook_handlers(self) -> None:
-        """Register one handler per binary hook on BinaryEvent.
+    def _attach_handlers(self) -> None:
+        """Register provider hooks first, then on_BinaryEvent last.
 
-        These are registered *after* ``on_BinaryEvent`` (which handles the
-        already-resolved path). A final handler emits BinaryInstalledEvent
-        if a provider successfully resolved the binary.
+        Provider hooks must run before on_BinaryEvent so that by the time
+        on_BinaryEvent executes, the binary is either already resolved
+        (abspath set) or a provider has installed it (env key in shared_config).
         """
         for plugin, hook in self.binary_hooks:
-            handler = self._make_binary_hook_handler(plugin, hook)
+            handler = self._make_provider_hook_handler(plugin, hook)
             handler.__name__ = hook.name
             handler.__qualname__ = hook.name
             self.bus.on(BinaryEvent, handler)
 
-        # Final handler: emit BinaryInstalledEvent if a provider resolved it
-        self.bus.on(BinaryEvent, self._emit_installed_event)
+        # on_BinaryEvent runs last — branches on outcome
+        self.bus.on(BinaryEvent, self.on_BinaryEvent)
 
-    def _make_binary_hook_handler(self, plugin: Plugin, hook: Hook):
+    def _make_provider_hook_handler(self, plugin: Plugin, hook: Hook):
         """Create an async handler that runs one binary provider hook.
 
         The handler reads args from the BinaryEvent at call time and checks
@@ -101,6 +100,7 @@ class BinaryService(BaseService):
         """
         async def handler(event: BinaryEvent, _plugin=plugin, _hook=hook) -> None:
             if not event.name or event.abspath:
+                # Already resolved or no name — skip
                 return
             # Early exit: a prior provider already resolved this binary
             if self.machine.shared_config.get(_binary_env_key(event.name)):
@@ -133,44 +133,40 @@ class BinaryService(BaseService):
         return handler
 
     async def on_BinaryEvent(self, event: BinaryEvent) -> None:
-        """Handle already-resolved binaries by registering their path in config.
+        """Handle binary resolution — runs after all provider hooks.
 
-        This runs before the per-hook handlers. If ``event.abspath`` is set,
-        the binary is already resolved — emit MachineEvent to update shared_config
-        and BinaryLoadedEvent to notify observers.
-        Unresolved binaries fall through to the per-hook handlers.
+        Branches on the outcome:
+        - **abspath set**: the binary was detected at a known path (either
+          the requesting hook found it, or a provider hook just installed it
+          and reported the path). Register in config + emit BinaryLoadedEvent.
+        - **no abspath, but config resolved**: a provider hook installed the
+          binary (its nested BinaryEvent → MachineEvent chain updated
+          shared_config). Emit BinaryInstalledEvent.
         """
-        if not event.name or not event.abspath:
+        if not event.name:
             return
-        await self.bus.emit(MachineEvent(
-            _method='update',
-            key=f'config/{_binary_env_key(event.name)}',
-            value=event.abspath,
-        ))
-        await self.bus.emit(BinaryLoadedEvent(
-            name=event.name,
-            abspath=event.abspath,
-            binprovider=getattr(event, 'binprovider', '') or '',
-            binary_id=event.binary_id,
-            machine_id=event.machine_id,
-        ))
 
-    async def _emit_installed_event(self, event: BinaryEvent) -> None:
-        """Emit BinaryInstalledEvent if a provider hook resolved the binary.
-
-        Runs after all per-hook handlers. Checks if the binary's env key
-        appeared in shared_config (set by a provider hook's BinaryEvent →
-        on_BinaryEvent → MachineEvent chain).
-        """
-        if not event.name or event.abspath:
-            # Already handled by on_BinaryEvent (BinaryLoadedEvent emitted)
-            return
-        abspath = self.machine.shared_config.get(_binary_env_key(event.name), '')
-        if not abspath:
-            return
-        await self.bus.emit(BinaryInstalledEvent(
-            name=event.name,
-            abspath=abspath,
-            binary_id=event.binary_id,
-            machine_id=event.machine_id,
-        ))
+        if event.abspath:
+            # Binary path provided — register in config and notify
+            await self.bus.emit(MachineEvent(
+                _method='update',
+                key=f'config/{_binary_env_key(event.name)}',
+                value=event.abspath,
+            ))
+            await self.bus.emit(BinaryLoadedEvent(
+                name=event.name,
+                abspath=event.abspath,
+                binprovider=getattr(event, 'binprovider', '') or '',
+                binary_id=event.binary_id,
+                machine_id=event.machine_id,
+            ))
+        else:
+            # No abspath — check if a provider resolved it
+            abspath = self.machine.shared_config.get(_binary_env_key(event.name), '')
+            if abspath:
+                await self.bus.emit(BinaryInstalledEvent(
+                    name=event.name,
+                    abspath=abspath,
+                    binary_id=event.binary_id,
+                    machine_id=event.machine_id,
+                ))

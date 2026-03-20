@@ -9,12 +9,18 @@ Events form a hierarchy during execution::
     │   │   │   ├── BinaryLoadedEvent (already installed)
     │   │   │   └── ProcessEvent (provider install) → BinaryInstalledEvent
     │   │   ├── MachineEvent
-    │   │   └── ProcessCompletedEvent
+    │   │   ├── SnapshotEvent (discovered URL, depth>1)
+    │   │   ├── ArchiveResultEvent (inline from stdout)
+    │   │   ├── ProcessCompletedEvent
+    │   │   └── ArchiveResultEvent (final=True, replaces callback)
     │   └── ...
     ├── CrawlStartEvent                    # triggers snapshot phase
-    │   └── SnapshotEvent
+    │   └── SnapshotEvent (depth=1)
     │       ├── ProcessEvent (on_Snapshot hooks)
-    │       │   └── ProcessCompletedEvent
+    │       │   ├── SnapshotEvent (discovered URL, depth>1)
+    │       │   ├── ArchiveResultEvent (inline from stdout)
+    │       │   ├── ProcessCompletedEvent
+    │       │   └── ArchiveResultEvent (final=True)
     │       ├── SnapshotCleanupEvent
     │       │   └── ProcessKillEvent × N
     │       └── SnapshotCompletedEvent
@@ -28,7 +34,8 @@ Event types:
   SnapshotCompletedEvent, CrawlCleanupEvent, CrawlCompletedEvent
 - **Command events** trigger actions: ProcessEvent, ProcessKillEvent,
   BinaryEvent, MachineEvent
-- **Completion events** notify results: ProcessCompletedEvent
+- **Completion events** notify results: ProcessCompletedEvent,
+  ArchiveResultEvent, BinaryLoadedEvent, BinaryInstalledEvent
 
 bubus behavior:
 - Each event has ``event_timeout`` — the hard deadline for the event and all its
@@ -110,10 +117,16 @@ class SnapshotEvent(BaseEvent):
 
     Emitted by CrawlService.on_CrawlStartEvent as a child of
     CrawlStartEvent. Per-hook handlers are registered on this event.
+
+    Also emitted by ProcessService when a hook outputs
+    ``{"type": "Snapshot", ...}`` JSONL (discovered URLs during crawling).
+    In abx-dl, SnapshotService ignores events with ``depth > 1``.
+    ArchiveBox handles recursive crawling by processing all depths.
     """
     url: str
     snapshot_id: str
     output_dir: str
+    depth: int = 1
     event_timeout: float = 300.0
 
 
@@ -272,4 +285,37 @@ class MachineEvent(BaseEvent):
     key: str = ''
     value: str = ''
     config: dict[str, Any] | None = None
+    event_timeout: float = 10.0
+
+
+# ── ArchiveResult notification ────────────────────────────────────────────
+
+class ArchiveResultEvent(BaseEvent):
+    """Informational: an ArchiveResult was produced by a hook.
+
+    Emitted in two contexts:
+
+    1. **Inline from stdout** (``final=False``): ProcessService emits this when
+       a hook outputs ``{"type": "ArchiveResult", ...}`` JSONL during execution.
+       Each line represents an individual extracted result. Consumed by ArchiveBox
+       to write DB rows for each extracted result.
+
+    2. **Process completion** (``final=True``): ProcessService emits this after
+       a hook subprocess finishes, with all fields populated from the final
+       ArchiveResult record. This replaces the callback-based emit_result flow.
+
+    Fields match the ArchiveResult model.
+    """
+    snapshot_id: str = ''
+    plugin: str = ''
+    id: str = ''
+    hook_name: str = ''
+    status: str = ''
+    process_id: str = ''
+    output_str: str = ''
+    output_files: list[str] = Field(default_factory=list)
+    start_ts: str = ''
+    end_ts: str = ''
+    error: str = ''
+    final: bool = False
     event_timeout: float = 10.0

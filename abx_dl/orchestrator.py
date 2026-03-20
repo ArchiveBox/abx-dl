@@ -63,9 +63,9 @@ from typing import Any, Callable
 
 from bubus import EventBus
 
-from .events import CrawlEvent
-from .models import ArchiveResult, Snapshot, VisibleRecord, write_jsonl
-from .models import INSTALL_URL, Hook, Plugin, filter_plugins
+from .events import ArchiveResultEvent, CrawlEvent
+from .models import ArchiveResult, Process, Snapshot, VisibleRecord, write_jsonl
+from .models import Hook, Plugin, filter_plugins
 
 
 async def download(
@@ -132,14 +132,30 @@ async def download(
     snapshot_hooks.sort(key=lambda x: x[1].sort_key)
 
     # Shared mutable results list — only ArchiveResults go here (public return value).
-    # The on_result callback receives both Process and ArchiveResult for TUI rendering.
+    # ArchiveResults flow through ArchiveResultEvent on the bus.
+    # Process records flow through the on_process callback.
     results: list[VisibleRecord] = []
 
-    def emit_result(record: VisibleRecord) -> None:
-        if isinstance(record, ArchiveResult):
-            results.append(record)
+    def on_process(proc: Process) -> None:
+        """Callback for Process records — passed to ProcessService."""
         if on_result:
-            on_result(record)
+            on_result(proc)
+
+    async def _on_archive_result_event(event: ArchiveResultEvent) -> None:
+        """Bus handler for ArchiveResultEvent — collects final results."""
+        if not event.final:
+            return
+        ar = ArchiveResult(
+            snapshot_id=event.snapshot_id, plugin=event.plugin,
+            id=event.id, hook_name=event.hook_name, status=event.status,
+            process_id=event.process_id or None,
+            output_str=event.output_str, output_files=event.output_files,
+            start_ts=event.start_ts or None, end_ts=event.end_ts or None,
+            error=event.error or None,
+        )
+        results.append(ar)
+        if on_result:
+            on_result(ar)
 
     # --- Create event bus ---
     timeout = int((config_overrides or {}).get('TIMEOUT', 60))
@@ -171,12 +187,14 @@ async def download(
     machine_svc = MachineService(bus, initial_config=config_overrides)
     BinaryService(
         bus, machine=machine_svc, plugins=plugins, auto_install=auto_install,
-        output_dir=output_dir, emit_result=emit_result,
+        output_dir=output_dir,
     )
     ProcessService(
         bus, index_path=index_path, output_dir=output_dir, emit_jsonl=emit_jsonl,
-        stderr_is_tty=stderr_is_tty, emit_result=emit_result,
+        stderr_is_tty=stderr_is_tty, on_process=on_process,
     )
+    # ArchiveResult records flow through the bus (replaces callback-based approach)
+    bus.on(ArchiveResultEvent, _on_archive_result_event)
     CrawlService(
         bus, url=url, snapshot=snapshot, output_dir=output_dir,
         machine=machine_svc, hooks=crawl_hooks, crawl_only=crawl_only,

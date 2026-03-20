@@ -70,22 +70,39 @@ class SnapshotService(BaseService):
         super().__init__(bus)
 
     def _attach_handlers(self) -> None:
-        """Register snapshot hook handlers and lifecycle handlers."""
+        """Register snapshot hook handlers and lifecycle handlers.
+
+        Each hook handler is wrapped with a depth guard — abx-dl does not
+        support recursive crawling, so SnapshotEvents with depth > 1
+        (discovered URLs from hook output) are silently ignored.
+        """
         for plugin, hook in self.hooks:
-            handler = make_hook_handler(
+            inner = make_hook_handler(
                 self, plugin, hook,
                 url=self.url, snapshot=self.snapshot,
                 output_dir=self.output_dir, machine=self.machine,
             )
-            handler.__name__ = hook.name
-            handler.__qualname__ = hook.name
-            self.bus.on(SnapshotEvent, handler)
+
+            async def guarded(event: SnapshotEvent, _inner=inner) -> None:
+                if event.depth > 1:
+                    return
+                await _inner(event)
+
+            guarded.__name__ = hook.name
+            guarded.__qualname__ = hook.name
+            self.bus.on(SnapshotEvent, guarded)
 
         self.bus.on(SnapshotEvent, self.on_SnapshotEvent)
         self.bus.on(SnapshotCleanupEvent, self.on_SnapshotCleanupEvent)
 
     async def on_SnapshotEvent(self, event: SnapshotEvent) -> None:
-        """Emit cleanup and completion after all snapshot hooks have run."""
+        """Emit cleanup and completion after all snapshot hooks have run.
+
+        Ignores SnapshotEvents with depth > 1 — abx-dl does not support
+        recursive crawling. ArchiveBox overrides this to process all depths.
+        """
+        if event.depth > 1:
+            return
         snapshot_kwargs = dict(url=self.url, snapshot_id=self.snapshot.id, output_dir=str(self.output_dir))
         await self.bus.emit(SnapshotCleanupEvent(**snapshot_kwargs))
         await self.bus.emit(SnapshotCompletedEvent(**snapshot_kwargs))

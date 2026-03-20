@@ -4,12 +4,12 @@ import asyncio
 import json
 import time
 from pathlib import Path
-from typing import Any, Callable, ClassVar
+from typing import Callable, ClassVar
 
 from bubus import BaseEvent, EventBus
 
-from ..events import BinaryEvent, MachineEvent, ProcessCompletedEvent, ProcessEvent, ProcessKillEvent
-from ..models import ArchiveResult, Process, VisibleRecord, write_jsonl, now_iso
+from ..events import ArchiveResultEvent, BinaryEvent, MachineEvent, ProcessCompletedEvent, ProcessEvent, ProcessKillEvent, SnapshotEvent
+from ..models import ArchiveResult, Process, write_jsonl, now_iso
 from ..process_utils import write_pid_file_with_mtime, write_cmd_file, graceful_kill_process, graceful_kill_by_pid_file
 from .base import BaseService
 
@@ -33,9 +33,10 @@ class ProcessService(BaseService):
         │
         ├── Stream stdout line-by-line (realtime):
         │   - Lines starting with '{' are parsed as JSON
-        │   - {"type": "Binary", ...}  → emit BinaryEvent (triggers install chain)
-        │   - {"type": "Machine", ...} → emit MachineEvent (updates shared config)
-        │   - {"type": "ArchiveResult", ...} → captures status/output_str
+        │   - {"type": "Binary", ...}    → emit BinaryEvent (triggers install chain)
+        │   - {"type": "Machine", ...}   → emit MachineEvent (updates shared config)
+        │   - {"type": "Snapshot", ...}  → emit SnapshotEvent (discovered URL)
+        │   - {"type": "ArchiveResult", ...} → emit ArchiveResultEvent + capture status
         │   - Non-JSON lines are logged but not parsed
         │
         ├── Wait for process exit (with timeout)
@@ -44,7 +45,8 @@ class ProcessService(BaseService):
         └── Finalize:
             - Write Process + ArchiveResult to index.jsonl
             - Emit ProcessCompletedEvent event
-            - Call emit_result() callback
+            - Emit ArchiveResultEvent(final=True)
+            - Call on_process() callback for Process record
 
     Realtime event emission is critical: when a hook outputs Binary/Machine JSONL,
     the corresponding event is emitted immediately (via ``await self.bus.emit()``).
@@ -64,16 +66,20 @@ class ProcessService(BaseService):
     - ``{hook_name}.sh`` — command line for debugging
 
     bubus details:
-    - Side-effect events (BinaryEvent, MachineEvent) are emitted with ``await``,
-      making them synchronous children of the ProcessEvent. They complete before
-      the next stdout line is processed.
-    - ProcessCompletedEvent is also emitted with ``await`` as an informational child.
+    - Side-effect events (BinaryEvent, MachineEvent, SnapshotEvent,
+      ArchiveResultEvent) are emitted with ``await``, making them synchronous
+      children of the ProcessEvent. They complete before the next stdout line
+      is processed.
+    - ProcessCompletedEvent and final ArchiveResultEvent are also emitted with
+      ``await`` as informational children.
     - Background hooks use ``start_new_session=True`` so SIGTERM to the parent
       process group doesn't accidentally kill them.
     """
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, ProcessKillEvent]
-    EMITS: ClassVar[list[type[BaseEvent]]] = [ProcessCompletedEvent, BinaryEvent, MachineEvent]
+    EMITS: ClassVar[list[type[BaseEvent]]] = [
+        ProcessCompletedEvent, ArchiveResultEvent, BinaryEvent, MachineEvent, SnapshotEvent,
+    ]
 
     def __init__(
         self,
@@ -83,13 +89,13 @@ class ProcessService(BaseService):
         output_dir: Path,
         emit_jsonl: bool,
         stderr_is_tty: bool,
-        emit_result: Callable[[VisibleRecord], None],
+        on_process: Callable[[Process], None] | None = None,
     ):
         self.index_path = index_path
         self.output_dir = output_dir
         self.emit_jsonl = emit_jsonl
         self.stderr_is_tty = stderr_is_tty
-        self.emit_result = emit_result
+        self.on_process = on_process
         super().__init__(bus)
 
     # ── Event handlers ──────────────────────────────────────────────────────
@@ -135,7 +141,8 @@ class ProcessService(BaseService):
                 JSON lines with "type" field trigger immediate event emission:
                 - Binary → BinaryEvent (may trigger full install chain via queue-jump)
                 - Machine → MachineEvent (updates shared config immediately)
-                - ArchiveResult → captures status/output_str (no event emitted)
+                - Snapshot → SnapshotEvent (discovered URL for recursive crawling)
+                - ArchiveResult → ArchiveResultEvent (informational) + capture status
                 """
                 nonlocal status, output_str
                 assert process.stdout is not None
@@ -165,9 +172,29 @@ class ProcessService(BaseService):
                         elif record_type == 'Machine':
                             record.pop('type')
                             await self.bus.emit(MachineEvent(**record))
+                        elif record_type == 'Snapshot':
+                            # Discovered URL — emit SnapshotEvent for potential
+                            # recursive crawling. Default depth=2 since any
+                            # hook-discovered URL is at least one level deep.
+                            await self.bus.emit(SnapshotEvent(
+                                url=record.get('url', ''),
+                                snapshot_id=record.get('id', record.get('snapshot_id', '')),
+                                output_dir=event.output_dir,
+                                depth=int(record.get('depth', 2)),
+                            ))
                         elif record_type == 'ArchiveResult':
                             status = record.get('status', status)
                             output_str = record.get('output_str', '')
+                            # Emit informational event (inline, not final)
+                            await self.bus.emit(ArchiveResultEvent(
+                                snapshot_id=record.get('snapshot_id', event.snapshot_id),
+                                plugin=record.get('plugin', event.plugin_name),
+                                id=record.get('id', ''),
+                                hook_name=record.get('hook_name', event.hook_name),
+                                status=status,
+                                output_str=output_str,
+                                error=record.get('error', ''),
+                            ))
 
             async def _stream_and_wait() -> None:
                 await _stream_stdout()
@@ -205,8 +232,14 @@ class ProcessService(BaseService):
                 output_dir=event.output_dir, status='failed',
                 is_background=event.is_background,
             ))
-            self.emit_result(proc)
-            self.emit_result(ar)
+            await self.bus.emit(ArchiveResultEvent(
+                snapshot_id=ar.snapshot_id, plugin=ar.plugin, id=ar.id,
+                hook_name=ar.hook_name, status=ar.status,
+                process_id=ar.process_id or '', error=ar.error or '',
+                final=True,
+            ))
+            if self.on_process:
+                self.on_process(proc)
             return
 
         # ── Finalize: build ArchiveResult from process output ──
@@ -262,8 +295,16 @@ class ProcessService(BaseService):
             output_str=output_str, status=status,
             is_background=event.is_background,
         ))
-        self.emit_result(proc)
-        self.emit_result(ar)
+        await self.bus.emit(ArchiveResultEvent(
+            snapshot_id=ar.snapshot_id, plugin=ar.plugin, id=ar.id,
+            hook_name=ar.hook_name, status=ar.status,
+            process_id=ar.process_id or '', output_str=ar.output_str,
+            output_files=ar.output_files, start_ts=ar.start_ts or '',
+            end_ts=ar.end_ts or '', error=ar.error or '',
+            final=True,
+        ))
+        if self.on_process:
+            self.on_process(proc)
 
     async def on_ProcessKillEvent(self, event: ProcessKillEvent) -> None:
         """Gracefully shut down a background daemon via its PID file.
