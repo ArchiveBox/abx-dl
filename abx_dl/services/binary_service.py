@@ -6,7 +6,7 @@ from typing import ClassVar
 
 from bubus import BaseEvent, EventBus
 
-from ..events import BinaryEvent, BinaryInstalledEvent, BinaryProcessEvent, MachineEvent, ProcessStdoutEvent
+from ..events import BinaryEvent, BinaryInstalledEvent, BinaryProcessEvent, MachineEvent, ProcessStdoutEvent, slow_warning_timeout
 from ..models import Hook, Plugin
 from .base import BaseService
 from .machine_service import MachineService
@@ -130,6 +130,8 @@ class BinaryService(BaseService):
                 hook_args=hook_args + [f'--machine-id={machine_id}'],
                 is_background=False, output_dir=str(plugin_output_dir),
                 env=plugin_env, timeout=300,
+                event_handler_timeout=330.0,
+                event_handler_slow_timeout=slow_warning_timeout(300),
             ))
 
         return handler

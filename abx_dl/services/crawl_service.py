@@ -16,6 +16,7 @@ from ..events import (
     ProcessEvent,
     ProcessKillEvent,
     SnapshotEvent,
+    slow_warning_timeout,
 )
 from ..models import Snapshot
 from ..models import INSTALL_URL, Hook, Plugin
@@ -109,9 +110,21 @@ class CrawlService(BaseService):
         url = self.url
         snapshot_id = self.snapshot.id
         output_dir = str(self.output_dir)
-        await self.bus.emit(CrawlSetupEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir, event_timeout=self.phase_timeout))
-        await self.bus.emit(CrawlStartEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir))
-        await self.bus.emit(CrawlCleanupEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir, event_timeout=self.phase_timeout))
+        await self.bus.emit(CrawlSetupEvent(
+            url=url, snapshot_id=snapshot_id, output_dir=output_dir,
+            event_timeout=self.phase_timeout,
+            event_handler_slow_timeout=slow_warning_timeout(self.phase_timeout),
+        ))
+        await self.bus.emit(CrawlStartEvent(
+            url=url, snapshot_id=snapshot_id, output_dir=output_dir,
+            event_timeout=event.event_timeout,
+            event_handler_slow_timeout=slow_warning_timeout(event.event_timeout),
+        ))
+        await self.bus.emit(CrawlCleanupEvent(
+            url=url, snapshot_id=snapshot_id, output_dir=output_dir,
+            event_timeout=self.phase_timeout,
+            event_handler_slow_timeout=slow_warning_timeout(self.phase_timeout),
+        ))
         await self.bus.emit(CrawlCompletedEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir))
 
     async def on_CrawlStartEvent(self, event: CrawlStartEvent) -> None:
@@ -126,6 +139,8 @@ class CrawlService(BaseService):
             snapshot_id=self.snapshot.id,
             output_dir=str(self.output_dir),
             depth=0,
+            event_timeout=event.event_timeout,
+            event_handler_slow_timeout=slow_warning_timeout(event.event_timeout),
         ))
 
     async def on_CrawlCleanupEvent(self, event: CrawlCleanupEvent) -> None:

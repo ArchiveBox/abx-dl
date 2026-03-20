@@ -124,6 +124,18 @@ def test_render_record_output_compacts_live_process_output() -> None:
     assert rendered.endswith('...')
 
 
+def test_render_record_output_humanizes_long_binary_json_before_compacting() -> None:
+    record = cli_module._LiveProcessRecord(
+        id='proc-1',
+        plugin='npm',
+        hook_name='on_Crawl__01_npm_install',
+        timeout=60,
+        output='{"type":"Binary","name":"npm","binproviders":"env,apt,brew","machine_id":"","overrides":{"apt":{"install_args":["nodejs","npm"]},"brew":{"install_args":["node"]}}}',
+    )
+    rendered = cli_module._render_record_output(record)
+    assert rendered == 'Binary requested: npm binproviders: env,apt,brew'
+
+
 def test_render_record_output_keeps_archive_result_output_untruncated() -> None:
     record = cli_module._LiveProcessRecord(
         id='proc-1',

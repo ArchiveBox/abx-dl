@@ -143,13 +143,47 @@ def _humanize_special_output(text: str) -> str:
     return output
 
 
+def _format_binary_requested_output(text: str) -> Text | None:
+    match = re.match(
+        r'^Binary requested: (?P<name>\S+)(?: \((?P<abspath>[^)]+)\))?(?: binproviders: (?P<providers>.+))?$',
+        text,
+    )
+    if not match:
+        return None
+
+    rendered = Text()
+    rendered.append('Binary requested: ', style='grey62')
+    rendered.append(match.group('name'), style='bold cyan')
+
+    abspath = match.group('abspath')
+    if abspath:
+        rendered.append(' (', style='grey50')
+        rendered.append(abspath, style='green')
+        rendered.append(')', style='grey50')
+
+    providers = match.group('providers')
+    if providers:
+        rendered.append(' binproviders: ', style='grey62')
+        rendered.append(providers, style='yellow')
+
+    return rendered
+
+
 def _format_install_output(text: str):
-    return REPR_HIGHLIGHTER(_flatten_output(_humanize_special_output(text)).replace('"', ''))
+    text = _flatten_output(_humanize_special_output(text)).replace('"', '')
+    special = _format_binary_requested_output(text)
+    if special is not None:
+        return special
+    return REPR_HIGHLIGHTER(text)
 
 
 def _format_table_output(text: str, *, flatten: bool) -> Text:
     text = _humanize_special_output(text)
-    rendered = REPR_HIGHLIGHTER((_flatten_output(text) if flatten else text).replace('"', ''))
+    text = (_flatten_output(text) if flatten else text).replace('"', '')
+    special = _format_binary_requested_output(text)
+    if special is not None:
+        return special
+    rendered = REPR_HIGHLIGHTER(text)
     return rendered if isinstance(rendered, Text) else Text(str(rendered))
 
 
@@ -460,7 +494,7 @@ def _normalize_archive_result_output(text: str) -> str:
 
 
 def _render_record_output(record: VisibleRecord) -> str:
-    output = _record_output(record)
+    output = _humanize_special_output(_record_output(record))
     if _record_status(record) == 'failed':
         return output
     if isinstance(record, ArchiveResult):
@@ -621,6 +655,7 @@ class _LiveStatusView:
                     list(self.results.values()),
                     timeout_seconds=self.timeout_seconds,
                     now=datetime.now(),
+                    stream=True,
                 ),
                 self.progress,
             )
@@ -919,7 +954,8 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
         with Live(
             status_view,
             console=ui_console,
-            auto_refresh=False,
+            auto_refresh=True,
+            refresh_per_second=4,
             transient=True,
             vertical_overflow='visible',
         ) as live:

@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from bubus import BaseEvent, EventBus
 
-from ..events import ProcessEvent
+from ..events import ProcessEvent, slow_warning_timeout
 from ..models import Hook, Plugin, Snapshot
 
 if TYPE_CHECKING:
@@ -107,6 +107,7 @@ def make_hook_handler(
             output_dir=str(plugin_output_dir), env=env,
             snapshot_id=snapshot.id, timeout=effective_timeout,
             event_handler_timeout=effective_timeout + 30.0,
+            event_handler_slow_timeout=slow_warning_timeout(effective_timeout),
         )
         if _hook.is_background:
             service.bus.emit(process_event)

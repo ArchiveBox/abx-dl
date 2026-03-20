@@ -16,6 +16,7 @@ from ..events import (
     SnapshotCleanupEvent,
     SnapshotCompletedEvent,
     SnapshotEvent,
+    slow_warning_timeout,
 )
 from ..models import Snapshot
 from ..models import Hook, Plugin
@@ -133,6 +134,8 @@ class SnapshotService(BaseService):
             snapshot_id=record.get('id', record.get('snapshot_id', '')),
             output_dir=event.output_dir,
             depth=int(record.get('depth', 1)),
+            event_timeout=event.event_timeout,
+            event_handler_slow_timeout=slow_warning_timeout(event.event_timeout),
         ))
 
     async def on_SnapshotEvent(self, event: SnapshotEvent) -> None:
@@ -146,7 +149,11 @@ class SnapshotService(BaseService):
         url = self.url
         snapshot_id = self.snapshot.id
         output_dir = str(self.output_dir)
-        await self.bus.emit(SnapshotCleanupEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir, event_timeout=self.phase_timeout))
+        await self.bus.emit(SnapshotCleanupEvent(
+            url=url, snapshot_id=snapshot_id, output_dir=output_dir,
+            event_timeout=self.phase_timeout,
+            event_handler_slow_timeout=slow_warning_timeout(self.phase_timeout),
+        ))
         await self.bus.emit(SnapshotCompletedEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir))
 
     async def on_SnapshotCleanupEvent(self, event: SnapshotCleanupEvent) -> None:

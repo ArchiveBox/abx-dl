@@ -81,7 +81,7 @@ from typing import Any
 
 from bubus import EventBus
 
-from .events import ArchiveResultEvent, CrawlEvent
+from .events import ArchiveResultEvent, CrawlEvent, slow_warning_timeout
 from .models import ArchiveResult, Snapshot, write_jsonl
 from .models import Hook, Plugin, filter_plugins
 
@@ -289,6 +289,8 @@ async def download(
     try:
         await bus.emit(CrawlEvent(
             url=url, snapshot_id=snapshot.id, output_dir=str(output_dir),
+            event_timeout=total_timeout,
+            event_handler_slow_timeout=slow_warning_timeout(total_timeout),
         ))
     finally:
         await bus.stop()

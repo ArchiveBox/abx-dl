@@ -52,6 +52,13 @@ from bubus import BaseEvent, EventConcurrencyMode
 from pydantic import ConfigDict, Field
 
 
+def slow_warning_timeout(timeout: float | int | None) -> float | None:
+    """Warn only after most of the timeout budget has been consumed."""
+    if timeout is None:
+        return None
+    return max(float(timeout) * 0.8, 1.0)
+
+
 # ── Crawl lifecycle ──────────────────────────────────────────────────────────
 
 class CrawlEvent(BaseEvent):
