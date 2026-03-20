@@ -5,7 +5,10 @@ Events form a hierarchy during execution::
     CrawlEvent                                      # orchestrator.download()
     ├── CrawlSetupEvent                             # crawl hooks run here
     │   ├── ProcessEvent (on_Crawl hooks)
-    │   │   ├── BinaryEvent → ProcessEvent (provider install) → MachineEvent
+    │   │   ├── BinaryEvent
+    │   │   │   ├── BinaryLoadedEvent (already installed)
+    │   │   │   └── ProcessEvent (provider install) → BinaryInstalledEvent
+    │   │   ├── MachineEvent
     │   │   └── ProcessCompletedEvent
     │   └── ...
     ├── CrawlStartEvent                    # triggers snapshot phase
@@ -217,6 +220,38 @@ class BinaryEvent(BaseEvent):
     overrides: dict[str, Any] | None = None
     custom_cmd: str = ''
     event_timeout: float = 300.0
+
+
+class BinaryLoadedEvent(BaseEvent):
+    """Informational: a binary was already installed and its path was registered.
+
+    Emitted by BinaryService.on_BinaryEvent when BinaryEvent arrives with
+    ``abspath`` already set (hook detected binary at a known path).
+    """
+    name: str
+    abspath: str
+    version: str = ''
+    sha256: str = ''
+    binprovider: str = ''
+    binary_id: str = ''
+    machine_id: str = ''
+    event_timeout: float = 10.0
+
+
+class BinaryInstalledEvent(BaseEvent):
+    """Informational: a binary was installed by a provider hook.
+
+    Emitted by BinaryService after a provider hook successfully installs a
+    binary (its env key appears in ``shared_config`` after the hook runs).
+    """
+    name: str
+    abspath: str
+    version: str = ''
+    sha256: str = ''
+    binprovider: str = ''
+    binary_id: str = ''
+    machine_id: str = ''
+    event_timeout: float = 10.0
 
 
 # ── Machine config update ────────────────────────────────────────────────────
