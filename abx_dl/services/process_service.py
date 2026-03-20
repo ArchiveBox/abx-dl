@@ -163,6 +163,13 @@ class ProcessService(BaseService):
                         # Route to services — await = queue-jump: the entire
                         # handler chain (e.g. BinaryEvent → provider install)
                         # completes before we read the next stdout line
+                        output_dir = Path(event.output_dir)
+                        current_files = [
+                            str(f.relative_to(output_dir))
+                            for f in output_dir.rglob('*')
+                            if f.is_file()
+                        ] if output_dir.is_dir() else []
+
                         await self.bus.emit(ProcessRecordOutputtedEvent(
                             record_type=record_type,
                             record=record,
@@ -172,6 +179,8 @@ class ProcessService(BaseService):
                             snapshot_id=event.snapshot_id,
                             process_id=proc.id,
                             start_ts=proc.started_at or '',
+                            end_ts=now_iso(),
+                            output_files=current_files,
                         ))
 
             async def _stream_and_wait() -> None:

@@ -6,7 +6,7 @@ from typing import ClassVar
 from bubus import BaseEvent, EventBus
 
 from ..events import ArchiveResultEvent, ProcessCompletedEvent, ProcessRecordOutputtedEvent
-from ..models import ArchiveResult, now_iso, write_jsonl
+from ..models import ArchiveResult, write_jsonl
 from .base import BaseService
 
 # File extensions that are process metadata, not real hook output
@@ -60,20 +60,13 @@ class ArchiveResultService(BaseService):
 
         write_jsonl(self.index_path, ar, also_print=self.emit_jsonl)
 
-        output_dir = Path(event.output_dir)
-        output_files = [
-            str(f.relative_to(output_dir))
-            for f in output_dir.rglob('*')
-            if f.is_file()
-        ] if output_dir.is_dir() else []
-
         await self.bus.emit(ArchiveResultEvent(
             snapshot_id=ar.snapshot_id, plugin=ar.plugin, id=ar.id,
             hook_name=ar.hook_name, status=ar.status,
             process_id=event.process_id,
-            output_files=output_files,
+            output_files=event.output_files,
             start_ts=event.start_ts,
-            end_ts=now_iso(),
+            end_ts=event.end_ts,
             output_str=ar.output_str, error=ar.error or '',
         ))
 

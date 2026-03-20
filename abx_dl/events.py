@@ -243,6 +243,8 @@ class ProcessRecordOutputtedEvent(BaseEvent):
     snapshot_id: str = ''
     process_id: str = ''
     start_ts: str = ''
+    end_ts: str = ''
+    output_files: list[str] = Field(default_factory=list)
     event_timeout: float | None =360.0
 
 
