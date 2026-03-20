@@ -20,7 +20,7 @@ Full event tree for a typical run::
     │   │   └── ...
     │   └── ...
     │
-    ├── CrawlSetupCompletedEvent                # triggers snapshot phase
+    ├── CrawlStartEvent                # triggers snapshot phase
     │   └── SnapshotEvent
     │       ├── ProcessEvent  (on_Snapshot hooks)
     │       ├── SnapshotCleanupEvent
@@ -188,7 +188,7 @@ async def download(
 
     # --- Drive the lifecycle ---
     # Emitting CrawlEvent triggers the entire cascade:
-    # CrawlSetupEvent → CrawlSetupCompletedEvent → SnapshotEvent →
+    # CrawlSetupEvent → CrawlStartEvent → SnapshotEvent →
     # SnapshotCleanupEvent → SnapshotCompletedEvent → CrawlCleanupEvent →
     # CrawlCompletedEvent. The await returns after the full tree completes.
     try:

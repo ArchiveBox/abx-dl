@@ -21,11 +21,11 @@ from .machine_service import MachineService
 class SnapshotService(BaseService):
     """Orchestrates the snapshot phase: extraction hooks, cleanup, completion.
 
-    The SnapshotEvent is emitted by CrawlService.on_CrawlSetupCompletedEvent::
+    The SnapshotEvent is emitted by CrawlService.on_CrawlStartEvent::
 
         CrawlEvent
         ├── CrawlSetupEvent (crawl hooks)
-        ├── CrawlSetupCompletedEvent
+        ├── CrawlStartEvent
         │   └── SnapshotEvent                              # triggers this service
         │       │
         │       │  ── Snapshot hook handlers run serially ──

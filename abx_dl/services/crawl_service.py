@@ -9,7 +9,7 @@ from ..events import (
     CrawlCleanupEvent,
     CrawlCompletedEvent,
     CrawlEvent,
-    CrawlSetupCompletedEvent,
+    CrawlStartEvent,
     CrawlSetupEvent,
     ProcessEvent,
     ProcessKillEvent,
@@ -34,7 +34,7 @@ class CrawlService(BaseService):
         │   ├── on_Crawl__90_chrome_launch.daemon.bg
         │   └── on_Crawl__91_chrome_wait
         │
-        ├── CrawlSetupCompletedEvent                  # triggers snapshot phase
+        ├── CrawlStartEvent                  # triggers snapshot phase
         │   └── SnapshotEvent (full snapshot lifecycle)
         │
         ├── CrawlCleanupEvent                         # SIGTERMs bg crawl daemons
@@ -48,10 +48,10 @@ class CrawlService(BaseService):
     """
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [
-        CrawlEvent, CrawlSetupCompletedEvent, CrawlCleanupEvent,
+        CrawlEvent, CrawlStartEvent, CrawlCleanupEvent,
     ]
     EMITS: ClassVar[list[type[BaseEvent]]] = [
-        CrawlSetupEvent, CrawlSetupCompletedEvent, CrawlCleanupEvent,
+        CrawlSetupEvent, CrawlStartEvent, CrawlCleanupEvent,
         CrawlCompletedEvent, ProcessEvent, ProcessKillEvent, SnapshotEvent,
     ]
 
@@ -93,21 +93,21 @@ class CrawlService(BaseService):
 
         # Lifecycle chain handlers
         self.bus.on(CrawlEvent, self.on_CrawlEvent)
-        self.bus.on(CrawlSetupCompletedEvent, self.on_CrawlSetupCompletedEvent)
+        self.bus.on(CrawlStartEvent, self.on_CrawlStartEvent)
         self.bus.on(CrawlCleanupEvent, self.on_CrawlCleanupEvent)
 
     async def on_CrawlEvent(self, event: CrawlEvent) -> None:
         """Drive the full crawl lifecycle by emitting phase events in sequence.
 
-        CrawlSetupEvent → CrawlSetupCompletedEvent → CrawlCleanupEvent → CrawlCompletedEvent
+        CrawlSetupEvent → CrawlStartEvent → CrawlCleanupEvent → CrawlCompletedEvent
         """
         event_kwargs = dict(url=self.url, snapshot_id=self.snapshot.id, output_dir=str(self.output_dir))
         await self.bus.emit(CrawlSetupEvent(**event_kwargs))
-        await self.bus.emit(CrawlSetupCompletedEvent(**event_kwargs))
+        await self.bus.emit(CrawlStartEvent(**event_kwargs))
         await self.bus.emit(CrawlCleanupEvent(snapshot_id=self.snapshot.id, output_dir=str(self.output_dir)))
         await self.bus.emit(CrawlCompletedEvent(**event_kwargs))
 
-    async def on_CrawlSetupCompletedEvent(self, event: CrawlSetupCompletedEvent) -> None:
+    async def on_CrawlStartEvent(self, event: CrawlStartEvent) -> None:
         """Start the snapshot phase after crawl setup completes.
 
         Skipped when ``crawl_only`` is set (e.g. ``abx install`` or explicit flag).

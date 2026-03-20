@@ -8,7 +8,7 @@ Events form a hierarchy during execution::
     │   │   ├── BinaryEvent → ProcessEvent (provider install) → MachineEvent
     │   │   └── ProcessCompleted
     │   └── ...
-    ├── CrawlSetupCompletedEvent                    # triggers snapshot phase
+    ├── CrawlStartEvent                    # triggers snapshot phase
     │   └── SnapshotEvent
     │       ├── ProcessEvent (on_Snapshot hooks)
     │       │   └── ProcessCompleted
@@ -21,7 +21,7 @@ Events form a hierarchy during execution::
 
 Event types:
 - **Lifecycle events** drive phases: CrawlEvent, CrawlSetupEvent,
-  CrawlSetupCompletedEvent, SnapshotEvent, SnapshotCleanupEvent,
+  CrawlStartEvent, SnapshotEvent, SnapshotCleanupEvent,
   SnapshotCompletedEvent, CrawlCleanupEvent, CrawlCompletedEvent
 - **Command events** trigger actions: ProcessEvent, ProcessKillEvent,
   BinaryEvent, MachineEvent
@@ -49,7 +49,7 @@ class CrawlEvent(BaseEvent):
 
     Emitted once by orchestrator.download(). CrawlService.on_CrawlEvent
     handles this by emitting the lifecycle chain:
-    CrawlSetupEvent → CrawlSetupCompletedEvent → CrawlCleanupEvent → CrawlCompletedEvent
+    CrawlSetupEvent → CrawlStartEvent → CrawlCleanupEvent → CrawlCompletedEvent
     """
     url: str
     snapshot_id: str
@@ -69,11 +69,11 @@ class CrawlSetupEvent(BaseEvent):
     event_timeout: float = 300.0
 
 
-class CrawlSetupCompletedEvent(BaseEvent):
-    """Phase: crawl hooks finished, triggers snapshot extraction.
+class CrawlStartEvent(BaseEvent):
+    """Phase: crawl setup finished, start the actual crawl (snapshot extraction).
 
     Emitted by CrawlService.on_CrawlEvent after CrawlSetupEvent completes.
-    CrawlService.on_CrawlSetupCompletedEvent emits SnapshotEvent (unless crawl_only).
+    CrawlService.on_CrawlStartEvent emits SnapshotEvent (unless crawl_only).
     """
     url: str
     snapshot_id: str
@@ -104,8 +104,8 @@ class CrawlCompletedEvent(BaseEvent):
 class SnapshotEvent(BaseEvent):
     """Phase: run all on_Snapshot hooks (extraction + indexing).
 
-    Emitted by CrawlService.on_CrawlSetupCompletedEvent as a child of
-    CrawlSetupCompletedEvent. Per-hook handlers are registered on this event.
+    Emitted by CrawlService.on_CrawlStartEvent as a child of
+    CrawlStartEvent. Per-hook handlers are registered on this event.
     """
     url: str
     snapshot_id: str
