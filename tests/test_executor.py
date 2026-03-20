@@ -83,8 +83,14 @@ def test_download_dispatches_binary_hooks_and_applies_machine_updates(tmp_path: 
     plugins = discover_plugins(plugins_root)
     results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
 
-    assert next(result for result in results if result.plugin == 'producer').status == 'succeeded'
-    assert results[-1].output_str.endswith('|ready|' + str(tmp_path / 'run' / 'provider' / 'lib' / 'node_modules'))
+    # producer hook emits only Binary/Machine records (no ArchiveResult JSONL, no content files)
+    # so it correctly produces no ArchiveResult under the new model
+    assert not any(result.plugin == 'producer' for result in results)
+
+    # consumer hook explicitly emits an ArchiveResult with the env vars it sees
+    consumer_result = next(result for result in results if result.plugin == 'consumer')
+    assert consumer_result.status == 'succeeded'
+    assert consumer_result.output_str.endswith('|ready|' + str(tmp_path / 'run' / 'provider' / 'lib' / 'node_modules'))
 
     index_lines = [json.loads(line) for line in (tmp_path / 'run' / 'index.jsonl').read_text().splitlines()]
     assert any(
@@ -163,7 +169,8 @@ def test_download_applies_side_effects_from_completed_background_hooks(tmp_path:
 
     consumer_result = next(result for result in results if result.plugin == 'consumer')
     assert consumer_result.output_str == str(tmp_path / 'run' / 'provider' / 'bin' / 'demo') + '|ready'
-    assert any(result.plugin == 'producer' and result.status == 'succeeded' for result in results)
+    # producer only emits Binary/Machine records, no ArchiveResult or content files
+    assert not any(result.plugin == 'producer' for result in results)
 
 
 def test_download_finalizes_background_hooks_after_sigterm(tmp_path: Path) -> None:
@@ -224,8 +231,6 @@ def test_download_finalizes_background_hooks_after_sigterm(tmp_path: Path) -> No
     )
 
     assert final_result['status'] == 'succeeded'
-    assert final_result['process_id'] == results[0].process_id
-    assert final_process['id'] == results[0].process_id
     assert final_process['exit_code'] == 0
 
 
@@ -368,7 +373,8 @@ def test_cleanup_does_not_duplicate_failed_foreground_results(tmp_path: Path) ->
     assert foreground_results[0]['status'] == 'failed'
 
 
-def test_successful_hook_with_only_logs_is_succeeded(tmp_path: Path) -> None:
+def test_successful_hook_with_only_logs_produces_no_result(tmp_path: Path) -> None:
+    """A hook that exits 0 but doesn't emit ArchiveResult or create content files produces no result."""
     plugins_root = tmp_path / 'plugins'
 
     _write(
@@ -385,10 +391,11 @@ def test_successful_hook_with_only_logs_is_succeeded(tmp_path: Path) -> None:
     plugins = discover_plugins(plugins_root)
     results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
 
-    assert [result.status for result in results] == ['succeeded']
+    assert results == []
 
 
-def test_successful_hook_with_skipping_log_stays_succeeded_without_explicit_skip_result(tmp_path: Path) -> None:
+def test_successful_hook_with_skipping_log_produces_no_result(tmp_path: Path) -> None:
+    """A hook that exits 0 with only stderr output and no content files produces no result."""
     plugins_root = tmp_path / 'plugins'
 
     _write(
@@ -405,10 +412,11 @@ def test_successful_hook_with_skipping_log_stays_succeeded_without_explicit_skip
     plugins = discover_plugins(plugins_root)
     results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
 
-    assert [result.status for result in results] == ['succeeded']
+    assert results == []
 
 
-def test_output_str_absolute_paths_are_stored_relative_to_hook_output_dir(tmp_path: Path) -> None:
+def test_output_str_is_stored_verbatim_from_hook(tmp_path: Path) -> None:
+    """ArchiveResult output_str is stored exactly as the hook reported it."""
     plugins_root = tmp_path / 'plugins'
 
     _write(
@@ -432,7 +440,9 @@ def test_output_str_absolute_paths_are_stored_relative_to_hook_output_dir(tmp_pa
         if isinstance(result, ArchiveResult)
     ]
 
-    assert [result.output_str for result in results] == ['media.mp4']
+    assert len(results) == 1
+    # output_str is stored verbatim — the hook reported an absolute path
+    assert results[0].output_str == str(tmp_path / 'run' / 'demo' / 'media.mp4')
 
 
 def test_cleanup_runs_after_all_hooks_not_interleaved(tmp_path: Path) -> None:
@@ -637,19 +647,19 @@ def test_binary_loaded_vs_installed_events(tmp_path: Path) -> None:
     )
 
 
-def test_archive_result_events_inline_vs_enriched(tmp_path: Path) -> None:
-    """Verify inline ArchiveResultEvent (no process_id) and enriched (with process_id).
+def test_archive_result_events_no_synthetic_when_inline_reported(tmp_path: Path) -> None:
+    """When a hook reports an inline ArchiveResult, no synthetic one is emitted.
 
-    A hook outputs an inline ArchiveResult during execution. After the process
-    completes, ArchiveResultService emits an enriched ArchiveResultEvent with
-    process metadata. The orchestrator only collects the enriched one.
+    A hook that outputs ``{"type": "ArchiveResult", ...}`` JSONL during execution
+    gets exactly one ArchiveResultEvent (the inline one). ProcessCompletedEvent
+    sees the existing result via bus.find and skips synthetic emission.
     """
     plugins_root = tmp_path / 'plugins'
-    ar_events: list[tuple[str, str, str]] = []  # (process_id, hook_name, status)
+    ar_events: list[tuple[str, str]] = []  # (hook_name, status)
     bus = create_bus(num_hooks=1, timeout=60)
 
     async def on_ar(e: ArchiveResultEvent) -> None:
-        ar_events.append((e.process_id, e.hook_name, e.status))
+        ar_events.append((e.hook_name, e.status))
 
     bus.on(ArchiveResultEvent, on_ar)
 
@@ -658,7 +668,6 @@ def test_archive_result_events_inline_vs_enriched(tmp_path: Path) -> None:
         '\n'.join(
             [
                 'import json',
-                # Inline ArchiveResult during execution (informational)
                 'print(json.dumps({"type": "ArchiveResult", "status": "succeeded", "output_str": "partial"}))',
             ]
         )
@@ -668,22 +677,15 @@ def test_archive_result_events_inline_vs_enriched(tmp_path: Path) -> None:
     plugins = discover_plugins(plugins_root)
     results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True, bus=bus)
 
-    # Should have at least 2 ArchiveResultEvents for this hook:
-    # 1 inline (no process_id), 1 enriched (with process_id)
-    demo_events = [e for e in ar_events if e[1] == 'on_Snapshot__10_emit']
-    inline = [e for e in demo_events if not e[0]]
-    enriched = [e for e in demo_events if e[0]]
-
-    assert len(inline) >= 1, (
-        f'Expected at least 1 inline ArchiveResultEvent, got {len(inline)}'
+    # Should have exactly 1 ArchiveResultEvent — the inline one.
+    # No synthetic duplicate from ProcessCompletedEvent.
+    demo_events = [e for e in ar_events if e[0] == 'on_Snapshot__10_emit']
+    assert len(demo_events) == 1, (
+        f'Expected exactly 1 ArchiveResultEvent (inline only), got {len(demo_events)}: {demo_events}'
     )
-    assert len(enriched) == 1, (
-        f'Expected exactly 1 enriched ArchiveResultEvent, got {len(enriched)}: {enriched}'
-    )
-    assert enriched[0][2] == 'succeeded'
+    assert demo_events[0][1] == 'succeeded'
 
-    # Only the enriched event should produce results in the return list
     demo_results = [r for r in results if isinstance(r, ArchiveResult) and r.hook_name == 'on_Snapshot__10_emit']
     assert len(demo_results) == 1, (
-        f'Expected 1 ArchiveResult in results list (from enriched event only), got {len(demo_results)}'
+        f'Expected 1 ArchiveResult in results list, got {len(demo_results)}'
     )

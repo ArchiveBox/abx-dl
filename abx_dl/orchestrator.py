@@ -26,9 +26,9 @@ Full event tree for a typical run::
     │       ├── ProcessEvent  (on_Snapshot hooks)
     │       │   ├── ProcessRecordOutputtedEvent
     │       │   │   ├── SnapshotEvent (depth>1, ignored by abx-dl)
-    │       │   │   └── ArchiveResultEvent (inline)
+    │       │   │   └── ArchiveResultEvent (from hook JSONL)
     │       │   └── ProcessCompletedEvent
-    │       │       └── ArchiveResultEvent (enriched)
+    │       │       └── ArchiveResultEvent (synthetic, only if hook didn't report one)
     │       ├── SnapshotCleanupEvent
     │       │   └── ProcessKillEvent × N
     │       └── SnapshotCompletedEvent
@@ -42,9 +42,10 @@ Result collection:
 - ArchiveResultEvents are only emitted during the snapshot phase (under
   CrawlStartEvent → SnapshotEvent). CrawlSetupEvent only produces Binary,
   Machine, and Process events — never ArchiveResults or Snapshots.
-- ArchiveResultService emits ArchiveResultEvent in two contexts: inline
-  (from hook stdout, no process_id) and enriched (on ProcessCompletedEvent,
-  with process_id set). The orchestrator collects the enriched ones.
+- ArchiveResultService emits ArchiveResultEvents in two cases: directly from
+  hook JSONL output (inline), or as a synthetic fallback on ProcessCompletedEvent
+  when the hook didn't report one itself (failed, or succeeded with output files).
+  The orchestrator collects all of them.
 - Callers subscribe to events on the bus before calling download():
   ``bus.on(ProcessCompletedEvent, handler)`` for process records,
   ``bus.on(ArchiveResultEvent, handler)`` for archive results.
@@ -135,7 +136,7 @@ async def download(
     This is the only public function in the orchestrator. It:
     1. Discovers and sorts hooks from selected plugins
     2. Wires up all services on the bus
-    3. Registers a bus handler for enriched ArchiveResultEvents to collect results
+    3. Registers a bus handler for ArchiveResultEvents to collect results
     4. Emits CrawlEvent (which cascades through the entire lifecycle)
     5. Returns all ArchiveResult records collected from ArchiveResultEvents
 
@@ -153,7 +154,7 @@ async def download(
         emit_jsonl: Whether to print JSONL to stdout. Defaults to True if not a TTY.
 
     Returns:
-        List of ArchiveResult records produced (collected from enriched
+        List of ArchiveResult records produced (collected from
         ArchiveResultEvents on the bus).
     """
 
@@ -190,19 +191,15 @@ async def download(
     if bus is None:
         bus = create_bus(num_hooks=len(snapshot_hooks), timeout=timeout)
 
-    # Collect enriched ArchiveResult records from the bus
+    # Collect ArchiveResult records from the bus
     results: list[ArchiveResult] = []
 
     async def _on_archive_result_event(event: ArchiveResultEvent) -> None:
-        """Collects enriched ArchiveResultEvents (process_id set)."""
-        if not event.process_id:
-            return
+        """Collects all ArchiveResultEvents."""
         results.append(ArchiveResult(
             snapshot_id=event.snapshot_id, plugin=event.plugin,
             id=event.id, hook_name=event.hook_name, status=event.status,
-            process_id=event.process_id or None,
-            output_str=event.output_str, output_files=event.output_files,
-            start_ts=event.start_ts or None, end_ts=event.end_ts or None,
+            output_str=event.output_str,
             error=event.error or None,
         ))
 

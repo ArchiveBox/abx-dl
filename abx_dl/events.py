@@ -326,29 +326,23 @@ class MachineEvent(BaseEvent):
 class ArchiveResultEvent(BaseEvent):
     """An ArchiveResult was produced by a hook.
 
-    Emitted by ArchiveResultService in two contexts:
+    Emitted by ArchiveResultService in two cases:
 
     1. **Inline from stdout**: when a hook outputs ``{"type": "ArchiveResult", ...}``
-       JSONL during execution (via ProcessRecordOutputtedEvent routing). These
-       have partial fields (status, output_str from the hook) but no process
-       metadata. Consumed by ArchiveBox to write DB rows for each extracted result.
+       JSONL during execution (via ProcessRecordOutputtedEvent routing).
 
-    2. **Process completion**: when ProcessCompletedEvent arrives, the inline
-       record is enriched with process metadata (process_id, output_files,
-       start_ts, end_ts, error). The orchestrator collects these (identified
-       by ``process_id`` being set).
+    2. **Synthetic fallback**: on ProcessCompletedEvent, only if the hook didn't
+       already report an ArchiveResult — e.g. failed (nonzero exit) or succeeded
+       with output files but no explicit JSONL output.
 
-    Fields match the ArchiveResult model.
+    Contains only result-level fields. Process metadata (timestamps, output_files,
+    process_id, etc.) belongs on ProcessCompletedEvent, not here.
     """
     snapshot_id: str = ''
     plugin: str = ''
     id: str = ''
     hook_name: str = ''
     status: str = ''
-    process_id: str = ''
     output_str: str = ''
-    output_files: list[str] = Field(default_factory=list)
-    start_ts: str = ''
-    end_ts: str = ''
     error: str = ''
-    event_timeout: float | None =10.0
+    event_timeout: float | None = 10.0
