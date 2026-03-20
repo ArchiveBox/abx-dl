@@ -75,12 +75,14 @@ class SnapshotService(BaseService):
         output_dir: Path,
         machine: MachineService,
         hooks: list[tuple[Plugin, Hook]],
+        phase_timeout: float = 300.0,
     ):
         self.url = url
         self.snapshot = snapshot
         self.output_dir = output_dir
         self.machine = machine
         self.hooks = hooks
+        self.phase_timeout = phase_timeout
         super().__init__(bus)
 
     def _attach_handlers(self) -> None:
@@ -97,6 +99,7 @@ class SnapshotService(BaseService):
                 self, plugin, hook,
                 url=self.url, snapshot=self.snapshot,
                 output_dir=self.output_dir, machine=self.machine,
+                phase_timeout=self.phase_timeout,
             )
 
             async def guarded(event: SnapshotEvent, _inner=inner) -> None:
@@ -141,16 +144,24 @@ class SnapshotService(BaseService):
         url = self.url
         snapshot_id = self.snapshot.id
         output_dir = str(self.output_dir)
-        await self.bus.emit(SnapshotCleanupEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir))
+        await self.bus.emit(SnapshotCleanupEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir, event_timeout=self.phase_timeout))
         await self.bus.emit(SnapshotCompletedEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir))
 
     async def on_SnapshotCleanupEvent(self, event: SnapshotCleanupEvent) -> None:
-        """SIGTERM all background snapshot daemons so they can flush and exit."""
+        """SIGTERM all background snapshot daemons so they can flush and exit.
+
+        Each daemon gets its plugin's timeout (PLUGINNAME_TIMEOUT) as the
+        grace period before SIGKILL.
+        """
         for plugin, hook in self.hooks:
             if hook.is_background:
+                env = self.machine.get_env_for_plugin(plugin, run_output_dir=self.output_dir)
+                grace = float(env.get(f"{plugin.name.upper()}_TIMEOUT", env.get('TIMEOUT', '60')))
                 plugin_output_dir = self.output_dir / plugin.name
                 await self.bus.emit(ProcessKillEvent(
                     plugin_name=plugin.name,
                     hook_name=hook.name,
                     output_dir=str(plugin_output_dir),
+                    grace_period=grace,
+                    event_timeout=grace + 10.0,
                 ))

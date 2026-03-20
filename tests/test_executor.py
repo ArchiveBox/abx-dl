@@ -512,6 +512,74 @@ def test_cleanup_runs_after_all_hooks_not_interleaved(tmp_path: Path) -> None:
     )
 
 
+def test_bg_daemon_survives_past_timeout(tmp_path: Path) -> None:
+    """Background daemons must not be killed by the per-hook timeout.
+
+    Sets up a bg daemon with a 1-second timeout, plus a fg hook that sleeps
+    for 2 seconds (longer than the daemon's timeout). The daemon must still be
+    alive when the fg hook runs, proving the timeout doesn't apply to bg hooks.
+    """
+    plugins_root = tmp_path / 'plugins'
+    alive_marker = tmp_path / 'run' / 'bgdemo' / 'daemon_alive.marker'
+
+    # bg daemon with a very short timeout — writes a marker every 0.1s
+    _write(
+        plugins_root / 'bgdemo' / 'on_Snapshot__05_daemon.bg.py',
+        '\n'.join(
+            [
+                'import json',
+                'import signal',
+                'import sys',
+                'import time',
+                'from pathlib import Path',
+                '',
+                'def handle_sigterm(signum, frame):',
+                '    sys.exit(0)',
+                '',
+                'signal.signal(signal.SIGTERM, handle_sigterm)',
+                'print("[*] daemon ready", flush=True)',
+                'while True:',
+                f'    Path({str(alive_marker)!r}).write_text(str(time.time()))',
+                '    time.sleep(0.1)',
+            ]
+        )
+        + '\n',
+    )
+
+    # fg hook that sleeps 2s (longer than the 1s timeout), then checks daemon
+    _write(
+        plugins_root / 'checker' / 'on_Snapshot__10_check.py',
+        '\n'.join(
+            [
+                'import json',
+                'import time',
+                'from pathlib import Path',
+                'time.sleep(2)',
+                f'alive = Path({str(alive_marker)!r}).exists()',
+                # Read mtime to verify daemon wrote recently (within last 1s)
+                f'mtime = Path({str(alive_marker)!r}).stat().st_mtime if alive else 0',
+                'recent = (time.time() - mtime) < 1.0 if alive else False',
+                'print(json.dumps({"type": "ArchiveResult", "status": "succeeded",'
+                ' "output_str": f"alive={alive},recent={recent}"}))',
+            ]
+        )
+        + '\n',
+    )
+
+    plugins = discover_plugins(plugins_root)
+    # BGDEMO_TIMEOUT=1 sets a 1-second timeout for the bgdemo plugin only.
+    # The bg daemon must survive past this timeout (killed only at cleanup).
+    results = _run_download(
+        'https://example.com', plugins, tmp_path / 'run',
+        auto_install=True, config_overrides={'BGDEMO_TIMEOUT': '1'},
+    )
+
+    checker_result = next(r for r in results if r.plugin == 'checker')
+    assert checker_result.output_str == 'alive=True,recent=True', (
+        f'Background daemon was killed by timeout instead of surviving: {checker_result.output_str}'
+    )
+
+
 def test_binary_installed_events(tmp_path: Path) -> None:
     """Verify BinaryInstalledEvent fires for both pre-existing and provider-installed binaries.
 
@@ -523,7 +591,7 @@ def test_binary_installed_events(tmp_path: Path) -> None:
     """
     plugins_root = tmp_path / 'plugins'
     captured: list[tuple[str, str]] = []  # (name, abspath)
-    bus = create_bus(num_hooks=0, timeout=60)
+    bus = create_bus(total_timeout=60.0)
 
     async def on_installed(e: BinaryInstalledEvent) -> None:
         captured.append((e.name, e.abspath))
@@ -636,7 +704,7 @@ def test_archive_result_events_no_synthetic_when_inline_reported(tmp_path: Path)
     """
     plugins_root = tmp_path / 'plugins'
     ar_events: list[tuple[str, str]] = []  # (hook_name, status)
-    bus = create_bus(num_hooks=1, timeout=60)
+    bus = create_bus(total_timeout=60.0)
 
     async def on_ar(e: ArchiveResultEvent) -> None:
         ar_events.append((e.hook_name, e.status))

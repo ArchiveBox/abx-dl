@@ -185,12 +185,15 @@ class ProcessKillEvent(BaseEvent):
     """Command: SIGTERM a background daemon hook via its PID file.
 
     Emitted by cleanup event handlers. ProcessService reads the PID file
-    and sends SIGTERM. Safe no-op if the hook already exited.
+    and sends SIGTERM, waits ``grace_period`` seconds for clean exit, then
+    escalates to SIGKILL. The grace period should be the plugin's timeout
+    (PLUGINNAME_TIMEOUT) so daemons get their configured time to flush.
     """
     plugin_name: str
     hook_name: str
     output_dir: str
-    event_timeout: float | None =10.0
+    grace_period: float = 15.0
+    event_timeout: float | None = 60.0
 
 
 class ProcessCompletedEvent(BaseEvent):

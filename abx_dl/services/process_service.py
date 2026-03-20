@@ -37,7 +37,10 @@ class ProcessService(BaseService):
         │     (each service parses and handles its own types)
         │
         ├── Wait for process exit (with timeout)
-        │   - On timeout: SIGTERM → wait 2s → SIGKILL
+        │   - FG hooks: per-plugin timeout (PLUGINNAME_TIMEOUT)
+        │   - BG daemons: phase timeout ceiling (sum of all plugin timeouts
+        │     in the phase); normally killed earlier by ProcessKillEvent
+        │   - On timeout: SIGTERM → wait 15s → SIGKILL
         │
         └── Finalize:
             - Write Process record to index.jsonl
@@ -243,13 +246,11 @@ class ProcessService(BaseService):
         """Gracefully shut down a background daemon via its PID file.
 
         Triggered by CrawlCleanupEvent/SnapshotCleanupEvent handlers. Validates the
-        PID file (mtime + command check), sends SIGTERM, waits up to 15s for
-        clean exit, then escalates to SIGKILL if the process is still alive.
-
-        The 15s grace period is important for Chrome, which needs time to flush
-        its user_data_dir (cookies, local storage, session state) on shutdown.
+        PID file (mtime + command check), sends SIGTERM, waits up to
+        ``grace_period`` for clean exit (the plugin's PLUGINNAME_TIMEOUT),
+        then escalates to SIGKILL if the process is still alive.
         """
         output_dir = Path(event.output_dir)
         pid_file = output_dir / f'{event.hook_name}.pid'
         cmd_file = output_dir / f'{event.hook_name}.sh'
-        await graceful_kill_by_pid_file(pid_file, cmd_file)
+        await graceful_kill_by_pid_file(pid_file, cmd_file, grace_period=event.grace_period)
