@@ -194,7 +194,7 @@ async def download(
     # Collect ArchiveResult records from the bus
     results: list[ArchiveResult] = []
 
-    async def _on_archive_result_event(event: ArchiveResultEvent) -> None:
+    async def on_ArchiveResultEvent(event: ArchiveResultEvent) -> None:
         """Collects all ArchiveResultEvents."""
         results.append(ArchiveResult(
             snapshot_id=event.snapshot_id, plugin=event.plugin,
@@ -206,7 +206,7 @@ async def download(
             error=event.error or None,
         ))
 
-    bus.on(ArchiveResultEvent, _on_archive_result_event)
+    bus.on(ArchiveResultEvent, on_ArchiveResultEvent)
 
     # --- Wire up services ---
     # Import here to avoid circular imports (services import events/models)

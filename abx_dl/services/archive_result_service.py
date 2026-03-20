@@ -28,7 +28,7 @@ class ArchiveResultService(BaseService):
        - If exit_code != 0 → synthetic ``failed`` result (with stderr as error).
        - If exit_code == 0 and non-metadata output files exist → synthetic
          ``succeeded`` result.
-       - Otherwise → no-op.
+       - If exit_code == 0 and no content files → synthetic ``noresult`` result.
 
        Uses ``bus.find()`` to check whether an ArchiveResultEvent was already
        emitted for this hook, avoiding the need for manual pending-state tracking.
@@ -98,7 +98,11 @@ class ArchiveResultService(BaseService):
                 hook_name=event.hook_name, status='succeeded',
             )
         else:
-            return
+            # Succeeded but no content files → noresult
+            ar = ArchiveResult(
+                snapshot_id=event.snapshot_id, plugin=event.plugin_name,
+                hook_name=event.hook_name, status='noresult',
+            )
 
         write_jsonl(self.index_path, ar, also_print=self.emit_jsonl)
 

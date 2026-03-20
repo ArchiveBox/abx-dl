@@ -84,8 +84,9 @@ def test_download_dispatches_binary_hooks_and_applies_machine_updates(tmp_path: 
     results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
 
     # producer hook emits only Binary/Machine records (no ArchiveResult JSONL, no content files)
-    # so it correctly produces no ArchiveResult under the new model
-    assert not any(result.plugin == 'producer' for result in results)
+    # so it gets a synthetic noresult ArchiveResult
+    producer_result = next(result for result in results if result.plugin == 'producer')
+    assert producer_result.status == 'noresult'
 
     # consumer hook explicitly emits an ArchiveResult with the env vars it sees
     consumer_result = next(result for result in results if result.plugin == 'consumer')
@@ -170,7 +171,9 @@ def test_download_applies_side_effects_from_completed_background_hooks(tmp_path:
     consumer_result = next(result for result in results if result.plugin == 'consumer')
     assert consumer_result.output_str == str(tmp_path / 'run' / 'provider' / 'bin' / 'demo') + '|ready'
     # producer only emits Binary/Machine records, no ArchiveResult or content files
-    assert not any(result.plugin == 'producer' for result in results)
+    # so it gets a synthetic noresult
+    producer_result = next(result for result in results if result.plugin == 'producer')
+    assert producer_result.status == 'noresult'
 
 
 def test_download_finalizes_background_hooks_after_sigterm(tmp_path: Path) -> None:
@@ -373,8 +376,8 @@ def test_cleanup_does_not_duplicate_failed_foreground_results(tmp_path: Path) ->
     assert foreground_results[0]['status'] == 'failed'
 
 
-def test_successful_hook_with_only_logs_produces_no_result(tmp_path: Path) -> None:
-    """A hook that exits 0 but doesn't emit ArchiveResult or create content files produces no result."""
+def test_successful_hook_with_only_logs_produces_noresult(tmp_path: Path) -> None:
+    """A hook that exits 0 but doesn't emit ArchiveResult or create content files produces noresult."""
     plugins_root = tmp_path / 'plugins'
 
     _write(
@@ -391,11 +394,13 @@ def test_successful_hook_with_only_logs_produces_no_result(tmp_path: Path) -> No
     plugins = discover_plugins(plugins_root)
     results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
 
-    assert results == []
+    assert len(results) == 1
+    assert results[0].plugin == 'cachedemo'
+    assert results[0].status == 'noresult'
 
 
-def test_successful_hook_with_skipping_log_produces_no_result(tmp_path: Path) -> None:
-    """A hook that exits 0 with only stderr output and no content files produces no result."""
+def test_successful_hook_with_skipping_log_produces_noresult(tmp_path: Path) -> None:
+    """A hook that exits 0 with only stderr output and no content files produces noresult."""
     plugins_root = tmp_path / 'plugins'
 
     _write(
@@ -412,7 +417,9 @@ def test_successful_hook_with_skipping_log_produces_no_result(tmp_path: Path) ->
     plugins = discover_plugins(plugins_root)
     results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
 
-    assert results == []
+    assert len(results) == 1
+    assert results[0].plugin == 'skipdemo'
+    assert results[0].status == 'noresult'
 
 
 def test_output_str_is_stored_verbatim_from_hook(tmp_path: Path) -> None:

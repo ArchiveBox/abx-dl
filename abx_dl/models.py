@@ -331,12 +331,15 @@ def get_plugin_names(plugins: dict[str, Plugin]) -> list[str]:
     return sorted(plugins.keys())
 
 
-def filter_plugins(plugins: dict[str, Plugin], names: list[str] | None) -> dict[str, Plugin]:
+def filter_plugins(plugins: dict[str, Plugin], names: list[str] | None, *, include_providers: bool = True) -> dict[str, Plugin]:
     """Filter plugins to only include specified names, plus transitive dependencies.
 
-    Dependencies are resolved via the ``required_plugins`` field in each plugin's
-    config.json. For example, if plugin "chrome" requires "pip", selecting "chrome"
-    automatically includes "pip".
+    Dependencies are resolved via:
+    1. ``required_plugins`` field in each plugin's config.json
+    2. When *include_providers* is True (default), binary provider plugins
+       (those with ``on_Binary__*`` hooks) are automatically included when any
+       selected plugin has crawl hooks, since crawl hooks may request binary
+       resolution at runtime.
     """
     if not names:
         return plugins
@@ -355,6 +358,18 @@ def filter_plugins(plugins: dict[str, Plugin], names: list[str] | None) -> dict[
                 dep_lower = dep.lower()
                 if dep_lower not in resolved:
                     queue.append(dep_lower)
+
+    # If any resolved plugin has crawl hooks, include all binary provider plugins
+    if include_providers:
+        needs_providers = any(
+            plugin.get_crawl_hooks()
+            for name, plugin in plugins.items()
+            if name.lower() in resolved
+        )
+        if needs_providers:
+            for name, plugin in plugins.items():
+                if plugin.get_binary_hooks():
+                    resolved.add(name.lower())
 
     return {
         name: plugin
