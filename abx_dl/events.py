@@ -6,12 +6,12 @@ Events form a hierarchy during execution::
     ├── CrawlSetupEvent                             # crawl hooks run here
     │   ├── ProcessEvent (on_Crawl hooks)
     │   │   ├── BinaryEvent → ProcessEvent (provider install) → MachineEvent
-    │   │   └── ProcessCompleted
+    │   │   └── ProcessCompletedEvent
     │   └── ...
     ├── CrawlStartEvent                    # triggers snapshot phase
     │   └── SnapshotEvent
     │       ├── ProcessEvent (on_Snapshot hooks)
-    │       │   └── ProcessCompleted
+    │       │   └── ProcessCompletedEvent
     │       ├── SnapshotCleanupEvent
     │       │   └── ProcessKillEvent × N
     │       └── SnapshotCompletedEvent
@@ -25,7 +25,7 @@ Event types:
   SnapshotCompletedEvent, CrawlCleanupEvent, CrawlCompletedEvent
 - **Command events** trigger actions: ProcessEvent, ProcessKillEvent,
   BinaryEvent, MachineEvent
-- **Completion events** notify results: ProcessCompleted
+- **Completion events** notify results: ProcessCompletedEvent
 
 bubus behavior:
 - Each event has ``event_timeout`` — the hard deadline for the event and all its
@@ -176,7 +176,7 @@ class ProcessKillEvent(BaseEvent):
     event_timeout: float = 10.0
 
 
-class ProcessCompleted(BaseEvent):
+class ProcessCompletedEvent(BaseEvent):
     """Notification: a hook subprocess finished.
 
     Emitted by ProcessService after the subprocess exits (or times out).

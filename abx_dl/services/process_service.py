@@ -8,7 +8,7 @@ from typing import Any, Callable, ClassVar
 
 from bubus import BaseEvent, EventBus
 
-from ..events import BinaryEvent, MachineEvent, ProcessCompleted, ProcessEvent, ProcessKillEvent
+from ..events import BinaryEvent, MachineEvent, ProcessCompletedEvent, ProcessEvent, ProcessKillEvent
 from ..models import ArchiveResult, Process, VisibleRecord, write_jsonl, now_iso
 from ..process_utils import write_pid_file_with_mtime, write_cmd_file, graceful_kill_process, graceful_kill_by_pid_file
 from .base import BaseService
@@ -43,7 +43,7 @@ class ProcessService(BaseService):
         │
         └── Finalize:
             - Write Process + ArchiveResult to index.jsonl
-            - Emit ProcessCompleted event
+            - Emit ProcessCompletedEvent event
             - Call emit_result() callback
 
     Realtime event emission is critical: when a hook outputs Binary/Machine JSONL,
@@ -67,13 +67,13 @@ class ProcessService(BaseService):
     - Side-effect events (BinaryEvent, MachineEvent) are emitted with ``await``,
       making them synchronous children of the ProcessEvent. They complete before
       the next stdout line is processed.
-    - ProcessCompleted is also emitted with ``await`` as an informational child.
+    - ProcessCompletedEvent is also emitted with ``await`` as an informational child.
     - Background hooks use ``start_new_session=True`` so SIGTERM to the parent
       process group doesn't accidentally kill them.
     """
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, ProcessKillEvent]
-    EMITS: ClassVar[list[type[BaseEvent]]] = [ProcessCompleted, BinaryEvent, MachineEvent]
+    EMITS: ClassVar[list[type[BaseEvent]]] = [ProcessCompletedEvent, BinaryEvent, MachineEvent]
 
     def __init__(
         self,
@@ -199,7 +199,7 @@ class ProcessService(BaseService):
             )
             write_jsonl(self.index_path, proc, also_print=self.emit_jsonl)
             write_jsonl(self.index_path, ar, also_print=self.emit_jsonl)
-            await self.bus.emit(ProcessCompleted(
+            await self.bus.emit(ProcessCompletedEvent(
                 plugin_name=event.plugin_name, hook_name=event.hook_name,
                 stdout='', stderr=proc.stderr, exit_code=-1,
                 output_dir=event.output_dir, status='failed',
@@ -255,7 +255,7 @@ class ProcessService(BaseService):
         write_jsonl(self.index_path, proc, also_print=self.emit_jsonl)
         write_jsonl(self.index_path, ar, also_print=self.emit_jsonl)
 
-        await self.bus.emit(ProcessCompleted(
+        await self.bus.emit(ProcessCompletedEvent(
             plugin_name=event.plugin_name, hook_name=event.hook_name,
             stdout=stdout, stderr=stderr, exit_code=returncode,
             output_dir=event.output_dir, output_files=new_files,

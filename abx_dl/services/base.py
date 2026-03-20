@@ -23,7 +23,7 @@ class BaseService:
 
     Handler name resolution:
     - ``on_ProcessEvent`` → matches ``ProcessEvent`` directly
-    - ``on_ProcessCompleted`` → matches ``ProcessCompleted`` directly
+    - ``on_ProcessCompletedEvent`` → matches ``ProcessCompletedEvent`` directly
     - ``on_CrawlSetup__plugin_hook`` → tries "CrawlSetup", then "CrawlSetupEvent" (matches)
 
     Note: CrawlService and SnapshotService override ``_attach_handlers()`` to
