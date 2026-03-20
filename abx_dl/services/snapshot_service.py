@@ -148,12 +148,20 @@ class SnapshotService(BaseService):
         await self.bus.emit(SnapshotCompletedEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir))
 
     async def on_SnapshotCleanupEvent(self, event: SnapshotCleanupEvent) -> None:
-        """SIGTERM all background snapshot daemons so they can flush and exit."""
+        """SIGTERM all background snapshot daemons so they can flush and exit.
+
+        Each daemon gets its plugin's timeout (PLUGINNAME_TIMEOUT) as the
+        grace period before SIGKILL.
+        """
         for plugin, hook in self.hooks:
             if hook.is_background:
+                env = self.machine.get_env_for_plugin(plugin, run_output_dir=self.output_dir)
+                grace = float(env.get(f"{plugin.name.upper()}_TIMEOUT", env.get('TIMEOUT', '60')))
                 plugin_output_dir = self.output_dir / plugin.name
                 await self.bus.emit(ProcessKillEvent(
                     plugin_name=plugin.name,
                     hook_name=hook.name,
                     output_dir=str(plugin_output_dir),
+                    grace_period=grace,
+                    event_timeout=grace + 10.0,
                 ))
