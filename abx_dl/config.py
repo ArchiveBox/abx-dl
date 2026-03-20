@@ -375,6 +375,16 @@ def build_env_for_plugin(
     if overrides:
         explicit_keys.update(overrides.keys())
 
+    # Fix NO_PROXY to allow proxied downloads from googleapis.com/google.com.
+    # In some sandboxed environments (e.g. Claude Code), NO_PROXY includes
+    # *.googleapis.com and *.google.com, which causes tools like @puppeteer/browsers
+    # to bypass the egress proxy and fail DNS resolution for storage.googleapis.com.
+    _no_proxy_strip = {'googleapis.com', 'google.com', '*.googleapis.com', '*.google.com', '.googleapis.com', '.google.com'}
+    for _key in ('NO_PROXY', 'no_proxy'):
+        if _key in env:
+            _entries = [e.strip() for e in env[_key].split(',') if e.strip() not in _no_proxy_strip]
+            env[_key] = ','.join(_entries)
+
     # Add global defaults
     for key, value in GLOBAL_DEFAULTS.items():
         if key not in env:

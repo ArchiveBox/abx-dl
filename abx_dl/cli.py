@@ -2,6 +2,7 @@
 CLI interface for abx-dl using rich-click.
 """
 
+import asyncio
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -16,9 +17,10 @@ from rich.table import Table
 
 from .config import get_config, set_config, CONFIG_FILE
 from .dependencies import load_binary
-from .executor import download
+from .events import ArchiveResultEvent, BinaryInstalledEvent, ProcessCompletedEvent
+from .orchestrator import create_bus, download
 from .models import ArchiveResult, Process
-from .plugins import discover_plugins, filter_plugins
+from .models import INSTALL_URL, discover_plugins, filter_plugins
 
 console = Console()
 stderr_console = Console(stderr=True)
@@ -31,7 +33,7 @@ click.rich_click.GROUP_ARGUMENTS_OPTIONS = True
 
 STATUS_STYLES = {
     'succeeded': 'green',
-    'noresults': 'grey35',
+    'noresult': 'grey35',
     'failed': 'red',
     'skipped': 'bright_black',
     'started': 'yellow',
@@ -75,7 +77,7 @@ def _compact_output(text: str, limit: int = 120) -> str:
 
 
 def _record_muted_style(record: VisibleRecord) -> str | None:
-    if _record_status(record) == 'noresults':
+    if _record_status(record) == 'noresult':
         return 'grey35'
     return None
 
@@ -306,17 +308,6 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
     interactive_tty = stdout_is_tty or stderr_is_tty
     ui_console = stderr_console if stderr_is_tty else console
 
-    results: list[VisibleRecord] = []
-    gen = download(
-        url,
-        plugins,
-        out_path,
-        selected,
-        config_overrides or None,
-        auto_install=not no_install,
-        emit_jsonl=not stdout_is_tty,
-    )
-
     if interactive_tty:
         ui_console.print(f"[bold blue]Downloading:[/bold blue] {url}")
         ui_console.print(f"[dim]Output: {out_path.absolute()}[/dim]")
@@ -330,6 +321,7 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
     )
     total_hooks = sum(len(plugin.get_crawl_hooks()) + len(plugin.get_snapshot_hooks()) for plugin in selected_plugins.values())
     live_results: dict[str, VisibleRecord] = {}
+    bus = create_bus(num_hooks=total_hooks, timeout=timeout_seconds)
 
     if interactive_tty:
         progress = Progress(
@@ -341,87 +333,148 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
             transient=False,
         )
         status_view = _LiveStatusView(live_results, progress, timeout_seconds)
-
         task_id = progress.add_task("[cyan]Running plugins...", total=total_hooks)
+
+        async def on_ArchiveResultEvent(event: ArchiveResultEvent) -> None:
+            ar = ArchiveResult(
+                snapshot_id=event.snapshot_id, plugin=event.plugin,
+                id=event.id, hook_name=event.hook_name, status=event.status,
+                process_id=event.process_id or None,
+                output_str=event.output_str, output_files=event.output_files,
+                start_ts=event.start_ts or None, end_ts=event.end_ts or None,
+                error=event.error or None,
+            )
+            live_results[_record_key(ar)] = ar
+            # ArchiveResult from a binary install hook (not in total_hooks) —
+            # bump the total so the progress bar doesn't exceed 100%
+            task = progress.tasks[task_id]
+            if task.total is not None and task.completed >= task.total:
+                progress.update(task_id, total=task.total + 1)
+            progress.update(task_id, advance=1, description=f"[cyan]{escape(_record_hook_name(ar))}[/cyan]")
+
+        bus.on(ArchiveResultEvent, on_ArchiveResultEvent)
+
         with Live(
             status_view,
             console=ui_console,
             refresh_per_second=8,
             transient=False,
             vertical_overflow='visible',
-        ) as live:
-            for record in gen:
-                results.append(record)
-                if isinstance(record, Process):
-                    task = progress.tasks[task_id]
-                    if task.total is not None:
-                        progress.update(task_id, total=task.total + 1)
-                progress.update(task_id, advance=1, description=f"[cyan]{escape(_record_hook_name(record))}[/cyan]")
-                live_results[_record_key(record)] = record
-                live.refresh()
+        ):
+            results = asyncio.run(download(
+                url, plugins, out_path, selected, config_overrides or None,
+                auto_install=not no_install, emit_jsonl=not stdout_is_tty,
+                bus=bus,
+            ))
     else:
-        for record in gen:
-            results.append(record)
+        results = asyncio.run(download(
+            url, plugins, out_path, selected, config_overrides or None,
+            auto_install=not no_install, emit_jsonl=not stdout_is_tty,
+            bus=bus,
+        ))
 
     if interactive_tty:
         archive_results = [record for record in results if isinstance(record, ArchiveResult)]
         ui_console.print()
         ui_console.print(
             f"[green]{sum(1 for r in archive_results if r.status == 'succeeded')} succeeded[/green], "
-            f"[grey35]{sum(1 for r in archive_results if r.status == 'noresults')} noresults[/grey35], "
+            f"[grey35]{sum(1 for r in archive_results if r.status == 'noresult')} noresult[/grey35], "
             f"[red]{sum(1 for r in archive_results if r.status == 'failed')} failed[/red], "
             f"[bright_black]{sum(1 for r in archive_results if r.status == 'skipped')} skipped[/bright_black]"
         )
         ui_console.print(f"[dim]Output: {out_path.absolute()}[/dim]")
-    else:
-        # JSONL output for non-TTY (handled by executor, just consume generator)
-        pass
+
+
+class _BinaryRecord:
+    """Lightweight record for displaying binary install results in the CLI."""
+
+    def __init__(self, *, name: str, abspath: str, plugin: str, hook_name: str,
+                 status: str, version: str = '', error: str = '') -> None:
+        self.name = name
+        self.abspath = abspath
+        self.plugin = plugin
+        self.hook_name = hook_name
+        self.status = status
+        self.version = version
+        self.error = error
+
+    @property
+    def display_output(self) -> str:
+        if self.error:
+            return self.error
+        parts = [self.name]
+        if self.version:
+            parts.append(self.version)
+        if self.abspath:
+            parts.append(self.abspath)
+        return ' '.join(parts)
 
 
 def _run_plugin_install(selected) -> int:
     console.print("[bold]Installing plugin dependencies...[/bold]\n")
 
-    results_by_hook: dict[tuple[str, str], ArchiveResult] = {}
-    failed_processes_by_hook: dict[tuple[str, str], Process] = {}
+    binaries: dict[str, _BinaryRecord] = {}  # keyed by binary name
+    hooks_ran: dict[tuple[str, str], Process] = {}  # all completed hooks
+    failed_hooks: dict[tuple[str, str], Process] = {}  # hooks that failed
+    bus = create_bus(num_hooks=0, timeout=300)
+
+    async def on_BinaryInstalledEvent(event: BinaryInstalledEvent) -> None:
+        binaries[event.name] = _BinaryRecord(
+            name=event.name, abspath=event.abspath, version=event.version,
+            plugin=event.binprovider or '-', hook_name='-', status='installed',
+        )
+
+    async def on_ProcessCompletedEvent(event: ProcessCompletedEvent) -> None:
+        key = (event.plugin_name, event.hook_name)
+        proc = Process(
+            cmd=[], plugin=event.plugin_name, hook_name=event.hook_name,
+            exit_code=event.exit_code, stdout=event.stdout, stderr=event.stderr,
+        )
+        hooks_ran[key] = proc
+        if event.exit_code not in (None, 0):
+            failed_hooks[key] = proc
+
+    bus.on(BinaryInstalledEvent, on_BinaryInstalledEvent)
+    bus.on(ProcessCompletedEvent, on_ProcessCompletedEvent)
+
     with TemporaryDirectory(prefix='abx-dl-install-') as temp_dir:
-        for record in download(
-            'https://example.com',
+        asyncio.run(download(
+            INSTALL_URL,
             selected,
             Path(temp_dir),
             auto_install=True,
-            crawl_only=True,
             emit_jsonl=False,
-        ):
-            if isinstance(record, ArchiveResult):
-                results_by_hook[(record.plugin, record.hook_name)] = record
-            elif isinstance(record, Process) and record.exit_code not in (None, 0):
-                failed_processes_by_hook[(record.plugin or '', _record_hook_name(record))] = record
+            bus=bus,
+        ))
 
     no_install_hooks = [name for name, plugin in sorted(selected.items()) if not plugin.get_crawl_hooks()]
-    visible_records: list[VisibleRecord] = [
-        result
-        for _, result in sorted(results_by_hook.items())
-    ]
-    visible_records.extend(
-        proc
-        for _, proc in sorted(failed_processes_by_hook.items())
-    )
 
-    if visible_records:
+    if binaries or hooks_ran:
         table = Table(title="Install Results")
         table.add_column("Plugin", style="cyan")
         table.add_column("Hook")
         table.add_column("Status")
         table.add_column("Output")
 
-        for record in visible_records:
-            status = _record_status(record)
+        # Show binary results if any were resolved
+        for record in sorted(binaries.values(), key=lambda r: r.name):
+            status_style = STATUS_STYLES.get('succeeded', 'green')
+            table.add_row(
+                record.plugin,
+                record.name,
+                f'[{status_style}]{record.status}[/{status_style}]',
+                _compact_output(record.display_output),
+            )
+
+        # Show hooks that ran (succeeded or failed) but didn't produce binary events
+        for (plugin_name, hook_name), proc in sorted(hooks_ran.items()):
+            status = 'succeeded' if proc.exit_code in (None, 0) else 'failed'
             status_style = STATUS_STYLES.get(status, 'white')
             table.add_row(
-                record.plugin or '-',
-                _record_hook_name(record),
+                plugin_name,
+                hook_name,
                 f'[{status_style}]{status}[/{status_style}]',
-                _compact_output(_record_output(record)),
+                _compact_output(_parse_process_output(proc)),
             )
 
         console.print(table)
@@ -431,16 +484,15 @@ def _run_plugin_install(selected) -> int:
     if no_install_hooks:
         console.print(f"[dim]No install hooks: {', '.join(no_install_hooks)}[/dim]")
 
-    failures = [record for record in visible_records if _record_status(record) == 'failed']
-    if failures:
+    if failed_hooks:
         console.print("\n[bold red]Failure details:[/bold red]")
-        for record in failures:
-            details = _record_output(record).strip()
+        for (plugin_name, hook_name), proc in sorted(failed_hooks.items()):
+            details = (proc.stderr or '').strip()
             if not details:
                 continue
-            console.print(f"\n[bold cyan]{escape(_format_install_failure_label(record))}[/bold cyan]")
+            console.print(f"\n[bold cyan]{plugin_name} / {hook_name}[/bold cyan]")
             console.print(escape(details))
-        console.print(f"\n[bold red]{len(failures)} install step(s) failed.[/bold red]")
+        console.print(f"\n[bold red]{len(failed_hooks)} install step(s) failed.[/bold red]")
         return 1
 
     console.print("\n[bold green]Done![/bold green]")
@@ -468,12 +520,12 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool):
 
     # Filter to selected plugins if specified (resolves required_plugins dependencies)
     if plugin_names:
-        selected = filter_plugins(all_plugins, list(plugin_names))
+        selected = filter_plugins(all_plugins, list(plugin_names), include_providers=do_install)
         not_found = [n for n in plugin_names if n.lower() not in {k.lower() for k in all_plugins}]
         if not_found:
             console.print(f"[yellow]Warning: Unknown plugins: {', '.join(not_found)}[/yellow]")
         if not selected:
-            console.print(f"[red]No valid plugins specified.[/red]")
+            console.print("[red]No valid plugins specified.[/red]")
             console.print(f"[dim]Available: {', '.join(sorted(all_plugins.keys()))}[/dim]")
             return
     else:
@@ -548,7 +600,7 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool):
                     console.print("\n[bold]Hooks:[/bold]")
                     for hook in hooks:
                         bg = " [dim](background)[/dim]" if hook.is_background else ""
-                        console.print(f"  Step {hook.step}.{hook.priority}: {hook.name}{bg}")
+                        console.print(f"  {hook.order:02d}: {hook.name}{bg}")
 
 
 @cli.command()

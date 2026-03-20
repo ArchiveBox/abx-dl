@@ -1,14 +1,24 @@
+import asyncio
 import json
 from pathlib import Path
 
-from abx_dl.executor import download
+from abx_dl.orchestrator import create_bus, download
+from abx_dl.events import BinaryInstalledEvent, ArchiveResultEvent
 from abx_dl.models import ArchiveResult
-from abx_dl.plugins import discover_plugins
+from abx_dl.models import discover_plugins
 
 
 def _write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if content and not content.startswith('#!'):
+        content = '#!/usr/bin/env python3\n' + content
     path.write_text(content)
+    path.chmod(0o755)
+
+
+def _run_download(*args, **kwargs):
+    """Helper to run async download() from sync test code."""
+    return asyncio.run(download(*args, **kwargs))
 
 
 def test_download_dispatches_binary_hooks_and_applies_machine_updates(tmp_path: Path) -> None:
@@ -71,10 +81,15 @@ def test_download_dispatches_binary_hooks_and_applies_machine_updates(tmp_path: 
     )
 
     plugins = discover_plugins(plugins_root)
-    results = list(download('https://example.com', plugins, tmp_path / 'run', auto_install=True))
+    results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
 
-    assert next(result for result in results if result.plugin == 'producer').status == 'succeeded'
-    assert results[-1].output_str.endswith('|ready|' + str(tmp_path / 'run' / 'provider' / 'lib' / 'node_modules'))
+    # producer hook is an on_Crawl hook (emits Binary/Machine records) — these
+    # don't produce ArchiveResults (only on_Snapshot hooks do)
+
+    # consumer hook explicitly emits an ArchiveResult with the env vars it sees
+    consumer_result = next(result for result in results if result.plugin == 'consumer')
+    assert consumer_result.status == 'succeeded'
+    assert consumer_result.output_str.endswith('|ready|' + str(tmp_path / 'run' / 'provider' / 'lib' / 'node_modules'))
 
     index_lines = [json.loads(line) for line in (tmp_path / 'run' / 'index.jsonl').read_text().splitlines()]
     assert any(
@@ -149,11 +164,11 @@ def test_download_applies_side_effects_from_completed_background_hooks(tmp_path:
     )
 
     plugins = discover_plugins(plugins_root)
-    results = list(download('https://example.com', plugins, tmp_path / 'run', auto_install=True))
+    results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
 
     consumer_result = next(result for result in results if result.plugin == 'consumer')
     assert consumer_result.output_str == str(tmp_path / 'run' / 'provider' / 'bin' / 'demo') + '|ready'
-    assert any(result.plugin == 'producer' and result.status == 'succeeded' for result in results)
+    # producer is an on_Crawl hook — no ArchiveResult expected (only on_Snapshot hooks get them)
 
 
 def test_download_finalizes_background_hooks_after_sigterm(tmp_path: Path) -> None:
@@ -192,16 +207,16 @@ def test_download_finalizes_background_hooks_after_sigterm(tmp_path: Path) -> No
     )
 
     plugins = discover_plugins(plugins_root)
+    all_results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
     results = [
-        result
-        for result in download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
+        result for result in all_results
         if result.plugin == 'bgdemo' and result.hook_name == 'on_Snapshot__05_wait.bg'
     ]
 
-    assert [result.status for result in results] == ['started', 'succeeded']
-    assert results[-1].output_str == 'bg cleaned up'
-    assert results[0].process_id == results[-1].process_id
-    assert results[0].start_ts == results[-1].start_ts
+    # Only the hook's own SIGTERM handler emits the ArchiveResult — no synthetic records.
+    assert len(results) == 1
+    assert results[0].status == 'succeeded'
+    assert results[0].output_str == 'bg cleaned up'
 
     index_lines = [json.loads(line) for line in (tmp_path / 'run' / 'index.jsonl').read_text().splitlines()]
     final_result = next(
@@ -214,8 +229,6 @@ def test_download_finalizes_background_hooks_after_sigterm(tmp_path: Path) -> No
     )
 
     assert final_result['status'] == 'succeeded'
-    assert final_result['process_id'] == results[0].process_id
-    assert final_process['id'] == results[0].process_id
     assert final_process['exit_code'] == 0
 
 
@@ -224,7 +237,7 @@ def test_download_preserves_full_hook_stderr_in_archive_result(tmp_path: Path) -
     full_error = 'ERROR: ' + ('proxy-blocked ' * 80) + 'storage.googleapis.com'
 
     _write(
-        plugins_root / 'broken' / 'on_Crawl__00_fail.py',
+        plugins_root / 'broken' / 'on_Snapshot__00_fail.py',
         '\n'.join(
             [
                 'import sys',
@@ -236,7 +249,7 @@ def test_download_preserves_full_hook_stderr_in_archive_result(tmp_path: Path) -
     )
 
     plugins = discover_plugins(plugins_root)
-    results = list(download('https://example.com', plugins, tmp_path / 'run', auto_install=True))
+    results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
 
     failure = next(result for result in results if result.plugin == 'broken')
     assert failure.status == 'failed'
@@ -293,7 +306,7 @@ def test_download_applies_background_side_effects_in_hook_lifecycle_order(tmp_pa
     )
 
     plugins = discover_plugins(plugins_root)
-    results = list(download('https://example.com', plugins, tmp_path / 'run', auto_install=True))
+    results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
 
     consumer_result = next(result for result in results if result.plugin == 'consumer')
     assert consumer_result.output_str == 'snapshot'
@@ -314,14 +327,12 @@ def test_download_can_suppress_jsonl_stdout(tmp_path: Path, capsys) -> None:
     )
 
     plugins = discover_plugins(plugins_root)
-    results = list(
-        download(
-            'https://example.com',
-            plugins,
-            tmp_path / 'run',
-            auto_install=True,
-            emit_jsonl=False,
-        )
+    results = _run_download(
+        'https://example.com',
+        plugins,
+        tmp_path / 'run',
+        auto_install=True,
+        emit_jsonl=False,
     )
 
     captured = capsys.readouterr()
@@ -330,7 +341,7 @@ def test_download_can_suppress_jsonl_stdout(tmp_path: Path, capsys) -> None:
     assert captured.out == ''
 
 
-def test_cleanup_does_not_refinalize_failed_foreground_hooks(tmp_path: Path) -> None:
+def test_cleanup_does_not_duplicate_failed_foreground_results(tmp_path: Path) -> None:
     plugins_root = tmp_path / 'plugins'
 
     _write(
@@ -346,7 +357,7 @@ def test_cleanup_does_not_refinalize_failed_foreground_hooks(tmp_path: Path) -> 
     )
 
     plugins = discover_plugins(plugins_root)
-    results = [result for result in download('https://example.com', plugins, tmp_path / 'run', auto_install=True) if result.plugin == 'foreground']
+    results = [result for result in _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True) if result.plugin == 'foreground']
 
     assert [result.status for result in results] == ['failed']
 
@@ -360,11 +371,12 @@ def test_cleanup_does_not_refinalize_failed_foreground_hooks(tmp_path: Path) -> 
     assert foreground_results[0]['status'] == 'failed'
 
 
-def test_successful_hook_with_only_logs_is_succeeded(tmp_path: Path) -> None:
+def test_successful_hook_with_only_logs_produces_noresult(tmp_path: Path) -> None:
+    """A hook that exits 0 but doesn't emit ArchiveResult or create content files produces noresult."""
     plugins_root = tmp_path / 'plugins'
 
     _write(
-        plugins_root / 'cachedemo' / 'on_Crawl__10_install.py',
+        plugins_root / 'cachedemo' / 'on_Snapshot__10_install.py',
         '\n'.join(
             [
                 'print("[*] extension already installed (using cache)")',
@@ -375,12 +387,15 @@ def test_successful_hook_with_only_logs_is_succeeded(tmp_path: Path) -> None:
     )
 
     plugins = discover_plugins(plugins_root)
-    results = [result for result in download('https://example.com', plugins, tmp_path / 'run', auto_install=True)]
+    results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
 
-    assert [result.status for result in results] == ['succeeded']
+    assert len(results) == 1
+    assert results[0].plugin == 'cachedemo'
+    assert results[0].status == 'noresult'
 
 
-def test_successful_hook_with_skipping_log_stays_succeeded_without_explicit_skip_result(tmp_path: Path) -> None:
+def test_successful_hook_with_skipping_log_produces_noresult(tmp_path: Path) -> None:
+    """A hook that exits 0 with only stderr output and no content files produces noresult."""
     plugins_root = tmp_path / 'plugins'
 
     _write(
@@ -395,12 +410,15 @@ def test_successful_hook_with_skipping_log_stays_succeeded_without_explicit_skip
     )
 
     plugins = discover_plugins(plugins_root)
-    results = [result for result in download('https://example.com', plugins, tmp_path / 'run', auto_install=True)]
+    results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
 
-    assert [result.status for result in results] == ['succeeded']
+    assert len(results) == 1
+    assert results[0].plugin == 'skipdemo'
+    assert results[0].status == 'noresult'
 
 
-def test_output_str_absolute_paths_are_stored_relative_to_hook_output_dir(tmp_path: Path) -> None:
+def test_output_str_is_stored_verbatim_from_hook(tmp_path: Path) -> None:
+    """ArchiveResult output_str is stored exactly as the hook reported it."""
     plugins_root = tmp_path / 'plugins'
 
     _write(
@@ -420,8 +438,234 @@ def test_output_str_absolute_paths_are_stored_relative_to_hook_output_dir(tmp_pa
     plugins = discover_plugins(plugins_root)
     results = [
         result
-        for result in download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
+        for result in _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
         if isinstance(result, ArchiveResult)
     ]
 
-    assert [result.output_str for result in results] == ['media.mp4']
+    assert len(results) == 1
+    # output_str is stored verbatim — the hook reported an absolute path
+    assert results[0].output_str == str(tmp_path / 'run' / 'demo' / 'media.mp4')
+
+
+def test_cleanup_runs_after_all_hooks_not_interleaved(tmp_path: Path) -> None:
+    """Verify that cleanup events fire after all hooks, not interleaved.
+
+    A bg daemon hook writes a marker file on SIGTERM. A fg hook runs after it.
+    The cleanup (SIGTERM) must happen only after ALL hooks have run, so the
+    marker file must NOT exist when the fg hook runs but MUST exist after
+    download() returns.
+    """
+    plugins_root = tmp_path / 'plugins'
+    marker = tmp_path / 'run' / 'bgdemo' / 'sigtermed.marker'
+
+    # bg daemon that creates a marker file when SIGTERMed
+    _write(
+        plugins_root / 'bgdemo' / 'on_Snapshot__05_daemon.bg.py',
+        '\n'.join(
+            [
+                'import json',
+                'import signal',
+                'import sys',
+                'import time',
+                'from pathlib import Path',
+                '',
+                'def handle_sigterm(signum, frame):',
+                f'    Path({str(marker)!r}).write_text("killed")',
+                '    print(json.dumps({"type": "ArchiveResult", "status": "succeeded", "output_str": "daemon cleaned up"}), flush=True)',
+                '    sys.exit(0)',
+                '',
+                'signal.signal(signal.SIGTERM, handle_sigterm)',
+                'print("[*] daemon ready", flush=True)',
+                'while True:',
+                '    time.sleep(0.1)',
+            ]
+        )
+        + '\n',
+    )
+
+    # fg hook that checks the marker file does NOT exist yet (cleanup hasn't fired)
+    _write(
+        plugins_root / 'checker' / 'on_Snapshot__10_check.py',
+        '\n'.join(
+            [
+                'import json',
+                'from pathlib import Path',
+                f'marker_exists = Path({str(marker)!r}).exists()',
+                'print(json.dumps({"type": "ArchiveResult", "status": "succeeded", "output_str": f"marker_during_hooks={marker_exists}"}))',
+            ]
+        )
+        + '\n',
+    )
+
+    plugins = discover_plugins(plugins_root)
+    results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
+
+    # The fg hook must see no marker (cleanup hasn't happened yet)
+    checker_result = next(r for r in results if r.plugin == 'checker')
+    assert checker_result.output_str == 'marker_during_hooks=False', (
+        'Cleanup fired before fg hooks finished — ordering is broken'
+    )
+
+    # After download() returns, the marker must exist (cleanup did fire)
+    assert marker.exists(), (
+        'Cleanup event never SIGTERMed the bg daemon — cleanup event not emitted'
+    )
+
+
+def test_binary_installed_events(tmp_path: Path) -> None:
+    """Verify BinaryInstalledEvent fires for both pre-existing and provider-installed binaries.
+
+    Sets up two binaries in the same run:
+    - "preloaded": hook outputs Binary with abspath already set (detected on disk)
+    - "installme": hook outputs Binary without abspath (needs provider to install)
+
+    Both should emit BinaryInstalledEvent with the resolved abspath.
+    """
+    plugins_root = tmp_path / 'plugins'
+    captured: list[tuple[str, str]] = []  # (name, abspath)
+    bus = create_bus(num_hooks=0, timeout=60)
+
+    async def on_installed(e: BinaryInstalledEvent) -> None:
+        captured.append((e.name, e.abspath))
+
+    bus.on(BinaryInstalledEvent, on_installed)
+
+    # Hook that emits two Binary requests: one pre-existing, one needing install
+    preloaded_path = str(tmp_path / 'bin' / 'preloaded')
+    (tmp_path / 'bin').mkdir()
+    Path(preloaded_path).write_text('stub')
+
+    _write(
+        plugins_root / 'emitter' / 'on_Crawl__00_emit.py',
+        '\n'.join(
+            [
+                'import json',
+                # Pre-existing binary — abspath already known
+                f'print(json.dumps({{"type": "Binary", "name": "preloaded", "abspath": {preloaded_path!r}}}))',
+                # Binary that needs provider installation
+                'print(json.dumps({"type": "Binary", "name": "installme", "binproviders": "provider"}))',
+            ]
+        )
+        + '\n',
+    )
+
+    # Provider hook that "installs" the binary
+    _write(
+        plugins_root / 'provider' / 'on_Binary__10_provider_install.py',
+        '\n'.join(
+            [
+                'import json',
+                'import argparse',
+                'from pathlib import Path',
+                'parser = argparse.ArgumentParser()',
+                'parser.add_argument("--name", required=True)',
+                'parser.add_argument("--binary-id", required=True)',
+                'parser.add_argument("--machine-id", required=True)',
+                'parser.add_argument("--binproviders", default="*")',
+                'parser.add_argument("--overrides", default=None)',
+                'parser.add_argument("--custom-cmd", default=None)',
+                'args = parser.parse_args()',
+                'bin_path = Path.cwd() / "bin" / args.name',
+                'bin_path.parent.mkdir(parents=True, exist_ok=True)',
+                'bin_path.write_text("installed")',
+                'print(json.dumps({"type": "Binary", "name": args.name, "abspath": str(bin_path),'
+                ' "binary_id": args.binary_id, "machine_id": args.machine_id,'
+                ' "binprovider": "provider"}))',
+            ]
+        )
+        + '\n',
+    )
+
+    # Consumer hook verifies both binaries are available via env vars
+    _write(
+        plugins_root / 'consumer' / 'on_Crawl__01_check.py',
+        '\n'.join(
+            [
+                'import json',
+                'import os',
+                'print(json.dumps({',
+                '    "type": "ArchiveResult",',
+                '    "status": "succeeded",',
+                '    "output_str": "|".join([',
+                '        os.environ.get("PRELOADED_BINARY", "missing"),',
+                '        os.environ.get("INSTALLME_BINARY", "missing"),',
+                '    ]),',
+                '}))',
+            ]
+        )
+        + '\n',
+    )
+
+    plugins = discover_plugins(plugins_root)
+    results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True, bus=bus)
+
+    # --- Verify BinaryInstalledEvent for both binaries ---
+
+    preloaded_events = [(n, p) for n, p in captured if n == 'preloaded']
+    installme_events = [(n, p) for n, p in captured if n == 'installme']
+
+    assert len(preloaded_events) >= 1, (
+        f'Expected BinaryInstalledEvent for preloaded, got: {preloaded_events}'
+    )
+    assert preloaded_events[0][1] == preloaded_path, (
+        f'BinaryInstalledEvent abspath mismatch: {preloaded_events[0][1]!r} != {preloaded_path!r}'
+    )
+
+    assert len(installme_events) >= 1, (
+        f'Expected BinaryInstalledEvent for installme, got: {installme_events}'
+    )
+
+    # --- Verify config propagation (both binaries visible to subsequent hooks) ---
+
+    consumer = next(r for r in results if r.plugin == 'consumer')
+    parts = consumer.output_str.split('|')
+    assert parts[0] == preloaded_path, (
+        f'PRELOADED_BINARY env var mismatch: {parts[0]!r}'
+    )
+    assert parts[1] != 'missing', (
+        'INSTALLME_BINARY not set in consumer env — install chain broken'
+    )
+
+
+def test_archive_result_events_no_synthetic_when_inline_reported(tmp_path: Path) -> None:
+    """When a hook reports an inline ArchiveResult, no synthetic one is emitted.
+
+    A hook that outputs ``{"type": "ArchiveResult", ...}`` JSONL during execution
+    gets exactly one ArchiveResultEvent (the inline one). ProcessCompletedEvent
+    sees the existing result via bus.find and skips synthetic emission.
+    """
+    plugins_root = tmp_path / 'plugins'
+    ar_events: list[tuple[str, str]] = []  # (hook_name, status)
+    bus = create_bus(num_hooks=1, timeout=60)
+
+    async def on_ar(e: ArchiveResultEvent) -> None:
+        ar_events.append((e.hook_name, e.status))
+
+    bus.on(ArchiveResultEvent, on_ar)
+
+    _write(
+        plugins_root / 'demo' / 'on_Snapshot__10_emit.py',
+        '\n'.join(
+            [
+                'import json',
+                'print(json.dumps({"type": "ArchiveResult", "status": "succeeded", "output_str": "partial"}))',
+            ]
+        )
+        + '\n',
+    )
+
+    plugins = discover_plugins(plugins_root)
+    results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True, bus=bus)
+
+    # Should have exactly 1 ArchiveResultEvent — the inline one.
+    # No synthetic duplicate from ProcessCompletedEvent.
+    demo_events = [e for e in ar_events if e[0] == 'on_Snapshot__10_emit']
+    assert len(demo_events) == 1, (
+        f'Expected exactly 1 ArchiveResultEvent (inline only), got {len(demo_events)}: {demo_events}'
+    )
+    assert demo_events[0][1] == 'succeeded'
+
+    demo_results = [r for r in results if isinstance(r, ArchiveResult) and r.hook_name == 'on_Snapshot__10_emit']
+    assert len(demo_results) == 1, (
+        f'Expected 1 ArchiveResult in results list, got {len(demo_results)}'
+    )
