@@ -256,6 +256,26 @@ def test_download_preserves_full_hook_stderr_in_archive_result(tmp_path: Path) -
     assert failure.error == full_error
 
 
+def test_pid_file_removed_after_failed_hook_exits(tmp_path: Path) -> None:
+    plugins_root = tmp_path / 'plugins'
+
+    _write(
+        plugins_root / 'broken' / 'on_Snapshot__00_fail.py',
+        '\n'.join(
+            [
+                'raise SystemExit(1)',
+            ]
+        )
+        + '\n',
+    )
+
+    plugins = discover_plugins(plugins_root)
+    _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
+
+    pid_file = tmp_path / 'run' / 'broken' / 'on_Snapshot__00_fail.pid'
+    assert not pid_file.exists(), 'stale pid file left behind after process exit'
+
+
 def test_download_applies_background_side_effects_in_hook_lifecycle_order(tmp_path: Path) -> None:
     plugins_root = tmp_path / 'plugins'
 

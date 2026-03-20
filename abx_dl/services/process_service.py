@@ -62,7 +62,7 @@ class ProcessService(BaseService):
     File artifacts per hook execution:
     - ``{hook_name}.stdout.log`` — full stdout (deleted on success)
     - ``{hook_name}.stderr.log`` — full stderr (deleted on success)
-    - ``{hook_name}.pid`` — PID file for daemon hooks (deleted on success)
+    - ``{hook_name}.pid`` — PID file used while the subprocess is alive (deleted on exit)
     - ``{hook_name}.sh`` — command line for debugging
 
     bubus details:
@@ -188,6 +188,7 @@ class ProcessService(BaseService):
             # JSONL, or if bus.emit() fails during the streaming phase).
             if process is not None:
                 await graceful_kill_process(process)
+            pid_file.unlink(missing_ok=True)
             proc.exit_code = -1
             proc.stderr = f'{type(e).__name__}: {e}'
             proc.ended_at = now_iso()
@@ -225,11 +226,13 @@ class ProcessService(BaseService):
         excluded_suffixes = ('.stdout.log', '.stderr.log', '.pid', '.sh')
         new_files = [f for f in new_files if not any(f.endswith(s) for s in excluded_suffixes)]
 
+        # Remove the pid file once the subprocess is gone to avoid stale daemons.
+        pid_file.unlink(missing_ok=True)
+
         # Clean up log files on success (keep them on failure for debugging)
         if returncode == 0:
             stdout_file.unlink(missing_ok=True)
             stderr_file.unlink(missing_ok=True)
-            pid_file.unlink(missing_ok=True)
 
         write_jsonl(self.index_path, proc, also_print=self.emit_jsonl)
 
