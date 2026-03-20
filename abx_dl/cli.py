@@ -473,7 +473,7 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool):
         if not_found:
             console.print(f"[yellow]Warning: Unknown plugins: {', '.join(not_found)}[/yellow]")
         if not selected:
-            console.print(f"[red]No valid plugins specified.[/red]")
+            console.print("[red]No valid plugins specified.[/red]")
             console.print(f"[dim]Available: {', '.join(sorted(all_plugins.keys()))}[/dim]")
             return
     else:

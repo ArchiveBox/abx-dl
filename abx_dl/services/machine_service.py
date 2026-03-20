@@ -72,7 +72,7 @@ class MachineService(BaseService):
         if key:
             self.shared_config[key] = event.value
             try:
-                set_config(**{key: event.value})
+                set_config(None, **{key: event.value})
             except Exception:
                 pass
 

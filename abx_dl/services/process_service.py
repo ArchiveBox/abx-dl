@@ -119,6 +119,7 @@ class ProcessService(BaseService):
         write_cmd_file(cmd_file, cmd)
         files_before = set(plugin_output_dir.rglob('*')) if plugin_output_dir.exists() else set()
 
+        process: asyncio.subprocess.Process | None = None
         try:
             with open(stderr_file, 'w') as err_fh:
                 process = await asyncio.create_subprocess_exec(
@@ -192,7 +193,7 @@ class ProcessService(BaseService):
             # started with start_new_session=True would leak as orphan processes
             # (e.g. if BinaryEvent(**record) raises ValidationError on malformed
             # JSONL, or if bus.emit() fails during the streaming phase).
-            if 'process' in locals():
+            if process is not None:
                 await graceful_kill_process(process)
             proc.exit_code = -1
             proc.stderr = f'{type(e).__name__}: {e}'

@@ -159,7 +159,7 @@ class BinaryService(BaseService):
         if event.abspath:
             # Binary path provided — register in config and notify
             await self.bus.emit(MachineEvent(
-                _method='update',
+                method='update',
                 key=f'config/{_binary_env_key(event.name)}',
                 value=event.abspath,
             ))

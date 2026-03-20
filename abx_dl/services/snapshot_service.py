@@ -36,9 +36,9 @@ class SnapshotService(BaseService):
         │       │   └── ProcessEvent
         │       │       ├── ProcessRecordOutputtedEvent
         │       │       │   ├── SnapshotEvent (depth>1, discovered URL — ignored)
-        │       │       │   └── ArchiveResultEvent (inline, final=False)
-        │       │       ├── ProcessCompletedEvent
-        │       │       └── ArchiveResultEvent (final=True)
+        │       │       │   └── ArchiveResultEvent (inline)
+        │       │       └── ProcessCompletedEvent
+        │       │           └── ArchiveResultEvent (enriched)
         │       ├── on_Snapshot__09_chrome_launch.daemon.bg
         │       ├── on_Snapshot__54_title
         │       ├── on_Snapshot__93_hashes
@@ -133,9 +133,11 @@ class SnapshotService(BaseService):
         """
         if event.depth > 1:
             return
-        snapshot_kwargs = dict(url=self.url, snapshot_id=self.snapshot.id, output_dir=str(self.output_dir))
-        await self.bus.emit(SnapshotCleanupEvent(**snapshot_kwargs))
-        await self.bus.emit(SnapshotCompletedEvent(**snapshot_kwargs))
+        url = self.url
+        snapshot_id = self.snapshot.id
+        output_dir = str(self.output_dir)
+        await self.bus.emit(SnapshotCleanupEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir))
+        await self.bus.emit(SnapshotCompletedEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir))
 
     async def on_SnapshotCleanupEvent(self, event: SnapshotCleanupEvent) -> None:
         """SIGTERM all background snapshot daemons so they can flush and exit."""

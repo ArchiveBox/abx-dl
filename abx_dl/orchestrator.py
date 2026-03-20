@@ -80,8 +80,8 @@ from typing import Any, Callable
 from bubus import EventBus
 
 from .events import ArchiveResultEvent, CrawlEvent
-from .models import ArchiveResult, Process, Snapshot, VisibleRecord, write_jsonl
-from .models import Hook, Plugin, filter_plugins
+from .models import ArchiveResult, Process, Snapshot, write_jsonl
+from .models import Hook, Plugin, VisibleRecord, filter_plugins
 
 
 async def download(
@@ -95,7 +95,7 @@ async def download(
     *,
     emit_jsonl: bool | None = None,
     on_result: Callable[[VisibleRecord], None] | None = None,
-) -> list[VisibleRecord]:
+) -> list[ArchiveResult]:
     """Download a URL using plugins, coordinated through a bubus EventBus.
 
     This is the only public function in the orchestrator. It:
@@ -119,7 +119,7 @@ async def download(
             ArchiveResult records come from the ArchiveResultEvent bus handler.
 
     Returns:
-        List of ArchiveResult records produced (collected from final
+        List of ArchiveResult records produced (collected from enriched
         ArchiveResultEvents on the bus).
     """
 
@@ -154,7 +154,7 @@ async def download(
     # Shared mutable results list — only ArchiveResults go here (public return value).
     # ArchiveResults flow through ArchiveResultEvent on the bus.
     # Process records flow through the on_process callback.
-    results: list[VisibleRecord] = []
+    results: list[ArchiveResult] = []
 
     def on_process(proc: Process) -> None:
         """Callback for Process records — passed to ProcessService."""

@@ -340,7 +340,7 @@ def test_download_can_suppress_jsonl_stdout(tmp_path: Path, capsys) -> None:
     assert captured.out == ''
 
 
-def test_cleanup_does_not_refinalize_failed_foreground_hooks(tmp_path: Path) -> None:
+def test_cleanup_does_not_duplicate_failed_foreground_results(tmp_path: Path) -> None:
     plugins_root = tmp_path / 'plugins'
 
     _write(
@@ -643,7 +643,7 @@ def test_binary_loaded_vs_installed_events(tmp_path: Path, monkeypatch) -> None:
         f'PRELOADED_BINARY env var mismatch: {parts[0]!r}'
     )
     assert parts[1] != 'missing', (
-        f'INSTALLME_BINARY not set in consumer env — install chain broken'
+        'INSTALLME_BINARY not set in consumer env — install chain broken'
     )
 
 

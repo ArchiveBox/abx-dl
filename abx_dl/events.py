@@ -52,7 +52,7 @@ bubus behavior:
 
 from typing import Any
 
-from bubus import BaseEvent
+from bubus import BaseEvent, EventConcurrencyMode
 from pydantic import ConfigDict, Field
 
 
@@ -68,7 +68,7 @@ class CrawlEvent(BaseEvent):
     url: str
     snapshot_id: str
     output_dir: str
-    event_timeout: float = 300.0
+    event_timeout: float | None =300.0
 
 
 class CrawlSetupEvent(BaseEvent):
@@ -80,7 +80,7 @@ class CrawlSetupEvent(BaseEvent):
     url: str
     snapshot_id: str
     output_dir: str
-    event_timeout: float = 300.0
+    event_timeout: float | None =300.0
 
 
 class CrawlStartEvent(BaseEvent):
@@ -92,7 +92,7 @@ class CrawlStartEvent(BaseEvent):
     url: str
     snapshot_id: str
     output_dir: str
-    event_timeout: float = 300.0
+    event_timeout: float | None =300.0
 
 
 class CrawlCleanupEvent(BaseEvent):
@@ -103,7 +103,7 @@ class CrawlCleanupEvent(BaseEvent):
     url: str
     snapshot_id: str
     output_dir: str
-    event_timeout: float = 30.0
+    event_timeout: float | None =30.0
 
 
 class CrawlCompletedEvent(BaseEvent):
@@ -111,7 +111,7 @@ class CrawlCompletedEvent(BaseEvent):
     url: str
     snapshot_id: str
     output_dir: str
-    event_timeout: float = 10.0
+    event_timeout: float | None =10.0
 
 
 # ── Snapshot lifecycle ───────────────────────────────────────────────────────
@@ -131,7 +131,7 @@ class SnapshotEvent(BaseEvent):
     snapshot_id: str
     output_dir: str
     depth: int = 1
-    event_timeout: float = 300.0
+    event_timeout: float | None =300.0
 
 
 class SnapshotCleanupEvent(BaseEvent):
@@ -142,7 +142,7 @@ class SnapshotCleanupEvent(BaseEvent):
     url: str
     snapshot_id: str
     output_dir: str
-    event_timeout: float = 30.0
+    event_timeout: float | None =30.0
 
 
 class SnapshotCompletedEvent(BaseEvent):
@@ -150,7 +150,7 @@ class SnapshotCompletedEvent(BaseEvent):
     url: str
     snapshot_id: str
     output_dir: str
-    event_timeout: float = 10.0
+    event_timeout: float | None =10.0
 
 
 # ── Process (hook subprocess execution) ──────────────────────────────────────
@@ -171,8 +171,8 @@ class ProcessEvent(BaseEvent):
     Hook handlers set this to ``hook_timeout + 30s`` to allow
     overhead for process startup and JSONL parsing.
     """
-    event_concurrency: str = 'parallel'
-    event_handler_timeout: float = 360.0
+    event_concurrency: EventConcurrencyMode | None = EventConcurrencyMode.PARALLEL
+    event_handler_timeout: float | None = 360.0
     plugin_name: str
     hook_name: str
     hook_path: str
@@ -182,7 +182,7 @@ class ProcessEvent(BaseEvent):
     env: dict[str, str]
     snapshot_id: str = ''
     timeout: int = 60
-    event_timeout: float = 360.0
+    event_timeout: float | None =360.0
 
 
 class ProcessKillEvent(BaseEvent):
@@ -194,7 +194,7 @@ class ProcessKillEvent(BaseEvent):
     plugin_name: str
     hook_name: str
     output_dir: str
-    event_timeout: float = 10.0
+    event_timeout: float | None =10.0
 
 
 class ProcessCompletedEvent(BaseEvent):
@@ -217,7 +217,7 @@ class ProcessCompletedEvent(BaseEvent):
     snapshot_id: str = ''
     start_ts: str = ''
     end_ts: str = ''
-    event_timeout: float = 60.0
+    event_timeout: float | None =60.0
 
 
 class ProcessRecordOutputtedEvent(BaseEvent):
@@ -244,7 +244,7 @@ class ProcessRecordOutputtedEvent(BaseEvent):
     hook_name: str = ''
     output_dir: str = ''
     snapshot_id: str = ''
-    event_timeout: float = 360.0
+    event_timeout: float | None =360.0
 
 
 # ── Binary resolution ────────────────────────────────────────────────────────
@@ -268,7 +268,7 @@ class BinaryEvent(BaseEvent):
     binproviders: str = ''
     overrides: dict[str, Any] | None = None
     custom_cmd: str = ''
-    event_timeout: float = 300.0
+    event_timeout: float | None =300.0
 
 
 class BinaryLoadedEvent(BaseEvent):
@@ -284,7 +284,7 @@ class BinaryLoadedEvent(BaseEvent):
     binprovider: str = ''
     binary_id: str = ''
     machine_id: str = ''
-    event_timeout: float = 10.0
+    event_timeout: float | None =10.0
 
 
 class BinaryInstalledEvent(BaseEvent):
@@ -300,7 +300,7 @@ class BinaryInstalledEvent(BaseEvent):
     binprovider: str = ''
     binary_id: str = ''
     machine_id: str = ''
-    event_timeout: float = 10.0
+    event_timeout: float | None =10.0
 
 
 # ── Machine config update ────────────────────────────────────────────────────
@@ -321,7 +321,7 @@ class MachineEvent(BaseEvent):
     key: str = ''
     value: str = ''
     config: dict[str, Any] | None = None
-    event_timeout: float = 10.0
+    event_timeout: float | None =10.0
 
 
 # ── ArchiveResult notification ────────────────────────────────────────────
@@ -354,4 +354,4 @@ class ArchiveResultEvent(BaseEvent):
     start_ts: str = ''
     end_ts: str = ''
     error: str = ''
-    event_timeout: float = 10.0
+    event_timeout: float | None =10.0

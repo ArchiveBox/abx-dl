@@ -4,7 +4,7 @@ Dependency management for abx-dl using abx-pkg.
 
 from typing import Any
 
-from abx_pkg import Binary, BinProvider, EnvProvider, PipProvider, NpmProvider, BrewProvider, AptProvider, BinProviderOverrides   # DO NOT REMOVE UNUSED IMPORT, critical for pydantic circular reference fix
+from abx_pkg import Binary, BinProvider, EnvProvider, PipProvider, NpmProvider, BrewProvider, AptProvider   # DO NOT REMOVE UNUSED IMPORT, critical for pydantic circular reference fix
 
 from .config import PIP_HOME, NPM_HOME
 

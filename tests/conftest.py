@@ -1,6 +1,5 @@
 """Fixtures for test isolation — prevent config file pollution across tests."""
 
-import os
 from pathlib import Path
 
 import pytest

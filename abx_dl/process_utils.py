@@ -12,16 +12,14 @@ import os
 import shlex
 import shutil
 import signal
-import time
 from pathlib import Path
 from typing import Optional
 
 
 try:
     import psutil
-    PSUTIL_AVAILABLE = True
 except ImportError:
-    PSUTIL_AVAILABLE = False
+    psutil = None  # type: ignore[assignment]
 
 
 # Grace period before escalating from SIGTERM to SIGKILL. Chrome needs up to
@@ -98,6 +96,8 @@ def validate_pid_file(pid_file: Path, cmd_file: Optional[Path] = None, tolerance
     - psutil is unavailable or raises an error
     """
     if not pid_file.exists():
+        return False
+    if psutil is None:
         return False
 
     try:

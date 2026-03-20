@@ -1,4 +1,3 @@
-from pathlib import Path
 
 from abx_dl.models import discover_plugins, parse_hook_filename
 
