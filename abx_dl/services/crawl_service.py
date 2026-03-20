@@ -65,6 +65,7 @@ class CrawlService(BaseService):
         machine: MachineService,
         hooks: list[tuple[Plugin, Hook]],
         crawl_only: bool = False,
+        phase_timeout: float = 300.0,
     ):
         self.url = url
         self.snapshot = snapshot
@@ -72,6 +73,7 @@ class CrawlService(BaseService):
         self.machine = machine
         self.hooks = hooks
         self.crawl_only = crawl_only or (url == INSTALL_URL)
+        self.phase_timeout = phase_timeout
         super().__init__(bus)
 
     def _attach_handlers(self) -> None:
@@ -86,6 +88,7 @@ class CrawlService(BaseService):
                 self, plugin, hook,
                 url=self.url, snapshot=self.snapshot,
                 output_dir=self.output_dir, machine=self.machine,
+                phase_timeout=self.phase_timeout,
             )
             handler.__name__ = hook.name
             handler.__qualname__ = hook.name
@@ -104,7 +107,7 @@ class CrawlService(BaseService):
         url = self.url
         snapshot_id = self.snapshot.id
         output_dir = str(self.output_dir)
-        await self.bus.emit(CrawlSetupEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir))
+        await self.bus.emit(CrawlSetupEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir, event_timeout=self.phase_timeout))
         await self.bus.emit(CrawlStartEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir))
         await self.bus.emit(CrawlCleanupEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir))
         await self.bus.emit(CrawlCompletedEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir))

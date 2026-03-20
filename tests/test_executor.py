@@ -591,7 +591,7 @@ def test_binary_installed_events(tmp_path: Path) -> None:
     """
     plugins_root = tmp_path / 'plugins'
     captured: list[tuple[str, str]] = []  # (name, abspath)
-    bus = create_bus(num_hooks=0, timeout=60)
+    bus = create_bus(total_timeout=60.0)
 
     async def on_installed(e: BinaryInstalledEvent) -> None:
         captured.append((e.name, e.abspath))
@@ -704,7 +704,7 @@ def test_archive_result_events_no_synthetic_when_inline_reported(tmp_path: Path)
     """
     plugins_root = tmp_path / 'plugins'
     ar_events: list[tuple[str, str]] = []  # (hook_name, status)
-    bus = create_bus(num_hooks=1, timeout=60)
+    bus = create_bus(total_timeout=60.0)
 
     async def on_ar(e: ArchiveResultEvent) -> None:
         ar_events.append((e.hook_name, e.status))

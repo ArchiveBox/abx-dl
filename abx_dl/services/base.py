@@ -74,6 +74,7 @@ def make_hook_handler(
     snapshot: Snapshot,
     output_dir: Path,
     machine: MachineService,
+    phase_timeout: float = 300.0,
 ):
     """Create an async handler that emits a ProcessEvent for one hook.
 
@@ -83,6 +84,10 @@ def make_hook_handler(
 
     The env dict is built fresh each time from ``MachineService.shared_config``,
     so fg hooks pick up config updates (e.g. CHROME_BINARY path) from earlier hooks.
+
+    For background daemons, ``phase_timeout`` is used as the process timeout
+    ceiling instead of the per-hook timeout (daemons should survive until
+    cleanup kills them, but not outlive the entire phase).
     """
     async def handler(event: BaseEvent, _plugin=plugin, _hook=hook) -> None:
         env = machine.get_env_for_plugin(_plugin, run_output_dir=output_dir)
@@ -90,14 +95,18 @@ def make_hook_handler(
         plugin_output_dir = output_dir / _plugin.name
         plugin_output_dir.mkdir(parents=True, exist_ok=True)
 
+        # BG daemons use the full phase timeout as their ceiling (they should
+        # survive until cleanup, but not outlive the phase). FG hooks use
+        # the per-plugin timeout.
+        effective_timeout = int(phase_timeout) if _hook.is_background else timeout
         process_event = ProcessEvent(
             plugin_name=_plugin.name, hook_name=_hook.name,
             hook_path=str(_hook.path),
             hook_args=[f'--url={url}', f'--snapshot-id={snapshot.id}'],
             is_background=_hook.is_background,
             output_dir=str(plugin_output_dir), env=env,
-            snapshot_id=snapshot.id, timeout=timeout,
-            event_handler_timeout=timeout + 30.0,
+            snapshot_id=snapshot.id, timeout=effective_timeout,
+            event_handler_timeout=effective_timeout + 30.0,
         )
         if _hook.is_background:
             service.bus.emit(process_event)

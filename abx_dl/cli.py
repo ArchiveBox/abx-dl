@@ -18,9 +18,9 @@ from rich.table import Table
 from .config import get_config, set_config, CONFIG_FILE
 from .dependencies import load_binary
 from .events import ArchiveResultEvent, BinaryInstalledEvent, ProcessCompletedEvent
-from .orchestrator import create_bus, download
+from .orchestrator import compute_phase_timeout, create_bus, download
 from .models import ArchiveResult, Process
-from .models import INSTALL_URL, discover_plugins, filter_plugins
+from .models import INSTALL_URL, Hook, Plugin, discover_plugins, filter_plugins
 
 console = Console()
 stderr_console = Console(stderr=True)
@@ -319,9 +319,19 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
         if selected
         else plugins
     )
-    total_hooks = sum(len(plugin.get_crawl_hooks()) + len(plugin.get_snapshot_hooks()) for plugin in selected_plugins.values())
+    crawl_hooks: list[tuple[Plugin, Hook]] = []
+    snapshot_hooks: list[tuple[Plugin, Hook]] = []
+    for plugin in selected_plugins.values():
+        for hook in plugin.get_crawl_hooks():
+            crawl_hooks.append((plugin, hook))
+        for hook in plugin.get_snapshot_hooks():
+            snapshot_hooks.append((plugin, hook))
+    total_timeout = (
+        compute_phase_timeout(crawl_hooks, config_overrides)
+        + compute_phase_timeout(snapshot_hooks, config_overrides)
+    )
     live_results: dict[str, VisibleRecord] = {}
-    bus = create_bus(num_hooks=total_hooks, timeout=timeout_seconds)
+    bus = create_bus(total_timeout=total_timeout)
 
     if interactive_tty:
         progress = Progress(
@@ -416,7 +426,8 @@ def _run_plugin_install(selected) -> int:
     binaries: dict[str, _BinaryRecord] = {}  # keyed by binary name
     hooks_ran: dict[tuple[str, str], Process] = {}  # all completed hooks
     failed_hooks: dict[tuple[str, str], Process] = {}  # hooks that failed
-    bus = create_bus(num_hooks=0, timeout=300)
+    crawl_hooks = [(plugin, hook) for plugin in selected.values() for hook in plugin.get_crawl_hooks()]
+    bus = create_bus(total_timeout=compute_phase_timeout(crawl_hooks))
 
     async def on_BinaryInstalledEvent(event: BinaryInstalledEvent) -> None:
         binaries[event.name] = _BinaryRecord(

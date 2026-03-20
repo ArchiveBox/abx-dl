@@ -75,12 +75,14 @@ class SnapshotService(BaseService):
         output_dir: Path,
         machine: MachineService,
         hooks: list[tuple[Plugin, Hook]],
+        phase_timeout: float = 300.0,
     ):
         self.url = url
         self.snapshot = snapshot
         self.output_dir = output_dir
         self.machine = machine
         self.hooks = hooks
+        self.phase_timeout = phase_timeout
         super().__init__(bus)
 
     def _attach_handlers(self) -> None:
@@ -97,6 +99,7 @@ class SnapshotService(BaseService):
                 self, plugin, hook,
                 url=self.url, snapshot=self.snapshot,
                 output_dir=self.output_dir, machine=self.machine,
+                phase_timeout=self.phase_timeout,
             )
 
             async def guarded(event: SnapshotEvent, _inner=inner) -> None:

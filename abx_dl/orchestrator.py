@@ -86,7 +86,46 @@ from .models import ArchiveResult, Snapshot, write_jsonl
 from .models import Hook, Plugin, filter_plugins
 
 
-def create_bus(*, num_hooks: int, timeout: int = 60) -> EventBus:
+def get_plugin_timeout(plugin: Plugin, config: dict[str, Any] | None = None) -> int:
+    """Resolve a plugin's timeout from config overrides and schema defaults.
+
+    Checks (in priority order):
+    1. ``{PLUGIN_NAME}_TIMEOUT`` in *config*
+    2. ``TIMEOUT`` in *config*
+    3. ``{PLUGIN_NAME}_TIMEOUT`` default from the plugin's config_schema
+    4. Global default (60s)
+    """
+    name_upper = plugin.name.upper()
+    cfg = config or {}
+    # Check config overrides first
+    if f'{name_upper}_TIMEOUT' in cfg:
+        return int(cfg[f'{name_upper}_TIMEOUT'])
+    if 'TIMEOUT' in cfg:
+        return int(cfg['TIMEOUT'])
+    # Check plugin schema defaults
+    schema_def = plugin.config_schema.get(f'{name_upper}_TIMEOUT', {})
+    if isinstance(schema_def, dict) and 'default' in schema_def:
+        return int(schema_def['default'])
+    return 60
+
+
+def compute_phase_timeout(hooks: list[tuple[Plugin, Hook]], config: dict[str, Any] | None = None) -> float:
+    """Sum per-plugin timeouts across all hooks in a phase.
+
+    Each hook contributes its plugin's timeout (from ``get_plugin_timeout``).
+    This gives an accurate ceiling: slow plugins (e.g. YTDLP_TIMEOUT=120)
+    contribute more than fast ones (e.g. TITLE_TIMEOUT=10).
+
+    Returns at least 60.0 (minimum phase timeout).
+    """
+    total = sum(
+        get_plugin_timeout(plugin, config)
+        for plugin, _hook in hooks
+    )
+    return max(float(total), 60.0)
+
+
+def create_bus(*, total_timeout: float = 60.0) -> EventBus:
     """Create a configured EventBus for a download run.
 
     Callers should subscribe to events on the bus before passing it to
@@ -96,10 +135,9 @@ def create_bus(*, num_hooks: int, timeout: int = 60) -> EventBus:
         bus.on(ArchiveResultEvent, my_result_handler)
 
     Args:
-        num_hooks: Number of snapshot hooks (used to scale total timeout).
-        timeout: Per-hook timeout in seconds.
+        total_timeout: Total timeout for the entire run (sum of all phase
+            timeouts). Computed by ``compute_phase_timeout`` in download().
     """
-    total_timeout = max(float(num_hooks * timeout), float(timeout))
     return EventBus(
         name='AbxDl',
         # parallel event concurrency lets bg ProcessEvents (fire-and-forget
@@ -109,7 +147,7 @@ def create_bus(*, num_hooks: int, timeout: int = 60) -> EventBus:
         # entries instead of rejecting new events when the buffer fills
         max_history_size=1000,
         max_history_drop=True,
-        # Timeouts scale with the number of hooks × per-hook TIMEOUT.
+        # Total timeout covers both crawl and snapshot phases.
         # Individual hooks set their own timeouts via event_handler_timeout
         # on their ProcessEvent.
         event_timeout=total_timeout,
@@ -185,10 +223,14 @@ async def download(
     crawl_hooks.sort(key=lambda x: x[1].sort_key)
     snapshot_hooks.sort(key=lambda x: x[1].sort_key)
 
+    # Compute per-phase timeouts from plugin-specific settings
+    crawl_phase_timeout = compute_phase_timeout(crawl_hooks, config_overrides)
+    snapshot_phase_timeout = compute_phase_timeout(snapshot_hooks, config_overrides)
+    total_timeout = crawl_phase_timeout + snapshot_phase_timeout
+
     # Create bus if caller didn't provide one
-    timeout = int((config_overrides or {}).get('TIMEOUT', 60))
     if bus is None:
-        bus = create_bus(num_hooks=len(snapshot_hooks), timeout=timeout)
+        bus = create_bus(total_timeout=total_timeout)
 
     # Collect ArchiveResult records from the bus
     results: list[ArchiveResult] = []
@@ -224,10 +266,12 @@ async def download(
     CrawlService(
         bus, url=url, snapshot=snapshot, output_dir=output_dir,
         machine=machine_svc, hooks=crawl_hooks, crawl_only=crawl_only,
+        phase_timeout=crawl_phase_timeout,
     )
     SnapshotService(
         bus, url=url, snapshot=snapshot, output_dir=output_dir,
         machine=machine_svc, hooks=snapshot_hooks,
+        phase_timeout=snapshot_phase_timeout,
     )
 
     # --- Drive the lifecycle ---
