@@ -405,12 +405,20 @@ def _run_plugin_install(selected) -> int:
     bus = create_bus(num_hooks=0, timeout=300)
 
     async def _on_process_completed(event: ProcessCompletedEvent) -> None:
+        key = (event.plugin_name, event.hook_name)
         if event.exit_code not in (None, 0):
             proc = Process(
                 cmd=[], plugin=event.plugin_name, hook_name=event.hook_name,
                 exit_code=event.exit_code, stderr=event.stderr,
             )
-            failed_processes_by_hook[(event.plugin_name, event.hook_name)] = proc
+            failed_processes_by_hook[key] = proc
+        elif key not in results_by_hook:
+            # Hook ran successfully but emitted no ArchiveResult — show as succeeded
+            results_by_hook[key] = ArchiveResult(
+                snapshot_id=event.snapshot_id, plugin=event.plugin_name,
+                hook_name=event.hook_name, status='succeeded',
+                process_id=event.process_id or None,
+            )
 
     async def _on_archive_result(event: ArchiveResultEvent) -> None:
         if not event.process_id:
