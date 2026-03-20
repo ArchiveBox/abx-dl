@@ -1,11 +1,11 @@
-"""Base service class for auto-registering event handlers on a bubus EventBus."""
+"""Base service class for auto-registering event handlers on a abxbus EventBus."""
 
 from __future__ import annotations
 
 from pathlib import Path
 from typing import TYPE_CHECKING, ClassVar
 
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 from ..events import ProcessEvent, slow_warning_timeout
 from ..models import Hook, Plugin, Snapshot
@@ -30,7 +30,7 @@ class BaseService:
     control registration order explicitly. They register per-hook handlers on
     CrawlSetupEvent / SnapshotEvent directly via ``bus.on()``.
 
-    bubus detail: ``bus.on(EventClass, handler)`` registers the handler to be called
+    abxbus detail: ``bus.on(EventClass, handler)`` registers the handler to be called
     whenever an event of that class is emitted on the bus. Handlers are called in
     registration order with serial concurrency (one at a time) by default.
     """

@@ -9,7 +9,7 @@ source = { editable = "." }
 dependencies = [
     { name = "abx-pkg" },
     { name = "abx-plugins" },
-    { name = "bubus" },
+    { name = "abxbus" },
     { name = "platformdirs" },
     { name = "psutil" },
     { name = "pydantic" },
@@ -32,7 +32,7 @@ dev = [
 requires-dist = [
     { name = "abx-pkg", specifier = ">=1.9.10" },
     { name = "abx-plugins", specifier = ">=1.9.18" },
-    { name = "bubus", git = "https://github.com/pirate/bbus" },
+    { name = "abxbus", git = "https://github.com/pirate/bbus" },
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=7.1.1" },
     { name = "flask", marker = "extra == 'dev'", specifier = ">=3.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11.2" },
@@ -124,7 +124,7 @@ wheels = [
 ]
 
 [[package]]
-name = "bubus"
+name = "abxbus"
 version = "2.3.2"
 source = { git = "https://github.com/pirate/bbus#9afb722bc837c0cd8f054b6747b4fa5ebb794607" }
 dependencies = [

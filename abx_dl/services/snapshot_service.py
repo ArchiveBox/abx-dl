@@ -5,7 +5,7 @@ import asyncio
 from pathlib import Path
 from typing import ClassVar
 
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 import json
 

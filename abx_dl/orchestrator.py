@@ -2,7 +2,7 @@
 Event-driven orchestrator for abx-dl.
 
 This is the main entry point for downloading a URL. It wires up all services
-on a caller-provided bubus EventBus and emits a single CrawlEvent to kick off
+on a caller-provided abxbus EventBus and emits a single CrawlEvent to kick off
 the entire lifecycle. Everything else is driven by services reacting to events.
 
 Full event tree for a typical run::
@@ -49,7 +49,7 @@ Result collection:
   ``bus.on(ProcessCompletedEvent, handler)`` for process records,
   ``bus.on(ArchiveResultEvent, handler)`` for archive results.
 
-Key bubus concepts used:
+Key abxbus concepts used:
 
 - **event_concurrency='parallel'**: child events of a parent can process
   concurrently. This is what lets bg ProcessEvents (fire-and-forget) run
@@ -79,7 +79,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from bubus import EventBus
+from abxbus import EventBus
 
 from .events import ArchiveResultEvent, CrawlEvent, slow_warning_timeout
 from .models import ArchiveResult, Snapshot, write_jsonl
@@ -175,7 +175,7 @@ async def download(
     bus: EventBus | None = None,
     emit_jsonl: bool | None = None,
 ) -> list[ArchiveResult]:
-    """Download a URL using plugins, coordinated through a bubus EventBus.
+    """Download a URL using plugins, coordinated through a abxbus EventBus.
 
     This is the only public function in the orchestrator. It:
     1. Discovers and sorts hooks from selected plugins

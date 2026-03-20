@@ -1,6 +1,6 @@
 [project]
 name = "abx-dl"
-version = "1.10.4"
+version = "1.10.5"
 requires-python = ">=3.11"
 description = "All-in-one CLI tool to download and extract content from URLs"
 authors = [{name = "Nick Sweeting", email = "pyproject.toml@archivebox.io"}]
@@ -40,12 +40,12 @@ dependencies = [
     "rich-click>=1.8.0",
     "rich>=13.0.0",
     "abx-pkg>=1.9.10",
-    "abx-plugins>=1.10.3",
+    "abx-plugins>=1.10.5",
     "pydantic>=2.0.0",
     "platformdirs>=4.0.0",
     "requests>=2.28.0",
     "psutil>=7.2.1",
-    "bubus>=2.3.3",
+    "abx-bus>=2.3.3",
 ]
 
 [project.optional-dependencies]
@@ -119,8 +119,8 @@ reportMissingTypeStubs = false
 pythonVersion = "3.11"
 pythonPlatform = "Linux"
 
-[tool.uv.sources]
-bubus = { git = "https://github.com/pirate/bbus" }
+# [tool.uv.sources]
+# abxbus = { git = "https://github.com/pirate/bbus" }
 
 
 [project.scripts]

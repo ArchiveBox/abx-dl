@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import ClassVar
 
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 from ..events import ArchiveResultEvent, ProcessCompletedEvent, ProcessStdoutEvent
 from ..models import ArchiveResult, write_jsonl

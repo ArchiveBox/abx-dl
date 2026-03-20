@@ -3,7 +3,7 @@
 from pathlib import Path
 from typing import Any, ClassVar
 
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 from ..config import build_env_for_plugin, set_config
 import json

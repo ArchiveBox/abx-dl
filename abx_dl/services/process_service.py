@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from typing import ClassVar
 
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 from ..events import BinaryProcessEvent, ProcessCompletedEvent, ProcessEvent, ProcessKillEvent, ProcessStdoutEvent
 from ..models import Process, write_jsonl, now_iso
@@ -65,7 +65,7 @@ class ProcessService(BaseService):
     - ``{hook_name}.pid`` — PID file used while the subprocess is alive (deleted on exit)
     - ``{hook_name}.sh`` — command line for debugging
 
-    bubus details:
+    abxbus details:
     - ProcessStdoutEvent is emitted with ``await``, making it a
       synchronous child. Each consuming service's handler chain completes
       before the next line is processed.

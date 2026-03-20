@@ -1,4 +1,4 @@
-"""Event schemas for the abx-dl bubus event bus.
+"""Event schemas for the abx-dl abxbus event bus.
 
 Events form a hierarchy during execution::
 
@@ -37,9 +37,9 @@ Event types:
 - **Completion events** notify results: ProcessCompletedEvent,
   ArchiveResultEvent, BinaryInstalledEvent
 
-bubus behavior:
+abxbus behavior:
 - Each event has ``event_timeout`` — the hard deadline for the event and all its
-  children. If exceeded, bubus cancels pending handlers and child events.
+  children. If exceeded, abxbus cancels pending handlers and child events.
 - ``event_concurrency='parallel'`` on ProcessEvent allows bg hooks to run
   concurrently with the parent event's handler chain.
 - ``event_handler_timeout`` on ProcessEvent controls the per-handler timeout
@@ -48,7 +48,7 @@ bubus behavior:
 
 from typing import Any
 
-from bubus import BaseEvent, EventConcurrencyMode
+from abxbus import BaseEvent, EventConcurrencyMode
 from pydantic import ConfigDict, Field
 
 
@@ -169,7 +169,7 @@ class ProcessEvent(BaseEvent):
     process alongside the parent event's serial handler chain. Without this,
     bg ProcessEvents would queue behind the parent and deadlock.
 
-    ``event_handler_timeout`` must be set per-hook — otherwise bubus uses the
+    ``event_handler_timeout`` must be set per-hook — otherwise abxbus uses the
     bus-level default (60s), which is too short for slow installs like puppeteer.
     Hook handlers set this to ``hook_timeout + 30s`` to allow
     overhead for process startup and JSONL parsing.
@@ -192,7 +192,7 @@ class BinaryProcessEvent(ProcessEvent):
     """Command: run a binary provider hook subprocess.
 
     Uses a separate event type from ProcessEvent so nested provider installs do
-    not trip bubus' same-handler recursion guard for ProcessService.
+    not trip abxbus' same-handler recursion guard for ProcessService.
     """
 
 

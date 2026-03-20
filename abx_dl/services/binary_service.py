@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import ClassVar
 
-from bubus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus
 
 from ..events import BinaryEvent, BinaryInstalledEvent, BinaryProcessEvent, MachineEvent, ProcessStdoutEvent, slow_warning_timeout
 from ..models import Hook, Plugin
@@ -44,7 +44,7 @@ class BinaryService(BaseService):
     on_BinaryEvent runs last and emits BinaryInstalledEvent with the resolved
     path (whether discovered by env or installed by another provider).
 
-    bubus detail: all handlers run serially in registration order, so the
+    abxbus detail: all handlers run serially in registration order, so the
     early-exit check works correctly.
     """
 
