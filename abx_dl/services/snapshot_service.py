@@ -86,15 +86,9 @@ class SnapshotService(BaseService):
 
     async def on_SnapshotEvent(self, event: SnapshotEvent) -> None:
         """Emit cleanup and completion after all snapshot hooks have run."""
-        await self.bus.emit(SnapshotCleanupEvent(
-            snapshot_id=self.snapshot.id,
-            output_dir=str(self.output_dir),
-        ))
-        await self.bus.emit(SnapshotCompletedEvent(
-            url=self.url,
-            snapshot_id=self.snapshot.id,
-            output_dir=str(self.output_dir),
-        ))
+        snapshot_kwargs = dict(url=self.url, snapshot_id=self.snapshot.id, output_dir=str(self.output_dir))
+        await self.bus.emit(SnapshotCleanupEvent(**snapshot_kwargs))
+        await self.bus.emit(SnapshotCompletedEvent(**snapshot_kwargs))
 
     async def on_SnapshotCleanupEvent(self, event: SnapshotCleanupEvent) -> None:
         """SIGTERM all background snapshot daemons so they can flush and exit."""

@@ -101,11 +101,11 @@ class CrawlService(BaseService):
 
         CrawlSetupEvent → CrawlStartEvent → CrawlCleanupEvent → CrawlCompletedEvent
         """
-        event_kwargs = dict(url=self.url, snapshot_id=self.snapshot.id, output_dir=str(self.output_dir))
-        await self.bus.emit(CrawlSetupEvent(**event_kwargs))
-        await self.bus.emit(CrawlStartEvent(**event_kwargs))
-        await self.bus.emit(CrawlCleanupEvent(snapshot_id=self.snapshot.id, output_dir=str(self.output_dir)))
-        await self.bus.emit(CrawlCompletedEvent(**event_kwargs))
+        crawl_kwargs = dict(url=self.url, snapshot_id=self.snapshot.id, output_dir=str(self.output_dir))
+        await self.bus.emit(CrawlSetupEvent(**crawl_kwargs))
+        await self.bus.emit(CrawlStartEvent(**crawl_kwargs))
+        await self.bus.emit(CrawlCleanupEvent(**crawl_kwargs))
+        await self.bus.emit(CrawlCompletedEvent(**crawl_kwargs))
 
     async def on_CrawlStartEvent(self, event: CrawlStartEvent) -> None:
         """Start the snapshot phase after crawl setup completes.

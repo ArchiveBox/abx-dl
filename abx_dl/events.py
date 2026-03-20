@@ -86,6 +86,7 @@ class CrawlCleanupEvent(BaseEvent):
 
     Emitted by CrawlService.on_CrawlEvent after snapshot phase completes.
     """
+    url: str
     snapshot_id: str
     output_dir: str
     event_timeout: float = 30.0
@@ -118,6 +119,7 @@ class SnapshotCleanupEvent(BaseEvent):
 
     Emitted by SnapshotService.on_SnapshotEvent after all snapshot hooks complete.
     """
+    url: str
     snapshot_id: str
     output_dir: str
     event_timeout: float = 30.0
