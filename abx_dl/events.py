@@ -9,13 +9,16 @@ Events form a hierarchy during execution::
     ├── SnapshotEvent
     │   ├── ProcessEvent (snapshot hooks)
     │   │   └── ProcessCompleted
-    │   └── ProcessKillEvent (snapshot bg cleanup)
-    ├── ProcessKillEvent (crawl bg cleanup)
+    │   └── SnapshotCleanupEvent
+    │       └── ProcessKillEvent × N (snapshot bg cleanup)
+    ├── CrawlCleanupEvent
+    │   └── ProcessKillEvent × N (crawl bg cleanup)
     └── CrawlCompleted
 
 Event types:
 - **Command events** trigger actions: CrawlEvent, SnapshotEvent, ProcessEvent,
-  ProcessKillEvent, BinaryEvent, MachineEvent
+  ProcessKillEvent, BinaryEvent, MachineEvent, CrawlCleanupEvent,
+  SnapshotCleanupEvent
 - **Completion events** notify results: CrawlCompleted, SnapshotCompleted,
   ProcessCompleted
 
@@ -48,6 +51,17 @@ class CrawlEvent(BaseEvent):
     event_timeout: float = 300.0
 
 
+class CrawlCleanupEvent(BaseEvent):
+    """Command: SIGTERM all background crawl daemons.
+
+    Emitted by CrawlService after all crawl hooks and the snapshot phase
+    complete. Handled by CrawlService.on_CrawlCleanupEvent.
+    """
+    snapshot_id: str
+    output_dir: str
+    event_timeout: float = 30.0
+
+
 class CrawlCompleted(BaseEvent):
     """Informational: emitted after the full CrawlEvent tree completes.
 
@@ -63,13 +77,24 @@ class CrawlCompleted(BaseEvent):
 class SnapshotEvent(BaseEvent):
     """Triggers all on_Snapshot hook handlers (extraction + indexing).
 
-    Emitted by CrawlService._emit_snapshot_event as a child of CrawlEvent,
+    Emitted by CrawlService.on_CrawlEvent as a child of CrawlEvent,
     so the entire snapshot phase sits inside the crawl event tree.
     """
     url: str
     snapshot_id: str
     output_dir: str
     event_timeout: float = 300.0
+
+
+class SnapshotCleanupEvent(BaseEvent):
+    """Command: SIGTERM all background snapshot daemons.
+
+    Emitted by SnapshotService after all snapshot hooks complete.
+    Handled by SnapshotService.on_SnapshotCleanupEvent.
+    """
+    snapshot_id: str
+    output_dir: str
+    event_timeout: float = 30.0
 
 
 class SnapshotCompleted(BaseEvent):

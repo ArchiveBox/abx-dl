@@ -21,7 +21,7 @@ Full event tree for a typical run::
     │   │  ProcessEvent → BinaryEvent → ProcessEvent (puppeteer install)
     │   │      → BinaryEvent(abspath=...) → MachineEvent(CHROME_BINARY=...)
     │   │
-    ├── SnapshotEvent                         ← emitted by CrawlService
+    ├── SnapshotEvent                         ← emitted by CrawlService.on_CrawlEvent
     │   ├── ProcessEvent  (bg: wget download)
     │   ├── ProcessEvent  (bg: chrome_launch)
     │   ├── ProcessEvent  (bg: chrome_tab)
@@ -31,9 +31,11 @@ Full event tree for a typical run::
     │   ├── ProcessEvent  (FG: htmltotext)
     │   ├── ProcessEvent  (FG: trafilatura)
     │   ├── ProcessEvent  (FG: hashes)
-    │   └── ProcessKillEvent × N              ← snapshot bg cleanup
+    │   └── SnapshotCleanupEvent              ← snapshot bg cleanup
+    │       └── ProcessKillEvent × N
     │
-    ├── ProcessKillEvent × N                  ← crawl bg cleanup
+    ├── CrawlCleanupEvent                     ← crawl bg cleanup
+    │   └── ProcessKillEvent × N
     │
     CrawlCompleted                            ← informational, after everything
 

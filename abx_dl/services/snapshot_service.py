@@ -5,7 +5,7 @@ from typing import ClassVar
 
 from bubus import BaseEvent, EventBus
 
-from ..events import ProcessEvent, ProcessKillEvent, SnapshotEvent
+from ..events import ProcessEvent, ProcessKillEvent, SnapshotCleanupEvent, SnapshotEvent
 from ..models import Snapshot
 from ..models import Hook, Plugin
 from .base import HookRunnerService
@@ -36,7 +36,7 @@ class SnapshotService(HookRunnerService):
         │   │
         │   │  ── After all hook handlers return ──
         │   │
-        │   └── _cleanup_bg_hooks                      # SIGTERMs snapshot bg daemons
+        │   └── SnapshotCleanupEvent                   # SIGTERMs snapshot bg daemons
         │       ├── ProcessKillEvent (chrome_launch)
         │       ├── ProcessKillEvent (chrome_tab)
         │       └── ...
@@ -46,8 +46,8 @@ class SnapshotService(HookRunnerService):
     See HookRunnerService for the shared fg/bg execution model and config propagation.
     """
 
-    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [SnapshotEvent]
-    EMITS: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, ProcessKillEvent]
+    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [SnapshotEvent, SnapshotCleanupEvent]
+    EMITS: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, ProcessKillEvent, SnapshotCleanupEvent]
 
     def __init__(
         self,
@@ -66,13 +66,36 @@ class SnapshotService(HookRunnerService):
         self.hooks = hooks
         super().__init__(bus)
         self._register_hook_handlers()
+        self.bus.on(SnapshotCleanupEvent, self.on_SnapshotCleanupEvent)
 
     def _register_hook_handlers(self) -> None:
-        """Register snapshot hook handlers, then cleanup, on SnapshotEvent."""
+        """Register snapshot hook handlers, then cleanup emission, on SnapshotEvent."""
         for plugin, hook in self.hooks:
             handler = self._make_hook_handler(plugin, hook)
             handler.__name__ = hook.name
             handler.__qualname__ = hook.name
             self.bus.on(SnapshotEvent, handler)
 
-        self.bus.on(SnapshotEvent, self._cleanup_bg_hooks)
+        self.bus.on(SnapshotEvent, self._emit_cleanup)
+
+    async def _emit_cleanup(self, event: BaseEvent) -> None:
+        """Emit SnapshotCleanupEvent to SIGTERM all bg snapshot daemons."""
+        await self.bus.emit(SnapshotCleanupEvent(
+            snapshot_id=self.snapshot.id,
+            output_dir=str(self.output_dir),
+        ))
+
+    async def on_SnapshotCleanupEvent(self, event: SnapshotCleanupEvent) -> None:
+        """SIGTERM all background snapshot daemons so they can flush and exit.
+
+        Sends ProcessKillEvent for each bg hook. Hooks that already exited
+        (finite bg hooks) will have no PID file — the kill is a safe no-op.
+        """
+        for plugin, hook in self.hooks:
+            if hook.is_background:
+                plugin_output_dir = self.output_dir / plugin.name
+                await self.bus.emit(ProcessKillEvent(
+                    plugin_name=plugin.name,
+                    hook_name=hook.name,
+                    output_dir=str(plugin_output_dir),
+                ))

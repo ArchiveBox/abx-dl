@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from bubus import BaseEvent, EventBus
 
-from ..events import ProcessEvent, ProcessKillEvent
+from ..events import ProcessEvent
 from ..models import Hook, Plugin, Snapshot
 
 if TYPE_CHECKING:
@@ -67,13 +67,13 @@ class BaseService:
 class HookRunnerService(BaseService):
     """Base class for services that run plugin hooks (CrawlService, SnapshotService).
 
-    Provides shared logic for:
-    - Building and emitting ProcessEvents (fg/bg dispatch)
-    - Cleaning up background hooks via ProcessKillEvent
+    Provides shared logic for building and emitting ProcessEvents (fg/bg dispatch).
+    Cleanup is handled via dedicated cleanup events (CrawlCleanupEvent,
+    SnapshotCleanupEvent) — see each subclass for details.
 
     Unlike plain BaseService, hook runner services skip auto-discovery of ``on_*``
-    methods. Registration order matters (hooks → post-hooks → cleanup), so
-    subclasses control it explicitly via ``_register_hook_handlers()``, using
+    methods. Registration order matters (hooks → post-hooks → cleanup emission),
+    so subclasses control it explicitly via ``_register_hook_handlers()``, using
     explicit event classes (e.g. ``bus.on(CrawlEvent, handler)``).
     """
 
@@ -120,18 +120,3 @@ class HookRunnerService(BaseService):
                 await self.bus.emit(process_event)
 
         return handler
-
-    async def _cleanup_bg_hooks(self, event: BaseEvent) -> None:
-        """SIGTERM all background daemons so they can flush and exit.
-
-        Sends ProcessKillEvent for each bg hook. Hooks that already exited
-        (finite bg hooks) will have no PID file — the kill is a safe no-op.
-        """
-        for plugin, hook in self.hooks:
-            if hook.is_background:
-                plugin_output_dir = self.output_dir / plugin.name
-                await self.bus.emit(ProcessKillEvent(
-                    plugin_name=plugin.name,
-                    hook_name=hook.name,
-                    output_dir=str(plugin_output_dir),
-                ))

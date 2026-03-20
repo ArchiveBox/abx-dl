@@ -5,7 +5,7 @@ from typing import ClassVar
 
 from bubus import BaseEvent, EventBus
 
-from ..events import CrawlEvent, ProcessEvent, ProcessKillEvent, SnapshotEvent
+from ..events import CrawlCleanupEvent, CrawlEvent, ProcessEvent, ProcessKillEvent, SnapshotEvent
 from ..models import Snapshot
 from ..models import INSTALL_URL, Hook, Plugin
 from .base import HookRunnerService
@@ -32,7 +32,7 @@ class CrawlService(HookRunnerService):
         ├── on_CrawlEvent                            # FG: emits SnapshotEvent (blocks)
         │   └── SnapshotEvent (full snapshot phase runs here)
         │
-        └── _cleanup_bg_hooks                      # FG: SIGTERMs all bg crawl daemons
+        └── CrawlCleanupEvent                     # FG: SIGTERMs all bg crawl daemons
             ├── ProcessKillEvent (chrome_launch)
             ├── ProcessKillEvent (wget_install)
             └── ...
@@ -40,8 +40,8 @@ class CrawlService(HookRunnerService):
     See HookRunnerService for the shared fg/bg execution model and config propagation.
     """
 
-    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [CrawlEvent]
-    EMITS: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, ProcessKillEvent, SnapshotEvent]
+    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [CrawlEvent, CrawlCleanupEvent]
+    EMITS: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, ProcessKillEvent, SnapshotEvent, CrawlCleanupEvent]
 
     def __init__(
         self,
@@ -66,11 +66,12 @@ class CrawlService(HookRunnerService):
         self.crawl_only = crawl_only or (url == INSTALL_URL)
         super().__init__(bus)
         self._register_hook_handlers()
+        self.bus.on(CrawlCleanupEvent, self.on_CrawlCleanupEvent)
 
     def _register_hook_handlers(self) -> None:
         """Register crawl hook handlers, then snapshot emission, then cleanup.
 
-        Order: per-hook handlers → on_CrawlEvent (snapshot phase) → cleanup.
+        Order: per-hook handlers → on_CrawlEvent (snapshot phase) → cleanup emission.
         """
         for plugin, hook in self.hooks:
             handler = self._make_hook_handler(plugin, hook)
@@ -79,7 +80,7 @@ class CrawlService(HookRunnerService):
             self.bus.on(CrawlEvent, handler)
 
         self.bus.on(CrawlEvent, self.on_CrawlEvent)
-        self.bus.on(CrawlEvent, self._cleanup_bg_hooks)
+        self.bus.on(CrawlEvent, self._emit_cleanup)
 
     async def on_CrawlEvent(self, event: BaseEvent) -> None:
         """Start the snapshot extraction phase after all crawl hooks complete.
@@ -96,3 +97,25 @@ class CrawlService(HookRunnerService):
             snapshot_id=self.snapshot.id,
             output_dir=str(self.output_dir),
         ))
+
+    async def _emit_cleanup(self, event: BaseEvent) -> None:
+        """Emit CrawlCleanupEvent to SIGTERM all bg crawl daemons."""
+        await self.bus.emit(CrawlCleanupEvent(
+            snapshot_id=self.snapshot.id,
+            output_dir=str(self.output_dir),
+        ))
+
+    async def on_CrawlCleanupEvent(self, event: CrawlCleanupEvent) -> None:
+        """SIGTERM all background crawl daemons so they can flush and exit.
+
+        Sends ProcessKillEvent for each bg hook. Hooks that already exited
+        (finite bg hooks) will have no PID file — the kill is a safe no-op.
+        """
+        for plugin, hook in self.hooks:
+            if hook.is_background:
+                plugin_output_dir = self.output_dir / plugin.name
+                await self.bus.emit(ProcessKillEvent(
+                    plugin_name=plugin.name,
+                    hook_name=hook.name,
+                    output_dir=str(plugin_output_dir),
+                ))
