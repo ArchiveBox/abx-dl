@@ -8,8 +8,8 @@ from typing import Callable, ClassVar
 
 from bubus import BaseEvent, EventBus
 
-from ..events import ArchiveResultEvent, ProcessCompletedEvent, ProcessEvent, ProcessKillEvent, ProcessRecordOutputtedEvent
-from ..models import ArchiveResult, Process, write_jsonl, now_iso
+from ..events import ProcessCompletedEvent, ProcessEvent, ProcessKillEvent, ProcessRecordOutputtedEvent
+from ..models import Process, write_jsonl, now_iso
 from ..process_utils import write_pid_file_with_mtime, write_cmd_file, graceful_kill_process, graceful_kill_by_pid_file
 from .base import BaseService
 
@@ -37,22 +37,24 @@ class ProcessService(BaseService):
         │   - Lines starting with '{' are parsed as JSON
         │   - Any JSON with a "type" field → ProcessRecordOutputtedEvent
         │     (each service handles its own types via on_ProcessRecordOutputtedEvent)
-        │   - ArchiveResult records also capture status/output_str for finalization
         │   - Non-JSON lines are logged but not parsed
         │
         ├── Wait for process exit (with timeout)
         │   - On timeout: SIGTERM → wait 2s → SIGKILL
         │
         └── Finalize:
-            - Write Process + ArchiveResult to index.jsonl
-            - Emit ProcessCompletedEvent event
-            - Emit ArchiveResultEvent(final=True)
+            - Write Process record to index.jsonl
+            - Emit ProcessCompletedEvent (raw process info)
             - Call on_process() callback for Process record
 
     Realtime event emission is critical: ProcessRecordOutputtedEvent is emitted
     with ``await self.bus.emit()`` (queue-jump), so the entire handler chain
     (e.g. BinaryEvent → provider install → MachineEvent) completes before the
     next stdout line is read.
+
+    ArchiveResult construction is handled entirely by ArchiveResultService,
+    which listens for ProcessCompletedEvent and enriches inline ArchiveResult
+    records with process metadata.
 
     State:
     - No mutable state beyond constructor args. Each ProcessEvent is handled
@@ -68,15 +70,15 @@ class ProcessService(BaseService):
     - ProcessRecordOutputtedEvent is emitted with ``await``, making it a
       synchronous child. The typed event emitted by the handling service
       (and its entire chain) completes before the next line is processed.
-    - ProcessCompletedEvent and final ArchiveResultEvent are also emitted with
-      ``await`` as informational children.
+    - ProcessCompletedEvent is emitted with ``await`` as an informational child.
+      ArchiveResultService handles it to build the final ArchiveResult.
     - Background hooks use ``start_new_session=True`` so SIGTERM to the parent
       process group doesn't accidentally kill them.
     """
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, ProcessKillEvent]
     EMITS: ClassVar[list[type[BaseEvent]]] = [
-        ProcessRecordOutputtedEvent, ProcessCompletedEvent, ArchiveResultEvent,
+        ProcessRecordOutputtedEvent, ProcessCompletedEvent,
     ]
 
     def __init__(
@@ -130,8 +132,6 @@ class ProcessService(BaseService):
             write_pid_file_with_mtime(pid_file, process.pid, time.time())
 
             stdout_lines: list[str] = []
-            status = 'succeeded'
-            output_str = ''
 
             async def _stream_stdout() -> None:
                 """Read stdout line-by-line, routing typed JSONL to the bus.
@@ -139,11 +139,7 @@ class ProcessService(BaseService):
                 JSON lines with a "type" field are emitted as
                 ProcessRecordOutputtedEvent. Each service handles its own
                 record types (Binary, Machine, Snapshot, ArchiveResult, etc.).
-
-                ArchiveResult records also capture status/output_str locally
-                for use in the finalization phase.
                 """
-                nonlocal status, output_str
                 assert process.stdout is not None
                 with open(stdout_file, 'w') as out_fh:
                     async for raw_line in process.stdout:
@@ -165,11 +161,6 @@ class ProcessService(BaseService):
                         record_type = record.pop('type', '')
                         if not record_type:
                             continue
-
-                        # Capture ArchiveResult status/output_str for finalization
-                        if record_type == 'ArchiveResult':
-                            status = record.get('status', status)
-                            output_str = record.get('output_str', '')
 
                         # Route to services — await = queue-jump: the entire
                         # handler chain (e.g. BinaryEvent → provider install)
@@ -206,30 +197,20 @@ class ProcessService(BaseService):
             proc.exit_code = -1
             proc.stderr = f'{type(e).__name__}: {e}'
             proc.ended_at = now_iso()
-            ar = ArchiveResult(
-                snapshot_id=event.snapshot_id, plugin=event.plugin_name,
-                hook_name=event.hook_name, status='failed',
-                process_id=proc.id, error=proc.stderr,
-            )
             write_jsonl(self.index_path, proc, also_print=self.emit_jsonl)
-            write_jsonl(self.index_path, ar, also_print=self.emit_jsonl)
             await self.bus.emit(ProcessCompletedEvent(
                 plugin_name=event.plugin_name, hook_name=event.hook_name,
                 stdout='', stderr=proc.stderr, exit_code=-1,
-                output_dir=event.output_dir, status='failed',
+                output_dir=event.output_dir, output_files=[],
                 is_background=event.is_background,
-            ))
-            await self.bus.emit(ArchiveResultEvent(
-                snapshot_id=ar.snapshot_id, plugin=ar.plugin, id=ar.id,
-                hook_name=ar.hook_name, status=ar.status,
-                process_id=ar.process_id or '', error=ar.error or '',
-                final=True,
+                process_id=proc.id, snapshot_id=event.snapshot_id,
+                start_ts=proc.started_at or '', end_ts=proc.ended_at or '',
             ))
             if self.on_process:
                 self.on_process(proc)
             return
 
-        # ── Finalize: build ArchiveResult from process output ──
+        # ── Finalize: emit process completion ──
 
         stdout = ''.join(stdout_lines)
         stderr = stderr_file.read_text() if stderr_file.exists() else ''
@@ -237,7 +218,6 @@ class ProcessService(BaseService):
         if timed_out:
             returncode = -1
             stderr = f'Hook timed out after {event.timeout} seconds'
-            status = 'failed'
 
         proc.exit_code = returncode
         proc.stdout = stdout
@@ -253,42 +233,21 @@ class ProcessService(BaseService):
         excluded_suffixes = ('.stdout.log', '.stderr.log', '.pid', '.sh')
         new_files = [f for f in new_files if not any(f.endswith(s) for s in excluded_suffixes)]
 
-        if returncode != 0:
-            status = 'failed'
-
-        output_str = _normalize_output_str(output_str, plugin_output_dir, new_files)
-
         # Clean up log files on success (keep them on failure for debugging)
         if returncode == 0:
             stdout_file.unlink(missing_ok=True)
             stderr_file.unlink(missing_ok=True)
             pid_file.unlink(missing_ok=True)
 
-        ar = ArchiveResult(
-            snapshot_id=event.snapshot_id, plugin=event.plugin_name,
-            hook_name=event.hook_name, status=status, process_id=proc.id,
-            output_str=output_str, output_files=new_files,
-            start_ts=proc.started_at, end_ts=proc.ended_at,
-            error=stderr if returncode != 0 else None,
-        )
-
         write_jsonl(self.index_path, proc, also_print=self.emit_jsonl)
-        write_jsonl(self.index_path, ar, also_print=self.emit_jsonl)
 
         await self.bus.emit(ProcessCompletedEvent(
             plugin_name=event.plugin_name, hook_name=event.hook_name,
             stdout=stdout, stderr=stderr, exit_code=returncode,
             output_dir=event.output_dir, output_files=new_files,
-            output_str=output_str, status=status,
             is_background=event.is_background,
-        ))
-        await self.bus.emit(ArchiveResultEvent(
-            snapshot_id=ar.snapshot_id, plugin=ar.plugin, id=ar.id,
-            hook_name=ar.hook_name, status=ar.status,
-            process_id=ar.process_id or '', output_str=ar.output_str,
-            output_files=ar.output_files, start_ts=ar.start_ts or '',
-            end_ts=ar.end_ts or '', error=ar.error or '',
-            final=True,
+            process_id=proc.id, snapshot_id=event.snapshot_id,
+            start_ts=proc.started_at or '', end_ts=proc.ended_at or '',
         ))
         if self.on_process:
             self.on_process(proc)
@@ -307,30 +266,3 @@ class ProcessService(BaseService):
         pid_file = output_dir / f'{event.hook_name}.pid'
         cmd_file = output_dir / f'{event.hook_name}.sh'
         await graceful_kill_by_pid_file(pid_file, cmd_file)
-
-
-# ── Pure helpers ────────────────────────────────────────────────────────────
-
-def _normalize_output_str(output_str: str, output_dir: Path, output_files: list[str]) -> str:
-    """Convert absolute paths in output_str to relative paths within output_dir.
-
-    Hooks sometimes report their output as an absolute path. This normalizes it
-    to a relative path so the output_str is portable and matches output_files.
-    """
-    text = output_str.strip()
-    if not text:
-        return ''
-    try:
-        output_path = Path(text)
-    except Exception:
-        return text
-    if not output_path.is_absolute():
-        return text
-    try:
-        rel_path = output_path.relative_to(output_dir)
-    except ValueError:
-        return text
-    rel_text = str(rel_path)
-    if rel_text in ('', '.'):
-        return output_files[0] if output_files else ''
-    return rel_text

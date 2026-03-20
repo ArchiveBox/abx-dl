@@ -12,8 +12,8 @@ Events form a hierarchy during execution::
     │   │   │   ├── MachineEvent (via MachineService)
     │   │   │   ├── SnapshotEvent (via SnapshotService, depth>1)
     │   │   │   └── ArchiveResultEvent (via ArchiveResultService, inline)
-    │   │   ├── ProcessCompletedEvent
-    │   │   └── ArchiveResultEvent (final=True, replaces callback)
+    │   │   └── ProcessCompletedEvent
+    │   │       └── ArchiveResultEvent (enriched with process metadata)
     │   └── ...
     ├── CrawlStartEvent                    # triggers snapshot phase
     │   └── SnapshotEvent (depth=1)
@@ -21,8 +21,8 @@ Events form a hierarchy during execution::
     │       │   ├── ProcessRecordOutputtedEvent
     │       │   │   ├── SnapshotEvent (depth>1, ignored by abx-dl)
     │       │   │   └── ArchiveResultEvent (inline)
-    │       │   ├── ProcessCompletedEvent
-    │       │   └── ArchiveResultEvent (final=True)
+    │       │   └── ProcessCompletedEvent
+    │       │       └── ArchiveResultEvent (enriched)
     │       ├── SnapshotCleanupEvent
     │       │   └── ProcessKillEvent × N
     │       └── SnapshotCompletedEvent
@@ -201,8 +201,9 @@ class ProcessCompletedEvent(BaseEvent):
     """Notification: a hook subprocess finished.
 
     Emitted by ProcessService after the subprocess exits (or times out).
-    Carries the full result context. Currently no handlers listen for this
-    event — it exists for observability and future use (e.g. progress tracking).
+    Carries raw process-level data only — no interpretation of status or
+    output. ArchiveResultService listens for this to build ArchiveResult
+    records enriched with process metadata.
     """
     plugin_name: str
     hook_name: str
@@ -211,9 +212,11 @@ class ProcessCompletedEvent(BaseEvent):
     exit_code: int
     output_dir: str
     output_files: list[str] = []
-    output_str: str = ''
-    status: str = ''         # 'succeeded', 'failed', 'skipped', 'noresults'
     is_background: bool = False
+    process_id: str = ''
+    snapshot_id: str = ''
+    start_ts: str = ''
+    end_ts: str = ''
     event_timeout: float = 60.0
 
 
@@ -324,18 +327,19 @@ class MachineEvent(BaseEvent):
 # ── ArchiveResult notification ────────────────────────────────────────────
 
 class ArchiveResultEvent(BaseEvent):
-    """Informational: an ArchiveResult was produced by a hook.
+    """An ArchiveResult was produced by a hook.
 
-    Emitted in two contexts:
+    Emitted by ArchiveResultService in two contexts:
 
-    1. **Inline from stdout** (``final=False``): ArchiveResultService emits this
-       when a hook outputs ``{"type": "ArchiveResult", ...}`` JSONL during
-       execution (via ProcessRecordOutputtedEvent routing). Each line represents
-       an individual extracted result. Consumed by ArchiveBox to write DB rows.
+    1. **Inline from stdout**: when a hook outputs ``{"type": "ArchiveResult", ...}``
+       JSONL during execution (via ProcessRecordOutputtedEvent routing). These
+       have partial fields (status, output_str from the hook) but no process
+       metadata. Consumed by ArchiveBox to write DB rows for each extracted result.
 
-    2. **Process completion** (``final=True``): ProcessService emits this after
-       a hook subprocess finishes, with all fields populated from the final
-       ArchiveResult record. This replaces the callback-based emit_result flow.
+    2. **Process completion**: when ProcessCompletedEvent arrives, the inline
+       record is enriched with process metadata (process_id, output_files,
+       start_ts, end_ts, error). The orchestrator collects these (identified
+       by ``process_id`` being set).
 
     Fields match the ArchiveResult model.
     """
@@ -350,5 +354,4 @@ class ArchiveResultEvent(BaseEvent):
     start_ts: str = ''
     end_ts: str = ''
     error: str = ''
-    final: bool = False
     event_timeout: float = 10.0

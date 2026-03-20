@@ -647,16 +647,15 @@ def test_binary_loaded_vs_installed_events(tmp_path: Path, monkeypatch) -> None:
     )
 
 
-def test_archive_result_events_final_vs_informational(tmp_path: Path, monkeypatch) -> None:
-    """Verify ArchiveResultEvent(final=True) emitted at completion, not inline.
+def test_archive_result_events_inline_vs_enriched(tmp_path: Path, monkeypatch) -> None:
+    """Verify inline ArchiveResultEvent (no process_id) and enriched (with process_id).
 
-    A hook outputs an inline ArchiveResult (informational, final=False) during
-    execution. After the process completes, a final ArchiveResultEvent
-    (final=True) is emitted with full fields. The orchestrator only collects
-    the final one into the results list.
+    A hook outputs an inline ArchiveResult during execution. After the process
+    completes, ArchiveResultService emits an enriched ArchiveResultEvent with
+    process metadata. The orchestrator only collects the enriched one.
     """
     plugins_root = tmp_path / 'plugins'
-    ar_events: list[tuple[bool, str, str]] = []
+    ar_events: list[tuple[str, str, str]] = []  # (process_id, hook_name, status)
 
     _orig_init = EventBus.__init__
 
@@ -664,7 +663,7 @@ def test_archive_result_events_final_vs_informational(tmp_path: Path, monkeypatc
         _orig_init(self, *a, **kw)
 
         async def on_ar(e: ArchiveResultEvent) -> None:
-            ar_events.append((e.final, e.hook_name, e.status))
+            ar_events.append((e.process_id, e.hook_name, e.status))
 
         self.on(ArchiveResultEvent, on_ar)
 
@@ -686,21 +685,21 @@ def test_archive_result_events_final_vs_informational(tmp_path: Path, monkeypatc
     results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
 
     # Should have at least 2 ArchiveResultEvents for this hook:
-    # 1 inline (final=False), 1 at completion (final=True)
+    # 1 inline (no process_id), 1 enriched (with process_id)
     demo_events = [e for e in ar_events if e[1] == 'on_Snapshot__10_emit']
     inline = [e for e in demo_events if not e[0]]
-    final = [e for e in demo_events if e[0]]
+    enriched = [e for e in demo_events if e[0]]
 
     assert len(inline) >= 1, (
         f'Expected at least 1 inline ArchiveResultEvent, got {len(inline)}'
     )
-    assert len(final) == 1, (
-        f'Expected exactly 1 final ArchiveResultEvent, got {len(final)}: {final}'
+    assert len(enriched) == 1, (
+        f'Expected exactly 1 enriched ArchiveResultEvent, got {len(enriched)}: {enriched}'
     )
-    assert final[0][2] == 'succeeded'
+    assert enriched[0][2] == 'succeeded'
 
-    # Only the final event should produce results in the return list
+    # Only the enriched event should produce results in the return list
     demo_results = [r for r in results if isinstance(r, ArchiveResult) and r.hook_name == 'on_Snapshot__10_emit']
     assert len(demo_results) == 1, (
-        f'Expected 1 ArchiveResult in results list (from final event only), got {len(demo_results)}'
+        f'Expected 1 ArchiveResult in results list (from enriched event only), got {len(demo_results)}'
     )

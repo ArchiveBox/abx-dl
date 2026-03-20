@@ -18,10 +18,9 @@ Full event tree for a typical run::
     │   │   │   │  (side-effect chain from chrome_install):
     │   │   │   │  BinaryEvent → provider hooks → BinaryInstalledEvent
     │   │   │   │      → BinaryEvent(abspath) → MachineEvent → BinaryLoadedEvent
-    │   │   │   └── ArchiveResultEvent (inline, final=False)
-    │   │   ├── ProcessCompletedEvent
-    │   │   ├── ArchiveResultEvent (final=True → collected by orchestrator)
-    │   │   └── ...
+    │   │   │   └── ArchiveResultEvent (inline, via ArchiveResultService)
+    │   │   └── ProcessCompletedEvent
+    │   │       └── ArchiveResultEvent (enriched with process metadata)
     │   └── ...
     │
     ├── CrawlStartEvent                # triggers snapshot phase
@@ -29,9 +28,9 @@ Full event tree for a typical run::
     │       ├── ProcessEvent  (on_Snapshot hooks)
     │       │   ├── ProcessRecordOutputtedEvent
     │       │   │   ├── SnapshotEvent (depth>1, ignored by abx-dl)
-    │       │   │   └── ArchiveResultEvent (inline, final=False)
-    │       │   ├── ProcessCompletedEvent
-    │       │   └── ArchiveResultEvent (final=True → collected)
+    │       │   │   └── ArchiveResultEvent (inline)
+    │       │   └── ProcessCompletedEvent
+    │       │       └── ArchiveResultEvent (enriched)
     │       ├── SnapshotCleanupEvent
     │       │   └── ProcessKillEvent × N
     │       └── SnapshotCompletedEvent
@@ -42,13 +41,11 @@ Full event tree for a typical run::
     └── CrawlCompletedEvent                     # informational
 
 Result collection:
-- ArchiveResult records flow through the bus via ArchiveResultEvent(final=True).
-  The orchestrator registers a handler that constructs ArchiveResult models
-  from final events and appends them to the results list.
+- ArchiveResultService emits ArchiveResultEvent in two contexts: inline
+  (from hook stdout, no process_id) and enriched (on ProcessCompletedEvent,
+  with process_id set). The orchestrator collects the enriched ones.
 - Process records flow through the on_process callback from ProcessService
   to the on_result callback (for TUI display).
-- Inline ArchiveResultEvents (final=False) are informational — consumed by
-  ArchiveBox to write DB rows but ignored by the orchestrator's collector.
 
 Key bubus concepts used:
 
@@ -104,7 +101,7 @@ async def download(
     This is the only public function in the orchestrator. It:
     1. Discovers and sorts hooks from selected plugins
     2. Creates the EventBus and wires up all services
-    3. Registers a bus handler for ArchiveResultEvent(final=True) to collect results
+    3. Registers a bus handler for enriched ArchiveResultEvents to collect results
     4. Emits CrawlEvent (which cascades through the entire lifecycle)
     5. Returns all ArchiveResult records collected from ArchiveResultEvents
 
@@ -165,8 +162,13 @@ async def download(
             on_result(proc)
 
     async def _on_archive_result_event(event: ArchiveResultEvent) -> None:
-        """Bus handler for ArchiveResultEvent — collects final results."""
-        if not event.final:
+        """Bus handler for ArchiveResultEvent — collects enriched results.
+
+        Only collects events with process_id set (enriched by
+        ArchiveResultService on ProcessCompletedEvent). Inline events
+        (no process_id) are informational only.
+        """
+        if not event.process_id:
             return
         ar = ArchiveResult(
             snapshot_id=event.snapshot_id, plugin=event.plugin,
@@ -216,8 +218,8 @@ async def download(
         bus, index_path=index_path, output_dir=output_dir, emit_jsonl=emit_jsonl,
         stderr_is_tty=stderr_is_tty, on_process=on_process,
     )
-    ArchiveResultService(bus)
-    # Collect final ArchiveResult records from the bus
+    ArchiveResultService(bus, index_path=index_path, emit_jsonl=emit_jsonl)
+    # Collect enriched ArchiveResult records from the bus
     bus.on(ArchiveResultEvent, _on_archive_result_event)
     CrawlService(
         bus, url=url, snapshot=snapshot, output_dir=output_dir,
