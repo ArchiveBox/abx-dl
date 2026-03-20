@@ -17,7 +17,6 @@ Full event tree for a typical run::
     │   │   ├── ProcessStdoutEvent
     │   │   │   │  (side-effect chain from chrome_install):
     │   │   │   │  BinaryEvent → provider hooks → BinaryInstalledEvent
-    │   │   │   │      → BinaryEvent(abspath) → MachineEvent → BinaryLoadedEvent
     │   │   └── ProcessCompletedEvent
     │   └── ...
     │

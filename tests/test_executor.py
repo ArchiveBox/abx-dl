@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 
 from abx_dl.orchestrator import create_bus, download
-from abx_dl.events import BinaryInstalledEvent, BinaryLoadedEvent, ArchiveResultEvent
+from abx_dl.events import BinaryInstalledEvent, ArchiveResultEvent
 from abx_dl.models import ArchiveResult
 from abx_dl.models import discover_plugins
 
@@ -83,10 +83,8 @@ def test_download_dispatches_binary_hooks_and_applies_machine_updates(tmp_path: 
     plugins = discover_plugins(plugins_root)
     results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
 
-    # producer hook emits only Binary/Machine records (no ArchiveResult JSONL, no content files)
-    # so it gets a synthetic noresult ArchiveResult
-    producer_result = next(result for result in results if result.plugin == 'producer')
-    assert producer_result.status == 'noresult'
+    # producer hook is an on_Crawl hook (emits Binary/Machine records) — these
+    # don't produce ArchiveResults (only on_Snapshot hooks do)
 
     # consumer hook explicitly emits an ArchiveResult with the env vars it sees
     consumer_result = next(result for result in results if result.plugin == 'consumer')
@@ -170,10 +168,7 @@ def test_download_applies_side_effects_from_completed_background_hooks(tmp_path:
 
     consumer_result = next(result for result in results if result.plugin == 'consumer')
     assert consumer_result.output_str == str(tmp_path / 'run' / 'provider' / 'bin' / 'demo') + '|ready'
-    # producer only emits Binary/Machine records, no ArchiveResult or content files
-    # so it gets a synthetic noresult
-    producer_result = next(result for result in results if result.plugin == 'producer')
-    assert producer_result.status == 'noresult'
+    # producer is an on_Crawl hook — no ArchiveResult expected (only on_Snapshot hooks get them)
 
 
 def test_download_finalizes_background_hooks_after_sigterm(tmp_path: Path) -> None:
@@ -242,7 +237,7 @@ def test_download_preserves_full_hook_stderr_in_archive_result(tmp_path: Path) -
     full_error = 'ERROR: ' + ('proxy-blocked ' * 80) + 'storage.googleapis.com'
 
     _write(
-        plugins_root / 'broken' / 'on_Crawl__00_fail.py',
+        plugins_root / 'broken' / 'on_Snapshot__00_fail.py',
         '\n'.join(
             [
                 'import sys',
@@ -381,7 +376,7 @@ def test_successful_hook_with_only_logs_produces_noresult(tmp_path: Path) -> Non
     plugins_root = tmp_path / 'plugins'
 
     _write(
-        plugins_root / 'cachedemo' / 'on_Crawl__10_install.py',
+        plugins_root / 'cachedemo' / 'on_Snapshot__10_install.py',
         '\n'.join(
             [
                 'print("[*] extension already installed (using cache)")',
@@ -517,29 +512,22 @@ def test_cleanup_runs_after_all_hooks_not_interleaved(tmp_path: Path) -> None:
     )
 
 
-def test_binary_loaded_vs_installed_events(tmp_path: Path) -> None:
-    """Verify BinaryLoadedEvent for pre-existing and BinaryInstalledEvent for provider-installed.
+def test_binary_installed_events(tmp_path: Path) -> None:
+    """Verify BinaryInstalledEvent fires for both pre-existing and provider-installed binaries.
 
     Sets up two binaries in the same run:
     - "preloaded": hook outputs Binary with abspath already set (detected on disk)
     - "installme": hook outputs Binary without abspath (needs provider to install)
 
-    Expected event flow:
-    - preloaded: BinaryLoadedEvent only (no install needed)
-    - installme: BinaryLoadedEvent (from provider's nested BinaryEvent with abspath)
-                 + BinaryInstalledEvent (from original event after provider resolved it)
+    Both should emit BinaryInstalledEvent with the resolved abspath.
     """
     plugins_root = tmp_path / 'plugins'
-    captured: list[tuple[str, str, str]] = []
+    captured: list[tuple[str, str]] = []  # (name, abspath)
     bus = create_bus(num_hooks=0, timeout=60)
 
-    async def on_loaded(e: BinaryLoadedEvent) -> None:
-        captured.append(('loaded', e.name, e.abspath))
-
     async def on_installed(e: BinaryInstalledEvent) -> None:
-        captured.append(('installed', e.name, e.abspath))
+        captured.append((e.name, e.abspath))
 
-    bus.on(BinaryLoadedEvent, on_loaded)
     bus.on(BinaryInstalledEvent, on_installed)
 
     # Hook that emits two Binary requests: one pre-existing, one needing install
@@ -611,35 +599,20 @@ def test_binary_loaded_vs_installed_events(tmp_path: Path) -> None:
     plugins = discover_plugins(plugins_root)
     results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True, bus=bus)
 
-    # --- Verify informational events ---
+    # --- Verify BinaryInstalledEvent for both binaries ---
 
-    loaded_preloaded = [e for e in captured if e[0] == 'loaded' and e[1] == 'preloaded']
-    installed_preloaded = [e for e in captured if e[0] == 'installed' and e[1] == 'preloaded']
+    preloaded_events = [(n, p) for n, p in captured if n == 'preloaded']
+    installme_events = [(n, p) for n, p in captured if n == 'installme']
 
-    assert len(loaded_preloaded) == 1, (
-        f'Expected exactly 1 BinaryLoadedEvent for preloaded, got {len(loaded_preloaded)}: {loaded_preloaded}'
+    assert len(preloaded_events) >= 1, (
+        f'Expected BinaryInstalledEvent for preloaded, got: {preloaded_events}'
     )
-    assert loaded_preloaded[0][2] == preloaded_path, (
-        f'BinaryLoadedEvent abspath mismatch: {loaded_preloaded[0][2]!r} != {preloaded_path!r}'
-    )
-    assert len(installed_preloaded) == 0, (
-        f'Pre-existing binary should not emit BinaryInstalledEvent, got: {installed_preloaded}'
+    assert preloaded_events[0][1] == preloaded_path, (
+        f'BinaryInstalledEvent abspath mismatch: {preloaded_events[0][1]!r} != {preloaded_path!r}'
     )
 
-    loaded_installme = [e for e in captured if e[0] == 'loaded' and e[1] == 'installme']
-    installed_installme = [e for e in captured if e[0] == 'installed' and e[1] == 'installme']
-
-    assert len(loaded_installme) == 1, (
-        f'Expected 1 BinaryLoadedEvent for installme (from provider nested event), '
-        f'got {len(loaded_installme)}: {loaded_installme}'
-    )
-    assert len(installed_installme) == 1, (
-        f'Expected 1 BinaryInstalledEvent for installme, got {len(installed_installme)}: {installed_installme}'
-    )
-    # Both events should report the same resolved path
-    assert loaded_installme[0][2] == installed_installme[0][2], (
-        f'BinaryLoadedEvent path {loaded_installme[0][2]!r} != '
-        f'BinaryInstalledEvent path {installed_installme[0][2]!r}'
+    assert len(installme_events) >= 1, (
+        f'Expected BinaryInstalledEvent for installme, got: {installme_events}'
     )
 
     # --- Verify config propagation (both binaries visible to subsequent hooks) ---

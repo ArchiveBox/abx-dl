@@ -7,8 +7,7 @@ Events form a hierarchy during execution::
     │   ├── ProcessEvent (on_Crawl hooks)
     │   │   ├── ProcessStdoutEvent                   # for each stdout line
     │   │   │   ├── BinaryEvent (via BinaryService)
-    │   │   │   │   ├── BinaryLoadedEvent (already installed)
-    │   │   │   │   └── ProcessEvent (provider install) → BinaryInstalledEvent
+    │   │   │   │   └── ProcessEvent (provider hook) → BinaryInstalledEvent
     │   │   │   └── MachineEvent (via MachineService)
     │   │   └── ProcessCompletedEvent
     │   └── ...
@@ -19,7 +18,7 @@ Events form a hierarchy during execution::
     │       │   │   ├── SnapshotEvent (depth>1, ignored by abx-dl)
     │       │   │   └── ArchiveResultEvent (inline)
     │       │   └── ProcessCompletedEvent
-    │       │       └── ArchiveResultEvent (enriched)
+    │       │       └── ArchiveResultEvent (synthetic, on_Snapshot only)
     │       ├── SnapshotCleanupEvent
     │       │   └── ProcessKillEvent × N
     │       └── SnapshotCompletedEvent
@@ -36,7 +35,7 @@ Event types:
 - **Command events** trigger actions: ProcessEvent, ProcessKillEvent,
   BinaryEvent, MachineEvent
 - **Completion events** notify results: ProcessCompletedEvent,
-  ArchiveResultEvent, BinaryLoadedEvent, BinaryInstalledEvent
+  ArchiveResultEvent, BinaryInstalledEvent
 
 bubus behavior:
 - Each event has ``event_timeout`` — the hard deadline for the event and all its
@@ -270,27 +269,12 @@ class BinaryEvent(BaseEvent):
     event_timeout: float | None =300.0
 
 
-class BinaryLoadedEvent(BaseEvent):
-    """Informational: a binary was already installed and its path was registered.
-
-    Emitted by BinaryService.on_BinaryEvent when BinaryEvent arrives with
-    ``abspath`` already set (hook detected binary at a known path).
-    """
-    name: str
-    abspath: str
-    version: str = ''
-    sha256: str = ''
-    binprovider: str = ''
-    binary_id: str = ''
-    machine_id: str = ''
-    event_timeout: float | None =10.0
-
-
 class BinaryInstalledEvent(BaseEvent):
-    """Informational: a binary was installed by a provider hook.
+    """Informational: a binary was resolved (discovered or installed).
 
-    Emitted by BinaryService after a provider hook successfully installs a
-    binary (its env key appears in ``shared_config`` after the hook runs).
+    Emitted by BinaryService.on_BinaryEvent after binary resolution completes,
+    whether the binary was already present (discovered by env provider) or
+    freshly installed by another provider (apt, pip, npm, etc.).
     """
     name: str
     abspath: str

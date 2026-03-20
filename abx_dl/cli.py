@@ -17,7 +17,7 @@ from rich.table import Table
 
 from .config import get_config, set_config, CONFIG_FILE
 from .dependencies import load_binary
-from .events import ArchiveResultEvent, BinaryInstalledEvent, BinaryLoadedEvent, ProcessCompletedEvent
+from .events import ArchiveResultEvent, BinaryInstalledEvent, ProcessCompletedEvent
 from .orchestrator import create_bus, download
 from .models import ArchiveResult, Process
 from .models import INSTALL_URL, discover_plugins, filter_plugins
@@ -418,12 +418,6 @@ def _run_plugin_install(selected) -> int:
     failed_hooks: dict[tuple[str, str], Process] = {}  # hooks that failed
     bus = create_bus(num_hooks=0, timeout=300)
 
-    async def on_BinaryLoadedEvent(event: BinaryLoadedEvent) -> None:
-        binaries[event.name] = _BinaryRecord(
-            name=event.name, abspath=event.abspath, version=event.version,
-            plugin=event.binprovider or '-', hook_name='-', status='loaded',
-        )
-
     async def on_BinaryInstalledEvent(event: BinaryInstalledEvent) -> None:
         binaries[event.name] = _BinaryRecord(
             name=event.name, abspath=event.abspath, version=event.version,
@@ -440,7 +434,6 @@ def _run_plugin_install(selected) -> int:
         if event.exit_code not in (None, 0):
             failed_hooks[key] = proc
 
-    bus.on(BinaryLoadedEvent, on_BinaryLoadedEvent)
     bus.on(BinaryInstalledEvent, on_BinaryInstalledEvent)
     bus.on(ProcessCompletedEvent, on_ProcessCompletedEvent)
 

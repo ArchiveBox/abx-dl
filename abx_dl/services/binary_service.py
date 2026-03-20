@@ -6,7 +6,7 @@ from typing import ClassVar
 
 from bubus import BaseEvent, EventBus
 
-from ..events import BinaryEvent, BinaryInstalledEvent, BinaryLoadedEvent, MachineEvent, ProcessEvent, ProcessStdoutEvent
+from ..events import BinaryEvent, BinaryInstalledEvent, MachineEvent, ProcessEvent, ProcessStdoutEvent
 from ..models import Hook, Plugin
 from .base import BaseService
 from .machine_service import MachineService
@@ -37,14 +37,12 @@ class BinaryService(BaseService):
         on_Binary__12_brew_...  — provider hook handler
         on_Binary__13_apt_...   — provider hook handler
         ...
-        on_BinaryEvent          — runs last: emits BinaryLoadedEvent or
-                                  BinaryInstalledEvent depending on outcome
+        on_BinaryEvent          — runs last: emits BinaryInstalledEvent
 
     Provider hooks skip early if the binary is already resolved (abspath set on
     the event, or env key already in shared_config from a prior provider).
-    on_BinaryEvent runs last and branches:
-    - abspath set → register path via MachineEvent + emit BinaryLoadedEvent
-    - no abspath but config resolved → emit BinaryInstalledEvent
+    on_BinaryEvent runs last and emits BinaryInstalledEvent with the resolved
+    path (whether discovered by env or installed by another provider).
 
     bubus detail: all handlers run serially in registration order, so the
     early-exit check works correctly.
@@ -52,7 +50,7 @@ class BinaryService(BaseService):
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [ProcessStdoutEvent, BinaryEvent]
     EMITS: ClassVar[list[type[BaseEvent]]] = [
-        BinaryEvent, MachineEvent, ProcessEvent, BinaryLoadedEvent, BinaryInstalledEvent,
+        BinaryEvent, MachineEvent, ProcessEvent, BinaryInstalledEvent,
     ]
 
     def __init__(
@@ -76,18 +74,14 @@ class BinaryService(BaseService):
             ],
             key=lambda x: x[1].sort_key,
         )
-        # Track binaries discovered by the env provider (already present on
-        # disk). These should only emit BinaryLoadedEvent, not
-        # BinaryInstalledEvent, since nothing was actually installed.
-        self._discovered_binaries: set[str] = set()
         super().__init__(bus)
 
     def _attach_handlers(self) -> None:
         """Register handlers in correct order.
 
         1. ProcessStdoutEvent → BinaryEvent routing
-        2. Provider hooks on BinaryEvent (try to install)
-        3. on_BinaryEvent last (emits BinaryLoadedEvent or BinaryInstalledEvent)
+        2. Provider hooks on BinaryEvent (try to resolve/install)
+        3. on_BinaryEvent last (emits BinaryInstalledEvent)
         """
         self.bus.on(ProcessStdoutEvent, self.on_ProcessStdoutEvent)
 
@@ -153,16 +147,15 @@ class BinaryService(BaseService):
     async def on_BinaryEvent(self, event: BinaryEvent) -> None:
         """Handle binary resolution — runs after all provider hooks.
 
-        Branches on the outcome:
-        - **abspath set**: the binary was detected at a known path (either
-          the requesting hook found it, or a provider hook just installed it
-          and reported the path). Register in config + emit BinaryLoadedEvent.
-        - **no abspath, but config resolved**: a provider hook installed the
-          binary (its nested BinaryEvent → MachineEvent chain updated
-          shared_config). Emit BinaryInstalledEvent.
+        If the binary has an abspath (either from the requesting hook or from
+        a provider's nested BinaryEvent), registers it in config and emits
+        BinaryInstalledEvent. If no abspath but a provider set the config key,
+        emits BinaryInstalledEvent with the resolved path.
         """
         if not event.name:
             return
+
+        binprovider = getattr(event, 'binprovider', '') or ''
 
         if event.abspath:
             # Binary path provided — register in config and notify
@@ -171,12 +164,7 @@ class BinaryService(BaseService):
                 key=f'config/{_binary_env_key(event.name)}',
                 value=event.abspath,
             ))
-            # env provider discovers pre-existing binaries — mark them so we
-            # don't emit BinaryInstalledEvent (nothing was actually installed)
-            binprovider = getattr(event, 'binprovider', '') or ''
-            if binprovider == 'env':
-                self._discovered_binaries.add(event.name)
-            await self.bus.emit(BinaryLoadedEvent(
+            await self.bus.emit(BinaryInstalledEvent(
                 name=event.name,
                 abspath=event.abspath,
                 binprovider=binprovider,
@@ -184,12 +172,13 @@ class BinaryService(BaseService):
                 machine_id=event.machine_id,
             ))
         else:
-            # No abspath — check if a provider resolved it
+            # No abspath — check if a provider resolved it via shared_config
             abspath = self.machine.shared_config.get(_binary_env_key(event.name), '')
-            if abspath and event.name not in self._discovered_binaries:
+            if abspath:
                 await self.bus.emit(BinaryInstalledEvent(
                     name=event.name,
                     abspath=abspath,
+                    binprovider=binprovider,
                     binary_id=event.binary_id,
                     machine_id=event.machine_id,
                 ))

@@ -23,13 +23,14 @@ class ArchiveResultService(BaseService):
        self-reported result. Emits an ArchiveResultEvent and writes it to
        index.jsonl immediately.
 
-    2. **ProcessCompletedEvent**: emits a synthetic ArchiveResultEvent only
-       when the hook didn't already report one itself:
+    2. **ProcessCompletedEvent**: only for ``on_Snapshot`` hooks, emits a
+       synthetic ArchiveResultEvent when the hook didn't already report one:
        - If exit_code != 0 → synthetic ``failed`` result (with stderr as error).
        - If exit_code == 0 and non-metadata output files exist → synthetic
          ``succeeded`` result.
        - If exit_code == 0 and no content files → synthetic ``noresult`` result.
 
+       Crawl and Binary hooks are excluded — they don't produce ArchiveResults.
        Uses ``bus.find()`` to check whether an ArchiveResultEvent was already
        emitted for this hook, avoiding the need for manual pending-state tracking.
     """
@@ -75,7 +76,10 @@ class ArchiveResultService(BaseService):
         ))
 
     async def on_ProcessCompletedEvent(self, event: ProcessCompletedEvent) -> None:
-        """Emit a synthetic ArchiveResult only if the hook didn't report one."""
+        """Emit a synthetic ArchiveResult only for Snapshot hooks that didn't self-report."""
+        if not event.hook_name.startswith('on_Snapshot'):
+            return
+
         existing = await self.bus.find(
             ArchiveResultEvent,
             plugin=event.plugin_name,
