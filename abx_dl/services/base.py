@@ -24,10 +24,11 @@ class BaseService:
     Handler name resolution:
     - ``on_ProcessEvent`` → matches ``ProcessEvent`` directly
     - ``on_ProcessCompleted`` → matches ``ProcessCompleted`` directly
-    - ``on_Crawl__plugin_hook`` → tries "Crawl", then "CrawlEvent" (matches)
+    - ``on_CrawlSetup__plugin_hook`` → tries "CrawlSetup", then "CrawlSetupEvent" (matches)
 
-    This naming convention mirrors hook filenames (``on_Crawl__10_wget_install``)
-    so the connection between hook files and their handler registration is clear.
+    Note: CrawlService and SnapshotService override ``_attach_handlers()`` to
+    control registration order explicitly. They register per-hook handlers on
+    CrawlSetupEvent / SnapshotEvent directly via ``bus.on()``.
 
     bubus detail: ``bus.on(EventClass, handler)`` registers the handler to be called
     whenever an event of that class is emitted on the bus. Handlers are called in
@@ -49,8 +50,8 @@ class BaseService:
         class in ``LISTENS_TO``.
 
         The double-underscore split handles dynamic handler names like
-        ``on_Crawl__10_wget_install`` — only the prefix before ``__`` is used
-        for event class matching ("Crawl" → "CrawlEvent").
+        ``on_CrawlSetup__10_wget_install`` — only the prefix before ``__`` is
+        used for event class matching ("CrawlSetup" → "CrawlSetupEvent").
         """
         for attr_name in dir(self):
             if not attr_name.startswith('on_'):

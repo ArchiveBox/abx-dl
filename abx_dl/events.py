@@ -145,7 +145,7 @@ class ProcessEvent(BaseEvent):
 
     ``event_handler_timeout`` must be set per-hook — otherwise bubus uses the
     bus-level default (60s), which is too short for slow installs like puppeteer.
-    CrawlService/SnapshotService set this to ``hook_timeout + 30s`` to allow
+    Hook handlers set this to ``hook_timeout + 30s`` to allow
     overhead for process startup and JSONL parsing.
     """
     event_concurrency: str = 'parallel'

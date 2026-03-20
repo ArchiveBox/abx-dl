@@ -268,7 +268,7 @@ class ProcessService(BaseService):
     async def on_ProcessKillEvent(self, event: ProcessKillEvent) -> None:
         """Gracefully shut down a background daemon via its PID file.
 
-        Called by CrawlService/SnapshotService cleanup handlers. Validates the
+        Triggered by CrawlCleanupEvent/SnapshotCleanupEvent handlers. Validates the
         PID file (mtime + command check), sends SIGTERM, waits up to 15s for
         clean exit, then escalates to SIGKILL if the process is still alive.
 
