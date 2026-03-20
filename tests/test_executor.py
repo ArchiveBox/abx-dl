@@ -2,9 +2,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from bubus import EventBus
-
-from abx_dl.orchestrator import download
+from abx_dl.orchestrator import create_bus, download
 from abx_dl.events import BinaryInstalledEvent, BinaryLoadedEvent, ArchiveResultEvent
 from abx_dl.models import ArchiveResult
 from abx_dl.models import discover_plugins
@@ -502,7 +500,7 @@ def test_cleanup_runs_after_all_hooks_not_interleaved(tmp_path: Path) -> None:
     )
 
 
-def test_binary_loaded_vs_installed_events(tmp_path: Path, monkeypatch) -> None:
+def test_binary_loaded_vs_installed_events(tmp_path: Path) -> None:
     """Verify BinaryLoadedEvent for pre-existing and BinaryInstalledEvent for provider-installed.
 
     Sets up two binaries in the same run:
@@ -513,27 +511,19 @@ def test_binary_loaded_vs_installed_events(tmp_path: Path, monkeypatch) -> None:
     - preloaded: BinaryLoadedEvent only (no install needed)
     - installme: BinaryLoadedEvent (from provider's nested BinaryEvent with abspath)
                  + BinaryInstalledEvent (from original event after provider resolved it)
-
-    Uses monkeypatched EventBus.__init__ to capture informational events.
     """
     plugins_root = tmp_path / 'plugins'
     captured: list[tuple[str, str, str]] = []
+    bus = create_bus(num_hooks=0, timeout=60)
 
-    _orig_init = EventBus.__init__
+    async def on_loaded(e: BinaryLoadedEvent) -> None:
+        captured.append(('loaded', e.name, e.abspath))
 
-    def _capturing_init(self, *a, **kw):
-        _orig_init(self, *a, **kw)
+    async def on_installed(e: BinaryInstalledEvent) -> None:
+        captured.append(('installed', e.name, e.abspath))
 
-        async def on_loaded(e: BinaryLoadedEvent) -> None:
-            captured.append(('loaded', e.name, e.abspath))
-
-        async def on_installed(e: BinaryInstalledEvent) -> None:
-            captured.append(('installed', e.name, e.abspath))
-
-        self.on(BinaryLoadedEvent, on_loaded)
-        self.on(BinaryInstalledEvent, on_installed)
-
-    monkeypatch.setattr(EventBus, '__init__', _capturing_init)
+    bus.on(BinaryLoadedEvent, on_loaded)
+    bus.on(BinaryInstalledEvent, on_installed)
 
     # Hook that emits two Binary requests: one pre-existing, one needing install
     preloaded_path = str(tmp_path / 'bin' / 'preloaded')
@@ -602,7 +592,7 @@ def test_binary_loaded_vs_installed_events(tmp_path: Path, monkeypatch) -> None:
     )
 
     plugins = discover_plugins(plugins_root)
-    results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
+    results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True, bus=bus)
 
     # --- Verify informational events ---
 
@@ -647,7 +637,7 @@ def test_binary_loaded_vs_installed_events(tmp_path: Path, monkeypatch) -> None:
     )
 
 
-def test_archive_result_events_inline_vs_enriched(tmp_path: Path, monkeypatch) -> None:
+def test_archive_result_events_inline_vs_enriched(tmp_path: Path) -> None:
     """Verify inline ArchiveResultEvent (no process_id) and enriched (with process_id).
 
     A hook outputs an inline ArchiveResult during execution. After the process
@@ -656,18 +646,12 @@ def test_archive_result_events_inline_vs_enriched(tmp_path: Path, monkeypatch) -
     """
     plugins_root = tmp_path / 'plugins'
     ar_events: list[tuple[str, str, str]] = []  # (process_id, hook_name, status)
+    bus = create_bus(num_hooks=1, timeout=60)
 
-    _orig_init = EventBus.__init__
+    async def on_ar(e: ArchiveResultEvent) -> None:
+        ar_events.append((e.process_id, e.hook_name, e.status))
 
-    def _capturing_init(self, *a, **kw):
-        _orig_init(self, *a, **kw)
-
-        async def on_ar(e: ArchiveResultEvent) -> None:
-            ar_events.append((e.process_id, e.hook_name, e.status))
-
-        self.on(ArchiveResultEvent, on_ar)
-
-    monkeypatch.setattr(EventBus, '__init__', _capturing_init)
+    bus.on(ArchiveResultEvent, on_ar)
 
     _write(
         plugins_root / 'demo' / 'on_Snapshot__10_emit.py',
@@ -682,7 +666,7 @@ def test_archive_result_events_inline_vs_enriched(tmp_path: Path, monkeypatch) -
     )
 
     plugins = discover_plugins(plugins_root)
-    results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True)
+    results = _run_download('https://example.com', plugins, tmp_path / 'run', auto_install=True, bus=bus)
 
     # Should have at least 2 ArchiveResultEvents for this hook:
     # 1 inline (no process_id), 1 enriched (with process_id)

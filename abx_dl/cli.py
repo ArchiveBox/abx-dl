@@ -17,7 +17,8 @@ from rich.table import Table
 
 from .config import get_config, set_config, CONFIG_FILE
 from .dependencies import load_binary
-from .orchestrator import download
+from .events import ArchiveResultEvent, ProcessCompletedEvent
+from .orchestrator import create_bus, download
 from .models import ArchiveResult, Process
 from .models import INSTALL_URL, discover_plugins, filter_plugins
 
@@ -320,6 +321,7 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
     )
     total_hooks = sum(len(plugin.get_crawl_hooks()) + len(plugin.get_snapshot_hooks()) for plugin in selected_plugins.values())
     live_results: dict[str, VisibleRecord] = {}
+    bus = create_bus(num_hooks=total_hooks, timeout=timeout_seconds)
 
     if interactive_tty:
         progress = Progress(
@@ -333,18 +335,36 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
         status_view = _LiveStatusView(live_results, progress, timeout_seconds)
         task_id = progress.add_task("[cyan]Running plugins...", total=total_hooks)
 
-        def on_result(record: VisibleRecord) -> None:
-            live_results[_record_key(record)] = record
-            if isinstance(record, Process):
-                # Process records update the live display but don't advance
-                # the progress bar — only ArchiveResults count as completed hooks
+        async def _on_process_completed(event: ProcessCompletedEvent) -> None:
+            proc = Process(
+                cmd=[], plugin=event.plugin_name, hook_name=event.hook_name,
+                exit_code=event.exit_code, stderr=event.stderr,
+                started_at=event.start_ts or None, ended_at=event.end_ts or None,
+                timeout=int(event.event_timeout or timeout_seconds),
+            )
+            live_results[proc.id] = proc
+
+        async def _on_archive_result(event: ArchiveResultEvent) -> None:
+            if not event.process_id:
                 return
+            ar = ArchiveResult(
+                snapshot_id=event.snapshot_id, plugin=event.plugin,
+                id=event.id, hook_name=event.hook_name, status=event.status,
+                process_id=event.process_id or None,
+                output_str=event.output_str, output_files=event.output_files,
+                start_ts=event.start_ts or None, end_ts=event.end_ts or None,
+                error=event.error or None,
+            )
+            live_results[_record_key(ar)] = ar
             # ArchiveResult from a binary install hook (not in total_hooks) —
             # bump the total so the progress bar doesn't exceed 100%
             task = progress.tasks[task_id]
             if task.total is not None and task.completed >= task.total:
                 progress.update(task_id, total=task.total + 1)
-            progress.update(task_id, advance=1, description=f"[cyan]{escape(_record_hook_name(record))}[/cyan]")
+            progress.update(task_id, advance=1, description=f"[cyan]{escape(_record_hook_name(ar))}[/cyan]")
+
+        bus.on(ProcessCompletedEvent, _on_process_completed)
+        bus.on(ArchiveResultEvent, _on_archive_result)
 
         with Live(
             status_view,
@@ -356,12 +376,13 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
             results = asyncio.run(download(
                 url, plugins, out_path, selected, config_overrides or None,
                 auto_install=not no_install, emit_jsonl=not stdout_is_tty,
-                on_result=on_result,
+                bus=bus,
             ))
     else:
         results = asyncio.run(download(
             url, plugins, out_path, selected, config_overrides or None,
             auto_install=not no_install, emit_jsonl=not stdout_is_tty,
+            bus=bus,
         ))
 
     if interactive_tty:
@@ -381,20 +402,38 @@ def _run_plugin_install(selected) -> int:
 
     results_by_hook: dict[tuple[str, str], ArchiveResult] = {}
     failed_processes_by_hook: dict[tuple[str, str], Process] = {}
-    with TemporaryDirectory(prefix='abx-dl-install-') as temp_dir:
-        def on_record(record: VisibleRecord) -> None:
-            if isinstance(record, ArchiveResult):
-                results_by_hook[(record.plugin, record.hook_name)] = record
-            elif isinstance(record, Process) and record.exit_code not in (None, 0):
-                failed_processes_by_hook[(record.plugin or '', _record_hook_name(record))] = record
+    bus = create_bus(num_hooks=0, timeout=300)
 
+    async def _on_process_completed(event: ProcessCompletedEvent) -> None:
+        if event.exit_code not in (None, 0):
+            proc = Process(
+                cmd=[], plugin=event.plugin_name, hook_name=event.hook_name,
+                exit_code=event.exit_code, stderr=event.stderr,
+            )
+            failed_processes_by_hook[(event.plugin_name, event.hook_name)] = proc
+
+    async def _on_archive_result(event: ArchiveResultEvent) -> None:
+        if not event.process_id:
+            return
+        ar = ArchiveResult(
+            snapshot_id=event.snapshot_id, plugin=event.plugin,
+            id=event.id, hook_name=event.hook_name, status=event.status,
+            process_id=event.process_id or None,
+            output_str=event.output_str, error=event.error or None,
+        )
+        results_by_hook[(ar.plugin, ar.hook_name)] = ar
+
+    bus.on(ProcessCompletedEvent, _on_process_completed)
+    bus.on(ArchiveResultEvent, _on_archive_result)
+
+    with TemporaryDirectory(prefix='abx-dl-install-') as temp_dir:
         asyncio.run(download(
             INSTALL_URL,
             selected,
             Path(temp_dir),
             auto_install=True,
             emit_jsonl=False,
-            on_result=on_record,
+            bus=bus,
         ))
 
     no_install_hooks = [name for name, plugin in sorted(selected.items()) if not plugin.get_crawl_hooks()]

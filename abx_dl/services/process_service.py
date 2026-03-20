@@ -4,7 +4,7 @@ import asyncio
 import json
 import time
 from pathlib import Path
-from typing import Callable, ClassVar
+from typing import ClassVar
 
 from bubus import BaseEvent, EventBus
 
@@ -45,7 +45,6 @@ class ProcessService(BaseService):
         └── Finalize:
             - Write Process record to index.jsonl
             - Emit ProcessCompletedEvent (raw process info)
-            - Call on_process() callback for Process record
 
     Realtime event emission is critical: ProcessRecordOutputtedEvent is emitted
     with ``await self.bus.emit()`` (queue-jump), so the entire handler chain
@@ -89,13 +88,11 @@ class ProcessService(BaseService):
         output_dir: Path,
         emit_jsonl: bool,
         stderr_is_tty: bool,
-        on_process: Callable[[Process], None] | None = None,
     ):
         self.index_path = index_path
         self.output_dir = output_dir
         self.emit_jsonl = emit_jsonl
         self.stderr_is_tty = stderr_is_tty
-        self.on_process = on_process
         super().__init__(bus)
 
     # ── Event handlers ──────────────────────────────────────────────────────
@@ -207,8 +204,6 @@ class ProcessService(BaseService):
                 process_id=proc.id, snapshot_id=event.snapshot_id,
                 start_ts=proc.started_at or '', end_ts=proc.ended_at or '',
             ))
-            if self.on_process:
-                self.on_process(proc)
             return
 
         # ── Finalize: emit process completion ──
@@ -250,8 +245,6 @@ class ProcessService(BaseService):
             process_id=proc.id, snapshot_id=event.snapshot_id,
             start_ts=proc.started_at or '', end_ts=proc.ended_at or '',
         ))
-        if self.on_process:
-            self.on_process(proc)
 
     async def on_ProcessKillEvent(self, event: ProcessKillEvent) -> None:
         """Gracefully shut down a background daemon via its PID file.
