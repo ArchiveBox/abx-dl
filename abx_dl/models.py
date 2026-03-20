@@ -73,19 +73,21 @@ class Hook(BaseModel):
 
 
 class Plugin(BaseModel):
-    """A plugin directory containing config, binaries manifest, and hook scripts.
+    """A plugin directory containing config and hook scripts.
 
     Plugins are discovered from the plugins directory (``ABX_PLUGINS_DIR`` env var,
     ``abx_plugins`` package, or monorepo fallback). Each plugin directory may contain:
 
-    - ``config.json``: schema with config properties and ``required_plugins`` list
-    - ``binaries.jsonl``: binary dependency declarations
+    - ``config.json``: schema with metadata, config properties, and ``required_plugins``
     - ``on_*`` scripts: hook executables matching the naming convention
     """
     model_config = {'arbitrary_types_allowed': True}
 
     name: str
     path: Path
+    title: str = ''
+    description: str = ''
+    output_mimetypes: list[str] = Field(default_factory=list)
     config_schema: dict[str, Any] = Field(default_factory=dict)
     binaries: list[dict[str, Any]] = Field(default_factory=list)
     hooks: list[Hook] = Field(default_factory=list)
@@ -246,8 +248,8 @@ def parse_hook_filename(filename: str) -> tuple[str, int, bool] | None:
 def load_plugin(plugin_dir: Path) -> Plugin | None:
     """Load a single plugin from a directory.
 
-    Reads config.json for schema/dependencies, binaries.jsonl for binary specs,
-    and discovers hook scripts matching the ``on_*`` naming convention.
+    Reads config.json for metadata/schema/dependencies and discovers hook scripts
+    matching the ``on_*`` naming convention.
     """
     if not plugin_dir.is_dir():
         return None
@@ -265,19 +267,12 @@ def load_plugin(plugin_dir: Path) -> Plugin | None:
     if config_file.exists():
         try:
             schema = json.loads(config_file.read_text())
+            plugin.title = schema.get('title', '')
+            plugin.description = schema.get('description', '')
+            plugin.output_mimetypes = schema.get('output_mimetypes', [])
             plugin.config_schema = schema.get('properties', {})
             plugin.required_plugins = schema.get('required_plugins', [])
         except json.JSONDecodeError:
-            pass
-
-    # Load binaries manifest
-    binaries_file = plugin_dir / 'binaries.jsonl'
-    if binaries_file.exists():
-        try:
-            for line in binaries_file.read_text().strip().split('\n'):
-                if line.strip():
-                    plugin.binaries.append(json.loads(line))
-        except (json.JSONDecodeError, Exception):
             pass
 
     # Discover hooks

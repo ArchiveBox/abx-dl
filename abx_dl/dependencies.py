@@ -33,7 +33,7 @@ except Exception:
 
 
 def load_binary(spec: dict[str, Any]) -> Binary:
-    """Load a binary from a spec dict (from binaries.jsonl)."""
+    """Load a binary from a spec dict."""
     providers_str = spec.get('binproviders', 'env')
     providers = [p for p in DEFAULT_PROVIDERS if p.name in providers_str.split(',')]
     overrides = spec.get('overrides', {})

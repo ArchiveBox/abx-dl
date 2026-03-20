@@ -150,9 +150,36 @@ def test_readme_plugins_command_lists_real_wget_hooks(tmp_path: Path) -> None:
 
     assert result.returncode == 0
     assert 'wget' in result.stdout
+    assert 'Archive pages and their requisites with wget' in result.stdout
+    assert 'Outputs:' in result.stdout
+    assert 'text/html' in result.stdout
     assert expected_hook_names
     for hook_name in expected_hook_names:
         assert hook_name in result.stdout
+
+
+def test_plugins_single_plugin_shows_metadata_from_config(tmp_path: Path) -> None:
+    result = _run_cli(tmp_path, 'plugins', 'headers')
+    normalized = ' '.join(result.stdout.split())
+
+    assert result.returncode == 0
+    assert 'Headers' in normalized
+    assert 'Capture HTTP headers for the main document response' in normalized
+    assert 'Depends on: chrome' in normalized
+    assert 'Outputs: application/json' in normalized
+
+
+def test_plugins_list_includes_metadata_summary_columns(tmp_path: Path) -> None:
+    result = _run_cli(tmp_path, 'plugins', 'headers', 'chrome')
+    normalized = ' '.join(result.stdout.split())
+
+    assert result.returncode == 0
+    assert 'Info' in normalized
+    assert 'Launch and manage a shared Chromium session' in normalized
+    assert 'Capture HTTP headers for the main document' in normalized
+    assert 'deps: chrome' in normalized
+    assert 'outputs:' in normalized
+    assert 'application/json' in normalized
 
 
 def test_readme_install_command_runs_real_install_hooks(tmp_path: Path) -> None:
@@ -213,6 +240,44 @@ def test_run_plugin_install_passes_through_failed_binary_hook_stderr(monkeypatch
     assert exit_code == 1
     assert 'on_Binary__12_puppeteer_install' in rendered
     assert sandbox_error in rendered
+
+
+def test_run_plugin_install_fails_when_binary_request_never_resolves(monkeypatch) -> None:
+    plugin = discover_plugins()['chrome']
+    console_output = io.StringIO()
+    hook_name = 'on_Crawl__70_chrome_install.finite.bg'
+    request_stdout = json.dumps({
+        'type': 'Binary',
+        'name': 'chromium',
+        'binproviders': 'puppeteer',
+        'overrides': {'puppeteer': ['chromium@latest', '--install-deps']},
+    })
+
+    async def fake_download(*args, **kwargs):
+        bus = kwargs.get('bus')
+        if bus:
+            await bus.emit(ProcessCompletedEvent(
+                plugin_name='chrome',
+                hook_name=hook_name,
+                exit_code=0, stdout=request_stdout, stderr='',
+                output_dir='', process_id='proc-1',
+            ))
+        return []
+
+    monkeypatch.setattr(cli_module, 'download', fake_download)
+    monkeypatch.setattr(
+        cli_module,
+        'console',
+        Console(file=console_output, force_terminal=False, color_system=None, width=120),
+    )
+
+    exit_code = cli_module._run_plugin_install({'chrome': plugin})
+
+    rendered = console_output.getvalue()
+    assert exit_code == 1
+    assert hook_name in rendered
+    assert 'chromium' in rendered
+    assert 'Requested binary not resolved' in rendered
 
 
 def test_readme_dl_command_downloads_example_dot_com_with_real_output(tmp_path: Path) -> None:

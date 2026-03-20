@@ -3,6 +3,7 @@ CLI interface for abx-dl using rich-click.
 """
 
 import asyncio
+import json
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -123,8 +124,68 @@ def _parse_process_output(proc: Process) -> str:
     return (proc.stdout or '').strip()
 
 
+def _parse_requested_binary_names(proc: Process) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+
+    for line in proc.stdout.splitlines():
+        line = line.strip()
+        if not line.startswith('{'):
+            continue
+        try:
+            record = json.loads(line)
+        except Exception:
+            continue
+        if record.get('type') != 'Binary':
+            continue
+        if str(record.get('abspath', '')).strip():
+            continue
+        name = str(record.get('name', '')).strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        names.append(name)
+
+    return names
+
+
 def _record_type_name(record: VisibleRecord) -> str:
     return type(record).__name__
+
+
+def _format_plugin_list(values: list[str]) -> str:
+    return ', '.join(values) if values else '-'
+
+
+def _plugin_info(plugin) -> str:
+    info_parts: list[str] = []
+    title = plugin.title.strip()
+    description = plugin.description.strip()
+    depends = _format_plugin_list(plugin.required_plugins)
+    outputs = _format_plugin_list(plugin.output_mimetypes)
+
+    if title and title.lower() != plugin.name.lower():
+        info_parts.append(title)
+    if description:
+        info_parts.append(description)
+    if depends != '-':
+        info_parts.append(f"deps: {depends}")
+    if outputs != '-':
+        info_parts.append(f"outputs: {outputs}")
+
+    return _compact_output(' | '.join(info_parts), limit=180) if info_parts else '-'
+
+
+def _resolve_requested_plugins(plugin_names: tuple[str, ...], all_plugins: dict[str, object]) -> list[object]:
+    requested: list[object] = []
+    for requested_name in plugin_names:
+        match = next(
+            (plugin for name, plugin in all_plugins.items() if name.lower() == requested_name.lower()),
+            None,
+        )
+        if match is not None:
+            requested.append(match)
+    return requested
 
 
 def _record_hook_name(record: VisibleRecord) -> str:
@@ -459,6 +520,17 @@ def _run_plugin_install(selected) -> int:
         ))
 
     no_install_hooks = [name for name, plugin in sorted(selected.items()) if not plugin.get_crawl_hooks()]
+    unresolved_hooks: dict[tuple[str, str], str] = {}
+    for key, proc in hooks_ran.items():
+        if proc.exit_code not in (None, 0):
+            continue
+        missing_binaries = [
+            name
+            for name in _parse_requested_binary_names(proc)
+            if name not in binaries
+        ]
+        if missing_binaries:
+            unresolved_hooks[key] = f"Requested binary not resolved: {', '.join(sorted(missing_binaries))}"
 
     if binaries or hooks_ran:
         table = Table(title="Install Results")
@@ -480,12 +552,14 @@ def _run_plugin_install(selected) -> int:
         # Show hooks that ran (succeeded or failed) but didn't produce binary events
         for (plugin_name, hook_name), proc in sorted(hooks_ran.items()):
             status = 'succeeded' if proc.exit_code in (None, 0) else 'failed'
+            if (plugin_name, hook_name) in unresolved_hooks:
+                status = 'failed'
             status_style = STATUS_STYLES.get(status, 'white')
             table.add_row(
                 plugin_name,
                 hook_name,
                 f'[{status_style}]{status}[/{status_style}]',
-                _compact_output(_parse_process_output(proc)),
+                _compact_output(unresolved_hooks.get((plugin_name, hook_name), _parse_process_output(proc))),
             )
 
         console.print(table)
@@ -495,7 +569,7 @@ def _run_plugin_install(selected) -> int:
     if no_install_hooks:
         console.print(f"[dim]No install hooks: {', '.join(no_install_hooks)}[/dim]")
 
-    if failed_hooks:
+    if failed_hooks or unresolved_hooks:
         console.print("\n[bold red]Failure details:[/bold red]")
         for (plugin_name, hook_name), proc in sorted(failed_hooks.items()):
             details = (proc.stderr or '').strip()
@@ -503,7 +577,10 @@ def _run_plugin_install(selected) -> int:
                 continue
             console.print(f"\n[bold cyan]{plugin_name} / {hook_name}[/bold cyan]")
             console.print(escape(details))
-        console.print(f"\n[bold red]{len(failed_hooks)} install step(s) failed.[/bold red]")
+        for (plugin_name, hook_name), message in sorted(unresolved_hooks.items()):
+            console.print(f"\n[bold cyan]{plugin_name} / {hook_name}[/bold cyan]")
+            console.print(escape(message))
+        console.print(f"\n[bold red]{len(failed_hooks) + len(unresolved_hooks)} install step(s) failed.[/bold red]")
         return 1
 
     console.print("\n[bold green]Done![/bold green]")
@@ -551,7 +628,7 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool):
         table.add_column("Name", style="cyan")
         table.add_column("Status")
         table.add_column("Hooks", justify="right")
-        table.add_column("Binaries")
+        table.add_column("Info")
 
         all_ok = True
         for name in sorted(selected.keys()):
@@ -572,10 +649,14 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool):
                 binaries_str = ', '.join(binary_statuses)
                 status = "[green]✓[/green]" if all(b.startswith('[green]') for b in binary_statuses) else "[yellow]○[/yellow]"
             else:
-                binaries_str = '-'
                 status = "[green]✓[/green]"
 
-            table.add_row(name, status, str(hooks_count), binaries_str)
+            table.add_row(
+                name,
+                status,
+                str(hooks_count),
+                _plugin_info(plugin),
+            )
 
         console.print(table)
         console.print(f"\n[dim]{len(selected)} plugins[/dim]")
@@ -583,35 +664,33 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool):
         if not all_ok:
             console.print("[yellow]Some dependencies missing. Run 'abx-dl plugins --install' to install them.[/yellow]")
 
-        # Show detailed info if only a few plugins selected
-        if len(selected) <= 3:
-            for name, plugin in sorted(selected.items()):
-                console.print(f"\n[bold cyan]─── {plugin.name} ───[/bold cyan]")
-                console.print(f"[dim]Path: {plugin.path}[/dim]")
+        detail_plugins = _resolve_requested_plugins(plugin_names, all_plugins) if plugin_names else list(selected.values())
 
-                if plugin.config_schema:
-                    console.print("\n[bold]Config options:[/bold]")
-                    for key, prop in plugin.config_schema.items():
-                        console.print(f"  {key}={prop.get('default', '-')}")
-                        if prop.get('description'):
-                            console.print(f"    [dim]{prop['description']}[/dim]")
+        if len(detail_plugins) == 1:
+            plugin = detail_plugins[0]
+            display_name = plugin.title or plugin.name
 
-                if plugin.binaries:
-                    console.print("\n[bold]Binaries:[/bold]")
-                    for spec in plugin.binaries:
-                        binary = load_binary(spec)
-                        status = "[green]✓[/green]" if binary.is_valid else "[red]✗[/red]"
-                        version = f" ({binary.loaded_version})" if binary.is_valid and binary.loaded_version else ""
-                        path = f" - {binary.loaded_abspath}" if binary.is_valid else ""
-                        console.print(f"  {status} {spec.get('name', '?')}{version}{path}")
-                        console.print(f"    [dim]providers: {spec.get('binproviders', 'env')}[/dim]")
+            console.print(f"\n[bold cyan]─── {display_name} ───[/bold cyan]")
+            if plugin.title and plugin.title != plugin.name:
+                console.print(f"[bold]Plugin:[/bold] {plugin.name}")
+            console.print(f"[bold]Path:[/bold] [dim]{plugin.path}[/dim]")
+            console.print(f"[bold]Description:[/bold] {plugin.description or '-'}")
+            console.print(f"[bold]Depends on:[/bold] {_format_plugin_list(plugin.required_plugins)}")
+            console.print(f"[bold]Outputs:[/bold] {_format_plugin_list(plugin.output_mimetypes)}")
 
-                hooks = plugin.get_crawl_hooks() + plugin.get_snapshot_hooks()
-                if hooks:
-                    console.print("\n[bold]Hooks:[/bold]")
-                    for hook in hooks:
-                        bg = " [dim](background)[/dim]" if hook.is_background else ""
-                        console.print(f"  {hook.order:02d}: {hook.name}{bg}")
+            if plugin.config_schema:
+                console.print("\n[bold]Config options:[/bold]")
+                for key, prop in plugin.config_schema.items():
+                    console.print(f"  {key}={prop.get('default', '-')}")
+                    if prop.get('description'):
+                        console.print(f"    [dim]{prop['description']}[/dim]")
+
+            hooks = plugin.get_crawl_hooks() + plugin.get_snapshot_hooks()
+            if hooks:
+                console.print("\n[bold]Hooks:[/bold]")
+                for hook in hooks:
+                    bg = " [dim](background)[/dim]" if hook.is_background else ""
+                    console.print(f"  {hook.order:02d}: {hook.name}{bg}")
 
 
 @cli.command()
