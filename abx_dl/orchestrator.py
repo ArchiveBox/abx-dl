@@ -199,7 +199,10 @@ async def download(
         results.append(ArchiveResult(
             snapshot_id=event.snapshot_id, plugin=event.plugin,
             id=event.id, hook_name=event.hook_name, status=event.status,
+            process_id=event.process_id or None,
             output_str=event.output_str,
+            output_files=event.output_files,
+            start_ts=event.start_ts or None, end_ts=event.end_ts or None,
             error=event.error or None,
         ))
 

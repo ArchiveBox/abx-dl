@@ -97,6 +97,10 @@ class ArchiveResultService(BaseService):
         await self.bus.emit(ArchiveResultEvent(
             snapshot_id=ar.snapshot_id, plugin=ar.plugin, id=ar.id,
             hook_name=ar.hook_name, status=ar.status,
+            process_id=event.process_id,
+            output_files=event.output_files,
+            start_ts=event.start_ts,
+            end_ts=event.end_ts,
             error=ar.error or '',
         ))
 

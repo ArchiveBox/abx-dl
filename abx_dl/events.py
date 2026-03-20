@@ -329,20 +329,27 @@ class ArchiveResultEvent(BaseEvent):
     Emitted by ArchiveResultService in two cases:
 
     1. **Inline from stdout**: when a hook outputs ``{"type": "ArchiveResult", ...}``
-       JSONL during execution (via ProcessRecordOutputtedEvent routing).
+       JSONL during execution (via ProcessRecordOutputtedEvent routing). Process
+       metadata fields (process_id, output_files, start_ts, end_ts) are empty
+       at this stage — they get populated on ProcessCompletedEvent.
 
     2. **Synthetic fallback**: on ProcessCompletedEvent, only if the hook didn't
        already report an ArchiveResult — e.g. failed (nonzero exit) or succeeded
        with output files but no explicit JSONL output.
 
-    Contains only result-level fields. Process metadata (timestamps, output_files,
-    process_id, etc.) belongs on ProcessCompletedEvent, not here.
+    Both cases carry process_id, output_files, start_ts, end_ts when emitted
+    from ProcessCompletedEvent context (copied from the process, not merged
+    into the ArchiveResult model).
     """
     snapshot_id: str = ''
     plugin: str = ''
     id: str = ''
     hook_name: str = ''
     status: str = ''
+    process_id: str = ''
     output_str: str = ''
+    output_files: list[str] = Field(default_factory=list)
+    start_ts: str = ''
+    end_ts: str = ''
     error: str = ''
     event_timeout: float | None = 10.0
