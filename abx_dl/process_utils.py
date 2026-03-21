@@ -13,7 +13,6 @@ import shlex
 import shutil
 import signal
 from pathlib import Path
-from typing import Optional
 
 
 import psutil
@@ -79,7 +78,7 @@ def _normalize_recorded_arg(arg: str) -> str:
     return arg
 
 
-def validate_pid_file(pid_file: Path, cmd_file: Optional[Path] = None, tolerance: float = 5.0) -> bool:
+def validate_pid_file(pid_file: Path, cmd_file: Path | None = None, tolerance: float = 5.0) -> bool:
     """Validate PID using mtime and optional cmd.sh. Returns True if process is ours.
 
     Uses psutil to check that the PID is still alive and that the process start
@@ -107,13 +106,13 @@ def validate_pid_file(pid_file: Path, cmd_file: Optional[Path] = None, tolerance
         if cmd_file and cmd_file.exists():
             cmd = cmd_file.read_text()
             proc_argv = proc.cmdline()
-            cmdline = ' '.join(proc_argv)
-            if '--remote-debugging-port' in cmd and '--remote-debugging-port' not in cmdline:
+            cmdline = " ".join(proc_argv)
+            if "--remote-debugging-port" in cmd and "--remote-debugging-port" not in cmdline:
                 return False
 
             recorded_argv = _read_recorded_argv(cmd_file)
-            recorded_exec = _resolve_recorded_exec(recorded_argv[0]) if recorded_argv else ''
-            process_exec = _resolve_live_exec(proc_argv[0]) if proc_argv else ''
+            recorded_exec = _resolve_recorded_exec(recorded_argv[0]) if recorded_argv else ""
+            process_exec = _resolve_live_exec(proc_argv[0]) if proc_argv else ""
             shebang_rewrite = False
             if recorded_exec and process_exec and recorded_exec != process_exec:
                 # Shebang rewrite: kernel turns "./script.py" into "python3 ./script.py",
@@ -127,7 +126,7 @@ def validate_pid_file(pid_file: Path, cmd_file: Optional[Path] = None, tolerance
                 else:
                     return False
             if not recorded_exec:
-                recorded_exec_name = _normalize_exec_name(recorded_argv[0]) if recorded_argv else ''
+                recorded_exec_name = _normalize_exec_name(recorded_argv[0]) if recorded_argv else ""
                 process_exec_name = _normalize_exec_name(proc_argv[0]) if proc_argv else _normalize_exec_name(proc.name())
                 if recorded_exec_name and process_exec_name and recorded_exec_name != process_exec_name:
                     return False
@@ -163,10 +162,11 @@ def write_pid_file_with_mtime(pid_file: Path, pid: int, start_time: float):
 
 def write_cmd_file(cmd_file: Path, cmd: list[str]):
     """Write shell command script for debugging and PID validation."""
-    def escape(arg: str) -> str:
-        return f'"{arg.replace(chr(34), chr(92)+chr(34))}"' if any(c in arg for c in ' "$') else arg
 
-    script = '#!/bin/bash\n' + ' '.join(escape(arg) for arg in cmd) + '\n'
+    def escape(arg: str) -> str:
+        return f'"{arg.replace(chr(34), chr(92) + chr(34))}"' if any(c in arg for c in ' "$') else arg
+
+    script = "#!/bin/bash\n" + " ".join(escape(arg) for arg in cmd) + "\n"
     cmd_file.write_text(script)
     try:
         cmd_file.chmod(0o755)
@@ -188,6 +188,7 @@ def is_process_alive(pid: int) -> bool:
 
 
 # ── Signal helpers ──────────────────────────────────────────────────────────
+
 
 def _send_signal(pid: int, sig: int) -> bool:
     """Send a signal to a process, trying process group first.
@@ -211,6 +212,7 @@ def _send_signal(pid: int, sig: int) -> bool:
 
 
 # ── Async graceful shutdown ─────────────────────────────────────────────────
+
 
 async def graceful_kill_process(
     process: asyncio.subprocess.Process,
@@ -241,20 +243,20 @@ async def graceful_kill_process(
     try:
         await asyncio.wait_for(process.wait(), timeout=grace_period)
         return  # exited cleanly
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pass
 
     # Process ignored SIGTERM — force kill
     _send_signal(pid, signal.SIGKILL)
     try:
         await asyncio.wait_for(process.wait(), timeout=2.0)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pass  # zombie — will be reaped when parent exits
 
 
 async def graceful_kill_by_pid_file(
     pid_file: Path,
-    cmd_file: Optional[Path] = None,
+    cmd_file: Path | None = None,
     *,
     grace_period: float = GRACEFUL_SHUTDOWN_TIMEOUT,
 ) -> bool:
@@ -322,7 +324,8 @@ def _poll_intervals(total: float):
 
 # ── Sync fire-and-forget (deprecated) ──────────────────────────────────────
 
-def safe_kill_process(pid_file: Path, cmd_file: Optional[Path] = None, signal_num: int = 15) -> bool:
+
+def safe_kill_process(pid_file: Path, cmd_file: Path | None = None, signal_num: int = 15) -> bool:
     """Send a single signal after PID validation. No escalation.
 
     Deprecated: prefer ``graceful_kill_by_pid_file()`` which does SIGTERM → wait

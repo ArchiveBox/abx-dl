@@ -37,14 +37,12 @@ import time
 import uuid
 import zipfile
 from datetime import datetime, timedelta, timezone
-from http import HTTPStatus
 from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 from flask import (
     Flask,
-    Response,
     abort,
     jsonify,
     redirect,
@@ -121,6 +119,7 @@ sessions_lock = threading.Lock()
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def get_data_dir() -> Path:
     return Path(app.config.get("DATA_DIR", DEFAULT_DATA_DIR))
@@ -258,12 +257,14 @@ def list_session_files(sid: str) -> list[dict[str, Any]]:
         # Skip hook internal files
         if rel.name.endswith((".pid", ".sh", ".meta.json", ".stdout.log", ".stderr.log")):
             continue
-        files.append({
-            "path": str(rel),
-            "name": rel.name,
-            "size": p.stat().st_size,
-            "plugin": str(rel.parts[0]) if len(rel.parts) > 1 else None,
-        })
+        files.append(
+            {
+                "path": str(rel),
+                "name": rel.name,
+                "size": p.stat().st_size,
+                "plugin": str(rel.parts[0]) if len(rel.parts) > 1 else None,
+            },
+        )
     return files
 
 
@@ -355,6 +356,7 @@ def _cleanup_loop() -> None:
 # Web UI routes
 # ---------------------------------------------------------------------------
 
+
 @app.route("/")
 def index():
     return render_template(
@@ -413,6 +415,7 @@ def submit_form():
 # REST API routes
 # ---------------------------------------------------------------------------
 
+
 @app.route("/api/download", methods=["POST"])
 def api_download():
     """
@@ -455,14 +458,16 @@ def api_download():
         pass
 
     info = create_session(url, plugins, timeout)
-    return jsonify({
-        "id": info["id"],
-        "url": info["url"],
-        "plugins": info["plugins"],
-        "status": info["status"],
-        "session_url": f"/session/{info['id']}",
-        "api_url": f"/api/session/{info['id']}",
-    }), 201
+    return jsonify(
+        {
+            "id": info["id"],
+            "url": info["url"],
+            "plugins": info["plugins"],
+            "status": info["status"],
+            "session_url": f"/session/{info['id']}",
+            "api_url": f"/api/session/{info['id']}",
+        },
+    ), 201
 
 
 @app.route("/api/sessions")
@@ -513,11 +518,13 @@ def api_session(sid: str):
     files = list_session_files(sid)
     records = get_session_jsonl(sid)
 
-    return jsonify({
-        **info,
-        "files": files,
-        "records": records,
-    })
+    return jsonify(
+        {
+            **info,
+            "files": files,
+            "records": records,
+        },
+    )
 
 
 @app.route("/download/<sid>/<path:filepath>")
@@ -572,6 +579,7 @@ def download_zip(sid: str):
 # Main
 # ---------------------------------------------------------------------------
 
+
 def main():
     parser = argparse.ArgumentParser(description="abx-dl Web Download Server")
     parser.add_argument("--host", default=DEFAULT_HOST, help=f"Bind host (default: {DEFAULT_HOST})")
@@ -589,7 +597,7 @@ def main():
     cleanup_thread = threading.Thread(target=_cleanup_loop, daemon=True)
     cleanup_thread.start()
 
-    print(f"abx-dl Web Download Server")
+    print("abx-dl Web Download Server")
     print(f"  Listening on http://{args.host}:{args.port}")
     print(f"  Data directory: {args.data_dir}")
     print(f"  Sessions expire after {SESSION_TTL_HOURS} hours")

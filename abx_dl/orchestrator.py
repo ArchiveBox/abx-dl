@@ -76,10 +76,11 @@ Key abxbus concepts used:
 """
 
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from abxbus import EventBus
+from abxbus import EventBus, EventBusMiddleware, EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode
 
 from .events import ArchiveResultEvent, CrawlEvent, slow_warning_timeout
 from .models import ArchiveResult, Snapshot, write_jsonl
@@ -98,14 +99,14 @@ def get_plugin_timeout(plugin: Plugin, config: dict[str, Any] | None = None) -> 
     name_upper = plugin.name.upper()
     cfg = config or {}
     # Check config overrides first
-    if f'{name_upper}_TIMEOUT' in cfg:
-        return int(cfg[f'{name_upper}_TIMEOUT'])
-    if 'TIMEOUT' in cfg:
-        return int(cfg['TIMEOUT'])
+    if f"{name_upper}_TIMEOUT" in cfg:
+        return int(cfg[f"{name_upper}_TIMEOUT"])
+    if "TIMEOUT" in cfg:
+        return int(cfg["TIMEOUT"])
     # Check plugin schema defaults
-    schema_def = plugin.config_schema.get(f'{name_upper}_TIMEOUT', {})
-    if isinstance(schema_def, dict) and 'default' in schema_def:
-        return int(schema_def['default'])
+    schema_def = plugin.config_schema.get(f"{name_upper}_TIMEOUT", {})
+    if isinstance(schema_def, dict) and "default" in schema_def:
+        return int(schema_def["default"])
     return 60
 
 
@@ -118,14 +119,27 @@ def compute_phase_timeout(hooks: list[tuple[Plugin, Hook]], config: dict[str, An
 
     Returns at least 60.0 (minimum phase timeout).
     """
-    total = sum(
-        get_plugin_timeout(plugin, config)
-        for plugin, _hook in hooks
-    )
+    total = sum(get_plugin_timeout(plugin, config) for plugin, _hook in hooks)
     return max(float(total), 60.0)
 
 
-def create_bus(*, total_timeout: float = 60.0, **kwargs) -> EventBus:
+def create_bus(
+    *,
+    total_timeout: float = 60.0,
+    name: str | None = "AbxDl",
+    event_concurrency: EventConcurrencyMode | str | None = EventConcurrencyMode.PARALLEL,
+    event_handler_concurrency: EventHandlerConcurrencyMode | str = EventHandlerConcurrencyMode.SERIAL,
+    event_handler_completion: EventHandlerCompletionMode | str = EventHandlerCompletionMode.ALL,
+    max_history_size: int | None = 1000,
+    max_history_drop: bool = True,
+    event_timeout: float | None = None,
+    event_slow_timeout: float | None = None,
+    event_handler_slow_timeout: float | None = 60.0,
+    event_handler_detect_file_paths: bool = True,
+    max_handler_recursion_depth: int = 6,
+    middlewares: Sequence[EventBusMiddleware | type[EventBusMiddleware]] | None = None,
+    id: str | None = None,
+) -> EventBus:
     """Create a configured EventBus for a download run.
 
     Callers should subscribe to events on the bus before passing it to
@@ -137,30 +151,33 @@ def create_bus(*, total_timeout: float = 60.0, **kwargs) -> EventBus:
     Args:
         total_timeout: Total timeout for the entire run (sum of all phase
             timeouts). Computed by ``compute_phase_timeout`` in download().
-        **kwargs: Extra keyword arguments passed through to the ``EventBus``
-            constructor (e.g. ``name``, ``middlewares``).
+        name: Optional EventBus instance name.
+        middlewares: Optional EventBus middlewares.
     """
-    defaults = dict(
-        name='AbxDl',
+    return EventBus(
+        name=name,
         # parallel event concurrency lets bg ProcessEvents (fire-and-forget
         # children) process concurrently with the parent event's serial handlers
-        event_concurrency='parallel',
+        event_concurrency=event_concurrency,
+        event_handler_concurrency=event_handler_concurrency,
+        event_handler_completion=event_handler_completion,
         # A full plugin run generates hundreds of events; drop old history
         # entries instead of rejecting new events when the buffer fills
-        max_history_size=1000,
-        max_history_drop=True,
-        # Normal abx-dl processing legitimately nests several queue-jumped
-        # handler chains (stdout -> typed event -> follow-up process/event work).
-        max_handler_recursion_depth=6,
+        max_history_size=max_history_size,
+        max_history_drop=max_history_drop,
         # Total timeout covers both crawl and snapshot phases.
         # Individual hooks set their own timeouts via event_handler_timeout
         # on their ProcessEvent.
-        event_timeout=total_timeout,
-        event_slow_timeout=total_timeout * 0.8,
-        event_handler_slow_timeout=60.0,
+        event_timeout=total_timeout if event_timeout is None else event_timeout,
+        event_slow_timeout=(total_timeout * 0.8) if event_slow_timeout is None else event_slow_timeout,
+        event_handler_slow_timeout=event_handler_slow_timeout,
+        event_handler_detect_file_paths=event_handler_detect_file_paths,
+        # Normal abx-dl processing legitimately nests several queue-jumped
+        # handler chains (stdout -> typed event -> follow-up process/event work).
+        max_handler_recursion_depth=max_handler_recursion_depth,
+        middlewares=middlewares,
+        id=id,
     )
-    defaults.update(kwargs)
-    return EventBus(**defaults)
 
 
 async def download(
@@ -204,7 +221,7 @@ async def download(
 
     output_dir = output_dir or Path.cwd()
     output_dir.mkdir(parents=True, exist_ok=True)
-    index_path = output_dir / 'index.jsonl'
+    index_path = output_dir / "index.jsonl"
     stdout_is_tty = sys.stdout.isatty()
     stderr_is_tty = sys.stderr.isatty()
     if emit_jsonl is None:
@@ -244,15 +261,21 @@ async def download(
 
     async def on_ArchiveResultEvent(event: ArchiveResultEvent) -> None:
         """Collects all ArchiveResultEvents."""
-        results.append(ArchiveResult(
-            snapshot_id=event.snapshot_id, plugin=event.plugin,
-            id=event.id, hook_name=event.hook_name, status=event.status,
-            process_id=event.process_id or None,
-            output_str=event.output_str,
-            output_files=event.output_files,
-            start_ts=event.start_ts or None, end_ts=event.end_ts or None,
-            error=event.error or None,
-        ))
+        results.append(
+            ArchiveResult(
+                snapshot_id=event.snapshot_id,
+                plugin=event.plugin,
+                id=event.id,
+                hook_name=event.hook_name,
+                status=event.status,
+                process_id=event.process_id or None,
+                output_str=event.output_str,
+                output_files=event.output_files,
+                start_ts=event.start_ts or None,
+                end_ts=event.end_ts or None,
+                error=event.error or None,
+            ),
+        )
 
     bus.on(ArchiveResultEvent, on_ArchiveResultEvent)
 
@@ -262,22 +285,37 @@ async def download(
 
     machine_svc = MachineService(bus, initial_config=config_overrides)
     BinaryService(
-        bus, machine=machine_svc, plugins=plugins, auto_install=auto_install,
+        bus,
+        machine=machine_svc,
+        plugins=plugins,
+        auto_install=auto_install,
         output_dir=output_dir,
     )
     ProcessService(
-        bus, index_path=index_path, output_dir=output_dir, emit_jsonl=emit_jsonl,
+        bus,
+        index_path=index_path,
+        output_dir=output_dir,
+        emit_jsonl=emit_jsonl,
         stderr_is_tty=stderr_is_tty,
     )
     ArchiveResultService(bus, index_path=index_path, emit_jsonl=emit_jsonl)
     CrawlService(
-        bus, url=url, snapshot=snapshot, output_dir=output_dir,
-        machine=machine_svc, hooks=crawl_hooks, crawl_only=crawl_only,
+        bus,
+        url=url,
+        snapshot=snapshot,
+        output_dir=output_dir,
+        machine=machine_svc,
+        hooks=crawl_hooks,
+        crawl_only=crawl_only,
         phase_timeout=crawl_phase_timeout,
     )
     SnapshotService(
-        bus, url=url, snapshot=snapshot, output_dir=output_dir,
-        machine=machine_svc, hooks=snapshot_hooks,
+        bus,
+        url=url,
+        snapshot=snapshot,
+        output_dir=output_dir,
+        machine=machine_svc,
+        hooks=snapshot_hooks,
         phase_timeout=snapshot_phase_timeout,
     )
 
@@ -287,11 +325,15 @@ async def download(
     # SnapshotCleanupEvent → SnapshotCompletedEvent → CrawlCleanupEvent →
     # CrawlCompletedEvent. The await returns after the full tree completes.
     try:
-        await bus.emit(CrawlEvent(
-            url=url, snapshot_id=snapshot.id, output_dir=str(output_dir),
-            event_timeout=total_timeout,
-            event_handler_slow_timeout=slow_warning_timeout(total_timeout),
-        ))
+        await bus.emit(
+            CrawlEvent(
+                url=url,
+                snapshot_id=snapshot.id,
+                output_dir=str(output_dir),
+                event_timeout=total_timeout,
+                event_handler_slow_timeout=slow_warning_timeout(total_timeout),
+            ),
+        )
     finally:
         await bus.stop()
 

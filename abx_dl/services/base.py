@@ -54,10 +54,10 @@ class BaseService:
         used for event class matching ("CrawlSetup" → "CrawlSetupEvent").
         """
         for attr_name in dir(self):
-            if not attr_name.startswith('on_'):
+            if not attr_name.startswith("on_"):
                 continue
-            prefix = attr_name.split('on_', 1)[1].split('__')[0]
-            candidates = [prefix] if prefix.endswith('Event') else [prefix, prefix + 'Event']
+            prefix = attr_name.split("on_", 1)[1].split("__")[0]
+            candidates = [prefix] if prefix.endswith("Event") else [prefix, prefix + "Event"]
             for event_cls in self.LISTENS_TO:
                 if event_cls.__name__ in candidates:
                     handler = getattr(self, attr_name)
@@ -89,9 +89,10 @@ def make_hook_handler(
     ceiling instead of the per-hook timeout (daemons should survive until
     cleanup kills them, but not outlive the entire phase).
     """
+
     async def handler(event: BaseEvent, _plugin=plugin, _hook=hook) -> None:
         env = machine.get_env_for_plugin(_plugin, run_output_dir=output_dir)
-        timeout = int(env.get(f"{_plugin.name.upper()}_TIMEOUT", env.get('TIMEOUT', '60')))
+        timeout = int(env.get(f"{_plugin.name.upper()}_TIMEOUT", env.get("TIMEOUT", "60")))
         plugin_output_dir = output_dir / _plugin.name
         plugin_output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -100,12 +101,15 @@ def make_hook_handler(
         # the per-plugin timeout.
         effective_timeout = int(phase_timeout) if _hook.is_background else timeout
         process_event = ProcessEvent(
-            plugin_name=_plugin.name, hook_name=_hook.name,
+            plugin_name=_plugin.name,
+            hook_name=_hook.name,
             hook_path=str(_hook.path),
-            hook_args=[f'--url={url}', f'--snapshot-id={snapshot.id}'],
+            hook_args=[f"--url={url}", f"--snapshot-id={snapshot.id}"],
             is_background=_hook.is_background,
-            output_dir=str(plugin_output_dir), env=env,
-            snapshot_id=snapshot.id, timeout=effective_timeout,
+            output_dir=str(plugin_output_dir),
+            env=env,
+            snapshot_id=snapshot.id,
+            timeout=effective_timeout,
             event_handler_timeout=effective_timeout + 30.0,
             event_handler_slow_timeout=slow_warning_timeout(effective_timeout),
         )

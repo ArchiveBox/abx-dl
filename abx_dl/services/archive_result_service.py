@@ -11,7 +11,7 @@ from ..models import ArchiveResult, write_jsonl
 from .base import BaseService
 
 # File extensions that are process metadata, not real hook output
-_METADATA_SUFFIXES = {'.log', '.pid', '.sh'}
+_METADATA_SUFFIXES = {".log", ".pid", ".sh"}
 
 
 class ArchiveResultService(BaseService):
@@ -36,7 +36,8 @@ class ArchiveResultService(BaseService):
     """
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [
-        ProcessStdoutEvent, ProcessCompletedEvent,
+        ProcessStdoutEvent,
+        ProcessCompletedEvent,
     ]
     EMITS: ClassVar[list[type[BaseEvent]]] = [ArchiveResultEvent]
 
@@ -51,33 +52,39 @@ class ArchiveResultService(BaseService):
             record = json.loads(event.line)
         except (json.JSONDecodeError, ValueError):
             return
-        if not isinstance(record, dict) or record.get('type') != 'ArchiveResult':
+        if not isinstance(record, dict) or record.get("type") != "ArchiveResult":
             return
 
         ar = ArchiveResult(
-            snapshot_id=record.get('snapshot_id', event.snapshot_id),
-            plugin=record.get('plugin', event.plugin_name),
-            hook_name=record.get('hook_name', event.hook_name),
-            status=record.get('status', ''),
-            output_str=record.get('output_str', ''),
-            error=record.get('error') or None,
+            snapshot_id=record.get("snapshot_id", event.snapshot_id),
+            plugin=record.get("plugin", event.plugin_name),
+            hook_name=record.get("hook_name", event.hook_name),
+            status=record.get("status", ""),
+            output_str=record.get("output_str", ""),
+            error=record.get("error") or None,
         )
 
         write_jsonl(self.index_path, ar, also_print=self.emit_jsonl)
 
-        await self.bus.emit(ArchiveResultEvent(
-            snapshot_id=ar.snapshot_id, plugin=ar.plugin, id=ar.id,
-            hook_name=ar.hook_name, status=ar.status,
-            process_id=event.process_id,
-            output_files=event.output_files,
-            start_ts=event.start_ts,
-            end_ts=event.end_ts,
-            output_str=ar.output_str, error=ar.error or '',
-        ))
+        await self.bus.emit(
+            ArchiveResultEvent(
+                snapshot_id=ar.snapshot_id,
+                plugin=ar.plugin,
+                id=ar.id,
+                hook_name=ar.hook_name,
+                status=ar.status,
+                process_id=event.process_id,
+                output_files=event.output_files,
+                start_ts=event.start_ts,
+                end_ts=event.end_ts,
+                output_str=ar.output_str,
+                error=ar.error or "",
+            ),
+        )
 
     async def on_ProcessCompletedEvent(self, event: ProcessCompletedEvent) -> None:
         """Emit a synthetic ArchiveResult only for Snapshot hooks that didn't self-report."""
-        if not event.hook_name.startswith('on_Snapshot'):
+        if not event.hook_name.startswith("on_Snapshot"):
             return
 
         existing = await self.bus.find(
@@ -91,41 +98,50 @@ class ArchiveResultService(BaseService):
         if event.exit_code != 0:
             # Failed process with no inline result → synthetic failure
             ar = ArchiveResult(
-                snapshot_id=event.snapshot_id, plugin=event.plugin_name,
-                hook_name=event.hook_name, status='failed',
+                snapshot_id=event.snapshot_id,
+                plugin=event.plugin_name,
+                hook_name=event.hook_name,
+                status="failed",
                 error=event.stderr or None,
             )
         elif _has_content_files(event.output_files):
             # Succeeded with real output files but no inline result → synthetic success
             ar = ArchiveResult(
-                snapshot_id=event.snapshot_id, plugin=event.plugin_name,
-                hook_name=event.hook_name, status='succeeded',
+                snapshot_id=event.snapshot_id,
+                plugin=event.plugin_name,
+                hook_name=event.hook_name,
+                status="succeeded",
             )
         else:
             # Succeeded but no content files → noresult
             ar = ArchiveResult(
-                snapshot_id=event.snapshot_id, plugin=event.plugin_name,
-                hook_name=event.hook_name, status='noresult',
+                snapshot_id=event.snapshot_id,
+                plugin=event.plugin_name,
+                hook_name=event.hook_name,
+                status="noresult",
             )
 
         write_jsonl(self.index_path, ar, also_print=self.emit_jsonl)
 
-        await self.bus.emit(ArchiveResultEvent(
-            snapshot_id=ar.snapshot_id, plugin=ar.plugin, id=ar.id,
-            hook_name=ar.hook_name, status=ar.status,
-            process_id=event.process_id,
-            output_files=event.output_files,
-            start_ts=event.start_ts,
-            end_ts=event.end_ts,
-            error=ar.error or '',
-        ))
+        await self.bus.emit(
+            ArchiveResultEvent(
+                snapshot_id=ar.snapshot_id,
+                plugin=ar.plugin,
+                id=ar.id,
+                hook_name=ar.hook_name,
+                status=ar.status,
+                process_id=event.process_id,
+                output_files=event.output_files,
+                start_ts=event.start_ts,
+                end_ts=event.end_ts,
+                error=ar.error or "",
+            ),
+        )
 
 
 # ── Pure helpers ────────────────────────────────────────────────────────────
 
+
 def _has_content_files(output_files: list[str]) -> bool:
     """Return True if any output file is not process metadata (.log, .pid, .sh)."""
-    return any(
-        Path(f).suffix not in _METADATA_SUFFIXES
-        for f in output_files
-    )
+    return any(Path(f).suffix not in _METADATA_SUFFIXES for f in output_files)

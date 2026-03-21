@@ -1,0 +1,76 @@
+repos:
+  - repo: https://github.com/asottile/yesqa
+    rev: v1.5.0
+    hooks:
+      - id: yesqa
+
+  - repo: https://github.com/codespell-project/codespell
+    rev: v2.4.1
+    hooks:
+      - id: codespell # See pyproject.toml for args
+        additional_dependencies:
+          - tomli
+
+  - repo: https://github.com/asottile/pyupgrade
+    rev: v3.20.0
+    hooks:
+      - id: pyupgrade
+        args: [--py311-plus]
+
+  - repo: https://github.com/asottile/add-trailing-comma
+    rev: v3.1.0
+    hooks:
+      - id: add-trailing-comma
+
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: ruff-format
+        entry: uv run ruff format
+        language: system
+        types_or: [python, pyi]
+      - id: ruff-check
+        name: ruff-check
+        entry: uv run ruff check --fix
+        language: system
+        types_or: [python, pyi]
+      - id: ty-check
+        name: ty-check
+        entry: uv run ty check
+        language: system
+        files: ^(abx_dl/|tests/|server/$)
+      - id: pyright
+        name: pyright
+        entry: uv run pyright
+        language: system
+        files: ^(abx_dl/|tests/|server/$)
+      # see pyproject.toml for more details on ruff config
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      # check for basic syntax errors in python and data files
+      - id: check-ast
+      - id: check-toml
+      - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict
+      # check for bad files and folders
+      - id: check-symlinks
+      - id: destroyed-symlinks
+      - id: check-case-conflict
+      - id: check-illegal-windows-names
+      - id: check-shebang-scripts-are-executable
+      - id: mixed-line-ending
+      - id: fix-byte-order-marker
+      - id: end-of-file-fixer
+      # best practices enforcement
+      - id: detect-private-key
+      # - id: check-docstring-first
+      - id: debug-statements
+      - id: forbid-submodules
+      - id: check-added-large-files
+        args: ["--maxkb=600"]
+      - id: name-tests-test
+        args: ["--pytest-test-first"]
+        exclude: tests/.*_helpers\.py$

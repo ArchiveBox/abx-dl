@@ -9,11 +9,11 @@ from .process_service import ProcessService
 from .snapshot_service import SnapshotService
 
 __all__ = [
-    'ArchiveResultService',
-    'BaseService',
-    'BinaryService',
-    'CrawlService',
-    'MachineService',
-    'ProcessService',
-    'SnapshotService',
+    "ArchiveResultService",
+    "BaseService",
+    "BinaryService",
+    "CrawlService",
+    "MachineService",
+    "ProcessService",
+    "SnapshotService",
 ]

@@ -51,11 +51,18 @@ class CrawlService(BaseService):
     """
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [
-        CrawlEvent, CrawlStartEvent, CrawlCleanupEvent,
+        CrawlEvent,
+        CrawlStartEvent,
+        CrawlCleanupEvent,
     ]
     EMITS: ClassVar[list[type[BaseEvent]]] = [
-        CrawlSetupEvent, CrawlStartEvent, CrawlCleanupEvent,
-        CrawlCompletedEvent, ProcessEvent, ProcessKillEvent, SnapshotEvent,
+        CrawlSetupEvent,
+        CrawlStartEvent,
+        CrawlCleanupEvent,
+        CrawlCompletedEvent,
+        ProcessEvent,
+        ProcessKillEvent,
+        SnapshotEvent,
     ]
 
     def __init__(
@@ -88,9 +95,13 @@ class CrawlService(BaseService):
         # Per-hook handlers on CrawlSetupEvent (run during setup phase)
         for plugin, hook in self.hooks:
             handler = make_hook_handler(
-                self, plugin, hook,
-                url=self.url, snapshot=self.snapshot,
-                output_dir=self.output_dir, machine=self.machine,
+                self,
+                plugin,
+                hook,
+                url=self.url,
+                snapshot=self.snapshot,
+                output_dir=self.output_dir,
+                machine=self.machine,
                 phase_timeout=self.phase_timeout,
             )
             handler.__name__ = hook.name
@@ -110,21 +121,33 @@ class CrawlService(BaseService):
         url = self.url
         snapshot_id = self.snapshot.id
         output_dir = str(self.output_dir)
-        await self.bus.emit(CrawlSetupEvent(
-            url=url, snapshot_id=snapshot_id, output_dir=output_dir,
-            event_timeout=self.phase_timeout,
-            event_handler_slow_timeout=slow_warning_timeout(self.phase_timeout),
-        ))
-        await self.bus.emit(CrawlStartEvent(
-            url=url, snapshot_id=snapshot_id, output_dir=output_dir,
-            event_timeout=event.event_timeout,
-            event_handler_slow_timeout=slow_warning_timeout(event.event_timeout),
-        ))
-        await self.bus.emit(CrawlCleanupEvent(
-            url=url, snapshot_id=snapshot_id, output_dir=output_dir,
-            event_timeout=self.phase_timeout,
-            event_handler_slow_timeout=slow_warning_timeout(self.phase_timeout),
-        ))
+        await self.bus.emit(
+            CrawlSetupEvent(
+                url=url,
+                snapshot_id=snapshot_id,
+                output_dir=output_dir,
+                event_timeout=self.phase_timeout,
+                event_handler_slow_timeout=slow_warning_timeout(self.phase_timeout),
+            ),
+        )
+        await self.bus.emit(
+            CrawlStartEvent(
+                url=url,
+                snapshot_id=snapshot_id,
+                output_dir=output_dir,
+                event_timeout=event.event_timeout,
+                event_handler_slow_timeout=slow_warning_timeout(event.event_timeout),
+            ),
+        )
+        await self.bus.emit(
+            CrawlCleanupEvent(
+                url=url,
+                snapshot_id=snapshot_id,
+                output_dir=output_dir,
+                event_timeout=self.phase_timeout,
+                event_handler_slow_timeout=slow_warning_timeout(self.phase_timeout),
+            ),
+        )
         await self.bus.emit(CrawlCompletedEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir))
 
     async def on_CrawlStartEvent(self, event: CrawlStartEvent) -> None:
@@ -134,14 +157,16 @@ class CrawlService(BaseService):
         """
         if self.crawl_only:
             return
-        await self.bus.emit(SnapshotEvent(
-            url=self.url,
-            snapshot_id=self.snapshot.id,
-            output_dir=str(self.output_dir),
-            depth=0,
-            event_timeout=event.event_timeout,
-            event_handler_slow_timeout=slow_warning_timeout(event.event_timeout),
-        ))
+        await self.bus.emit(
+            SnapshotEvent(
+                url=self.url,
+                snapshot_id=self.snapshot.id,
+                output_dir=str(self.output_dir),
+                depth=0,
+                event_timeout=event.event_timeout,
+                event_handler_slow_timeout=slow_warning_timeout(event.event_timeout),
+            ),
+        )
 
     async def on_CrawlCleanupEvent(self, event: CrawlCleanupEvent) -> None:
         """SIGTERM all background crawl daemons so they can flush and exit.
@@ -153,14 +178,18 @@ class CrawlService(BaseService):
         for plugin, hook in self.hooks:
             if hook.is_background:
                 env = self.machine.get_env_for_plugin(plugin, run_output_dir=self.output_dir)
-                grace = float(env.get(f"{plugin.name.upper()}_TIMEOUT", env.get('TIMEOUT', '60')))
+                grace = float(env.get(f"{plugin.name.upper()}_TIMEOUT", env.get("TIMEOUT", "60")))
                 plugin_output_dir = self.output_dir / plugin.name
-                pending_kills.append(self.bus.emit(ProcessKillEvent(
-                    plugin_name=plugin.name,
-                    hook_name=hook.name,
-                    output_dir=str(plugin_output_dir),
-                    grace_period=grace,
-                    event_timeout=grace + 10.0,
-                )))
+                pending_kills.append(
+                    self.bus.emit(
+                        ProcessKillEvent(
+                            plugin_name=plugin.name,
+                            hook_name=hook.name,
+                            output_dir=str(plugin_output_dir),
+                            grace_period=grace,
+                            event_timeout=grace + 10.0,
+                        ),
+                    ),
+                )
         if pending_kills:
             await asyncio.gather(*pending_kills)

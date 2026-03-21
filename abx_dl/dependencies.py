@@ -4,14 +4,22 @@ Dependency management for abx-dl using abx-pkg.
 
 from typing import Any
 
-from abx_pkg import Binary, BinProvider, EnvProvider, PipProvider, NpmProvider, BrewProvider, AptProvider   # DO NOT REMOVE UNUSED IMPORT, critical for pydantic circular reference fix
+from abx_pkg import (
+    Binary,
+    BinProvider,
+    EnvProvider,
+    PipProvider,
+    NpmProvider,
+    BrewProvider,
+    AptProvider,
+)  # DO NOT REMOVE UNUSED IMPORT, critical for pydantic circular reference fix
 
 from .config import PIP_HOME, NPM_HOME
 
 DEFAULT_PROVIDERS: list[BinProvider] = [EnvProvider()]
 
 try:
-    DEFAULT_PROVIDERS.append(PipProvider(pip_venv=PIP_HOME / 'venv'))
+    DEFAULT_PROVIDERS.append(PipProvider(pip_venv=PIP_HOME / "venv"))
 except Exception:
     pass
 
@@ -31,16 +39,15 @@ except Exception:
     pass
 
 
-
 def load_binary(spec: dict[str, Any]) -> Binary:
     """Load a binary from a spec dict."""
-    providers_str = spec.get('binproviders', 'env')
-    providers = [p for p in DEFAULT_PROVIDERS if p.name in providers_str.split(',')]
-    overrides = spec.get('overrides', {})
-    min_version = spec.get('min_version') or None
+    providers_str = spec.get("binproviders", "env")
+    providers = [p for p in DEFAULT_PROVIDERS if p.name in providers_str.split(",")]
+    overrides = spec.get("overrides", {})
+    min_version = spec.get("min_version") or None
 
     binary = Binary(
-        name=spec['name'],
+        name=spec["name"],
         min_version=min_version,
         binproviders=providers,
         overrides=overrides,
@@ -54,13 +61,13 @@ def load_binary(spec: dict[str, Any]) -> Binary:
 
 def install_binary(spec: dict[str, Any]) -> Binary:
     """Load or install a binary from a spec dict."""
-    providers_str = spec.get('binproviders', 'env')
-    providers = [p for p in DEFAULT_PROVIDERS if p.name in providers_str.split(',')]
-    overrides = spec.get('overrides', {})
-    min_version = spec.get('min_version') or None
+    providers_str = spec.get("binproviders", "env")
+    providers = [p for p in DEFAULT_PROVIDERS if p.name in providers_str.split(",")]
+    overrides = spec.get("overrides", {})
+    min_version = spec.get("min_version") or None
 
     binary = Binary(
-        name=spec['name'],
+        name=spec["name"],
         min_version=min_version,
         binproviders=providers,
         overrides=overrides,

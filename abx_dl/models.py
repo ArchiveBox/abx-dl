@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 # ── Utility functions ──────────────────────────────────────────────────────
 
+
 def uuid7() -> str:
     """Generate a UUIDv7-like string (timestamp-based for sortability)."""
     ts = int(datetime.now().timestamp() * 1000)
@@ -33,13 +34,14 @@ def now_iso() -> str:
 
 # ── Special URLs ───────────────────────────────────────────────────────────
 
-INSTALL_URL = 'archivebox://install'
+INSTALL_URL = "archivebox://install"
 """Sentinel URL used by ``abx install`` to run crawl hooks (install/setup)
 without triggering the snapshot phase. CrawlService detects this URL and
 skips emitting SnapshotEvent."""
 
 
 # ── Plugin models ──────────────────────────────────────────────────────────
+
 
 class Hook(BaseModel):
     """A plugin hook — a +x executable script, language-agnostic.
@@ -54,7 +56,8 @@ class Hook(BaseModel):
     - ``.bg.`` in the filename marks it as a background hook
     - ``.finite.`` means the bg hook exits on its own (vs ``.daemon.`` which runs until killed)
     """
-    model_config = {'arbitrary_types_allowed': True}
+
+    model_config = {"arbitrary_types_allowed": True}
 
     name: str
     plugin_name: str
@@ -81,12 +84,13 @@ class Plugin(BaseModel):
     - ``config.json``: schema with metadata, config properties, and ``required_plugins``
     - ``on_*`` scripts: hook executables matching the naming convention
     """
-    model_config = {'arbitrary_types_allowed': True}
+
+    model_config = {"arbitrary_types_allowed": True}
 
     name: str
     path: Path
-    title: str = ''
-    description: str = ''
+    title: str = ""
+    description: str = ""
     output_mimetypes: list[str] = Field(default_factory=list)
     config_schema: dict[str, Any] = Field(default_factory=dict)
     binaries: list[dict[str, Any]] = Field(default_factory=list)
@@ -101,29 +105,31 @@ class Plugin(BaseModel):
     def get_snapshot_hooks(self) -> list[Hook]:
         """Get hooks that run during the snapshot phase (extraction/indexing)."""
         return sorted(
-            [h for h in self.hooks if 'Snapshot' in h.name],
-            key=lambda h: h.sort_key
+            [h for h in self.hooks if "Snapshot" in h.name],
+            key=lambda h: h.sort_key,
         )
 
     def get_crawl_hooks(self) -> list[Hook]:
         """Get hooks that run during the crawl phase (install/setup/daemons)."""
         return sorted(
-            [h for h in self.hooks if 'Crawl' in h.name],
-            key=lambda h: h.sort_key
+            [h for h in self.hooks if "Crawl" in h.name],
+            key=lambda h: h.sort_key,
         )
 
     def get_binary_hooks(self) -> list[Hook]:
         """Get hooks that resolve/install binary dependencies."""
         return sorted(
-            [h for h in self.hooks if 'Binary' in h.name],
-            key=lambda h: h.sort_key
+            [h for h in self.hooks if "Binary" in h.name],
+            key=lambda h: h.sort_key,
         )
 
 
 # ── Execution models ──────────────────────────────────────────────────────
 
+
 class Process(BaseModel):
     """A subprocess execution — one per hook invocation."""
+
     cmd: list[str]
     id: str = Field(default_factory=uuid7)
     binary_id: str | None = None
@@ -135,14 +141,14 @@ class Process(BaseModel):
     started_at: str | None = None
     ended_at: str | None = None
     exit_code: int | None = None
-    stdout: str = ''
-    stderr: str = ''
+    stdout: str = ""
+    stderr: str = ""
     machine_hostname: str = Field(default_factory=socket.gethostname)
     machine_os: str = Field(default_factory=lambda: f"{platform.system()} {platform.release()}")
 
     def to_jsonl(self) -> str:
         d = {k: v for k, v in self.model_dump().items() if v is not None}
-        d['type'] = 'Process'
+        d["type"] = "Process"
         return json.dumps(d, default=str)
 
 
@@ -153,31 +159,34 @@ class Process(BaseModel):
 #     version: str | None = None
 #     ...
 
+
 class Snapshot(BaseModel):
     """A URL being archived — one per download() call."""
+
     url: str
     id: str = Field(default_factory=uuid7)
     title: str | None = None
     timestamp: str = Field(default_factory=lambda: str(datetime.now().timestamp()))
     bookmarked_at: str = Field(default_factory=now_iso)
     created_at: str = Field(default_factory=now_iso)
-    tags: str = ''
+    tags: str = ""
 
     def to_jsonl(self) -> str:
         d = {k: v for k, v in self.model_dump().items() if v is not None}
-        d['type'] = 'Snapshot'
+        d["type"] = "Snapshot"
         return json.dumps(d, default=str)
 
 
 class ArchiveResult(BaseModel):
     """Result from running a single plugin hook."""
+
     snapshot_id: str
     plugin: str
     id: str = Field(default_factory=uuid7)
-    hook_name: str = ''
-    status: str = 'queued'
+    hook_name: str = ""
+    status: str = "queued"
     process_id: str | None = None
-    output_str: str = ''
+    output_str: str = ""
     output_files: list[str] = Field(default_factory=list)
     start_ts: str | None = None
     end_ts: str | None = None
@@ -185,7 +194,7 @@ class ArchiveResult(BaseModel):
 
     def to_jsonl(self) -> str:
         d = {k: v for k, v in self.model_dump().items() if v is not None}
-        d['type'] = 'ArchiveResult'
+        d["type"] = "ArchiveResult"
         return json.dumps(d, default=str)
 
 
@@ -195,30 +204,31 @@ VisibleRecord = ArchiveResult | Process
 def write_jsonl(path: Path, record: Any, also_print: bool = False):
     """Append a record to a JSONL file."""
     line = record.to_jsonl()
-    with open(path, 'a') as f:
-        f.write(line + '\n')
+    with open(path, "a") as f:
+        f.write(line + "\n")
     if also_print:
         print(line, flush=True)
 
 
 # ── Plugin discovery ──────────────────────────────────────────────────────
 
+
 def _default_plugins_dir() -> Path:
     """Determine the plugins directory.
 
     Priority: ABX_PLUGINS_DIR env var > abx_plugins package > monorepo path > local.
     """
-    override = os.environ.get('ABX_PLUGINS_DIR')
+    override = os.environ.get("ABX_PLUGINS_DIR")
     if override:
         return Path(override)
     try:
         from abx_plugins import get_plugins_dir
     except Exception:
         repo_root = Path(__file__).resolve().parents[3]
-        monorepo_plugins = repo_root / 'abx-plugins' / 'abx_plugins' / 'plugins'
+        monorepo_plugins = repo_root / "abx-plugins" / "abx_plugins" / "plugins"
         if monorepo_plugins.exists():
             return monorepo_plugins
-        return Path(__file__).parent / 'plugins'
+        return Path(__file__).parent / "plugins"
     return get_plugins_dir()
 
 
@@ -233,14 +243,14 @@ def parse_hook_filename(filename: str) -> tuple[str, int, bool] | None:
 
     Returns None if the filename doesn't match the hook convention.
     """
-    pattern = r'^on_(\w+)__(\d{2})_.+'
+    pattern = r"^on_(\w+)__(\d{2})_.+"
     match = re.match(pattern, filename)
     if not match:
         return None
 
     event = match.group(1)
     order = int(match.group(2))
-    is_background = '.bg.' in filename
+    is_background = ".bg." in filename
 
     return (event, order, is_background)
 
@@ -257,26 +267,26 @@ def load_plugin(plugin_dir: Path) -> Plugin | None:
     plugin_name = plugin_dir.name
 
     # Skip hidden dirs and special dirs
-    if plugin_name.startswith('.') or plugin_name.startswith('_'):
+    if plugin_name.startswith(".") or plugin_name.startswith("_"):
         return None
 
     plugin = Plugin(name=plugin_name, path=plugin_dir)
 
     # Load config schema
-    config_file = plugin_dir / 'config.json'
+    config_file = plugin_dir / "config.json"
     if config_file.exists():
         try:
             schema = json.loads(config_file.read_text())
-            plugin.title = schema.get('title', '')
-            plugin.description = schema.get('description', '')
-            plugin.output_mimetypes = schema.get('output_mimetypes', [])
-            plugin.config_schema = schema.get('properties', {})
-            plugin.required_plugins = schema.get('required_plugins', [])
+            plugin.title = schema.get("title", "")
+            plugin.description = schema.get("description", "")
+            plugin.output_mimetypes = schema.get("output_mimetypes", [])
+            plugin.config_schema = schema.get("properties", {})
+            plugin.required_plugins = schema.get("required_plugins", [])
         except json.JSONDecodeError:
             pass
 
     # Discover hooks
-    for hook_file in plugin_dir.glob('on_*'):
+    for hook_file in plugin_dir.glob("on_*"):
         if not hook_file.is_file():
             continue
 
@@ -356,18 +366,10 @@ def filter_plugins(plugins: dict[str, Plugin], names: list[str] | None, *, inclu
 
     # If any resolved plugin has crawl hooks, include all binary provider plugins
     if include_providers:
-        needs_providers = any(
-            plugin.get_crawl_hooks()
-            for name, plugin in plugins.items()
-            if name.lower() in resolved
-        )
+        needs_providers = any(plugin.get_crawl_hooks() for name, plugin in plugins.items() if name.lower() in resolved)
         if needs_providers:
             for name, plugin in plugins.items():
                 if plugin.get_binary_hooks():
                     resolved.add(name.lower())
 
-    return {
-        name: plugin
-        for name, plugin in plugins.items()
-        if name.lower() in resolved
-    }
+    return {name: plugin for name, plugin in plugins.items() if name.lower() in resolved}

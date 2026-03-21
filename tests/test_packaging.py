@@ -5,6 +5,6 @@ from pathlib import Path
 
 
 def test_base_install_does_not_publish_server_console_script() -> None:
-    pyproject = tomllib.loads(Path('pyproject.toml').read_text())
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text())
 
-    assert pyproject['project']['scripts'] == {'abx-dl': 'abx_dl:main'}
+    assert pyproject["project"]["scripts"] == {"abx-dl": "abx_dl:main"}

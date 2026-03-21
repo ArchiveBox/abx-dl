@@ -1,3 +1,3 @@
-__package__ = 'abx_dl'
+__package__ = "abx_dl"
 
 from .cli import main as main

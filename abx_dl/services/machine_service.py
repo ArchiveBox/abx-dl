@@ -55,7 +55,7 @@ class MachineService(BaseService):
             record = json.loads(event.line)
         except (json.JSONDecodeError, ValueError):
             return
-        if not isinstance(record, dict) or record.pop('type', '') != 'Machine':
+        if not isinstance(record, dict) or record.pop("type", "") != "Machine":
             return
         await self.bus.emit(MachineEvent(**record))
 
@@ -72,9 +72,9 @@ class MachineService(BaseService):
             except Exception:
                 pass  # persistent store write is best-effort
             return
-        if event.method != 'update':
+        if event.method != "update":
             return
-        key = event.key.replace('config/', '')
+        key = event.key.replace("config/", "")
         if key:
             self.shared_config[key] = event.value
             try:
@@ -93,6 +93,8 @@ class MachineService(BaseService):
         same CrawlEvent/SnapshotEvent).
         """
         return build_env_for_plugin(
-            plugin.name, plugin.config_schema, self.shared_config,
+            plugin.name,
+            plugin.config_schema,
+            self.shared_config,
             run_output_dir=run_output_dir,
         )

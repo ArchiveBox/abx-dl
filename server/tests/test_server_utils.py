@@ -52,7 +52,7 @@ def test_get_visible_log_entries_filters_whitespace_only_logs() -> None:
         {
             "abx-dl.stdout.log": "   \n\t",
             "abx-dl.stderr.log": "real output\n",
-        }
+        },
     )
 
     assert entries == [("abx-dl.stderr.log", "real output\n")]
@@ -73,50 +73,59 @@ def test_resolve_public_session_download_rejects_traversal_and_internal_files(tm
 
     allowed_paths = {"title/title.txt"}
 
-    assert resolve_public_session_download(
-        session_root,
-        "title/title.txt",
-        allowed_relative_paths=allowed_paths,
-    ) == public_file.resolve()
-    assert resolve_public_session_download(
-        session_root,
-        "session.json",
-        allowed_relative_paths=allowed_paths,
-    ) is None
-    assert resolve_public_session_download(
-        session_root,
-        "../session-escaped/secret.txt",
-        allowed_relative_paths=allowed_paths,
-    ) is None
+    assert (
+        resolve_public_session_download(
+            session_root,
+            "title/title.txt",
+            allowed_relative_paths=allowed_paths,
+        )
+        == public_file.resolve()
+    )
+    assert (
+        resolve_public_session_download(
+            session_root,
+            "session.json",
+            allowed_relative_paths=allowed_paths,
+        )
+        is None
+    )
+    assert (
+        resolve_public_session_download(
+            session_root,
+            "../session-escaped/secret.txt",
+            allowed_relative_paths=allowed_paths,
+        )
+        is None
+    )
 
 
-flask = pytest.importorskip('flask')
-server_module = importlib.import_module('server.server')
+flask = pytest.importorskip("flask")
+server_module = importlib.import_module("server.server")
 
 
 def _write_session(data_dir: Path, sid: str, **overrides: object) -> dict[str, object]:
     session_root = data_dir / sid
     session_root.mkdir(parents=True, exist_ok=True)
     info: dict[str, object] = {
-        'id': sid,
-        'url': 'https://example.com',
-        'plugins': ['title'],
-        'timeout': 120,
-        'status': 'completed',
-        'created_at': '2026-03-15T12:00:00+00:00',
-        'finished_at': '2026-03-15T12:01:00+00:00',
-        'exit_code': 0,
-        'pid': None,
-        'error': None,
+        "id": sid,
+        "url": "https://example.com",
+        "plugins": ["title"],
+        "timeout": 120,
+        "status": "completed",
+        "created_at": "2026-03-15T12:00:00+00:00",
+        "finished_at": "2026-03-15T12:01:00+00:00",
+        "exit_code": 0,
+        "pid": None,
+        "error": None,
     }
     info.update(overrides)
-    (session_root / 'session.json').write_text(json.dumps(info, indent=2))
+    (session_root / "session.json").write_text(json.dumps(info, indent=2))
     return info
 
 
 @pytest.fixture()
 def server_client(tmp_path: Path):
-    data_dir = tmp_path / 'sessions'
+    data_dir = tmp_path / "sessions"
     data_dir.mkdir(parents=True, exist_ok=True)
     server_module.app.config.update(TESTING=True, DATA_DIR=str(data_dir))
     with server_module.sessions_lock:
@@ -128,68 +137,68 @@ def server_client(tmp_path: Path):
 
 
 def test_api_sessions_normalizes_restarted_runs(server_client) -> None:
-    data_dir = Path(server_module.app.config['DATA_DIR'])
-    _write_session(data_dir, 'restartdemo', status='running', finished_at=None, error=None)
+    data_dir = Path(server_module.app.config["DATA_DIR"])
+    _write_session(data_dir, "restartdemo", status="running", finished_at=None, error=None)
 
-    response = server_client.get('/api/sessions')
+    response = server_client.get("/api/sessions")
 
     assert response.status_code == 200
-    session = next(item for item in response.get_json() if item['id'] == 'restartdemo')
-    assert session['status'] == 'failed'
-    assert session['error'] == RECOVERED_SESSION_ERROR
-    assert session['finished_at'] is not None
+    session = next(item for item in response.get_json() if item["id"] == "restartdemo")
+    assert session["status"] == "failed"
+    assert session["error"] == RECOVERED_SESSION_ERROR
+    assert session["finished_at"] is not None
 
 
 def test_session_page_and_download_only_expose_safe_public_outputs(server_client) -> None:
-    data_dir = Path(server_module.app.config['DATA_DIR'])
-    sid = 'unsafe'
-    _write_session(data_dir, sid, url='javascript:alert(1)')
+    data_dir = Path(server_module.app.config["DATA_DIR"])
+    sid = "unsafe"
+    _write_session(data_dir, sid, url="javascript:alert(1)")
 
     session_root = data_dir / sid
-    public_file = session_root / 'title' / 'title.txt'
+    public_file = session_root / "title" / "title.txt"
     public_file.parent.mkdir(parents=True, exist_ok=True)
-    public_file.write_text('ok')
-    (session_root / 'abx-dl.stdout.log').write_text('   \n')
+    public_file.write_text("ok")
+    (session_root / "abx-dl.stdout.log").write_text("   \n")
 
-    sibling_root = data_dir / f'{sid}-leak'
+    sibling_root = data_dir / f"{sid}-leak"
     sibling_root.mkdir(parents=True, exist_ok=True)
-    (sibling_root / 'secret.txt').write_text('secret')
+    (sibling_root / "secret.txt").write_text("secret")
 
-    page = server_client.get(f'/session/{sid}')
+    page = server_client.get(f"/session/{sid}")
     assert page.status_code == 200
     html = page.get_data(as_text=True)
     assert 'href="javascript:alert(1)"' not in html
-    assert 'No log output yet.' in html
+    assert "No log output yet." in html
 
-    public_download = server_client.get(f'/download/{sid}/title/title.txt')
+    public_download = server_client.get(f"/download/{sid}/title/title.txt")
     assert public_download.status_code == 200
-    assert public_download.data == b'ok'
+    assert public_download.data == b"ok"
 
-    internal_download = server_client.get(f'/download/{sid}/abx-dl.stdout.log')
+    internal_download = server_client.get(f"/download/{sid}/abx-dl.stdout.log")
     assert internal_download.status_code == 404
 
-    traversal_download = server_client.get(f'/download/{sid}/../{sid}-leak/secret.txt')
+    traversal_download = server_client.get(f"/download/{sid}/../{sid}-leak/secret.txt")
     assert traversal_download.status_code == 404
 
 
 def test_run_download_reaps_timed_out_child(server_client, monkeypatch, tmp_path: Path) -> None:
-    sid = 'timeoutdemo'
-    data_dir = Path(server_module.app.config['DATA_DIR'])
+    sid = "timeoutdemo"
+    data_dir = Path(server_module.app.config["DATA_DIR"])
     session_root = data_dir / sid
     session_root.mkdir(parents=True, exist_ok=True)
 
     with server_module.sessions_lock:
         server_module.sessions[sid] = {
-            'id': sid,
-            'url': 'https://example.com',
-            'plugins': ['title'],
-            'timeout': 1,
-            'status': 'starting',
-            'created_at': '2026-03-15T12:00:00+00:00',
-            'finished_at': None,
-            'exit_code': None,
-            'pid': None,
-            'error': None,
+            "id": sid,
+            "url": "https://example.com",
+            "plugins": ["title"],
+            "timeout": 1,
+            "status": "starting",
+            "created_at": "2026-03-15T12:00:00+00:00",
+            "finished_at": None,
+            "exit_code": None,
+            "pid": None,
+            "error": None,
         }
 
     class FakeProc:
@@ -202,20 +211,20 @@ def test_run_download_reaps_timed_out_child(server_client, monkeypatch, tmp_path
         def wait(self, timeout=None):
             self.wait_calls += 1
             if self.wait_calls == 1:
-                raise server_module.subprocess.TimeoutExpired(cmd=['abx-dl'], timeout=timeout)
+                raise server_module.subprocess.TimeoutExpired(cmd=["abx-dl"], timeout=timeout)
             return self.returncode
 
         def kill(self) -> None:
             self.kill_called = True
 
     fake_proc = FakeProc()
-    monkeypatch.setattr(server_module.subprocess, 'Popen', lambda *args, **kwargs: fake_proc)
+    monkeypatch.setattr(server_module.subprocess, "Popen", lambda *args, **kwargs: fake_proc)
 
-    server_module._run_download(sid, 'https://example.com', ['title'], timeout=1)
+    server_module._run_download(sid, "https://example.com", ["title"], timeout=1)
 
     assert fake_proc.kill_called is True
     assert fake_proc.wait_calls == 2
     with server_module.sessions_lock:
         info = dict(server_module.sessions[sid])
-    assert info['status'] == 'timeout'
-    assert info['exit_code'] == -9
+    assert info["status"] == "timeout"
+    assert info["exit_code"] == -9

@@ -14,14 +14,15 @@ from dataclasses import dataclass, field as dataclass_field
 from datetime import datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Callable, TypeVar
+from typing import TypeVar
+from collections.abc import Callable, Mapping
 
 import rich_click as click
 from rich.console import Console, Group
 from rich.highlighter import ReprHighlighter
 from rich.live import Live
 from rich.markup import escape
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn, TaskID
 from rich.table import Table
 from rich.text import Text
 from rich import box
@@ -45,12 +46,12 @@ REPR_HIGHLIGHTER = ReprHighlighter()
 
 
 STATUS_STYLES = {
-    'succeeded': 'green',
-    'noresult': 'grey58',
-    'noresults': 'grey58',
-    'failed': 'red',
-    'skipped': 'grey50',
-    'started': 'yellow',
+    "succeeded": "green",
+    "noresult": "grey58",
+    "noresults": "grey58",
+    "failed": "red",
+    "skipped": "grey50",
+    "started": "yellow",
 }
 
 
@@ -60,19 +61,19 @@ class _LiveProcessRecord:
     plugin: str
     hook_name: str
     timeout: int
-    phase: str = ''
+    phase: str = ""
     started_at: str | None = None
     ended_at: str | None = None
-    status: str = 'started'
-    output: str = ''
+    status: str = "started"
+    output: str = ""
     cmd: list[str] = dataclass_field(default_factory=list)
     final_status: str | None = None
-    final_output: str = ''
+    final_output: str = ""
     final_output_is_archive_result: bool = False
 
 
 VisibleRecord = ArchiveResult | Process | _LiveProcessRecord
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 class DefaultGroup(click.Group):
@@ -80,23 +81,23 @@ class DefaultGroup(click.Group):
 
     @staticmethod
     def _looks_like_url(arg: str) -> bool:
-        return '://' in arg
+        return "://" in arg
 
     def _should_default_to_dl(self, args: list[str]) -> bool:
         if not args:
             return False
 
-        first_non_option = next((arg for arg in args if not arg.startswith('-')), None)
+        first_non_option = next((arg for arg in args if not arg.startswith("-")), None)
         if first_non_option is None:
             return False
 
         return self._looks_like_url(first_non_option) and first_non_option not in self.commands
 
     def parse_args(self, ctx, args):
-        if args == ['help']:
-            args[:] = ['--help']
+        if args == ["help"]:
+            args[:] = ["--help"]
         if self._should_default_to_dl(args):
-            args.insert(0, 'dl')
+            args.insert(0, "dl")
         return super().parse_args(ctx, args)
 
     def resolve_command(self, ctx, args):
@@ -105,72 +106,72 @@ class DefaultGroup(click.Group):
         if args[0] in self.commands:
             return super().resolve_command(ctx, args)
         if self._should_default_to_dl(args):
-            return super().resolve_command(ctx, ['dl'] + args)
+            return super().resolve_command(ctx, ["dl"] + args)
         return super().resolve_command(ctx, args)
 
 
 def _compact_output(text: str, limit: int = 120) -> str:
-    compact = ' '.join(text.split())
+    compact = " ".join(text.split())
     if len(compact) <= limit:
         return compact
-    return compact[: limit - 3] + '...'
+    return compact[: limit - 3] + "..."
 
 
 def _flatten_output(text: str) -> str:
-    return ' '.join(text.split())
+    return " ".join(text.split())
 
 
 def _humanize_special_output(text: str) -> str:
     stripped = text.strip()
-    if not stripped.startswith('{') or not stripped.endswith('}'):
+    if not stripped.startswith("{") or not stripped.endswith("}"):
         return text
     try:
         record = json.loads(stripped)
     except Exception:
         return text
-    if not isinstance(record, dict) or record.get('type') != 'Binary':
+    if not isinstance(record, dict) or record.get("type") != "Binary":
         return text
-    name = str(record.get('name', '')).strip()
+    name = str(record.get("name", "")).strip()
     if not name:
         return text
-    output = f'Binary requested: {name}'
-    abspath = str(record.get('abspath', '')).strip()
+    output = f"Binary requested: {name}"
+    abspath = str(record.get("abspath", "")).strip()
     if abspath:
-        output += f' ({abspath})'
-    binproviders = str(record.get('binproviders', '')).strip()
+        output += f" ({abspath})"
+    binproviders = str(record.get("binproviders", "")).strip()
     if binproviders:
-        output += f' binproviders: {binproviders}'
+        output += f" binproviders: {binproviders}"
     return output
 
 
 def _format_binary_requested_output(text: str) -> Text | None:
     match = re.match(
-        r'^Binary requested: (?P<name>\S+)(?: \((?P<abspath>[^)]+)\))?(?: binproviders: (?P<providers>.+))?$',
+        r"^Binary requested: (?P<name>\S+)(?: \((?P<abspath>[^)]+)\))?(?: binproviders: (?P<providers>.+))?$",
         text,
     )
     if not match:
         return None
 
     rendered = Text()
-    rendered.append('Binary requested: ', style='grey62')
-    rendered.append(match.group('name'), style='bold cyan')
+    rendered.append("Binary requested: ", style="grey62")
+    rendered.append(match.group("name"), style="bold cyan")
 
-    abspath = match.group('abspath')
+    abspath = match.group("abspath")
     if abspath:
-        rendered.append(' (', style='grey50')
-        rendered.append(abspath, style='green')
-        rendered.append(')', style='grey50')
+        rendered.append(" (", style="grey50")
+        rendered.append(abspath, style="green")
+        rendered.append(")", style="grey50")
 
-    providers = match.group('providers')
+    providers = match.group("providers")
     if providers:
-        rendered.append(' binproviders: ', style='grey62')
-        rendered.append(providers, style='yellow')
+        rendered.append(" binproviders: ", style="grey62")
+        rendered.append(providers, style="yellow")
 
     return rendered
 
 
 def _format_install_output(text: str):
-    text = _flatten_output(_humanize_special_output(text)).replace('"', '')
+    text = _flatten_output(_humanize_special_output(text)).replace('"', "")
     special = _format_binary_requested_output(text)
     if special is not None:
         return special
@@ -179,7 +180,7 @@ def _format_install_output(text: str):
 
 def _format_table_output(text: str, *, flatten: bool) -> Text:
     text = _humanize_special_output(text)
-    text = (_flatten_output(text) if flatten else text).replace('"', '')
+    text = (_flatten_output(text) if flatten else text).replace('"', "")
     special = _format_binary_requested_output(text)
     if special is not None:
         return special
@@ -188,24 +189,20 @@ def _format_table_output(text: str, *, flatten: bool) -> Text:
 
 
 def _record_muted_style(record: VisibleRecord) -> str | None:
-    if _record_status(record) in ('noresult', 'noresults'):
-        return 'grey58'
-    if _record_status(record) == 'skipped':
-        return 'grey50'
+    if _record_status(record) in ("noresult", "noresults"):
+        return "grey58"
+    if _record_status(record) == "skipped":
+        return "grey50"
     return None
 
 
 def _format_archive_result_line(ar: ArchiveResult) -> str:
-    hook_name = escape(ar.hook_name or '-')
-    status = escape(ar.status or '-')
-    output = escape(_compact_output(_normalize_archive_result_output(ar.output_str or ar.error or '')))
-    status_style = STATUS_STYLES.get(ar.status, 'white')
+    hook_name = escape(ar.hook_name or "-")
+    status = escape(ar.status or "-")
+    output = escape(_compact_output(_normalize_archive_result_output(ar.output_str or ar.error or "")))
+    status_style = STATUS_STYLES.get(ar.status, "white")
     muted_style = _record_muted_style(ar)
-    line = (
-        f"[dim]{'ArchiveResult':<13}[/dim] "
-        f"[cyan]{hook_name:<40}[/cyan] "
-        f"[{status_style}]{status:<10}[/{status_style}]"
-    )
+    line = f"[dim]{'ArchiveResult':<13}[/dim] [cyan]{hook_name:<40}[/cyan] [{status_style}]{status:<10}[/{status_style}]"
     if output:
         line += f" [{muted_style}]{output}[/{muted_style}]" if muted_style else f" {output}"
     return line
@@ -214,26 +211,26 @@ def _format_archive_result_line(ar: ArchiveResult) -> str:
 def _parse_process_output(proc: Process) -> str:
     for line in proc.stdout.splitlines():
         line = line.strip()
-        if not line.startswith('{'):
+        if not line.startswith("{"):
             continue
         try:
-            record = __import__('json').loads(line)
+            record = __import__("json").loads(line)
         except Exception:
             continue
-        if record.get('type') != 'Binary':
+        if record.get("type") != "Binary":
             continue
-        name = str(record.get('name', '')).strip()
-        version = str(record.get('version', '')).strip()
+        name = str(record.get("name", "")).strip()
+        version = str(record.get("version", "")).strip()
         if version:
-            return f'{name} {version}'.strip()
-        abspath = str(record.get('abspath', '')).strip()
+            return f"{name} {version}".strip()
+        abspath = str(record.get("abspath", "")).strip()
         if abspath:
             return abspath
 
-    stderr = (proc.stderr or '').strip()
+    stderr = (proc.stderr or "").strip()
     if stderr:
         return stderr
-    return (proc.stdout or '').strip()
+    return (proc.stdout or "").strip()
 
 
 def _parse_hook_status_marker(stdout: str, stderr: str) -> tuple[str | None, str]:
@@ -242,16 +239,16 @@ def _parse_hook_status_marker(stdout: str, stderr: str) -> tuple[str | None, str
             line = raw_line.strip()
             if not line:
                 continue
-            if line.startswith('SKIPPED:'):
-                return 'skipped', line.split(':', 1)[1].strip()
-    return None, ''
+            if line.startswith("SKIPPED:"):
+                return "skipped", line.split(":", 1)[1].strip()
+    return None, ""
 
 
 def _iter_process_records(proc: Process) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
     for line in proc.stdout.splitlines():
         line = line.strip()
-        if not line.startswith('{'):
+        if not line.startswith("{"):
             continue
         try:
             record = json.loads(line)
@@ -267,11 +264,11 @@ def _parse_requested_binary_names(proc: Process) -> list[str]:
     seen: set[str] = set()
 
     for record in _iter_process_records(proc):
-        if record.get('type') != 'Binary':
+        if record.get("type") != "Binary":
             continue
-        if str(record.get('abspath', '')).strip():
+        if str(record.get("abspath", "")).strip():
             continue
-        name = str(record.get('name', '')).strip()
+        name = str(record.get("name", "")).strip()
         if not name or name in seen:
             continue
         seen.add(name)
@@ -285,9 +282,9 @@ def _parse_emitted_binary_names(proc: Process) -> list[str]:
     seen: set[str] = set()
 
     for record in _iter_process_records(proc):
-        if record.get('type') != 'Binary':
+        if record.get("type") != "Binary":
             continue
-        name = str(record.get('name', '')).strip()
+        name = str(record.get("name", "")).strip()
         if not name or name in seen:
             continue
         seen.add(name)
@@ -297,31 +294,31 @@ def _parse_emitted_binary_names(proc: Process) -> list[str]:
 
 
 def _format_install_status(label: str, *, ok: bool) -> str:
-    style = 'green' if ok else 'red'
-    if ok and label == 'BinaryRequested':
-        icon = '⬇️'
+    style = "green" if ok else "red"
+    if ok and label == "BinaryRequested":
+        icon = "⬇️"
     else:
-        icon = '✅' if ok else '❌'
-    return f'[{style}]{label} {icon}[/{style}]'
+        icon = "✅" if ok else "❌"
+    return f"[{style}]{label} {icon}[/{style}]"
 
 
 def _record_type_name(record: VisibleRecord) -> str:
     if isinstance(record, _LiveProcessRecord):
-        return 'Process'
+        return "Process"
     return type(record).__name__
 
 
 def _format_plugin_list(values: list[str]) -> str:
-    return ', '.join(values) if values else '-'
+    return ", ".join(values) if values else "-"
 
 
 def _format_plugin_badges(values: list[str], *, style: str) -> str:
     if not values:
-        return '[bright_black]-[/bright_black]'
-    return ', '.join(f'[{style}]{value}[/{style}]' for value in values)
+        return "[bright_black]-[/bright_black]"
+    return ", ".join(f"[{style}]{value}[/{style}]" for value in values)
 
 
-def _plugin_info(plugin) -> str:
+def _plugin_info(plugin: Plugin) -> str:
     info_parts: list[str] = []
     title = plugin.title.strip()
     description = plugin.description.strip()
@@ -331,10 +328,10 @@ def _plugin_info(plugin) -> str:
     if description:
         info_parts.append(description)
 
-    return _compact_output(' | '.join(info_parts), limit=180) if info_parts else '-'
+    return _compact_output(" | ".join(info_parts), limit=180) if info_parts else "-"
 
 
-def _advance_progress(progress: Progress, task_id: int, description: str, *, headroom: int = 1) -> None:
+def _advance_progress(progress: Progress, task_id: TaskID, description: str, *, headroom: int = 1) -> None:
     task = progress.tasks[task_id]
     if task.total is not None and task.completed >= task.total:
         progress.update(task_id, total=max(task.total + 1, task.completed + max(headroom, 1)))
@@ -347,7 +344,7 @@ def _progress_hook_description(hook_name: str | None) -> str:
     return f"[cyan]{escape(hook_name)}[/cyan]"
 
 
-def _latest_active_hook_name(active_row_keys: list[str], live_results: dict[str, VisibleRecord]) -> str | None:
+def _latest_active_hook_name(active_row_keys: list[str], live_results: Mapping[str, VisibleRecord]) -> str | None:
     for row_key in reversed(active_row_keys):
         current = live_results.get(row_key)
         if isinstance(current, _LiveProcessRecord):
@@ -363,8 +360,8 @@ def _run_with_debug_bus_log(bus, *, debug: bool, func: Callable[[], T]) -> T:
             bus.log_tree()
 
 
-def _resolve_requested_plugins(plugin_names: tuple[str, ...], all_plugins: dict[str, object]) -> list[object]:
-    requested: list[object] = []
+def _resolve_requested_plugins(plugin_names: tuple[str, ...], all_plugins: Mapping[str, Plugin]) -> list[Plugin]:
+    requested: list[Plugin] = []
     for requested_name in plugin_names:
         match = next(
             (plugin for name, plugin in all_plugins.items() if name.lower() == requested_name.lower()),
@@ -377,59 +374,59 @@ def _resolve_requested_plugins(plugin_names: tuple[str, ...], all_plugins: dict[
 
 def _record_hook_name(record: VisibleRecord) -> str:
     if isinstance(record, ArchiveResult):
-        return record.hook_name or '-'
+        return record.hook_name or "-"
     if isinstance(record, _LiveProcessRecord):
-        return record.hook_name or '-'
+        return record.hook_name or "-"
     if record.hook_name:
         return record.hook_name
     for part in record.cmd:
         name = Path(part).name
-        if name.startswith('on_'):
+        if name.startswith("on_"):
             return Path(name).stem
-    return '-'
+    return "-"
 
 
 def _record_plugin_name(record: VisibleRecord) -> str:
     if isinstance(record, ArchiveResult):
-        return record.plugin or ''
+        return record.plugin or ""
     if isinstance(record, _LiveProcessRecord):
-        return record.plugin or ''
-    return record.plugin or ''
+        return record.plugin or ""
+    return record.plugin or ""
 
 
 def _render_hook_name_cell(record: VisibleRecord) -> Text:
     hook_name = _record_hook_name(record)
     text = Text(hook_name)
 
-    match = re.match(r'^(on_)([A-Za-z]+)(__)(\d{2})(.*)$', hook_name)
+    match = re.match(r"^(on_)([A-Za-z]+)(__)(\d{2})(.*)$", hook_name)
     if match:
         on_prefix, event_name, separator, order, rest = match.groups()
-        text.stylize('grey50', 0, len(on_prefix))
-        text.stylize('bold cyan', len(on_prefix), len(on_prefix) + len(event_name))
+        text.stylize("grey50", 0, len(on_prefix))
+        text.stylize("bold cyan", len(on_prefix), len(on_prefix) + len(event_name))
         sep_start = len(on_prefix) + len(event_name)
-        text.stylize('grey50', sep_start, sep_start + len(separator))
+        text.stylize("grey50", sep_start, sep_start + len(separator))
         order_start = sep_start + len(separator)
-        text.stylize('bold magenta', order_start, order_start + len(order))
+        text.stylize("bold magenta", order_start, order_start + len(order))
 
         rest_offset = order_start + len(order)
         for token, style in (
-            ('.finite', 'green'),
-            ('.daemon', 'yellow'),
-            ('.bg', 'blue'),
+            (".finite", "green"),
+            (".daemon", "yellow"),
+            (".bg", "blue"),
         ):
             start = rest.find(token)
             if start >= 0:
                 text.stylize(style, rest_offset + start, rest_offset + start + len(token))
 
     plugin_name = _record_plugin_name(record).strip()
-    if plugin_name and plugin_name != '-':
+    if plugin_name and plugin_name != "-":
         for match in re.finditer(re.escape(plugin_name), hook_name, flags=re.IGNORECASE):
-            text.stylize('bold blue', match.start(), match.end())
+            text.stylize("bold blue", match.start(), match.end())
 
     for token, style in (
-        ('install', 'bright_green'),
-        ('launch', 'bright_yellow'),
-        ('wait', 'bright_red'),
+        ("install", "bright_green"),
+        ("launch", "bright_yellow"),
+        ("wait", "bright_red"),
     ):
         for match in re.finditer(token, hook_name, flags=re.IGNORECASE):
             text.stylize(style, match.start(), match.end())
@@ -439,50 +436,50 @@ def _render_hook_name_cell(record: VisibleRecord) -> Text:
 
 def _record_phase(record: VisibleRecord) -> str:
     if isinstance(record, _LiveProcessRecord):
-        return record.phase or ''
-    return ''
+        return record.phase or ""
+    return ""
 
 
 def _record_status(record: VisibleRecord) -> str:
     if isinstance(record, ArchiveResult):
-        return record.status or '-'
+        return record.status or "-"
     if isinstance(record, _LiveProcessRecord):
-        return record.status or '-'
+        return record.status or "-"
     if record.exit_code is None:
-        return 'started'
-    return 'succeeded' if record.exit_code == 0 else 'failed'
+        return "started"
+    return "succeeded" if record.exit_code == 0 else "failed"
 
 
 def _process_args_output(cmd: list[str]) -> str:
     if not cmd:
-        return ''
+        return ""
     return repr(cmd[1:] or cmd)
 
 
 def _record_output(record: VisibleRecord) -> str:
     if isinstance(record, ArchiveResult):
-        if record.status == 'failed':
-            return record.error or _normalize_archive_result_output(record.output_str) or ''
-        return _normalize_archive_result_output(record.output_str) or record.error or ''
+        if record.status == "failed":
+            return record.error or _normalize_archive_result_output(record.output_str) or ""
+        return _normalize_archive_result_output(record.output_str) or record.error or ""
     if isinstance(record, _LiveProcessRecord):
         if record.output:
             if record.final_output_is_archive_result:
                 return _normalize_archive_result_output(record.output)
             return record.output
-        if record.status == 'failed':
+        if record.status == "failed":
             return _process_args_output(record.cmd)
-        return ''
+        return ""
     output = _parse_process_output(record)
     if output:
         return output
-    if _record_status(record) == 'failed':
+    if _record_status(record) == "failed":
         return _process_args_output(record.cmd)
-    return ''
+    return ""
 
 
 def _normalize_archive_result_output(text: str) -> str:
     stripped = text.strip()
-    if not stripped or '\n' in stripped:
+    if not stripped or "\n" in stripped:
         return text
     path = Path(stripped)
     if not path.is_absolute():
@@ -495,7 +492,7 @@ def _normalize_archive_result_output(text: str) -> str:
 
 def _render_record_output(record: VisibleRecord) -> str:
     output = _humanize_special_output(_record_output(record))
-    if _record_status(record) == 'failed':
+    if _record_status(record) == "failed":
         return output
     if isinstance(record, ArchiveResult):
         return record.output_str or _compact_output(output)
@@ -505,7 +502,7 @@ def _render_record_output(record: VisibleRecord) -> str:
 
 
 def _render_record_output_cell(record: VisibleRecord, *, muted_style: str | None = None) -> Text:
-    full_output = _record_status(record) == 'failed' or (isinstance(record, ArchiveResult) and bool(record.output_str))
+    full_output = _record_status(record) == "failed" or (isinstance(record, ArchiveResult) and bool(record.output_str))
     if isinstance(record, _LiveProcessRecord):
         full_output = full_output or record.final_output_is_archive_result
     cell = _format_table_output(_render_record_output(record), flatten=not full_output)
@@ -515,8 +512,8 @@ def _render_record_output_cell(record: VisibleRecord, *, muted_style: str | None
 
 
 def _format_install_failure_label(record: VisibleRecord) -> str:
-    plugin = record.plugin if isinstance(record, (ArchiveResult, _LiveProcessRecord)) else (record.plugin or '-')
-    return f'{plugin} / {_record_hook_name(record)}'
+    plugin = record.plugin if isinstance(record, (ArchiveResult, _LiveProcessRecord)) else (record.plugin or "-")
+    return f"{plugin} / {_record_hook_name(record)}"
 
 
 def _record_start_ts(record: VisibleRecord) -> str | None:
@@ -544,22 +541,22 @@ def _record_key(record: VisibleRecord) -> str:
 
 
 def _is_binary_provider_hook_name(hook_name: str) -> bool:
-    return hook_name.startswith('on_Binary__')
+    return hook_name.startswith("on_Binary__")
 
 
-def _process_event_key(*, plugin_name: str, hook_name: str, snapshot_id: str = '', output_dir: str = '') -> tuple[str, str, str, str]:
+def _process_event_key(*, plugin_name: str, hook_name: str, snapshot_id: str = "", output_dir: str = "") -> tuple[str, str, str, str]:
     return (plugin_name, hook_name, snapshot_id, output_dir)
 
 
 def _phase_label_for_event(bus, event) -> str:
     phase_names = {
-        'CrawlSetupEvent': 'CrawlSetup',
-        'SnapshotEvent': 'Snapshot',
-        'SnapshotCleanupEvent': 'SnapshotCleanup',
-        'CrawlCleanupEvent': 'CrawlCleanup',
+        "CrawlSetupEvent": "CrawlSetup",
+        "SnapshotEvent": "Snapshot",
+        "SnapshotCleanupEvent": "SnapshotCleanup",
+        "CrawlCleanupEvent": "CrawlCleanup",
     }
-    if not hasattr(bus, 'event_history'):
-        return ''
+    if not hasattr(bus, "event_history"):
+        return ""
 
     current = event
     checked_ids: set[str] = set()
@@ -567,23 +564,23 @@ def _phase_label_for_event(bus, event) -> str:
         label = phase_names.get(type(current).__name__)
         if label:
             return label
-        parent_id = getattr(current, 'event_parent_id', None)
+        parent_id = getattr(current, "event_parent_id", None)
         if not parent_id or parent_id in checked_ids:
             break
         checked_ids.add(parent_id)
         current = bus.event_history.get(parent_id)
 
-    return ''
+    return ""
 
 
 def _format_elapsed(start_ts: str | None, end_ts: str | None, timeout_seconds: int, *, now: datetime | None = None) -> str:
     if not start_ts:
-        return '-'
+        return "-"
 
     try:
         start = datetime.fromisoformat(start_ts)
     except ValueError:
-        return '-'
+        return "-"
 
     if end_ts:
         try:
@@ -594,7 +591,7 @@ def _format_elapsed(start_ts: str | None, end_ts: str | None, timeout_seconds: i
         end = now or datetime.now()
 
     elapsed = max(0.0, (end - start).total_seconds())
-    return f'{elapsed:.1f}s/{timeout_seconds}s'
+    return f"{elapsed:.1f}s/{timeout_seconds}s"
 
 
 def _build_archive_results_table(
@@ -607,20 +604,20 @@ def _build_archive_results_table(
 ) -> Table:
     table = Table(
         show_header=show_header,
-        header_style='bold',
+        header_style="bold",
         box=None if stream else box.HEAVY_HEAD,
         show_edge=not stream,
         pad_edge=not stream,
     )
-    table.add_column('Currently Running', width=40, no_wrap=True)
-    table.add_column('Phase', width=15, no_wrap=True)
-    table.add_column('Status', width=10, no_wrap=True)
-    table.add_column('Elapsed', width=12, no_wrap=True)
-    table.add_column('Output')
+    table.add_column("Currently Running", width=40, no_wrap=True)
+    table.add_column("Phase", width=15, no_wrap=True)
+    table.add_column("Status", width=10, no_wrap=True)
+    table.add_column("Elapsed", width=12, no_wrap=True)
+    table.add_column("Output")
 
     for record in results:
         status = escape(_record_status(record))
-        status_style = STATUS_STYLES.get(_record_status(record), 'white')
+        status_style = STATUS_STYLES.get(_record_status(record), "white")
         muted_style = _record_muted_style(record)
         elapsed = escape(
             _format_elapsed(
@@ -628,14 +625,14 @@ def _build_archive_results_table(
                 _record_end_ts(record),
                 _record_timeout(record, timeout_seconds),
                 now=now,
-            )
+            ),
         )
         output = _render_record_output_cell(record, muted_style=muted_style if _render_record_output(record) else None)
         table.add_row(
             _render_hook_name_cell(record),
             escape(_record_phase(record)),
-            f'[{status_style}]{status}[/{status_style}]',
-            f'[{muted_style}]{elapsed}[/{muted_style}]' if muted_style else elapsed,
+            f"[{status_style}]{status}[/{status_style}]",
+            f"[{muted_style}]{elapsed}[/{muted_style}]" if muted_style else elapsed,
             output,
         )
 
@@ -663,8 +660,8 @@ class _LiveStatusView:
         yield self.progress
 
 
-@click.group(cls=DefaultGroup, context_settings={'help_option_names': ['-h', '--help']})
-@click.version_option(package_name='abx-dl', message='%(version)s')
+@click.group(cls=DefaultGroup, context_settings={"help_option_names": ["-h", "--help"]})
+@click.version_option(package_name="abx-dl", message="%(version)s")
 @click.pass_context
 def cli(ctx):
     """
@@ -685,16 +682,16 @@ def cli(ctx):
         abx-dl plugins wget ytdlp --install
     """
     ctx.ensure_object(dict)
-    ctx.obj['plugins'] = discover_plugins()
+    ctx.obj["plugins"] = discover_plugins()
 
 
 @cli.command()
-@click.argument('url')
-@click.option('--plugins', '-p', 'plugin_list', help='Comma-separated list of plugins to use')
-@click.option('--output', '-o', 'output_dir', type=click.Path(), help='Output directory')
-@click.option('--timeout', '-t', type=int, help='Timeout in seconds')
-@click.option('--no-install', 'no_install', is_flag=True, help='Skip plugins with missing dependencies instead of auto-installing')
-@click.option('--debug', is_flag=True, help='Print the EventBus tree on exit or abort')
+@click.argument("url")
+@click.option("--plugins", "-p", "plugin_list", help="Comma-separated list of plugins to use")
+@click.option("--output", "-o", "output_dir", type=click.Path(), help="Output directory")
+@click.option("--timeout", "-t", type=int, help="Timeout in seconds")
+@click.option("--no-install", "no_install", is_flag=True, help="Skip plugins with missing dependencies instead of auto-installing")
+@click.option("--debug", is_flag=True, help="Print the EventBus tree on exit or abort")
 @click.pass_context
 def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: int | None, no_install: bool, debug: bool):
     """Download a URL using all enabled plugins.
@@ -716,11 +713,11 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
 
         abx-dl dl --no-install 'https://example.com'
     """
-    plugins = ctx.obj['plugins']
-    selected = [p.strip() for p in plugin_list.split(',')] if plugin_list else None
+    plugins = ctx.obj["plugins"]
+    selected = [p.strip() for p in plugin_list.split(",")] if plugin_list else None
     out_path = Path(output_dir) if output_dir else Path.cwd()
-    config_overrides = {'TIMEOUT': timeout} if timeout else {}
-    timeout_seconds = int((config_overrides or {}).get('TIMEOUT') or get_config('TIMEOUT').get('TIMEOUT') or 60)
+    config_overrides = {"TIMEOUT": timeout} if timeout else {}
+    timeout_seconds = int((config_overrides or {}).get("TIMEOUT") or get_config("TIMEOUT").get("TIMEOUT") or 60)
     stdout_is_tty = sys.stdout.isatty()
     stderr_is_tty = sys.stderr.isatty()
     interactive_tty = stdout_is_tty or stderr_is_tty
@@ -740,10 +737,7 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
             crawl_hooks.append((plugin, hook))
         for hook in plugin.get_snapshot_hooks():
             snapshot_hooks.append((plugin, hook))
-    total_timeout = (
-        compute_phase_timeout(crawl_hooks, config_overrides)
-        + compute_phase_timeout(snapshot_hooks, config_overrides)
-    )
+    total_timeout = compute_phase_timeout(crawl_hooks, config_overrides) + compute_phase_timeout(snapshot_hooks, config_overrides)
     total_hooks = len(crawl_hooks) + len(snapshot_hooks)
     live_results: dict[str, VisibleRecord] = {}
     streamed_header = False
@@ -766,7 +760,14 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
         )
         status_view = _LiveStatusView(live_results, progress, timeout_seconds)
         task_id = progress.add_task(_progress_hook_description(None), total=total_hooks)
-        live: Live | None = None
+        live = Live(
+            status_view,
+            console=ui_console,
+            auto_refresh=True,
+            refresh_per_second=4,
+            transient=True,
+            vertical_overflow="visible",
+        )
         last_live_refresh = 0.0
 
         def _refresh_live(*, force: bool = False, min_interval: float = 0.1) -> None:
@@ -787,11 +788,11 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
                     timeout_seconds=timeout_seconds,
                     show_header=not streamed_header,
                     stream=True,
-                )
+                ),
             )
             streamed_header = True
 
-        def _fallback_row_key(*, plugin_name: str, hook_name: str, snapshot_id: str = '', output_dir: str = '') -> str | None:
+        def _fallback_row_key(*, plugin_name: str, hook_name: str, snapshot_id: str = "", output_dir: str = "") -> str | None:
             pending_key = _process_event_key(
                 plugin_name=plugin_name,
                 hook_name=hook_name,
@@ -801,17 +802,17 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
             return pending_process_rows[pending_key][0] if pending_process_rows[pending_key] else None
 
         def _match_row_key(event) -> str | None:
-            parent_id = getattr(event, 'event_parent_id', None) or ''
+            parent_id = getattr(event, "event_parent_id", None) or ""
             if parent_id and parent_id in row_key_by_event_id:
                 return row_key_by_event_id[parent_id]
-            process_id = getattr(event, 'process_id', '') or ''
+            process_id = getattr(event, "process_id", "") or ""
             if process_id and process_id in process_id_to_row_key:
                 return process_id_to_row_key[process_id]
             return _fallback_row_key(
-                plugin_name=getattr(event, 'plugin_name', '') or getattr(event, 'plugin', ''),
-                hook_name=getattr(event, 'hook_name', ''),
-                snapshot_id=getattr(event, 'snapshot_id', ''),
-                output_dir=getattr(event, 'output_dir', ''),
+                plugin_name=getattr(event, "plugin_name", "") or getattr(event, "plugin", ""),
+                hook_name=getattr(event, "hook_name", ""),
+                snapshot_id=getattr(event, "snapshot_id", ""),
+                output_dir=getattr(event, "output_dir", ""),
             )
 
         def _apply_archive_result(row: _LiveProcessRecord, event: ArchiveResultEvent) -> None:
@@ -829,13 +830,15 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
                 return
             nonlocal process_row_num
             process_row_num += 1
-            row_key = f'process:{process_row_num}'
-            pending_process_rows[_process_event_key(
-                plugin_name=event.plugin_name,
-                hook_name=event.hook_name,
-                snapshot_id=event.snapshot_id,
-                output_dir=event.output_dir,
-            )].append(row_key)
+            row_key = f"process:{process_row_num}"
+            pending_process_rows[
+                _process_event_key(
+                    plugin_name=event.plugin_name,
+                    hook_name=event.hook_name,
+                    snapshot_id=event.snapshot_id,
+                    output_dir=event.output_dir,
+                )
+            ].append(row_key)
             row_key_by_event_id[event.event_id] = row_key
             process_event_by_row_key[row_key] = event
             active_row_keys.append(row_key)
@@ -848,8 +851,10 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
                 started_at=datetime.now().isoformat(),
                 cmd=[event.hook_path, *event.hook_args],
             )
-            seen_hooks = progress.tasks[task_id].completed + len(active_row_keys)
-            if progress.tasks[task_id].total is not None and seen_hooks > progress.tasks[task_id].total:
+            current_task = progress.tasks[task_id]
+            seen_hooks = current_task.completed + len(active_row_keys)
+            total = current_task.total
+            if total is not None and seen_hooks > total:
                 progress.update(task_id, total=seen_hooks)
             progress.update(task_id, description=_progress_hook_description(event.hook_name))
             _refresh_live(force=True)
@@ -897,7 +902,7 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
                 output_dir=event.output_dir,
             )
             if row_key is None:
-                row_key = event.process_id or f'process:completed:{len(live_results) + 1}'
+                row_key = event.process_id or f"process:completed:{len(live_results) + 1}"
             elif pending_process_rows[pending_key] and pending_process_rows[pending_key][0] == row_key:
                 pending_process_rows[pending_key].popleft()
             if not pending_process_rows[pending_key]:
@@ -906,17 +911,21 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
             if event.process_id:
                 process_id_to_row_key[event.process_id] = row_key
             existing = live_results.get(row_key)
-            row = existing if isinstance(existing, _LiveProcessRecord) else _LiveProcessRecord(
-                id=row_key,
-                plugin=event.plugin_name,
-                hook_name=event.hook_name,
-                timeout=timeout_seconds,
-                phase=_phase_label_for_event(bus, event),
+            row = (
+                existing
+                if isinstance(existing, _LiveProcessRecord)
+                else _LiveProcessRecord(
+                    id=row_key,
+                    plugin=event.plugin_name,
+                    hook_name=event.hook_name,
+                    timeout=timeout_seconds,
+                    phase=_phase_label_for_event(bus, event),
+                )
             )
             status_marker, status_output = _parse_hook_status_marker(event.stdout, event.stderr)
             row.started_at = event.start_ts or row.started_at
             row.ended_at = event.end_ts or now_iso()
-            row.status = row.final_status or status_marker or ('succeeded' if event.exit_code == 0 else 'failed')
+            row.status = row.final_status or status_marker or ("succeeded" if event.exit_code == 0 else "failed")
             if event.exit_code != 0:
                 row.output = event.stderr or event.stdout or row.final_output or row.output
             elif row.final_output:
@@ -930,7 +939,7 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
             live_results[row_key] = row
 
             process_event = process_event_by_row_key.get(row_key)
-            if process_event is not None and hasattr(bus, 'find'):
+            if process_event is not None and hasattr(bus, "find"):
                 existing_result = await bus.find(ArchiveResultEvent, child_of=process_event)
                 if isinstance(existing_result, ArchiveResultEvent):
                     _apply_archive_result(row, existing_result)
@@ -951,32 +960,39 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
         bus.on(ArchiveResultEvent, on_ArchiveResultEvent)
         bus.on(ProcessCompletedEvent, on_ProcessCompletedEvent)
 
-        with Live(
-            status_view,
-            console=ui_console,
-            auto_refresh=True,
-            refresh_per_second=4,
-            transient=True,
-            vertical_overflow='visible',
-        ) as live:
+        with live:
             results = _run_with_debug_bus_log(
                 bus,
                 debug=debug,
-                func=lambda: asyncio.run(download(
-                    url, plugins, out_path, selected, config_overrides or None,
-                    auto_install=not no_install, emit_jsonl=not stdout_is_tty,
-                    bus=bus,
-                )),
+                func=lambda: asyncio.run(
+                    download(
+                        url,
+                        plugins,
+                        out_path,
+                        selected,
+                        config_overrides or None,
+                        auto_install=not no_install,
+                        emit_jsonl=not stdout_is_tty,
+                        bus=bus,
+                    ),
+                ),
             )
     else:
         results = _run_with_debug_bus_log(
             bus,
             debug=debug,
-            func=lambda: asyncio.run(download(
-                url, plugins, out_path, selected, config_overrides or None,
-                auto_install=not no_install, emit_jsonl=not stdout_is_tty,
-                bus=bus,
-            )),
+            func=lambda: asyncio.run(
+                download(
+                    url,
+                    plugins,
+                    out_path,
+                    selected,
+                    config_overrides or None,
+                    auto_install=not no_install,
+                    emit_jsonl=not stdout_is_tty,
+                    bus=bus,
+                ),
+            ),
         )
 
     if interactive_tty:
@@ -986,7 +1002,7 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
             f"[green]{sum(1 for r in archive_results if r.status == 'succeeded')} succeeded[/green], "
             f"[grey35]{sum(1 for r in archive_results if r.status == 'noresult')} noresult[/grey35], "
             f"[red]{sum(1 for r in archive_results if r.status == 'failed')} failed[/red], "
-            f"[bright_black]{sum(1 for r in archive_results if r.status == 'skipped')} skipped[/bright_black]"
+            f"[bright_black]{sum(1 for r in archive_results if r.status == 'skipped')} skipped[/bright_black]",
         )
         ui_console.print(f"[dim]Output: {out_path.absolute()}[/dim]")
 
@@ -994,8 +1010,18 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
 class _BinaryRecord:
     """Lightweight record for displaying binary install results in the CLI."""
 
-    def __init__(self, *, name: str, abspath: str, plugin: str, hook_name: str,
-                 status: str, version: str = '', error: str = '', order: int = 0) -> None:
+    def __init__(
+        self,
+        *,
+        name: str,
+        abspath: str,
+        plugin: str,
+        hook_name: str,
+        status: str,
+        version: str = "",
+        error: str = "",
+        order: int = 0,
+    ) -> None:
         self.name = name
         self.abspath = abspath
         self.plugin = plugin
@@ -1016,19 +1042,19 @@ class _BinaryRecord:
             parts.append(self.version)
         if not parts:
             parts.append(self.name)
-        return ' '.join(parts)
+        return " ".join(parts)
 
 
 @dataclass
 class _InstallRow:
     kind: str
     name: str
-    plugin: str = '-'
-    hook_name: str = '-'
-    output: str = ''
+    plugin: str = "-"
+    hook_name: str = "-"
+    output: str = ""
     providers: tuple[str, ...] = ()
     related_names: tuple[str, ...] = ()
-    failure_output: str = ''
+    failure_output: str = ""
     provider_failure: bool = False
     ok: bool = True
 
@@ -1038,29 +1064,25 @@ def _binary_event_output(event: BinaryEvent) -> str:
         return event.abspath
     parts = [event.name]
     if event.binproviders:
-        parts.append(f'providers={event.binproviders}')
-    return ' '.join(part for part in parts if part).strip()
+        parts.append(f"providers={event.binproviders}")
+    return " ".join(part for part in parts if part).strip()
 
 
 def _filter_install_rows(rows: list[_InstallRow], visible_plugins: set[str], resolved_names: set[str] | None = None) -> list[_InstallRow]:
-    visible_binaries = {row.name for row in rows if row.kind == 'BinaryRequested' and row.plugin.lower() in visible_plugins}
+    visible_binaries = {row.name for row in rows if row.kind == "BinaryRequested" and row.plugin.lower() in visible_plugins}
     resolved_names = resolved_names or set()
     filtered: list[_InstallRow] = []
 
     for row in rows:
-        if (
-            row.provider_failure
-            and row.related_names
-            and all(name in resolved_names for name in row.related_names)
-        ):
+        if row.provider_failure and row.related_names and all(name in resolved_names for name in row.related_names):
             continue
         if not row.ok:
             filtered.append(row)
             continue
-        if row.kind == 'BinaryRequested' and row.plugin.lower() in visible_plugins:
+        if row.kind == "BinaryRequested" and row.plugin.lower() in visible_plugins:
             filtered.append(row)
             continue
-        if row.kind == 'BinaryInstalled' and (not visible_binaries or row.name in visible_binaries):
+        if row.kind == "BinaryInstalled" and (not visible_binaries or row.name in visible_binaries):
             filtered.append(row)
 
     return filtered
@@ -1082,22 +1104,27 @@ def _build_install_table(rows: list[_InstallRow]) -> Table:
     return table
 
 
-def _run_plugin_install(selected, *, visible_plugins: set[str] | None = None, label_plugins: list[str] | tuple[str, ...] | None = None, debug: bool = False) -> int:
+def _run_plugin_install(
+    selected,
+    *,
+    visible_plugins: set[str] | None = None,
+    label_plugins: list[str] | tuple[str, ...] | None = None,
+    debug: bool = False,
+) -> int:
     console.print(f"[bold]Installing plugin dependencies for {', '.join(label_plugins or sorted(selected))}...[/bold]\n")
 
     visible_plugins = {name.lower() for name in (visible_plugins or selected)}
     selected = {
-        name: plugin.model_copy(update={
-            'hooks': [
-                hook for hook in plugin.hooks
-                if 'Binary' in hook.name
-                or (
-                    name.lower() in visible_plugins
-                    and 'Crawl' in hook.name
-                    and 'install' in hook.name.lower()
-                )
-            ],
-        })
+        name: plugin.model_copy(
+            update={
+                "hooks": [
+                    hook
+                    for hook in plugin.hooks
+                    if "Binary" in hook.name
+                    or (name.lower() in visible_plugins and "Crawl" in hook.name and "install" in hook.name.lower())
+                ],
+            },
+        )
         for name, plugin in selected.items()
     }
     rows: list[_InstallRow] = []
@@ -1136,16 +1163,12 @@ def _run_plugin_install(selected, *, visible_plugins: set[str] | None = None, la
         if event.abspath:
             return
         row = _InstallRow(
-            kind='BinaryRequested',
+            kind="BinaryRequested",
             name=event.name,
-            plugin=event.plugin_name or '-',
-            hook_name=event.hook_name or '-',
+            plugin=event.plugin_name or "-",
+            hook_name=event.hook_name or "-",
             output=_binary_event_output(event),
-            providers=tuple(
-                provider.strip()
-                for provider in event.binproviders.split(',')
-                if provider.strip() and provider.strip() != '*'
-            ),
+            providers=tuple(provider.strip() for provider in event.binproviders.split(",") if provider.strip() and provider.strip() != "*"),
             related_names=(event.name,),
         )
         rows.append(row)
@@ -1157,15 +1180,15 @@ def _run_plugin_install(selected, *, visible_plugins: set[str] | None = None, la
             name=event.name,
             abspath=event.abspath,
             version=event.version,
-            plugin=event.binprovider or '-',
-            hook_name='-',
-            status='installed',
+            plugin=event.binprovider or "-",
+            hook_name="-",
+            status="installed",
         )
         row = _InstallRow(
-            kind='BinaryInstalled',
+            kind="BinaryInstalled",
             name=event.name,
             plugin=event.plugin_name or record.plugin,
-            hook_name=event.hook_name or '-',
+            hook_name=event.hook_name or "-",
             output=record.display_output,
             related_names=(event.name,),
         )
@@ -1183,24 +1206,20 @@ def _run_plugin_install(selected, *, visible_plugins: set[str] | None = None, la
             stderr=event.stderr,
         )
         requested_names = _parse_requested_binary_names(proc)
-        emitted_names = _parse_emitted_binary_names(proc)
         if event.exit_code not in (None, 0):
             if requested_names:
-                details = (proc.stderr or '').strip() or _parse_process_output(proc)
+                details = (proc.stderr or "").strip() or _parse_process_output(proc)
                 for name in requested_names:
                     _mark_request_failure(name, message=details)
-            if event.hook_name.startswith('on_Binary__'):
-                details = (proc.stderr or '').strip() or _parse_process_output(proc)
+            if event.hook_name.startswith("on_Binary__"):
+                details = (proc.stderr or "").strip() or _parse_process_output(proc)
                 _remember_provider_failure(event.plugin_name, details)
                 related_names = tuple(
-                    row.name
-                    for request_rows in request_rows_by_name.values()
-                    for row in request_rows
-                    if event.plugin_name in row.providers
+                    row.name for request_rows in request_rows_by_name.values() for row in request_rows if event.plugin_name in row.providers
                 )
                 row = _InstallRow(
-                    kind='BinaryInstalled',
-                    name=','.join(related_names) if related_names else event.hook_name,
+                    kind="BinaryInstalled",
+                    name=",".join(related_names) if related_names else event.hook_name,
                     plugin=event.plugin_name,
                     hook_name=event.hook_name,
                     output=details,
@@ -1214,22 +1233,24 @@ def _run_plugin_install(selected, *, visible_plugins: set[str] | None = None, la
     bus.on(BinaryInstalledEvent, on_BinaryInstalledEvent)
     bus.on(ProcessCompletedEvent, on_ProcessCompletedEvent)
 
-    with TemporaryDirectory(prefix='abx-dl-install-') as temp_dir:
-        live_enabled = getattr(console.file, 'isatty', lambda: False)()
+    with TemporaryDirectory(prefix="abx-dl-install-") as temp_dir:
+        live_enabled = getattr(console.file, "isatty", lambda: False)()
         live_cm = Live(_build_install_table([]), console=console, refresh_per_second=8) if live_enabled else nullcontext()
         with live_cm as active_live:
             live = active_live
             _run_with_debug_bus_log(
                 bus,
                 debug=debug,
-                func=lambda: asyncio.run(download(
-                    INSTALL_URL,
-                    selected,
-                    Path(temp_dir),
-                    auto_install=True,
-                    emit_jsonl=False,
-                    bus=bus,
-                )),
+                func=lambda: asyncio.run(
+                    download(
+                        INSTALL_URL,
+                        selected,
+                        Path(temp_dir),
+                        auto_install=True,
+                        emit_jsonl=False,
+                        bus=bus,
+                    ),
+                ),
             )
 
     for name, request_rows in request_rows_by_name.items():
@@ -1240,15 +1261,9 @@ def _run_plugin_install(selected, *, visible_plugins: set[str] | None = None, la
                 continue
             row.ok = False
             row.output = row.failure_output or f"Requested binary not resolved: {name}"
-    failed_request_rows = [
-        row
-        for request_rows in request_rows_by_name.values()
-        for row in request_rows
-        if not row.ok
-    ]
+    failed_request_rows = [row for request_rows in request_rows_by_name.values() for row in request_rows if not row.ok]
     rows.extend(
-        row for row in failed_install_rows
-        if not row.related_names or any(name not in installed_names for name in row.related_names)
+        row for row in failed_install_rows if not row.related_names or any(name not in installed_names for name in row.related_names)
     )
     rows = _filter_install_rows(rows, visible_plugins, installed_names)
 
@@ -1271,9 +1286,9 @@ def _run_plugin_install(selected, *, visible_plugins: set[str] | None = None, la
 
 
 @cli.command()
-@click.argument('plugin_names', nargs=-1)
-@click.option('--install', '-i', 'do_install', is_flag=True, help='Install plugin dependencies')
-@click.option('--debug', is_flag=True, help='Print the EventBus tree on exit or abort when used with --install')
+@click.argument("plugin_names", nargs=-1)
+@click.option("--install", "-i", "do_install", is_flag=True, help="Install plugin dependencies")
+@click.option("--debug", is_flag=True, help="Print the EventBus tree on exit or abort when used with --install")
 @click.pass_context
 def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, debug: bool):
     """Check and show info for plugins. Optionally install dependencies.
@@ -1288,7 +1303,12 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, debug: bool):
 
         abx-dl plugins --install wget ytdlp git  # install only these plugins
     """
-    all_plugins = ctx.obj.get('plugins', discover_plugins())
+    plugins_obj = ctx.obj.get("plugins")
+    if isinstance(plugins_obj, dict):
+        context_plugins = {name: plugin for name, plugin in plugins_obj.items() if isinstance(name, str) and isinstance(plugin, Plugin)}
+        all_plugins = context_plugins if len(context_plugins) == len(plugins_obj) else discover_plugins()
+    else:
+        all_plugins = discover_plugins()
 
     # Filter to selected plugins if specified (resolves required_plugins dependencies)
     if plugin_names:
@@ -1334,7 +1354,7 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, debug: bool):
                     else:
                         binary_statuses.append(f"[red]{binary.name}[/red]")
                         all_ok = False
-                status = "[green]✓[/green]" if all(b.startswith('[green]') for b in binary_statuses) else "[yellow]○[/yellow]"
+                status = "[green]✓[/green]" if all(b.startswith("[green]") for b in binary_statuses) else "[yellow]○[/yellow]"
             else:
                 status = "[green]✓[/green]"
 
@@ -1342,8 +1362,8 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, debug: bool):
                 name,
                 status,
                 str(hooks_count),
-                _format_plugin_badges(plugin.required_plugins, style='yellow3'),
-                _format_plugin_badges(plugin.output_mimetypes, style='magenta'),
+                _format_plugin_badges(plugin.required_plugins, style="yellow3"),
+                _format_plugin_badges(plugin.output_mimetypes, style="magenta"),
                 _plugin_info(plugin),
             )
 
@@ -1371,7 +1391,7 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, debug: bool):
                 console.print("\n[bold]Config options:[/bold]")
                 for key, prop in plugin.config_schema.items():
                     console.print(f"  {key}={prop.get('default', '-')}")
-                    if prop.get('description'):
+                    if prop.get("description"):
                         console.print(f"    [dim]{prop['description']}[/dim]")
 
             hooks = plugin.get_crawl_hooks() + plugin.get_snapshot_hooks()
@@ -1383,8 +1403,8 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, debug: bool):
 
 
 @cli.command()
-@click.argument('plugin_names', nargs=-1)
-@click.option('--debug', is_flag=True, help='Print the EventBus tree on exit or abort')
+@click.argument("plugin_names", nargs=-1)
+@click.option("--debug", is_flag=True, help="Print the EventBus tree on exit or abort")
 @click.pass_context
 def install(ctx, plugin_names: tuple[str, ...], debug: bool):
     """Shortcut for 'abx-dl plugins --install [plugins...]'."""
@@ -1392,8 +1412,8 @@ def install(ctx, plugin_names: tuple[str, ...], debug: bool):
 
 
 @cli.command()
-@click.option('--get', 'get_key', help='Get a specific config value')
-@click.option('--set', 'set_pair', help='Set a config value (KEY=value)')
+@click.option("--get", "get_key", help="Get a specific config value")
+@click.option("--set", "set_pair", help="Set a config value (KEY=value)")
 @click.pass_context
 def config(ctx, get_key: str | None, set_pair: str | None):
     """Show or modify configuration.
@@ -1409,22 +1429,22 @@ def config(ctx, get_key: str | None, set_pair: str | None):
     import json
 
     # Get plugin schemas for alias resolution and full config
-    all_plugins = ctx.obj.get('plugins', discover_plugins())
+    all_plugins = ctx.obj.get("plugins", discover_plugins())
     plugin_schemas = {name: p.config_schema for name, p in all_plugins.items() if p.config_schema}
 
     if set_pair:
-        if '=' not in set_pair:
+        if "=" not in set_pair:
             console.print("[red]Invalid format. Use --set KEY=value[/red]")
             return
-        key, value = set_pair.split('=', 1)
+        key, value = set_pair.split("=", 1)
         # Try to parse value as JSON, handle Python-style booleans, otherwise treat as string
         try:
             parsed_value = json.loads(value)
         except json.JSONDecodeError:
             # Handle Python-style booleans
-            if value.lower() in ('true', 'yes', '1'):
+            if value.lower() in ("true", "yes", "1"):
                 parsed_value = True
-            elif value.lower() in ('false', 'no', '0'):
+            elif value.lower() in ("false", "no", "0"):
                 parsed_value = False
             else:
                 parsed_value = value
@@ -1456,5 +1476,5 @@ def main():
     cli(obj={})
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
