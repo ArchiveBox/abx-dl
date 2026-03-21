@@ -72,6 +72,13 @@ build-backend = "pdm.backend"
 
 [tool.pdm.build]
 includes = ["abx_dl/"]
+source-includes = []
+excludes = [
+    ".DS_Store",
+    "**/.DS_Store",
+    "tests/",
+    "tests/**",
+]
 
 [tool.ruff]
 line-length = 140
