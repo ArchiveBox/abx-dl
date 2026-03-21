@@ -78,6 +78,7 @@ Key abxbus concepts used:
 import sys
 from collections.abc import Sequence
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 from abxbus import EventBus, EventBusMiddleware, EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode
@@ -91,8 +92,8 @@ from .events import (
     SnapshotEvent,
     slow_warning_timeout,
 )
-from .models import ArchiveResult, Snapshot, write_jsonl
-from .models import Hook, Plugin, filter_plugins
+from .models import INSTALL_URL, ArchiveResult, Snapshot, write_jsonl
+from .models import Hook, Plugin, discover_plugins, filter_plugins
 
 
 class _BusServices:
@@ -141,6 +142,98 @@ def _get_or_create_bus_services(
     elif config_overrides:
         state.machine.shared_config.update(config_overrides)
     return state
+
+
+def setup_services(
+    bus: EventBus,
+    *,
+    plugins: dict[str, Plugin],
+    config_overrides: dict[str, Any] | None = None,
+    auto_install: bool = True,
+    emit_jsonl: bool = True,
+    stderr_is_tty: bool | None = None,
+) -> _BusServices:
+    """Attach the shared abx-dl services to an existing bus.
+
+    This is the public entrypoint for embedding abx-dl as an event-driven
+    runtime without immediately starting a crawl via ``download()``.
+    """
+    if stderr_is_tty is None:
+        stderr_is_tty = getattr(sys.stderr, "isatty", lambda: False)()
+    return _get_or_create_bus_services(
+        bus,
+        plugins=plugins,
+        config_overrides=config_overrides,
+        auto_install=auto_install,
+        emit_jsonl=emit_jsonl,
+        stderr_is_tty=bool(stderr_is_tty),
+    )
+
+
+def prepare_install_plugins(
+    plugins: dict[str, Plugin],
+    plugin_names: Sequence[str] | None = None,
+) -> dict[str, Plugin]:
+    """Filter plugins down to the install-only hooks used by `abx-dl install`."""
+    if plugin_names:
+        selected = filter_plugins(plugins, list(plugin_names), include_providers=True)
+        visible_plugins = set(filter_plugins(plugins, list(plugin_names), include_providers=False))
+    else:
+        selected = plugins
+        visible_plugins = set(selected)
+
+    return {
+        name: plugin.model_copy(
+            update={
+                "hooks": [
+                    hook
+                    for hook in plugin.hooks
+                    if "Binary" in hook.name
+                    or (name.lower() in visible_plugins and "Crawl" in hook.name and "install" in hook.name.lower())
+                ],
+            },
+        )
+        for name, plugin in selected.items()
+    }
+
+
+async def install_plugins(
+    plugin_names: Sequence[str] | None = None,
+    *,
+    plugins: dict[str, Plugin] | None = None,
+    output_dir: Path | None = None,
+    config_overrides: dict[str, Any] | None = None,
+    auto_install: bool = True,
+    emit_jsonl: bool = False,
+    bus: EventBus | None = None,
+) -> list[ArchiveResult]:
+    """Run the abx-dl install flow on an existing bus or a temporary one."""
+    all_plugins = plugins or discover_plugins()
+    selected = prepare_install_plugins(all_plugins, plugin_names=plugin_names)
+    if not selected:
+        return []
+
+    if output_dir is not None:
+        return await download(
+            INSTALL_URL,
+            selected,
+            output_dir,
+            auto_install=auto_install,
+            emit_jsonl=emit_jsonl,
+            config_overrides=config_overrides,
+            bus=bus,
+        )
+
+    with TemporaryDirectory(prefix="abx-dl-install-") as temp_dir:
+        return await download(
+            INSTALL_URL,
+            selected,
+            Path(temp_dir),
+            auto_install=auto_install,
+            emit_jsonl=emit_jsonl,
+            config_overrides=config_overrides,
+            bus=bus,
+        )
 
 
 def get_plugin_timeout(plugin: Plugin, config: dict[str, Any] | None = None) -> int:

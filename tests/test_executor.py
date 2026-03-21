@@ -4,7 +4,7 @@ from pathlib import Path
 
 from abx_dl.orchestrator import create_bus, download
 from abx_dl.events import ArchiveResultEvent, BinaryInstalledEvent, SnapshotEvent
-from abx_dl.models import ArchiveResult
+from abx_dl.models import ArchiveResult, Snapshot
 from abx_dl.models import discover_plugins
 
 
@@ -774,6 +774,89 @@ def test_bg_daemon_survives_past_timeout(tmp_path: Path) -> None:
     assert checker_result.output_str == "alive=True,recent=True", (
         f"Background daemon was killed by timeout instead of surviving: {checker_result.output_str}"
     )
+
+
+def test_crawl_bg_daemon_does_not_block_snapshot_phase(tmp_path: Path) -> None:
+    """Crawl-scoped bg daemons must not block transition into snapshot hooks."""
+    plugins_root = tmp_path / "plugins"
+    alive_marker = tmp_path / "run" / "crawlbg" / "alive.marker"
+    cleaned_marker = tmp_path / "run" / "crawlbg" / "cleaned.marker"
+
+    _write(
+        plugins_root / "crawlbg" / "on_Crawl__05_daemon.bg.py",
+        "\n".join(
+            [
+                "import signal",
+                "import sys",
+                "import time",
+                "from pathlib import Path",
+                "",
+                "def handle_sigterm(signum, frame):",
+                f"    Path({str(cleaned_marker)!r}).write_text('cleaned')",
+                "    sys.exit(0)",
+                "",
+                "signal.signal(signal.SIGTERM, handle_sigterm)",
+                'print("[*] crawl daemon ready", flush=True)',
+                "while True:",
+                f"    Path({str(alive_marker)!r}).write_text(str(time.time()))",
+                "    time.sleep(0.05)",
+            ],
+        )
+        + "\n",
+    )
+
+    _write(
+        plugins_root / "checker" / "on_Snapshot__01_check.py",
+        "\n".join(
+            [
+                "import json",
+                "import time",
+                "from pathlib import Path",
+                "time.sleep(0.2)",
+                f"alive = Path({str(alive_marker)!r}).exists()",
+                'print(json.dumps({"type": "ArchiveResult", "status": "succeeded", "output_str": f"crawlbg_alive={alive}"}))',
+            ],
+        )
+        + "\n",
+    )
+
+    plugins = discover_plugins(plugins_root)
+    results = _run_download("https://example.com", plugins, tmp_path / "run", auto_install=True)
+
+    checker_result = next(r for r in results if r.plugin == "checker")
+    assert checker_result.output_str == "crawlbg_alive=True"
+    assert cleaned_marker.exists(), "Crawl cleanup never SIGTERMed the crawl-scoped bg daemon"
+
+
+def test_explicit_depth_one_snapshot_runs_snapshot_hooks(tmp_path: Path) -> None:
+    """Explicit child snapshot runs should still execute snapshot hooks."""
+    plugins_root = tmp_path / "plugins"
+
+    _write(
+        plugins_root / "childcheck" / "on_Snapshot__10_check.py",
+        "\n".join(
+            [
+                "import json",
+                'print(json.dumps({"type": "ArchiveResult", "status": "succeeded", "output_str": "child-depth-hook-ran"}))',
+            ],
+        )
+        + "\n",
+    )
+
+    plugins = discover_plugins(plugins_root)
+    child_snapshot = Snapshot(url="https://example.com/child", depth=1, id="child-depth-1")
+    results = _run_download(
+        "https://example.com/child",
+        plugins,
+        tmp_path / "run",
+        auto_install=True,
+        snapshot=child_snapshot,
+        skip_crawl_setup=True,
+        skip_crawl_cleanup=True,
+    )
+
+    checker_result = next(r for r in results if r.plugin == "childcheck")
+    assert checker_result.output_str == "child-depth-hook-ran"
 
 
 def test_binary_installed_events(tmp_path: Path) -> None:

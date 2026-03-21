@@ -118,12 +118,11 @@ class SnapshotService(BaseService):
             async def guarded(event: SnapshotEvent, _inner=inner) -> None:
                 if event.snapshot_id != self.snapshot.id or event.output_dir != str(self.output_dir):
                     return
-                if event.depth > 0:
-                    return
                 await _inner(event)
 
-            guarded.__name__ = hook.name
-            guarded.__qualname__ = hook.name
+            hook_handler_name = f"{hook.name}__{self.snapshot.id.replace('-', '_')[-12:]}"
+            guarded.__name__ = hook_handler_name
+            guarded.__qualname__ = hook_handler_name
             self._register(SnapshotEvent, guarded)
 
         self._register(SnapshotEvent, self.on_SnapshotEvent)
@@ -158,12 +157,11 @@ class SnapshotService(BaseService):
     async def on_SnapshotEvent(self, event: SnapshotEvent) -> None:
         """Emit cleanup and completion after all snapshot hooks have run.
 
-        Ignores SnapshotEvents with depth > 0 — abx-dl does not support
-        recursive crawling. ArchiveBox overrides this to process all depths.
+        SnapshotEvents emitted from hook stdout are already ignored by the
+        snapshot_id/output_dir match above, so explicit child snapshot runs
+        can reuse this same service even when ``depth > 0``.
         """
         if event.snapshot_id != self.snapshot.id or event.output_dir != str(self.output_dir):
-            return
-        if event.depth > 0:
             return
         url = self.url
         snapshot_id = self.snapshot.id
