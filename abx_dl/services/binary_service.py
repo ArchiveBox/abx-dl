@@ -8,7 +8,7 @@ from abxbus import BaseEvent, EventBus
 
 from ..events import BinaryEvent, BinaryInstalledEvent, BinaryProcessEvent, MachineEvent, ProcessStdoutEvent, slow_warning_timeout
 from ..models import Hook, Plugin
-from .base import BaseService
+from .base import BaseService, add_extra_context
 from .machine_service import MachineService
 
 
@@ -63,11 +63,9 @@ class BinaryService(BaseService):
         machine: MachineService,
         plugins: dict[str, Plugin],
         auto_install: bool,
-        output_dir: Path,
     ):
         self.machine = machine
         self.auto_install = auto_install
-        self.output_dir = output_dir
         self.plugins = plugins
         # Pre-collect all binary hooks at init time (sorted by order across all plugins)
         self.binary_hooks: list[tuple[Plugin, Hook]] = sorted(
@@ -83,16 +81,16 @@ class BinaryService(BaseService):
         2. Provider hooks on BinaryEvent (try to resolve/install)
         3. on_BinaryEvent last (emits BinaryInstalledEvent)
         """
-        self.bus.on(ProcessStdoutEvent, self.on_ProcessStdoutEvent)
+        self._register(ProcessStdoutEvent, self.on_ProcessStdoutEvent)
 
         for plugin, hook in self.binary_hooks:
             handler = self._make_provider_hook_handler(plugin, hook)
             handler.__name__ = hook.name
             handler.__qualname__ = hook.name
-            self.bus.on(BinaryEvent, handler)
+            self._register(BinaryEvent, handler)
 
         # on_BinaryEvent runs last — branches on outcome
-        self.bus.on(BinaryEvent, self.on_BinaryEvent)
+        self._register(BinaryEvent, self.on_BinaryEvent)
 
     def _plugin_binary_config_keys(self, plugin_name: str, binary_name: str) -> list[str]:
         """Return plugin config keys whose default binary name matches the requested binary."""
@@ -146,9 +144,6 @@ class BinaryService(BaseService):
             binary_id = event.binary_id or uuid7()
             hook_args = [
                 f"--name={event.name}",
-                f"--binary-id={binary_id}",
-                f"--plugin-name={event.plugin_name}",
-                f"--hook-name={event.hook_name}",
             ]
             if event.binproviders:
                 hook_args.append(f"--binproviders={event.binproviders}")
@@ -159,19 +154,28 @@ class BinaryService(BaseService):
             if event.custom_cmd:
                 hook_args.append(f"--custom-cmd={event.custom_cmd}")
 
-            plugin_output_dir = self.output_dir / _plugin.name
+            run_output_dir = Path(event.output_dir).parent if event.output_dir else Path.cwd()
+            plugin_output_dir = run_output_dir / _plugin.name
             plugin_output_dir.mkdir(parents=True, exist_ok=True)
             plugin_env = self.machine.get_env_for_plugin(
                 _plugin,
-                run_output_dir=self.output_dir,
+                run_output_dir=run_output_dir,
             )
-            machine_id = plugin_env.get("MACHINE_ID", "")
+            plugin_env = add_extra_context(
+                plugin_env,
+                {
+                    "binary_id": binary_id,
+                    "hook_name": event.hook_name,
+                    "machine_id": plugin_env.get("MACHINE_ID", ""),
+                    "plugin_name": event.plugin_name,
+                },
+            )
             await self.bus.emit(
                 BinaryProcessEvent(
                     plugin_name=_plugin.name,
                     hook_name=_hook.name,
                     hook_path=str(_hook.path),
-                    hook_args=hook_args + [f"--machine-id={machine_id}"],
+                    hook_args=hook_args,
                     is_background=False,
                     output_dir=str(plugin_output_dir),
                     env=plugin_env,
@@ -200,6 +204,7 @@ class BinaryService(BaseService):
             BinaryEvent(
                 plugin_name=record.pop("plugin_name", event.plugin_name),
                 hook_name=record.pop("hook_name", event.hook_name),
+                output_dir=record.pop("output_dir", event.output_dir),
                 **record,
             ),
         )

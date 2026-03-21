@@ -106,18 +106,18 @@ class CrawlService(BaseService):
             )
             handler.__name__ = hook.name
             handler.__qualname__ = hook.name
-            self.bus.on(CrawlSetupEvent, handler)
+            self._register(CrawlSetupEvent, handler)
 
-        # Lifecycle chain handlers
-        self.bus.on(CrawlEvent, self.on_CrawlEvent)
-        self.bus.on(CrawlStartEvent, self.on_CrawlStartEvent)
-        self.bus.on(CrawlCleanupEvent, self.on_CrawlCleanupEvent)
+        # Lifecycle cleanup handler
+        self._register(CrawlCleanupEvent, self.on_CrawlCleanupEvent)
 
     async def on_CrawlEvent(self, event: CrawlEvent) -> None:
         """Drive the full crawl lifecycle by emitting phase events in sequence.
 
         CrawlSetupEvent → CrawlStartEvent → CrawlCleanupEvent → CrawlCompletedEvent
         """
+        if event.snapshot_id != self.snapshot.id or event.output_dir != str(self.output_dir):
+            return
         url = self.url
         snapshot_id = self.snapshot.id
         output_dir = str(self.output_dir)
@@ -155,6 +155,8 @@ class CrawlService(BaseService):
 
         Skipped when ``crawl_only`` is set (e.g. ``abx install`` or explicit flag).
         """
+        if event.snapshot_id != self.snapshot.id or event.output_dir != str(self.output_dir):
+            return
         if self.crawl_only:
             return
         await self.bus.emit(
@@ -174,6 +176,8 @@ class CrawlService(BaseService):
         Each daemon gets its plugin's timeout (PLUGINNAME_TIMEOUT) as the
         grace period before SIGKILL.
         """
+        if event.snapshot_id != self.snapshot.id or event.output_dir != str(self.output_dir):
+            return
         pending_kills = []
         for plugin, hook in self.hooks:
             if hook.is_background:

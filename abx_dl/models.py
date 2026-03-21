@@ -170,6 +170,9 @@ class Snapshot(BaseModel):
     bookmarked_at: str = Field(default_factory=now_iso)
     created_at: str = Field(default_factory=now_iso)
     tags: str = ""
+    depth: int = 0
+    parent_snapshot_id: str | None = None
+    crawl_id: str | None = None
 
     def to_jsonl(self) -> str:
         d = {k: v for k, v in self.model_dump().items() if v is not None}
@@ -187,6 +190,7 @@ class ArchiveResult(BaseModel):
     status: str = "queued"
     process_id: str | None = None
     output_str: str = ""
+    output_json: dict[str, Any] | None = None
     output_files: list[str] = Field(default_factory=list)
     start_ts: str | None = None
     end_ts: str | None = None

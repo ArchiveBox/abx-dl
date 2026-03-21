@@ -7,6 +7,7 @@ from .crawl_service import CrawlService
 from .machine_service import MachineService
 from .process_service import ProcessService
 from .snapshot_service import SnapshotService
+from .tag_service import TagService
 
 __all__ = [
     "ArchiveResultService",
@@ -16,4 +17,5 @@ __all__ = [
     "MachineService",
     "ProcessService",
     "SnapshotService",
+    "TagService",
 ]

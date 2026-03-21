@@ -101,7 +101,7 @@ class SnapshotService(BaseService):
         2. Per-hook handlers on SnapshotEvent (each wrapped with depth>0 guard)
         3. on_SnapshotEvent last (cleanup + completion)
         """
-        self.bus.on(ProcessStdoutEvent, self.on_ProcessStdoutEvent)
+        self._register(ProcessStdoutEvent, self.on_ProcessStdoutEvent)
 
         for plugin, hook in self.hooks:
             inner = make_hook_handler(
@@ -116,16 +116,18 @@ class SnapshotService(BaseService):
             )
 
             async def guarded(event: SnapshotEvent, _inner=inner) -> None:
+                if event.snapshot_id != self.snapshot.id or event.output_dir != str(self.output_dir):
+                    return
                 if event.depth > 0:
                     return
                 await _inner(event)
 
             guarded.__name__ = hook.name
             guarded.__qualname__ = hook.name
-            self.bus.on(SnapshotEvent, guarded)
+            self._register(SnapshotEvent, guarded)
 
-        self.bus.on(SnapshotEvent, self.on_SnapshotEvent)
-        self.bus.on(SnapshotCleanupEvent, self.on_SnapshotCleanupEvent)
+        self._register(SnapshotEvent, self.on_SnapshotEvent)
+        self._register(SnapshotCleanupEvent, self.on_SnapshotCleanupEvent)
 
     async def on_ProcessStdoutEvent(self, event: ProcessStdoutEvent) -> None:
         """Route type=Snapshot records to SnapshotEvent.
@@ -133,6 +135,8 @@ class SnapshotService(BaseService):
         Discovered URLs default to depth=1 since any hook-discovered URL
         is at least one level deep from the root snapshot.
         """
+        if event.snapshot_id != self.snapshot.id:
+            return
         try:
             record = json.loads(event.line)
         except (json.JSONDecodeError, ValueError):
@@ -145,6 +149,7 @@ class SnapshotService(BaseService):
                 snapshot_id=record.get("id", record.get("snapshot_id", "")),
                 output_dir=event.output_dir,
                 depth=int(record.get("depth", 1)),
+                parent_snapshot_id=event.snapshot_id,
                 event_timeout=event.event_timeout,
                 event_handler_slow_timeout=slow_warning_timeout(event.event_timeout),
             ),
@@ -156,6 +161,8 @@ class SnapshotService(BaseService):
         Ignores SnapshotEvents with depth > 0 — abx-dl does not support
         recursive crawling. ArchiveBox overrides this to process all depths.
         """
+        if event.snapshot_id != self.snapshot.id or event.output_dir != str(self.output_dir):
+            return
         if event.depth > 0:
             return
         url = self.url
@@ -178,6 +185,8 @@ class SnapshotService(BaseService):
         Each daemon gets its plugin's timeout (PLUGINNAME_TIMEOUT) as the
         grace period before SIGKILL.
         """
+        if event.snapshot_id != self.snapshot.id or event.output_dir != str(self.output_dir):
+            return
         pending_kills = []
         for plugin, hook in self.hooks:
             if hook.is_background:

@@ -4,7 +4,7 @@ requires-python = ">=3.11"
 
 [[package]]
 name = "abx-dl"
-version = "1.10.11"
+version = "1.10.12"
 source = { editable = "." }
 dependencies = [
     { name = "abx-pkg" },
@@ -39,7 +39,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "abx-pkg", specifier = ">=1.9.14" },
-    { name = "abx-plugins", specifier = ">=1.10.11" },
+    { name = "abx-plugins", specifier = ">=1.10.13" },
     { name = "abxbus", specifier = ">=2.4.2" },
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=7.1.1" },
     { name = "flask", marker = "extra == 'dev'", specifier = ">=3.0" },
@@ -81,16 +81,16 @@ wheels = [
 
 [[package]]
 name = "abx-plugins"
-version = "1.10.11"
+version = "1.10.13"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "abx-pkg" },
     { name = "pydantic-settings" },
     { name = "rich-click" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d6/59/b3a7160dbdbc234adae2180f893608121b7eaf6fd640b45d0b80a6e4bbbc/abx_plugins-1.10.11.tar.gz", hash = "sha256:5cfe8c53112b9572bd5caaa63bcd925d92aa548f1358426687d80d5d05ce43fb", size = 526204, upload-time = "2026-03-21T08:01:02.656Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2b/ea/7e70fa30a1e52039decd8b755b22549b8c51fb9d97cf54751b6fd1af7f2d/abx_plugins-1.10.13.tar.gz", hash = "sha256:945623afc6436894d26e8e27ce6101032b0c42655d5cbfaeeaa8a57913d0d46a", size = 525322, upload-time = "2026-03-21T17:39:10.142Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9b/84/e073f13d413042ce96541591c99c2e93f3ea843f139510da6b3e336a267f/abx_plugins-1.10.11-py3-none-any.whl", hash = "sha256:87e14a3a7cb11242ac966ff6361fe6c67a2dc2ecb55d586ffbc9c269ef058d65", size = 732471, upload-time = "2026-03-21T08:01:04.099Z" },
+    { url = "https://files.pythonhosted.org/packages/29/25/d5338a5a7a1958916e7104727046ec01744da3fb28b1e30934480ab57f65/abx_plugins-1.10.13-py3-none-any.whl", hash = "sha256:79353763baf685871d52ea7e5fa8d0249937ec9edb2f63c7768b0c0a98d5518e", size = 731961, upload-time = "2026-03-21T17:39:11.713Z" },
 ]
 
 [[package]]

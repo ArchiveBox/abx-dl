@@ -7,7 +7,7 @@ from typing import ClassVar
 
 from abxbus import BaseEvent, EventBus
 
-from ..events import BinaryProcessEvent, ProcessCompletedEvent, ProcessEvent, ProcessKillEvent, ProcessStdoutEvent
+from ..events import BinaryProcessEvent, ProcessCompletedEvent, ProcessEvent, ProcessKillEvent, ProcessStartedEvent, ProcessStdoutEvent
 from ..models import Process, write_jsonl, now_iso
 from ..process_utils import write_pid_file_with_mtime, write_cmd_file, graceful_kill_process, graceful_kill_by_pid_file
 from .base import BaseService
@@ -77,6 +77,7 @@ class ProcessService(BaseService):
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, BinaryProcessEvent, ProcessKillEvent]
     EMITS: ClassVar[list[type[BaseEvent]]] = [
+        ProcessStartedEvent,
         ProcessStdoutEvent,
         ProcessCompletedEvent,
     ]
@@ -85,13 +86,9 @@ class ProcessService(BaseService):
         self,
         bus: EventBus,
         *,
-        index_path: Path,
-        output_dir: Path,
         emit_jsonl: bool,
         stderr_is_tty: bool,
     ):
-        self.index_path = index_path
-        self.output_dir = output_dir
         self.emit_jsonl = emit_jsonl
         self.stderr_is_tty = stderr_is_tty
         super().__init__(bus)
@@ -140,6 +137,22 @@ class ProcessService(BaseService):
                     start_new_session=event.is_background,
                 )
             write_pid_file_with_mtime(pid_file, process.pid, time.time())
+            await self.bus.emit(
+                ProcessStartedEvent(
+                    plugin_name=event.plugin_name,
+                    hook_name=event.hook_name,
+                    hook_path=event.hook_path,
+                    hook_args=event.hook_args,
+                    output_dir=event.output_dir,
+                    env=event.env,
+                    timeout=event.timeout,
+                    pid=process.pid,
+                    process_id=proc.id,
+                    snapshot_id=event.snapshot_id,
+                    is_background=event.is_background,
+                    start_ts=proc.started_at or "",
+                ),
+            )
 
             stdout_lines: list[str] = []
 
@@ -204,11 +217,15 @@ class ProcessService(BaseService):
             proc.exit_code = -1
             proc.stderr = f"{type(e).__name__}: {e}"
             proc.ended_at = now_iso()
-            write_jsonl(self.index_path, proc, also_print=self.emit_jsonl)
+            index_path = plugin_output_dir.parent / "index.jsonl"
+            write_jsonl(index_path, proc, also_print=self.emit_jsonl)
             await self.bus.emit(
                 ProcessCompletedEvent(
                     plugin_name=event.plugin_name,
                     hook_name=event.hook_name,
+                    hook_path=event.hook_path,
+                    hook_args=event.hook_args,
+                    env=event.env,
                     stdout="",
                     stderr=proc.stderr,
                     exit_code=-1,
@@ -217,6 +234,7 @@ class ProcessService(BaseService):
                     is_background=event.is_background,
                     process_id=proc.id,
                     snapshot_id=event.snapshot_id,
+                    pid=process.pid if process is not None else 0,
                     start_ts=proc.started_at or "",
                     end_ts=proc.ended_at or "",
                 ),
@@ -251,12 +269,16 @@ class ProcessService(BaseService):
             stdout_file.unlink(missing_ok=True)
             stderr_file.unlink(missing_ok=True)
 
-        write_jsonl(self.index_path, proc, also_print=self.emit_jsonl)
+        index_path = plugin_output_dir.parent / "index.jsonl"
+        write_jsonl(index_path, proc, also_print=self.emit_jsonl)
 
         await self.bus.emit(
             ProcessCompletedEvent(
                 plugin_name=event.plugin_name,
                 hook_name=event.hook_name,
+                hook_path=event.hook_path,
+                hook_args=event.hook_args,
+                env=event.env,
                 stdout=stdout,
                 stderr=stderr,
                 exit_code=returncode,
@@ -265,6 +287,7 @@ class ProcessService(BaseService):
                 is_background=event.is_background,
                 process_id=proc.id,
                 snapshot_id=event.snapshot_id,
+                pid=process.pid if process is not None else 0,
                 start_ts=proc.started_at or "",
                 end_ts=proc.ended_at or "",
             ),

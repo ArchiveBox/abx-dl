@@ -40,23 +40,21 @@ def test_download_dispatches_binary_hooks_and_applies_machine_updates(tmp_path: 
         "\n".join(
             [
                 "import json",
+                "import os",
                 "from pathlib import Path",
                 "import argparse",
                 "parser = argparse.ArgumentParser()",
-                'parser.add_argument("--binary-id", required=True)',
-                'parser.add_argument("--machine-id", required=True)',
-                'parser.add_argument("--plugin-name", required=True)',
-                'parser.add_argument("--hook-name", required=True)',
                 'parser.add_argument("--name", required=True)',
                 'parser.add_argument("--binproviders", default="*")',
                 'parser.add_argument("--overrides", default=None)',
                 "args = parser.parse_args()",
+                'context = json.loads(os.environ["EXTRA_CONTEXT"])',
                 'bin_path = Path.cwd() / "bin" / args.name',
                 "bin_path.parent.mkdir(parents=True, exist_ok=True)",
                 'bin_path.write_text("demo")',
                 'node_modules = Path.cwd() / "lib" / "node_modules"',
                 "node_modules.mkdir(parents=True, exist_ok=True)",
-                'print(json.dumps({"type": "Binary", "name": args.name, "abspath": str(bin_path), "binary_id": args.binary_id, "machine_id": args.machine_id, "plugin_name": args.plugin_name, "hook_name": args.hook_name, "binprovider": "provider"}))',
+                'print(json.dumps({"type": "Binary", "name": args.name, "abspath": str(bin_path), "binary_id": context["binary_id"], "machine_id": context["machine_id"], "plugin_name": context["plugin_name"], "hook_name": context["hook_name"], "binprovider": "provider"}))',
                 'print(json.dumps({"type": "Machine", "config": {"NODE_MODULES_DIR": str(node_modules), "NODE_PATH": str(node_modules)}}))',
             ],
         )
@@ -97,6 +95,15 @@ def test_download_dispatches_binary_hooks_and_applies_machine_updates(tmp_path: 
     assert any(
         line.get("type") == "Process" and "on_Binary__10_provider_install.py" in " ".join(line.get("cmd", [])) for line in index_lines
     )
+    provider_process = next(
+        line
+        for line in index_lines
+        if line.get("type") == "Process" and "on_Binary__10_provider_install.py" in " ".join(line.get("cmd", []))
+    )
+    assert "--binary-id=" not in " ".join(provider_process["cmd"])
+    assert "--machine-id=" not in " ".join(provider_process["cmd"])
+    assert "--plugin-name=" not in " ".join(provider_process["cmd"])
+    assert "--hook-name=" not in " ".join(provider_process["cmd"])
 
 
 def test_download_forwards_binary_min_version_to_provider_hooks(tmp_path: Path) -> None:
@@ -118,21 +125,19 @@ def test_download_forwards_binary_min_version_to_provider_hooks(tmp_path: Path) 
             [
                 "import argparse",
                 "import json",
+                "import os",
                 "from pathlib import Path",
                 "parser = argparse.ArgumentParser()",
-                'parser.add_argument("--binary-id", required=True)',
-                'parser.add_argument("--machine-id", required=True)',
-                'parser.add_argument("--plugin-name", required=True)',
-                'parser.add_argument("--hook-name", required=True)',
                 'parser.add_argument("--name", required=True)',
                 'parser.add_argument("--binproviders", default="*")',
                 'parser.add_argument("--min-version", default="")',
                 'parser.add_argument("--overrides", default=None)',
                 "args = parser.parse_args()",
+                'context = json.loads(os.environ["EXTRA_CONTEXT"])',
                 'bin_path = Path.cwd() / "bin" / args.name',
                 "bin_path.parent.mkdir(parents=True, exist_ok=True)",
                 'bin_path.write_text("demo")',
-                'print(json.dumps({"type": "Binary", "name": args.name, "abspath": str(bin_path), "binary_id": args.binary_id, "machine_id": args.machine_id, "plugin_name": args.plugin_name, "hook_name": args.hook_name, "binprovider": "provider"}))',
+                'print(json.dumps({"type": "Binary", "name": args.name, "abspath": str(bin_path), "binary_id": context["binary_id"], "machine_id": context["machine_id"], "plugin_name": context["plugin_name"], "hook_name": context["hook_name"], "binprovider": "provider"}))',
                 'print(json.dumps({"type": "Machine", "config": {"JAVA_VERSION_CONSTRAINT": args.min_version}}))',
             ],
         )
@@ -160,6 +165,39 @@ def test_download_forwards_binary_min_version_to_provider_hooks(tmp_path: Path) 
     consumer_result = next(result for result in results if result.plugin == "consumer")
     assert consumer_result.status == "succeeded"
     assert consumer_result.output_str == "11.0.0"
+
+
+def test_snapshot_hooks_receive_snapshot_id_via_extra_context_env(tmp_path: Path) -> None:
+    plugins_root = tmp_path / "plugins"
+
+    _write(
+        plugins_root / "demo" / "on_Snapshot__01_check.py",
+        "\n".join(
+            [
+                "import argparse",
+                "import json",
+                "import os",
+                "parser = argparse.ArgumentParser()",
+                'parser.add_argument("--url", required=True)',
+                "args = parser.parse_args()",
+                'context = json.loads(os.environ["EXTRA_CONTEXT"])',
+                'print(json.dumps({"type": "ArchiveResult", "status": "succeeded", "output_str": args.url + "|" + context.get("snapshot_id", "")}))',
+            ],
+        )
+        + "\n",
+    )
+
+    plugins = discover_plugins(plugins_root)
+    results = _run_download("https://example.com", plugins, tmp_path / "run", auto_install=True)
+
+    result = next(r for r in results if r.plugin == "demo")
+    url, snapshot_id = result.output_str.split("|", 1)
+    assert url == "https://example.com"
+    assert snapshot_id
+
+    index_lines = [json.loads(line) for line in (tmp_path / "run" / "index.jsonl").read_text().splitlines()]
+    process = next(line for line in index_lines if line.get("type") == "Process" and line.get("plugin") == "demo")
+    assert "--snapshot-id=" not in " ".join(process["cmd"])
 
 
 def test_download_sets_plugin_specific_binary_env_from_binary_default(tmp_path: Path) -> None:
@@ -215,21 +253,19 @@ def test_download_sets_plugin_specific_binary_env_from_binary_default(tmp_path: 
             [
                 "import argparse",
                 "import json",
+                "import os",
                 "from pathlib import Path",
                 "parser = argparse.ArgumentParser()",
-                'parser.add_argument("--binary-id", required=True)',
-                'parser.add_argument("--machine-id", required=True)',
-                'parser.add_argument("--plugin-name", required=True)',
-                'parser.add_argument("--hook-name", required=True)',
                 'parser.add_argument("--name", required=True)',
                 'parser.add_argument("--binproviders", default="*")',
                 'parser.add_argument("--min-version", default="")',
                 'parser.add_argument("--overrides", default=None)',
                 "args = parser.parse_args()",
+                'context = json.loads(os.environ["EXTRA_CONTEXT"])',
                 'bin_path = Path.cwd() / "bin" / args.name',
                 "bin_path.parent.mkdir(parents=True, exist_ok=True)",
                 'bin_path.write_text("demo")',
-                'print(json.dumps({"type": "Binary", "name": args.name, "abspath": str(bin_path), "binary_id": args.binary_id, "machine_id": args.machine_id, "plugin_name": args.plugin_name, "hook_name": args.hook_name, "binprovider": "provider"}))',
+                'print(json.dumps({"type": "Binary", "name": args.name, "abspath": str(bin_path), "binary_id": context["binary_id"], "machine_id": context["machine_id"], "plugin_name": context["plugin_name"], "hook_name": context["hook_name"], "binprovider": "provider"}))',
             ],
         )
         + "\n",
@@ -273,21 +309,19 @@ def test_download_applies_side_effects_from_completed_background_hooks(tmp_path:
         "\n".join(
             [
                 "import json",
+                "import os",
                 "from pathlib import Path",
                 "import argparse",
                 "parser = argparse.ArgumentParser()",
-                'parser.add_argument("--binary-id", required=True)',
-                'parser.add_argument("--machine-id", required=True)',
-                'parser.add_argument("--plugin-name", required=True)',
-                'parser.add_argument("--hook-name", required=True)',
                 'parser.add_argument("--name", required=True)',
                 'parser.add_argument("--binproviders", default="*")',
                 'parser.add_argument("--overrides", default=None)',
                 "args = parser.parse_args()",
+                'context = json.loads(os.environ["EXTRA_CONTEXT"])',
                 'bin_path = Path.cwd() / "bin" / args.name',
                 "bin_path.parent.mkdir(parents=True, exist_ok=True)",
                 'bin_path.write_text("demo")',
-                'print(json.dumps({"type": "Binary", "name": args.name, "abspath": str(bin_path), "binary_id": args.binary_id, "machine_id": args.machine_id, "plugin_name": args.plugin_name, "hook_name": args.hook_name, "binprovider": "provider"}))',
+                'print(json.dumps({"type": "Binary", "name": args.name, "abspath": str(bin_path), "binary_id": context["binary_id"], "machine_id": context["machine_id"], "plugin_name": context["plugin_name"], "hook_name": context["hook_name"], "binprovider": "provider"}))',
             ],
         )
         + "\n",
@@ -786,23 +820,21 @@ def test_binary_installed_events(tmp_path: Path) -> None:
             [
                 "import json",
                 "import argparse",
+                "import os",
                 "from pathlib import Path",
                 "parser = argparse.ArgumentParser()",
                 'parser.add_argument("--name", required=True)',
-                'parser.add_argument("--binary-id", required=True)',
-                'parser.add_argument("--machine-id", required=True)',
-                'parser.add_argument("--plugin-name", required=True)',
-                'parser.add_argument("--hook-name", required=True)',
                 'parser.add_argument("--binproviders", default="*")',
                 'parser.add_argument("--overrides", default=None)',
                 'parser.add_argument("--custom-cmd", default=None)',
                 "args = parser.parse_args()",
+                'context = json.loads(os.environ["EXTRA_CONTEXT"])',
                 'bin_path = Path.cwd() / "bin" / args.name',
                 "bin_path.parent.mkdir(parents=True, exist_ok=True)",
                 'bin_path.write_text("installed")',
                 'print(json.dumps({"type": "Binary", "name": args.name, "abspath": str(bin_path),'
-                ' "binary_id": args.binary_id, "machine_id": args.machine_id,'
-                ' "plugin_name": args.plugin_name, "hook_name": args.hook_name,'
+                ' "binary_id": context["binary_id"], "machine_id": context["machine_id"],'
+                ' "plugin_name": context["plugin_name"], "hook_name": context["hook_name"],'
                 ' "binprovider": "provider"}))',
             ],
         )

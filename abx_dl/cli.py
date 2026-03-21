@@ -602,6 +602,9 @@ def _build_archive_results_table(
     show_header: bool = True,
     stream: bool = False,
 ) -> Table:
+    phase_width = 0 if stream else 15
+    elapsed_width = 10 if stream else 12
+    output_width = 18 if stream else 60
     table = Table(
         show_header=show_header,
         header_style="bold",
@@ -610,10 +613,10 @@ def _build_archive_results_table(
         pad_edge=not stream,
     )
     table.add_column("Currently Running", width=40, no_wrap=True)
-    table.add_column("Phase", width=15, no_wrap=True)
+    table.add_column("Phase", width=phase_width, no_wrap=True)
     table.add_column("Status", width=10, no_wrap=True)
-    table.add_column("Elapsed", width=12, no_wrap=True)
-    table.add_column("Output")
+    table.add_column("Elapsed", width=elapsed_width, no_wrap=True)
+    table.add_column("Output", width=output_width, overflow="fold")
 
     for record in results:
         status = escape(_record_status(record))

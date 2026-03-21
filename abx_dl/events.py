@@ -142,6 +142,7 @@ class SnapshotEvent(BaseEvent):
     snapshot_id: str
     output_dir: str
     depth: int = 0
+    parent_snapshot_id: str = ""
     event_timeout: float | None = 300.0
 
 
@@ -224,6 +225,24 @@ class ProcessKillEvent(BaseEvent):
     event_timeout: float | None = 60.0
 
 
+class ProcessStartedEvent(BaseEvent):
+    """Notification: a hook subprocess started successfully."""
+
+    plugin_name: str
+    hook_name: str
+    hook_path: str
+    hook_args: list[str]
+    output_dir: str
+    env: dict[str, str]
+    timeout: int
+    pid: int = 0
+    process_id: str = ""
+    snapshot_id: str = ""
+    is_background: bool = False
+    start_ts: str = ""
+    event_timeout: float | None = 60.0
+
+
 class ProcessCompletedEvent(BaseEvent):
     """Notification: a hook subprocess finished.
 
@@ -235,6 +254,9 @@ class ProcessCompletedEvent(BaseEvent):
 
     plugin_name: str
     hook_name: str
+    hook_path: str = ""
+    hook_args: list[str] = []
+    env: dict[str, str] = {}
     stdout: str
     stderr: str
     exit_code: int
@@ -243,6 +265,7 @@ class ProcessCompletedEvent(BaseEvent):
     is_background: bool = False
     process_id: str = ""
     snapshot_id: str = ""
+    pid: int = 0
     start_ts: str = ""
     end_ts: str = ""
     event_timeout: float | None = 60.0
@@ -297,6 +320,7 @@ class BinaryEvent(BaseEvent):
     name: str
     plugin_name: str = ""
     hook_name: str = ""
+    output_dir: str = ""
     abspath: str = ""
     version: str = ""
     sha256: str = ""
@@ -353,6 +377,14 @@ class MachineEvent(BaseEvent):
     event_timeout: float | None = 10.0
 
 
+class TagEvent(BaseEvent):
+    """A hook emitted a tag to attach to the current snapshot."""
+
+    name: str
+    snapshot_id: str = ""
+    event_timeout: float | None = 10.0
+
+
 # ── ArchiveResult notification ────────────────────────────────────────────
 
 
@@ -382,6 +414,7 @@ class ArchiveResultEvent(BaseEvent):
     status: str = ""
     process_id: str = ""
     output_str: str = ""
+    output_json: dict[str, Any] | None = None
     output_files: list[str] = Field(default_factory=list)
     start_ts: str = ""
     end_ts: str = ""

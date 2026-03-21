@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
+from collections.abc import Mapping
 
-from abxbus import BaseEvent, EventBus
+from abxbus import BaseEvent, EventBus, EventHandler
 
 from ..events import ProcessEvent, slow_warning_timeout
 from ..models import Hook, Plugin, Snapshot
@@ -40,7 +42,18 @@ class BaseService:
 
     def __init__(self, bus: EventBus):
         self.bus = bus
+        self._registrations: list[tuple[type[BaseEvent] | str, EventHandler]] = []
         self._attach_handlers()
+
+    def _register(self, event_pattern: type[BaseEvent] | str, handler) -> EventHandler:
+        registration = self.bus.on(event_pattern, handler)
+        self._registrations.append((event_pattern, registration))
+        return registration
+
+    def close(self) -> None:
+        while self._registrations:
+            event_pattern, registration = self._registrations.pop()
+            self.bus.off(event_pattern, registration)
 
     def _attach_handlers(self) -> None:
         """Discover ``on_*`` methods and register them on the bus.
@@ -61,8 +74,25 @@ class BaseService:
             for event_cls in self.LISTENS_TO:
                 if event_cls.__name__ in candidates:
                     handler = getattr(self, attr_name)
-                    self.bus.on(event_cls, handler)
+                    self._register(event_cls, handler)
                     break
+
+
+def add_extra_context(env: dict[str, str], extra_context: Mapping[str, Any]) -> dict[str, str]:
+    """Merge hook passthrough metadata into EXTRA_CONTEXT without changing argv."""
+    merged_env = dict(env)
+    merged_context: dict[str, Any] = {}
+    existing = merged_env.get("EXTRA_CONTEXT")
+    if existing:
+        try:
+            parsed = json.loads(existing)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            merged_context.update(parsed)
+    merged_context.update(extra_context)
+    merged_env["EXTRA_CONTEXT"] = json.dumps(merged_context, separators=(",", ":"), sort_keys=True)
+    return merged_env
 
 
 def make_hook_handler(
@@ -91,7 +121,12 @@ def make_hook_handler(
     """
 
     async def handler(event: BaseEvent, _plugin=plugin, _hook=hook) -> None:
+        if getattr(event, "snapshot_id", snapshot.id) != snapshot.id:
+            return
+        if getattr(event, "output_dir", str(output_dir)) != str(output_dir):
+            return
         env = machine.get_env_for_plugin(_plugin, run_output_dir=output_dir)
+        env = add_extra_context(env, {"snapshot_id": snapshot.id})
         timeout = int(env.get(f"{_plugin.name.upper()}_TIMEOUT", env.get("TIMEOUT", "60")))
         plugin_output_dir = output_dir / _plugin.name
         plugin_output_dir.mkdir(parents=True, exist_ok=True)
@@ -104,7 +139,7 @@ def make_hook_handler(
             plugin_name=_plugin.name,
             hook_name=_hook.name,
             hook_path=str(_hook.path),
-            hook_args=[f"--url={url}", f"--snapshot-id={snapshot.id}"],
+            hook_args=[f"--url={url}"],
             is_background=_hook.is_background,
             output_dir=str(plugin_output_dir),
             env=env,

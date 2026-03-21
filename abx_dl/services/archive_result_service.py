@@ -41,8 +41,7 @@ class ArchiveResultService(BaseService):
     ]
     EMITS: ClassVar[list[type[BaseEvent]]] = [ArchiveResultEvent]
 
-    def __init__(self, bus: EventBus, *, index_path: Path, emit_jsonl: bool):
-        self.index_path = index_path
+    def __init__(self, bus: EventBus, *, emit_jsonl: bool):
         self.emit_jsonl = emit_jsonl
         super().__init__(bus)
 
@@ -61,10 +60,12 @@ class ArchiveResultService(BaseService):
             hook_name=record.get("hook_name", event.hook_name),
             status=record.get("status", ""),
             output_str=record.get("output_str", ""),
+            output_json=record.get("output_json") if isinstance(record.get("output_json"), dict) else None,
             error=record.get("error") or None,
         )
 
-        write_jsonl(self.index_path, ar, also_print=self.emit_jsonl)
+        index_path = Path(event.output_dir).parent / "index.jsonl"
+        write_jsonl(index_path, ar, also_print=self.emit_jsonl)
 
         await self.bus.emit(
             ArchiveResultEvent(
@@ -78,6 +79,7 @@ class ArchiveResultService(BaseService):
                 start_ts=event.start_ts,
                 end_ts=event.end_ts,
                 output_str=ar.output_str,
+                output_json=ar.output_json,
                 error=ar.error or "",
             ),
         )
@@ -89,8 +91,10 @@ class ArchiveResultService(BaseService):
 
         existing = await self.bus.find(
             ArchiveResultEvent,
+            snapshot_id=event.snapshot_id,
             plugin=event.plugin_name,
             hook_name=event.hook_name,
+            process_id=event.process_id,
         )
         if existing is not None:
             return
@@ -121,7 +125,8 @@ class ArchiveResultService(BaseService):
                 status="noresult",
             )
 
-        write_jsonl(self.index_path, ar, also_print=self.emit_jsonl)
+        index_path = Path(event.output_dir).parent / "index.jsonl"
+        write_jsonl(index_path, ar, also_print=self.emit_jsonl)
 
         await self.bus.emit(
             ArchiveResultEvent(
@@ -134,6 +139,7 @@ class ArchiveResultService(BaseService):
                 output_files=event.output_files,
                 start_ts=event.start_ts,
                 end_ts=event.end_ts,
+                output_json=ar.output_json,
                 error=ar.error or "",
             ),
         )

@@ -82,9 +82,65 @@ from typing import Any
 
 from abxbus import EventBus, EventBusMiddleware, EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode
 
-from .events import ArchiveResultEvent, CrawlEvent, slow_warning_timeout
+from .events import (
+    ArchiveResultEvent,
+    CrawlCleanupEvent,
+    CrawlCompletedEvent,
+    CrawlSetupEvent,
+    CrawlStartEvent,
+    SnapshotEvent,
+    slow_warning_timeout,
+)
 from .models import ArchiveResult, Snapshot, write_jsonl
 from .models import Hook, Plugin, filter_plugins
+
+
+class _BusServices:
+    def __init__(self, *, machine, binary, process, archive_result, tag):
+        self.machine = machine
+        self.binary = binary
+        self.process = process
+        self.archive_result = archive_result
+        self.tag = tag
+
+
+def _get_or_create_bus_services(
+    bus: EventBus,
+    *,
+    plugins: dict[str, Plugin],
+    config_overrides: dict[str, Any] | None,
+    auto_install: bool,
+    emit_jsonl: bool,
+    stderr_is_tty: bool,
+) -> _BusServices:
+    state = getattr(bus, "_abx_dl_services", None)
+    if state is None:
+        from .services import ArchiveResultService, BinaryService, MachineService, ProcessService, TagService
+
+        machine = MachineService(bus, initial_config=config_overrides)
+        state = _BusServices(
+            machine=machine,
+            binary=BinaryService(
+                bus,
+                machine=machine,
+                plugins=plugins,
+                auto_install=auto_install,
+            ),
+            process=ProcessService(
+                bus,
+                emit_jsonl=emit_jsonl,
+                stderr_is_tty=stderr_is_tty,
+            ),
+            archive_result=ArchiveResultService(
+                bus,
+                emit_jsonl=emit_jsonl,
+            ),
+            tag=TagService(bus),
+        )
+        setattr(bus, "_abx_dl_services", state)
+    elif config_overrides:
+        state.machine.shared_config.update(config_overrides)
+    return state
 
 
 def get_plugin_timeout(plugin: Plugin, config: dict[str, Any] | None = None) -> int:
@@ -191,6 +247,11 @@ async def download(
     *,
     bus: EventBus | None = None,
     emit_jsonl: bool | None = None,
+    snapshot: Snapshot | None = None,
+    skip_crawl_setup: bool = False,
+    skip_crawl_cleanup: bool = False,
+    crawl_setup_only: bool = False,
+    crawl_cleanup_only: bool = False,
 ) -> list[ArchiveResult]:
     """Download a URL using plugins, coordinated through a abxbus EventBus.
 
@@ -219,6 +280,8 @@ async def download(
         ArchiveResultEvents on the bus).
     """
 
+    if crawl_setup_only and crawl_cleanup_only:
+        raise ValueError("crawl_setup_only and crawl_cleanup_only are mutually exclusive")
     output_dir = output_dir or Path.cwd()
     output_dir.mkdir(parents=True, exist_ok=True)
     index_path = output_dir / "index.jsonl"
@@ -232,7 +295,7 @@ async def download(
         plugins = filter_plugins(plugins, selected_plugins)
 
     # Create snapshot record and write it as the first line of index.jsonl
-    snapshot = Snapshot(url=url)
+    snapshot = snapshot or Snapshot(url=url)
     write_jsonl(index_path, snapshot, also_print=emit_jsonl)
 
     # Collect and sort hooks by (order, name) so execution order matches
@@ -253,14 +316,23 @@ async def download(
     total_timeout = crawl_phase_timeout + snapshot_phase_timeout
 
     # Create bus if caller didn't provide one
+    owns_bus = bus is None
     if bus is None:
         bus = create_bus(total_timeout=total_timeout)
+    assert bus is not None
+    active_bus = bus
 
     # Collect ArchiveResult records from the bus
     results: list[ArchiveResult] = []
 
+    tracked_events: list[CrawlStartEvent | SnapshotEvent] = []
+
     async def on_ArchiveResultEvent(event: ArchiveResultEvent) -> None:
         """Collects all ArchiveResultEvents."""
+        if tracked_events and not any(
+            event.event_id == tracked.event_id or active_bus.event_is_child_of(event, tracked) for tracked in tracked_events
+        ):
+            return
         results.append(
             ArchiveResult(
                 snapshot_id=event.snapshot_id,
@@ -270,6 +342,7 @@ async def download(
                 status=event.status,
                 process_id=event.process_id or None,
                 output_str=event.output_str,
+                output_json=event.output_json,
                 output_files=event.output_files,
                 start_ts=event.start_ts or None,
                 end_ts=event.end_ts or None,
@@ -277,64 +350,117 @@ async def download(
             ),
         )
 
-    bus.on(ArchiveResultEvent, on_ArchiveResultEvent)
+    collector = active_bus.on(ArchiveResultEvent, on_ArchiveResultEvent)
 
     # --- Wire up services ---
-    # Import here to avoid circular imports (services import events/models)
-    from .services import MachineService, BinaryService, ProcessService, ArchiveResultService, CrawlService, SnapshotService
+    from .services import CrawlService, SnapshotService
 
-    machine_svc = MachineService(bus, initial_config=config_overrides)
-    BinaryService(
-        bus,
-        machine=machine_svc,
+    shared = _get_or_create_bus_services(
+        active_bus,
         plugins=plugins,
+        config_overrides=config_overrides,
         auto_install=auto_install,
-        output_dir=output_dir,
-    )
-    ProcessService(
-        bus,
-        index_path=index_path,
-        output_dir=output_dir,
         emit_jsonl=emit_jsonl,
         stderr_is_tty=stderr_is_tty,
     )
-    ArchiveResultService(bus, index_path=index_path, emit_jsonl=emit_jsonl)
-    CrawlService(
-        bus,
-        url=url,
-        snapshot=snapshot,
-        output_dir=output_dir,
-        machine=machine_svc,
-        hooks=crawl_hooks,
-        crawl_only=crawl_only,
-        phase_timeout=crawl_phase_timeout,
-    )
-    SnapshotService(
-        bus,
-        url=url,
-        snapshot=snapshot,
-        output_dir=output_dir,
-        machine=machine_svc,
-        hooks=snapshot_hooks,
-        phase_timeout=snapshot_phase_timeout,
-    )
 
-    # --- Drive the lifecycle ---
-    # Emitting CrawlEvent triggers the entire cascade:
-    # CrawlSetupEvent → CrawlStartEvent → SnapshotEvent →
-    # SnapshotCleanupEvent → SnapshotCompletedEvent → CrawlCleanupEvent →
-    # CrawlCompletedEvent. The await returns after the full tree completes.
-    try:
-        await bus.emit(
-            CrawlEvent(
+    run_services = []
+    if not skip_crawl_setup or not skip_crawl_cleanup or crawl_setup_only or crawl_cleanup_only:
+        run_services.append(
+            CrawlService(
+                active_bus,
                 url=url,
-                snapshot_id=snapshot.id,
-                output_dir=str(output_dir),
-                event_timeout=total_timeout,
-                event_handler_slow_timeout=slow_warning_timeout(total_timeout),
+                snapshot=snapshot,
+                output_dir=output_dir,
+                machine=shared.machine,
+                hooks=crawl_hooks,
+                crawl_only=crawl_only,
+                phase_timeout=crawl_phase_timeout,
             ),
         )
+    if not crawl_setup_only and not crawl_cleanup_only and not crawl_only:
+        run_services.append(
+            SnapshotService(
+                active_bus,
+                url=url,
+                snapshot=snapshot,
+                output_dir=output_dir,
+                machine=shared.machine,
+                hooks=snapshot_hooks,
+                phase_timeout=snapshot_phase_timeout,
+            ),
+        )
+
+    try:
+        if crawl_setup_only:
+            await active_bus.emit(
+                CrawlSetupEvent(
+                    url=url,
+                    snapshot_id=snapshot.id,
+                    output_dir=str(output_dir),
+                    event_timeout=crawl_phase_timeout,
+                    event_handler_slow_timeout=slow_warning_timeout(crawl_phase_timeout),
+                ),
+            )
+        elif crawl_cleanup_only:
+            await active_bus.emit(
+                CrawlCleanupEvent(
+                    url=url,
+                    snapshot_id=snapshot.id,
+                    output_dir=str(output_dir),
+                    event_timeout=crawl_phase_timeout,
+                    event_handler_slow_timeout=slow_warning_timeout(crawl_phase_timeout),
+                ),
+            )
+            await active_bus.emit(CrawlCompletedEvent(url=url, snapshot_id=snapshot.id, output_dir=str(output_dir)))
+        else:
+            if not skip_crawl_setup:
+                await active_bus.emit(
+                    CrawlSetupEvent(
+                        url=url,
+                        snapshot_id=snapshot.id,
+                        output_dir=str(output_dir),
+                        event_timeout=crawl_phase_timeout,
+                        event_handler_slow_timeout=slow_warning_timeout(crawl_phase_timeout),
+                    ),
+                )
+            if not crawl_only:
+                crawl_start = CrawlStartEvent(
+                    url=url,
+                    snapshot_id=snapshot.id,
+                    output_dir=str(output_dir),
+                    event_timeout=snapshot_phase_timeout,
+                    event_handler_slow_timeout=slow_warning_timeout(snapshot_phase_timeout),
+                )
+                tracked_events.append(crawl_start)
+                await active_bus.emit(crawl_start)
+                snapshot_event = SnapshotEvent(
+                    url=url,
+                    snapshot_id=snapshot.id,
+                    output_dir=str(output_dir),
+                    depth=snapshot.depth,
+                    parent_snapshot_id=snapshot.parent_snapshot_id or "",
+                    event_timeout=snapshot_phase_timeout,
+                    event_handler_slow_timeout=slow_warning_timeout(snapshot_phase_timeout),
+                )
+                tracked_events.append(snapshot_event)
+                await active_bus.emit(snapshot_event)
+            if not skip_crawl_cleanup:
+                await active_bus.emit(
+                    CrawlCleanupEvent(
+                        url=url,
+                        snapshot_id=snapshot.id,
+                        output_dir=str(output_dir),
+                        event_timeout=crawl_phase_timeout,
+                        event_handler_slow_timeout=slow_warning_timeout(crawl_phase_timeout),
+                    ),
+                )
+                await active_bus.emit(CrawlCompletedEvent(url=url, snapshot_id=snapshot.id, output_dir=str(output_dir)))
     finally:
-        await bus.stop()
+        active_bus.off(ArchiveResultEvent, collector)
+        while run_services:
+            run_services.pop().close()
+        if owns_bus:
+            await active_bus.stop()
 
     return results
