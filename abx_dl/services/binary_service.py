@@ -65,6 +65,7 @@ class BinaryService(BaseService):
         self.machine = machine
         self.auto_install = auto_install
         self.output_dir = output_dir
+        self.plugins = plugins
         # Pre-collect all binary hooks at init time (sorted by order across all plugins)
         self.binary_hooks: list[tuple[Plugin, Hook]] = sorted(
             [
@@ -94,6 +95,34 @@ class BinaryService(BaseService):
         # on_BinaryEvent runs last — branches on outcome
         self.bus.on(BinaryEvent, self.on_BinaryEvent)
 
+    def _plugin_binary_config_keys(self, plugin_name: str, binary_name: str) -> list[str]:
+        """Return plugin config keys whose default binary name matches the requested binary."""
+        plugin = self.plugins.get(plugin_name)
+        if plugin is None:
+            return []
+
+        matching_keys: list[str] = []
+        for key, prop in plugin.config_schema.items():
+            if not key.endswith('_BINARY'):
+                continue
+            if prop.get('default') == binary_name:
+                matching_keys.append(key)
+        return matching_keys
+
+    async def _register_binary_path(self, plugin_name: str, binary_name: str, abspath: str) -> None:
+        """Persist the generic and plugin-specific binary env vars for a resolved binary."""
+        await self.bus.emit(MachineEvent(
+            method='update',
+            key=f'config/{_binary_env_key(binary_name)}',
+            value=abspath,
+        ))
+        for config_key in self._plugin_binary_config_keys(plugin_name, binary_name):
+            await self.bus.emit(MachineEvent(
+                method='update',
+                key=f'config/{config_key}',
+                value=abspath,
+            ))
+
     def _make_provider_hook_handler(self, plugin: Plugin, hook: Hook):
         """Create an async handler that runs one binary provider hook.
 
@@ -110,9 +139,16 @@ class BinaryService(BaseService):
 
             from ..models import uuid7
             binary_id = event.binary_id or uuid7()
-            hook_args = [f'--name={event.name}', f'--binary-id={binary_id}']
+            hook_args = [
+                f'--name={event.name}',
+                f'--binary-id={binary_id}',
+                f'--plugin-name={event.plugin_name}',
+                f'--hook-name={event.hook_name}',
+            ]
             if event.binproviders:
                 hook_args.append(f'--binproviders={event.binproviders}')
+            if event.min_version:
+                hook_args.append(f'--min-version={event.min_version}')
             if event.overrides is not None:
                 hook_args.append(f'--overrides={json.dumps(event.overrides)}')
             if event.custom_cmd:
@@ -144,9 +180,13 @@ class BinaryService(BaseService):
             return
         if not isinstance(record, dict) or record.pop('type', '') != 'Binary':
             return
+
+        from ..models import uuid7
+        record.setdefault('binary_id', uuid7())
+
         await self.bus.emit(BinaryEvent(
-            plugin_name=event.plugin_name,
-            hook_name=event.hook_name,
+            plugin_name=record.pop('plugin_name', event.plugin_name),
+            hook_name=record.pop('hook_name', event.hook_name),
             **record,
         ))
 
@@ -162,14 +202,9 @@ class BinaryService(BaseService):
             return
 
         binprovider = getattr(event, 'binprovider', '') or ''
-
         if event.abspath:
             # Binary path provided — register in config and notify
-            await self.bus.emit(MachineEvent(
-                method='update',
-                key=f'config/{_binary_env_key(event.name)}',
-                value=event.abspath,
-            ))
+            await self._register_binary_path(event.plugin_name, event.name, event.abspath)
             await self.bus.emit(BinaryInstalledEvent(
                 name=event.name,
                 plugin_name=event.plugin_name,
@@ -185,6 +220,7 @@ class BinaryService(BaseService):
             # No abspath — check if a provider resolved it via shared_config
             abspath = self.machine.shared_config.get(_binary_env_key(event.name), '')
             if abspath:
+                await self._register_binary_path(event.plugin_name, event.name, abspath)
                 existing = await self.bus.find(
                     BinaryInstalledEvent,
                     child_of=event,

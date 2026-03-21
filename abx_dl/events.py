@@ -283,6 +283,7 @@ class BinaryEvent(BaseEvent):
     abspath: str = ''
     version: str = ''
     sha256: str = ''
+    min_version: str = ''
     binary_id: str = ''
     machine_id: str = ''
     binproviders: str = ''

@@ -37,8 +37,14 @@ def load_binary(spec: dict[str, Any]) -> Binary:
     providers_str = spec.get('binproviders', 'env')
     providers = [p for p in DEFAULT_PROVIDERS if p.name in providers_str.split(',')]
     overrides = spec.get('overrides', {})
+    min_version = spec.get('min_version') or None
 
-    binary = Binary(name=spec['name'], binproviders=providers, overrides=overrides)
+    binary = Binary(
+        name=spec['name'],
+        min_version=min_version,
+        binproviders=providers,
+        overrides=overrides,
+    )
 
     try:
         return binary.load()
@@ -51,8 +57,14 @@ def install_binary(spec: dict[str, Any]) -> Binary:
     providers_str = spec.get('binproviders', 'env')
     providers = [p for p in DEFAULT_PROVIDERS if p.name in providers_str.split(',')]
     overrides = spec.get('overrides', {})
+    min_version = spec.get('min_version') or None
 
-    binary = Binary(name=spec['name'], binproviders=providers, overrides=overrides)
+    binary = Binary(
+        name=spec['name'],
+        min_version=min_version,
+        binproviders=providers,
+        overrides=overrides,
+    )
 
     try:
         return binary.load_or_install()
