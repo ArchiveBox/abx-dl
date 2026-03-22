@@ -4,7 +4,7 @@ requires-python = ">=3.11"
 
 [[package]]
 name = "abx-dl"
-version = "1.10.13"
+version = "1.10.14"
 source = { editable = "." }
 dependencies = [
     { name = "abx-pkg" },
@@ -108,7 +108,7 @@ dev = [
 
 [[package]]
 name = "abx-plugins"
-version = "1.10.13"
+version = "1.10.14"
 source = { editable = "../abx-plugins" }
 dependencies = [
     { name = "abx-pkg" },
@@ -118,7 +118,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "abx-pkg", specifier = ">=1.9.14" },
+    { name = "abx-pkg", specifier = ">=1.9.18" },
     { name = "feedparser", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "jinja2", marker = "extra == 'dev'", specifier = ">=3.1.0" },
     { name = "pydantic-settings", specifier = ">=2.0.0" },
