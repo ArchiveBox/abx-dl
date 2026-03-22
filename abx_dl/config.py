@@ -194,6 +194,7 @@ NPM_BIN_DIR = NODE_MODULES_DIR / ".bin"
 
 # Global config defaults
 GLOBAL_DEFAULTS = {
+    "DRY_RUN": False,
     "TIMEOUT": 60,
     "USER_AGENT": "Mozilla/5.0 (compatible; abx-dl/1.0; +https://github.com/ArchiveBox/abx-dl)",
     "CHECK_SSL_VALIDITY": True,

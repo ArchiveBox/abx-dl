@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+from typing import Any
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -152,6 +153,65 @@ def test_render_record_output_keeps_archive_result_output_untruncated() -> None:
         final_output_is_archive_result=True,
     )
     assert cli_module._render_record_output(record) == "line one\nline two"
+
+
+def test_dl_dry_run_passes_flag_to_download(monkeypatch, tmp_path: Path) -> None:
+    captured: dict[str, Any] = {}
+
+    class DummyBus:
+        pass
+
+    class DummyLiveUI:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def print_intro(self, *args, **kwargs) -> None:
+            pass
+
+        def print_summary(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+    async def fake_download(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return []
+
+    monkeypatch.setattr(cli_module, "create_bus", lambda total_timeout: DummyBus())
+    monkeypatch.setattr(cli_module, "LiveBusUI", DummyLiveUI)
+    monkeypatch.setattr(cli_module, "download", fake_download)
+    monkeypatch.setattr(cli_module, "_run_with_debug_bus_log", lambda bus, debug, func: func())
+
+    runner = CliRunner()
+    result = runner.invoke(cli_group, ["dl", "--dry-run", "https://example.com"])
+
+    assert result.exit_code == 0, result.output
+    assert captured["kwargs"]["dry_run"] is True
+    assert captured["args"][4] == {"DRY_RUN": True}
+
+
+def test_install_dry_run_forwards_to_plugins_install(monkeypatch) -> None:
+    plugin = cli_module.Plugin(name="demo", path=Path("."), hooks=[], config_schema={})
+    captured: dict[str, object] = {}
+
+    monkeypatch.setattr(cli_module, "discover_plugins", lambda: {"demo": plugin})
+
+    def fake_run_plugin_install(*args, **kwargs):
+        captured.update(kwargs)
+        return 0
+
+    monkeypatch.setattr(cli_module, "_run_plugin_install", fake_run_plugin_install)
+
+    runner = CliRunner()
+    result = runner.invoke(cli_group, ["install", "--dry-run"])
+
+    assert result.exit_code == 0, result.output
+    assert captured["dry_run"] is True
 
 
 def test_normalize_archive_result_output_relativizes_absolute_path(monkeypatch, tmp_path: Path) -> None:
@@ -771,7 +831,60 @@ def test_run_plugin_install_hides_failed_provider_row_after_later_success(monkey
     assert "opendataloader-pdf" in rendered
     assert "/tmp/lib/pip/venv/bin/opendataloader-pdf 2.0.2" in rendered
     assert "opendataloader-pdf not found in PATH" not in rendered
-    assert env_hook not in rendered
+
+
+def test_run_plugin_install_scopes_provider_failure_to_requested_binary(monkeypatch) -> None:
+    plugins = discover_plugins()
+    selected = {name: plugins[name] for name in ["trafilatura", "opendataloader", "env", "pip"]}
+    console_output = io.StringIO()
+
+    async def fake_download(*args, **kwargs):
+        bus = kwargs.get("bus")
+        if bus:
+            await bus.emit(
+                BinaryEvent(
+                    name="trafilatura",
+                    plugin_name="trafilatura",
+                    hook_name="on_Crawl__41_trafilatura_install.finite.bg",
+                    binproviders="env,pip",
+                ),
+            )
+            await bus.emit(
+                BinaryEvent(
+                    name="opendataloader-pdf",
+                    plugin_name="opendataloader",
+                    hook_name="on_Crawl__42_opendataloader_install.finite.bg",
+                    binproviders="env,pip",
+                ),
+            )
+            await bus.emit(
+                ProcessCompletedEvent(
+                    plugin_name="env",
+                    hook_name="on_Binary__00_env_discover",
+                    hook_args=["--name=trafilatura", "--binproviders=env,pip"],
+                    exit_code=1,
+                    stdout="",
+                    stderr="trafilatura not found in PATH",
+                    output_dir="",
+                    process_id="env-proc",
+                ),
+            )
+        return []
+
+    monkeypatch.setattr(cli_module, "download", fake_download)
+    monkeypatch.setattr(
+        cli_module,
+        "console",
+        Console(file=console_output, force_terminal=False, color_system=None, width=160),
+    )
+
+    exit_code = cli_module._run_plugin_install(selected, visible_plugins={"trafilatura", "opendataloader"})
+
+    rendered = console_output.getvalue()
+    assert exit_code == 1
+    assert "trafilatura not found in PATH" in rendered
+    assert "Requested binary not resolved: opendataloader-pdf" in rendered
+    assert "opendataloader / on_Crawl__42_opendataloader_install.finite.bg\ntrafilatura not found in PATH" not in rendered
 
 
 def test_run_plugin_install_renders_rows_in_chronological_order(monkeypatch) -> None:

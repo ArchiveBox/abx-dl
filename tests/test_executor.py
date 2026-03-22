@@ -4,10 +4,10 @@ from pathlib import Path
 
 from abxbus import EventBus
 
-from abx_dl.orchestrator import create_bus, download
+from abx_dl.orchestrator import create_bus, download, install_plugins
 from abx_dl.events import ArchiveResultEvent, BinaryEvent, BinaryInstalledEvent, SnapshotEvent
 from abx_dl.models import ArchiveResult, Plugin, Snapshot
-from abx_dl.models import discover_plugins
+from abx_dl.models import INSTALL_URL, discover_plugins
 from abx_dl.services.binary_service import BinaryService
 from abx_dl.services.machine_service import MachineService
 
@@ -108,6 +108,57 @@ def test_download_dispatches_binary_hooks_and_applies_machine_updates(tmp_path: 
     assert "--machine-id=" not in " ".join(provider_process["cmd"])
     assert "--plugin-name=" not in " ".join(provider_process["cmd"])
     assert "--hook-name=" not in " ".join(provider_process["cmd"])
+
+
+def test_install_url_runs_finite_background_crawl_hooks_to_completion(tmp_path: Path) -> None:
+    plugins_root = tmp_path / "plugins"
+    captured: list[tuple[str, str]] = []
+    bus = create_bus(total_timeout=120.0)
+
+    async def on_installed(event: BinaryInstalledEvent) -> None:
+        captured.append((event.name, event.abspath))
+
+    bus.on(BinaryInstalledEvent, on_installed)
+
+    _write(
+        plugins_root / "emitter" / "on_Crawl__10_emit_install.finite.bg.py",
+        "\n".join(
+            [
+                "import json",
+                "import time",
+                "time.sleep(0.1)",
+                'print(json.dumps({"type": "Binary", "name": "demo", "binproviders": "provider"}), flush=True)',
+            ],
+        )
+        + "\n",
+    )
+    _write(
+        plugins_root / "provider" / "on_Binary__10_provider_install.py",
+        "\n".join(
+            [
+                "import argparse",
+                "import json",
+                "from pathlib import Path",
+                "parser = argparse.ArgumentParser()",
+                'parser.add_argument("--name", required=True)',
+                'parser.add_argument("--binproviders", default="*")',
+                'parser.add_argument("--overrides", default=None)',
+                "args = parser.parse_args()",
+                'bin_path = Path.cwd() / "bin" / args.name',
+                "bin_path.parent.mkdir(parents=True, exist_ok=True)",
+                'bin_path.write_text("demo")',
+                'print(json.dumps({"type": "Binary", "name": args.name, "abspath": str(bin_path), "version": "1.0.0", "binprovider": "provider"}), flush=True)',
+            ],
+        )
+        + "\n",
+    )
+
+    plugins = discover_plugins(plugins_root)
+    asyncio.run(download(INSTALL_URL, plugins, tmp_path / "install-run", auto_install=True, emit_jsonl=False, bus=bus))
+
+    assert captured
+    assert captured[-1][0] == "demo"
+    assert Path(captured[-1][1]).is_absolute()
 
 
 def test_download_forwards_binary_min_version_to_provider_hooks(tmp_path: Path) -> None:
@@ -272,6 +323,53 @@ def test_binary_installed_event_uses_machine_config_seeded_from_persistent_confi
     assert demo_events
     assert Path(str(demo_events[-1].abspath)).name == "postlight-parser"
     assert demo_events[-1].binproviders == "env"
+
+
+def test_binary_installed_event_resolves_config_backed_command_name() -> None:
+    async def run() -> list[BinaryInstalledEvent]:
+        bus = create_bus(total_timeout=10.0)
+        machine = MachineService(bus, initial_config={"DEMO_BINARY": "python3"})
+        BinaryService(
+            bus,
+            machine=machine,
+            plugins={
+                "demo": Plugin(
+                    name="demo",
+                    path=Path("."),
+                    hooks=[],
+                    config_schema={"DEMO_BINARY": {"type": "string", "default": "python3"}},
+                ),
+            },
+            auto_install=True,
+        )
+
+        installed_events: list[BinaryInstalledEvent] = []
+
+        async def on_installed(event: BinaryInstalledEvent) -> None:
+            installed_events.append(event)
+
+        bus.on(BinaryInstalledEvent, on_installed)
+        try:
+            await bus.emit(
+                BinaryEvent(
+                    name="python3",
+                    plugin_name="demo",
+                    hook_name="on_Crawl__00_demo_install",
+                    output_dir=".",
+                    binproviders="env",
+                ),
+            )
+            return installed_events
+        finally:
+            await bus.stop()
+
+    demo_events = [event for event in asyncio.run(run()) if event.name == "python3"]
+    assert demo_events
+    assert Path(str(demo_events[-1].abspath)).is_absolute()
+    assert Path(str(demo_events[-1].abspath)).name.startswith("python")
+    assert demo_events[-1].abspath != "python3"
+    assert demo_events[-1].binprovider == "env"
+    assert demo_events[-1].version
 
 
 def test_binary_provider_order_prefers_first_provider_over_cached_env_path(tmp_path: Path) -> None:
@@ -1281,3 +1379,60 @@ def test_nested_snapshot_events_are_emitted_but_ignored_by_snapshot_hooks(tmp_pa
     assert producer_results[0].output_str == "producer"
     assert len(observer_results) == 1
     assert observer_results[0].output_str == "observer"
+
+
+def test_download_dry_run_sets_env_and_skips_snapshot_processes(tmp_path: Path) -> None:
+    plugins_root = tmp_path / "plugins"
+
+    _write(
+        plugins_root / "crawlprobe" / "on_Crawl__00_probe.py",
+        "\n".join(
+            [
+                "import os",
+                "from pathlib import Path",
+                'Path.cwd().joinpath("crawl_marker.txt").write_text("crawl")',
+                'Path.cwd().joinpath("dry_run.txt").write_text(os.environ.get("DRY_RUN", ""))',
+            ],
+        )
+        + "\n",
+    )
+    _write(
+        plugins_root / "snapprobe" / "on_Snapshot__01_probe.py",
+        "\n".join(
+            [
+                "from pathlib import Path",
+                'Path.cwd().joinpath("snapshot_marker.txt").write_text("snapshot")',
+                'print("{\\"type\\": \\"ArchiveResult\\", \\"status\\": \\"succeeded\\", \\"output_str\\": \\"snapshot-ran\\"}")',
+            ],
+        )
+        + "\n",
+    )
+
+    plugins = discover_plugins(plugins_root)
+    results = _run_download("https://example.com", plugins, tmp_path / "run", dry_run=True, auto_install=True)
+
+    assert (tmp_path / "run" / "crawlprobe" / "crawl_marker.txt").read_text() == "crawl"
+    assert (tmp_path / "run" / "crawlprobe" / "dry_run.txt").read_text() == "True"
+    assert not (tmp_path / "run" / "snapprobe" / "snapshot_marker.txt").exists()
+    assert results == []
+
+
+def test_install_plugins_dry_run_sets_env_for_install_hooks(tmp_path: Path) -> None:
+    plugins_root = tmp_path / "plugins"
+
+    _write(
+        plugins_root / "installer" / "on_Crawl__00_install_probe.py",
+        "\n".join(
+            [
+                "import os",
+                "from pathlib import Path",
+                'Path.cwd().joinpath("dry_run_install.txt").write_text(os.environ.get("DRY_RUN", ""))',
+            ],
+        )
+        + "\n",
+    )
+
+    plugins = discover_plugins(plugins_root)
+    asyncio.run(install_plugins(plugins=plugins, output_dir=tmp_path / "install-run", dry_run=True))
+
+    assert (tmp_path / "install-run" / "installer" / "dry_run_install.txt").read_text() == "True"

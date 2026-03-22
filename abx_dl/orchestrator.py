@@ -207,12 +207,17 @@ async def install_plugins(
     auto_install: bool = True,
     emit_jsonl: bool = False,
     bus: EventBus | None = None,
+    dry_run: bool = False,
 ) -> list[ArchiveResult]:
     """Run the abx-dl install flow on an existing bus or a temporary one."""
     all_plugins = plugins or discover_plugins()
     selected = prepare_install_plugins(all_plugins, plugin_names=plugin_names)
     if not selected:
         return []
+
+    merged_config = dict(config_overrides or {})
+    if dry_run:
+        merged_config["DRY_RUN"] = True
 
     if output_dir is not None:
         return await download(
@@ -221,8 +226,9 @@ async def install_plugins(
             output_dir,
             auto_install=auto_install,
             emit_jsonl=emit_jsonl,
-            config_overrides=config_overrides,
+            config_overrides=merged_config or None,
             bus=bus,
+            dry_run=dry_run,
         )
 
     with TemporaryDirectory(prefix="abx-dl-install-") as temp_dir:
@@ -232,8 +238,9 @@ async def install_plugins(
             Path(temp_dir),
             auto_install=auto_install,
             emit_jsonl=emit_jsonl,
-            config_overrides=config_overrides,
+            config_overrides=merged_config or None,
             bus=bus,
+            dry_run=dry_run,
         )
 
 
@@ -348,6 +355,7 @@ async def download(
     skip_crawl_cleanup: bool = False,
     crawl_setup_only: bool = False,
     crawl_cleanup_only: bool = False,
+    dry_run: bool = False,
 ) -> list[ArchiveResult]:
     """Download a URL using plugins, coordinated through a abxbus EventBus.
 
@@ -378,6 +386,9 @@ async def download(
 
     if crawl_setup_only and crawl_cleanup_only:
         raise ValueError("crawl_setup_only and crawl_cleanup_only are mutually exclusive")
+    config_overrides = dict(config_overrides or {})
+    if dry_run:
+        config_overrides["DRY_RUN"] = True
     ensure_default_persona_dir()
     output_dir = output_dir or Path.cwd()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -408,8 +419,8 @@ async def download(
     snapshot_hooks.sort(key=lambda x: x[1].sort_key)
 
     # Compute per-phase timeouts from plugin-specific settings
-    crawl_phase_timeout = compute_phase_timeout(crawl_hooks, config_overrides)
-    snapshot_phase_timeout = compute_phase_timeout(snapshot_hooks, config_overrides)
+    crawl_phase_timeout = compute_phase_timeout(crawl_hooks, config_overrides or None)
+    snapshot_phase_timeout = compute_phase_timeout(snapshot_hooks, config_overrides or None)
     total_timeout = crawl_phase_timeout + snapshot_phase_timeout
 
     # Create bus if caller didn't provide one
@@ -455,7 +466,7 @@ async def download(
     shared = _get_or_create_bus_services(
         active_bus,
         plugins=plugins,
-        config_overrides=config_overrides,
+        config_overrides=config_overrides or None,
         auto_install=auto_install,
         emit_jsonl=emit_jsonl,
         stderr_is_tty=stderr_is_tty,
@@ -522,26 +533,32 @@ async def download(
                     ),
                 )
             if not crawl_only:
-                crawl_start = CrawlStartEvent(
-                    url=url,
-                    snapshot_id=snapshot.id,
-                    output_dir=str(output_dir),
-                    event_timeout=snapshot_phase_timeout,
-                    event_handler_slow_timeout=slow_warning_timeout(snapshot_phase_timeout),
-                )
-                tracked_events.append(crawl_start)
-                await active_bus.emit(crawl_start)
-                snapshot_event = SnapshotEvent(
-                    url=url,
-                    snapshot_id=snapshot.id,
-                    output_dir=str(output_dir),
-                    depth=snapshot.depth,
-                    parent_snapshot_id=snapshot.parent_snapshot_id or "",
-                    event_timeout=snapshot_phase_timeout,
-                    event_handler_slow_timeout=slow_warning_timeout(snapshot_phase_timeout),
-                )
-                tracked_events.append(snapshot_event)
-                await active_bus.emit(snapshot_event)
+                if dry_run:
+                    shared.process.suspend_process_events()
+                try:
+                    crawl_start = CrawlStartEvent(
+                        url=url,
+                        snapshot_id=snapshot.id,
+                        output_dir=str(output_dir),
+                        event_timeout=snapshot_phase_timeout,
+                        event_handler_slow_timeout=slow_warning_timeout(snapshot_phase_timeout),
+                    )
+                    tracked_events.append(crawl_start)
+                    await active_bus.emit(crawl_start)
+                    snapshot_event = SnapshotEvent(
+                        url=url,
+                        snapshot_id=snapshot.id,
+                        output_dir=str(output_dir),
+                        depth=snapshot.depth,
+                        parent_snapshot_id=snapshot.parent_snapshot_id or "",
+                        event_timeout=snapshot_phase_timeout,
+                        event_handler_slow_timeout=slow_warning_timeout(snapshot_phase_timeout),
+                    )
+                    tracked_events.append(snapshot_event)
+                    await active_bus.emit(snapshot_event)
+                finally:
+                    if dry_run:
+                        shared.process.resume_process_events()
             if not skip_crawl_cleanup:
                 await active_bus.emit(
                     CrawlCleanupEvent(

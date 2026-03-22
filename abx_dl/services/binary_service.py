@@ -132,6 +132,45 @@ class BinaryService(BaseService):
                 return value
         return ""
 
+    def _resolve_registered_binary(
+        self,
+        *,
+        plugin_name: str,
+        binary_name: str,
+        registered_value: str,
+        binproviders: str,
+        overrides: dict | None,
+        min_version: str | None,
+    ) -> tuple[str, str, str, str]:
+        """Resolve a config-backed binary name/path into concrete abspath/version/provider metadata."""
+        try:
+            from ..dependencies import load_binary
+
+            merged_overrides = dict(overrides or {})
+            registered_path = Path(registered_value).expanduser()
+            if registered_path.is_absolute() or "/" in registered_value:
+                env_overrides = dict(merged_overrides.get("env", {}))
+                env_overrides["abspath"] = registered_value
+                merged_overrides["env"] = env_overrides
+
+            binary = load_binary(
+                {
+                    "name": binary_name,
+                    "binproviders": binproviders or "env",
+                    "overrides": merged_overrides,
+                    "min_version": min_version,
+                },
+            )
+            resolved_abspath = str(getattr(binary, "abspath", None) or "")
+            resolved_version = str(getattr(binary, "version", None) or "")
+            resolved_sha256 = str(getattr(binary, "sha256", None) or "")
+            resolved_provider = str(getattr(getattr(binary, "loaded_binprovider", None), "name", "") or "")
+            if resolved_abspath:
+                return resolved_abspath, resolved_version, resolved_sha256, resolved_provider
+        except Exception:
+            pass
+        return "", "", "", ""
+
     async def _register_binary_path(self, plugin_name: str, binary_name: str, abspath: str) -> None:
         """Persist the generic and plugin-specific binary env vars for a resolved binary."""
         for config_key in self._binary_config_keys(plugin_name, binary_name):
@@ -315,25 +354,35 @@ class BinaryService(BaseService):
             # No abspath — check if a provider resolved it via shared_config
             abspath = self._get_registered_binary_path(event.plugin_name, event.name)
             if abspath:
-                await self._register_binary_path(event.plugin_name, event.name, abspath)
+                resolved_abspath, resolved_version, resolved_sha256, resolved_provider = self._resolve_registered_binary(
+                    plugin_name=event.plugin_name,
+                    binary_name=event.name,
+                    registered_value=abspath,
+                    binproviders=inherited_binproviders,
+                    overrides=event.overrides,
+                    min_version=event.min_version,
+                )
+                if not resolved_abspath:
+                    return
+                await self._register_binary_path(event.plugin_name, event.name, resolved_abspath)
                 resolved_event = await self.bus.find(
                     BinaryEvent,
                     child_of=event,
                     past=True,
                     future=False,
                     name=event.name,
-                    abspath=abspath,
+                    abspath=resolved_abspath,
                 )
                 await self.bus.emit(
                     BinaryInstalledEvent(
                         name=event.name,
                         plugin_name=event.plugin_name,
                         hook_name=event.hook_name,
-                        abspath=abspath,
-                        version=(resolved_event.version if resolved_event else "") or event.version,
-                        sha256=(resolved_event.sha256 if resolved_event else "") or event.sha256,
+                        abspath=resolved_abspath,
+                        version=(resolved_event.version if resolved_event else "") or resolved_version or event.version,
+                        sha256=(resolved_event.sha256 if resolved_event else "") or resolved_sha256 or event.sha256,
                         binproviders=(resolved_event.binproviders if resolved_event else "") or inherited_binproviders,
-                        binprovider=(resolved_event.binprovider if resolved_event else "") or binprovider,
+                        binprovider=(resolved_event.binprovider if resolved_event else "") or resolved_provider or binprovider,
                         overrides=(resolved_event.overrides if resolved_event else None) or event.overrides,
                         binary_id=event.binary_id,
                         machine_id=event.machine_id,

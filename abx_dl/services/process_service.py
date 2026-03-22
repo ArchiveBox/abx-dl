@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from abxbus import BaseEvent, EventBus
+from abxbus.base_event import EventHandler
 
 from ..events import BinaryProcessEvent, ProcessCompletedEvent, ProcessEvent, ProcessKillEvent, ProcessStartedEvent, ProcessStdoutEvent
 from ..models import Process, write_jsonl, now_iso
@@ -92,7 +93,34 @@ class ProcessService(BaseService):
         self.emit_jsonl = emit_jsonl
         self.stderr_is_tty = stderr_is_tty
         self._background_monitors: set[asyncio.Task[None]] = set()
+        self._process_event_registrations: list = []
         super().__init__(bus)
+
+    def _attach_handlers(self) -> None:
+        super()._attach_handlers()
+        self._process_event_registrations = [
+            registration for event_pattern, registration in self._registrations if event_pattern is ProcessEvent
+        ]
+
+    def suspend_process_events(self) -> None:
+        """Temporarily unregister ProcessEvent handlers while leaving other process handlers intact."""
+        if not self._process_event_registrations:
+            return
+        remaining: list[tuple[type[BaseEvent] | str, EventHandler]] = []
+        for event_pattern, registration in self._registrations:
+            if event_pattern is ProcessEvent:
+                self.bus.off(event_pattern, registration)
+            else:
+                remaining.append((event_pattern, registration))
+        self._registrations = remaining
+        self._process_event_registrations = []
+
+    def resume_process_events(self) -> None:
+        """Re-register ProcessEvent handlers after a suspend_process_events call."""
+        if self._process_event_registrations:
+            return
+        registration = self._register(ProcessEvent, self.on_ProcessEvent)
+        self._process_event_registrations = [registration]
 
     # ── Event handlers ──────────────────────────────────────────────────────
 

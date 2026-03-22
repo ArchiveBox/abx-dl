@@ -66,7 +66,7 @@ dev = [
 
 [[package]]
 name = "abx-pkg"
-version = "1.9.14"
+version = "1.9.18"
 source = { editable = "../abx-pkg" }
 dependencies = [
     { name = "pip" },
@@ -137,7 +137,7 @@ dev = [{ name = "prek", specifier = ">=0.3.6" }]
 
 [[package]]
 name = "abxbus"
-version = "2.4.2"
+version = "2.4.7"
 source = { editable = "../abxbus" }
 dependencies = [
     { name = "aiofiles" },
@@ -169,6 +169,7 @@ provides-extras = ["postgres", "nats", "redis", "bridges"]
 dev = [
     { name = "build", specifier = ">=1.2.2" },
     { name = "codespell", specifier = ">=2.4.1" },
+    { name = "fastapi", specifier = ">=0.118.0" },
     { name = "ipdb", specifier = ">=0.13.13" },
     { name = "prek", specifier = ">=0.3.3" },
     { name = "psutil", specifier = ">=7.0.0" },

@@ -9,6 +9,7 @@ from collections.abc import Mapping
 
 from abxbus import BaseEvent, EventBus, EventHandler
 
+from ..models import INSTALL_URL
 from ..events import ProcessEvent, slow_warning_timeout
 from ..models import Hook, Plugin, Snapshot
 
@@ -131,16 +132,23 @@ def make_hook_handler(
         plugin_output_dir = output_dir / _plugin.name
         plugin_output_dir.mkdir(parents=True, exist_ok=True)
 
+        # During the install-only crawl (archivebox://install), finite.bg
+        # hooks must run to completion before cleanup or they get killed
+        # before their Binary/Machine stdout can be projected.
+        run_in_background = _hook.is_background
+        if url == INSTALL_URL and _hook.is_background and ".daemon." not in _hook.name:
+            run_in_background = False
+
         # BG daemons use the full phase timeout as their ceiling (they should
         # survive until cleanup, but not outlive the phase). FG hooks use
         # the per-plugin timeout.
-        effective_timeout = int(phase_timeout) if _hook.is_background else timeout
+        effective_timeout = int(phase_timeout) if run_in_background else timeout
         process_event = ProcessEvent(
             plugin_name=_plugin.name,
             hook_name=_hook.name,
             hook_path=str(_hook.path),
             hook_args=[f"--url={url}"],
-            is_background=_hook.is_background,
+            is_background=run_in_background,
             output_dir=str(plugin_output_dir),
             env=env,
             snapshot_id=snapshot.id,
@@ -148,7 +156,7 @@ def make_hook_handler(
             event_handler_timeout=effective_timeout + 30.0,
             event_handler_slow_timeout=slow_warning_timeout(effective_timeout),
         )
-        if _hook.is_background:
+        if run_in_background:
             service.bus.emit(process_event)
         else:
             await service.bus.emit(process_event)

@@ -980,10 +980,20 @@ def cli(ctx):
 @click.option("--plugins", "-p", "plugin_list", help="Comma-separated list of plugins to use")
 @click.option("--output", "-o", "output_dir", type=click.Path(), help="Output directory")
 @click.option("--timeout", "-t", type=int, help="Timeout in seconds")
+@click.option("--dry-run", is_flag=True, help="Enable abx-pkg dry-run mode and skip running snapshot hook subprocesses")
 @click.option("--no-install", "no_install", is_flag=True, help="Skip plugins with missing dependencies instead of auto-installing")
 @click.option("--debug", is_flag=True, help="Print the EventBus tree on exit or abort")
 @click.pass_context
-def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: int | None, no_install: bool, debug: bool):
+def dl(
+    ctx,
+    url: str,
+    plugin_list: str | None,
+    output_dir: str | None,
+    timeout: int | None,
+    dry_run: bool,
+    no_install: bool,
+    debug: bool,
+):
     """Download a URL using all enabled plugins.
 
     By default, missing plugin dependencies are lazily auto-installed as needed.
@@ -1006,8 +1016,13 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
     plugins = ctx.obj["plugins"]
     selected = [p.strip() for p in plugin_list.split(",")] if plugin_list else None
     out_path = Path(output_dir) if output_dir else Path.cwd()
-    config_overrides = {"TIMEOUT": timeout} if timeout else {}
-    timeout_seconds = int((config_overrides or {}).get("TIMEOUT") or get_config("TIMEOUT").get("TIMEOUT") or 60)
+    config_overrides: dict[str, object] = {"TIMEOUT": timeout} if timeout else {}
+    if dry_run:
+        config_overrides["DRY_RUN"] = True
+    timeout_value = config_overrides.get("TIMEOUT")
+    if timeout_value is None:
+        timeout_value = get_config("TIMEOUT").get("TIMEOUT")
+    timeout_seconds = int(timeout_value) if isinstance(timeout_value, (int, str)) else 60
     stdout_is_tty = sys.stdout.isatty()
     stderr_is_tty = sys.stderr.isatty()
     interactive_tty = stdout_is_tty or stderr_is_tty
@@ -1057,6 +1072,7 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
                     auto_install=not no_install,
                     emit_jsonl=not stdout_is_tty,
                     bus=bus,
+                    dry_run=dry_run,
                 ),
             ),
         )
@@ -1167,6 +1183,7 @@ def _run_plugin_install(
     visible_plugins: set[str] | None = None,
     label_plugins: list[str] | tuple[str, ...] | None = None,
     debug: bool = False,
+    dry_run: bool = False,
 ) -> int:
     console.print(f"[bold]Installing plugin dependencies for {', '.join(label_plugins or sorted(selected))}...[/bold]\n")
 
@@ -1207,14 +1224,6 @@ def _run_plugin_install(
             if message:
                 row.output = message
             break
-
-    def _remember_provider_failure(provider_name: str, details: str) -> None:
-        if not details:
-            return
-        for request_rows in request_rows_by_name.values():
-            for row in request_rows:
-                if row.ok and provider_name in row.providers:
-                    row.failure_output = details
 
     async def on_BinaryEvent(event: BinaryEvent) -> None:
         if event.abspath:
@@ -1270,10 +1279,23 @@ def _run_plugin_install(
                     _mark_request_failure(name, message=details)
             if event.hook_name.startswith("on_Binary__"):
                 details = (proc.stderr or "").strip() or _parse_process_output(proc)
-                _remember_provider_failure(event.plugin_name, details)
-                related_names = tuple(
-                    row.name for request_rows in request_rows_by_name.values() for row in request_rows if event.plugin_name in row.providers
+                requested_name = next(
+                    (arg.split("=", 1)[1] for arg in event.hook_args if isinstance(arg, str) and arg.startswith("--name=")),
+                    "",
                 )
+                related_names = ()
+                if requested_name:
+                    related_names = (requested_name,)
+                    for row in request_rows_by_name.get(requested_name, []):
+                        if row.ok and event.plugin_name in row.providers:
+                            row.failure_output = details
+                else:
+                    related_names = tuple(
+                        row.name
+                        for request_rows in request_rows_by_name.values()
+                        for row in request_rows
+                        if event.plugin_name in row.providers
+                    )
                 row = _InstallRow(
                     kind="BinaryInstalled",
                     name=",".join(related_names) if related_names else event.hook_name,
@@ -1306,6 +1328,8 @@ def _run_plugin_install(
                         auto_install=True,
                         emit_jsonl=False,
                         bus=bus,
+                        config_overrides={"DRY_RUN": True} if dry_run else None,
+                        dry_run=dry_run,
                     ),
                 ),
             )
@@ -1345,9 +1369,10 @@ def _run_plugin_install(
 @cli.command()
 @click.argument("plugin_names", nargs=-1)
 @click.option("--install", "-i", "do_install", is_flag=True, help="Install plugin dependencies")
+@click.option("--dry-run", is_flag=True, help="Enable abx-pkg dry-run mode during --install")
 @click.option("--debug", is_flag=True, help="Print the EventBus tree on exit or abort when used with --install")
 @click.pass_context
-def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, debug: bool):
+def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool, debug: bool):
     """Check and show info for plugins. Optionally install dependencies.
 
     **Examples:**
@@ -1383,7 +1408,15 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, debug: bool):
         visible_plugins = set(selected)
 
     if do_install:
-        raise SystemExit(_run_plugin_install(selected, visible_plugins=visible_plugins, label_plugins=plugin_names, debug=debug))
+        raise SystemExit(
+            _run_plugin_install(
+                selected,
+                visible_plugins=visible_plugins,
+                label_plugins=plugin_names,
+                debug=debug,
+                dry_run=dry_run,
+            ),
+        )
     else:
         # Check + info mode (default)
         # Show summary table
@@ -1461,11 +1494,12 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, debug: bool):
 
 @cli.command()
 @click.argument("plugin_names", nargs=-1)
+@click.option("--dry-run", is_flag=True, help="Enable abx-pkg dry-run mode while resolving install hooks")
 @click.option("--debug", is_flag=True, help="Print the EventBus tree on exit or abort")
 @click.pass_context
-def install(ctx, plugin_names: tuple[str, ...], debug: bool):
+def install(ctx, plugin_names: tuple[str, ...], dry_run: bool, debug: bool):
     """Shortcut for 'abx-dl plugins --install [plugins...]'."""
-    ctx.invoke(plugins, plugin_names=plugin_names, do_install=True, debug=debug)
+    ctx.invoke(plugins, plugin_names=plugin_names, do_install=True, dry_run=dry_run, debug=debug)
 
 
 @cli.command()
