@@ -348,7 +348,9 @@ class BinaryInstalledEvent(BaseEvent):
     abspath: str
     version: str = ""
     sha256: str = ""
+    binproviders: str = ""
     binprovider: str = ""
+    overrides: dict[str, Any] | None = None
     binary_id: str = ""
     machine_id: str = ""
     event_timeout: float | None = 10.0

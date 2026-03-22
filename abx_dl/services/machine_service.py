@@ -5,7 +5,7 @@ from typing import Any, ClassVar
 
 from abxbus import BaseEvent, EventBus
 
-from ..config import build_env_for_plugin, set_config
+from ..config import build_env_for_plugin, get_config, set_config
 import json
 
 from ..events import MachineEvent, ProcessStdoutEvent
@@ -46,7 +46,9 @@ class MachineService(BaseService):
     EMITS: ClassVar[list[type[BaseEvent]]] = [MachineEvent]
 
     def __init__(self, bus: EventBus, *, initial_config: dict[str, Any] | None = None):
-        self.shared_config: dict[str, Any] = dict(initial_config) if initial_config else {}
+        self.shared_config: dict[str, Any] = get_config()
+        if initial_config:
+            self.shared_config.update(initial_config)
         super().__init__(bus)
 
     async def on_ProcessStdoutEvent(self, event: ProcessStdoutEvent) -> None:

@@ -34,6 +34,13 @@ LIB_DIR.mkdir(parents=True, exist_ok=True)
 PERSONAS_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def ensure_default_persona_dir() -> Path:
+    """Ensure the default persona directory exists and return its path."""
+    default_persona_dir = PERSONAS_DIR / "Default"
+    default_persona_dir.mkdir(parents=True, exist_ok=True)
+    return default_persona_dir
+
+
 def load_config_file() -> dict[str, str]:
     """Load config from ~/.config/abx/config.env file."""
     config = {}
@@ -154,6 +161,23 @@ def set_config(plugin_schemas: dict[str, dict[str, Any]] | None = None, **kwargs
     return saved
 
 
+def unset_config(*keys: str) -> list[str]:
+    """Remove config keys from ~/.config/abx/config.env if present."""
+    if not keys:
+        return []
+
+    config = load_config_file()
+    removed: list[str] = []
+    for key in keys:
+        if key in config:
+            removed.append(key)
+            config.pop(key, None)
+
+    lines = [f"{k}={v}" for k, v in sorted(config.items())]
+    CONFIG_FILE.write_text(("\n".join(lines) + "\n") if lines else "")
+    return removed
+
+
 # Load persistent config into environment (lower priority than actual env vars)
 _persistent_config = load_config_file()
 for _key, _value in _persistent_config.items():
@@ -161,6 +185,7 @@ for _key, _value in _persistent_config.items():
         os.environ[_key] = _value
 
 # Derived paths for package managers
+LIB_BIN_DIR = LIB_DIR / "bin"
 PIP_HOME = LIB_DIR / "pip"
 NPM_HOME = LIB_DIR / "npm"
 PIP_BIN_DIR = PIP_HOME / "venv" / "bin"
@@ -174,6 +199,7 @@ GLOBAL_DEFAULTS = {
     "CHECK_SSL_VALIDITY": True,
     "COOKIES_FILE": "",
     "LIB_DIR": str(LIB_DIR),
+    "LIB_BIN_DIR": str(LIB_BIN_DIR),
     "PERSONAS_DIR": str(PERSONAS_DIR),
     "CRAWL_DIR": str(DATA_DIR),
     "SNAP_DIR": str(DATA_DIR),
@@ -312,6 +338,7 @@ def _derive_runtime_paths(
     Explicit env/config values always win over these derived defaults.
     """
     lib_dir = Path(env.get("LIB_DIR", str(LIB_DIR)))
+    lib_bin_dir = Path(env["LIB_BIN_DIR"]) if "LIB_BIN_DIR" in explicit_keys else lib_dir / "bin"
     pip_home = Path(env["PIP_HOME"]) if "PIP_HOME" in explicit_keys else lib_dir / "pip"
     pip_bin_dir = Path(env["PIP_BIN_DIR"]) if "PIP_BIN_DIR" in explicit_keys else pip_home / "venv" / "bin"
     npm_home = Path(env["NPM_HOME"]) if "NPM_HOME" in explicit_keys else lib_dir / "npm"
@@ -321,6 +348,8 @@ def _derive_runtime_paths(
 
     derived: dict[str, str] = {}
 
+    if "LIB_BIN_DIR" not in explicit_keys:
+        derived["LIB_BIN_DIR"] = str(lib_bin_dir)
     if "PIP_HOME" not in explicit_keys:
         derived["PIP_HOME"] = str(pip_home)
     if "PIP_BIN_DIR" not in explicit_keys:
@@ -370,9 +399,15 @@ def build_env_for_plugin(
     Exports all config as environment variables.
     """
     env = os.environ.copy()
+    # Hook scripts commonly use `#!/usr/bin/env -S uv run --script`.
+    # Do not leak uv's internal recursion state into child hook processes,
+    # whether it came from the parent environment or caller-provided overrides.
+    blocked_env_keys = {"UV_RUN_RECURSION_DEPTH"}
+    for key in blocked_env_keys:
+        env.pop(key, None)
     explicit_keys = set(env.keys())
     if overrides:
-        explicit_keys.update(overrides.keys())
+        explicit_keys.update(key for key in overrides.keys() if key not in blocked_env_keys)
 
     # Fix NO_PROXY to allow proxied downloads from googleapis.com/google.com.
     # In some sandboxed environments (e.g. Claude Code), NO_PROXY includes
@@ -399,6 +434,8 @@ def build_env_for_plugin(
     # Apply overrides
     if overrides:
         for key, value in overrides.items():
+            if key in blocked_env_keys:
+                continue
             env[key] = _serialize_value(value)
 
     # Keep path values coherent with the effective LIB_DIR and current run dir.

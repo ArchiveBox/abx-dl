@@ -601,22 +601,23 @@ def _build_archive_results_table(
     now: datetime | None = None,
     show_header: bool = True,
     stream: bool = False,
+    max_width: int | None = None,
 ) -> Table:
-    phase_width = 0 if stream else 15
-    elapsed_width = 10 if stream else 12
-    output_width = 18 if stream else 60
     table = Table(
         show_header=show_header,
         header_style="bold",
         box=None if stream else box.HEAVY_HEAD,
         show_edge=not stream,
         pad_edge=not stream,
+        expand=True,
+        width=max_width,
     )
-    table.add_column("Currently Running", width=40, no_wrap=True)
-    table.add_column("Phase", width=phase_width, no_wrap=True)
+    table.add_column("Currently Running", min_width=36, ratio=3, no_wrap=True, overflow="ellipsis")
+    if not stream:
+        table.add_column("Phase", width=15, no_wrap=True)
     table.add_column("Status", width=10, no_wrap=True)
-    table.add_column("Elapsed", width=elapsed_width, no_wrap=True)
-    table.add_column("Output", width=output_width, overflow="fold")
+    table.add_column("Elapsed", width=10 if stream else 12, no_wrap=True)
+    table.add_column("Output", min_width=30 if stream else 40, ratio=4, overflow="fold")
 
     for record in results:
         status = escape(_record_status(record))
@@ -631,13 +632,19 @@ def _build_archive_results_table(
             ),
         )
         output = _render_record_output_cell(record, muted_style=muted_style if _render_record_output(record) else None)
-        table.add_row(
+        row: list[str | Text] = [
             _render_hook_name_cell(record),
-            escape(_record_phase(record)),
-            f"[{status_style}]{status}[/{status_style}]",
-            f"[{muted_style}]{elapsed}[/{muted_style}]" if muted_style else elapsed,
-            output,
+        ]
+        if not stream:
+            row.append(escape(_record_phase(record)))
+        row.extend(
+            [
+                f"[{status_style}]{status}[/{status_style}]",
+                f"[{muted_style}]{elapsed}[/{muted_style}]" if muted_style else elapsed,
+                output,
+            ],
         )
+        table.add_row(*row)
 
     return table
 
@@ -656,11 +663,291 @@ class _LiveStatusView:
                     timeout_seconds=self.timeout_seconds,
                     now=datetime.now(),
                     stream=True,
+                    max_width=options.max_width,
                 ),
                 self.progress,
             )
             return
         yield self.progress
+
+
+class LiveBusUI:
+    def __init__(
+        self,
+        bus,
+        *,
+        total_hooks: int,
+        timeout_seconds: int,
+        ui_console: Console | None = None,
+        interactive_tty: bool = True,
+    ) -> None:
+        self.bus = bus
+        self.total_hooks = total_hooks
+        self.timeout_seconds = timeout_seconds
+        self.ui_console = ui_console or console
+        self.interactive_tty = interactive_tty
+        self.live_results: dict[str, VisibleRecord] = {}
+        self.streamed_header = False
+        self.pending_process_rows: dict[tuple[str, str, str, str], deque[str]] = defaultdict(deque)
+        self.row_key_by_event_id: dict[str, str] = {}
+        self.process_event_by_row_key: dict[str, ProcessEvent] = {}
+        self.process_id_to_row_key: dict[str, str] = {}
+        self.active_row_keys: list[str] = []
+        self.process_row_num = 0
+        self.last_live_refresh = 0.0
+        self._registrations: list[tuple[object, object]] = []
+
+        if self.interactive_tty:
+            self.progress = Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                console=self.ui_console,
+                transient=False,
+            )
+            self.status_view = _LiveStatusView(self.live_results, self.progress, timeout_seconds)
+            self.task_id = self.progress.add_task(_progress_hook_description(None), total=total_hooks)
+            self.live = Live(
+                self.status_view,
+                console=self.ui_console,
+                auto_refresh=True,
+                refresh_per_second=4,
+                transient=True,
+                vertical_overflow="visible",
+            )
+            self._register(ProcessEvent, self.on_ProcessEvent)
+            self._register(ProcessStdoutEvent, self.on_ProcessStdoutEvent)
+            self._register(ArchiveResultEvent, self.on_ArchiveResultEvent)
+            self._register(ProcessCompletedEvent, self.on_ProcessCompletedEvent)
+        else:
+            self.progress = None
+            self.status_view = None
+            self.task_id = None
+            self.live = None
+
+    def _register(self, event_cls, handler) -> None:
+        registration = self.bus.on(event_cls, handler)
+        self._registrations.append((event_cls, registration))
+
+    def close(self) -> None:
+        while self._registrations:
+            event_cls, registration = self._registrations.pop()
+            self.bus.off(event_cls, registration)
+
+    def __enter__(self):
+        if self.live is not None:
+            self.live.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        try:
+            if self.live is not None:
+                self.live.__exit__(exc_type, exc, tb)
+        finally:
+            self.close()
+
+    def print_intro(self, *, url: str, output_dir: Path, plugins_label: str) -> None:
+        if not self.interactive_tty:
+            return
+        self.ui_console.print(f"[bold blue]Downloading:[/bold blue] {url}")
+        self.ui_console.print(f"[dim]Output: {output_dir.absolute()}[/dim]")
+        self.ui_console.print(f"[dim]Plugins: {plugins_label}[/dim]")
+        self.ui_console.print()
+
+    def print_summary(self, results: list[ArchiveResult], *, output_dir: Path) -> None:
+        if not self.interactive_tty:
+            return
+        archive_results = [record for record in results if isinstance(record, ArchiveResult)]
+        self.ui_console.print()
+        self.ui_console.print(
+            f"[green]{sum(1 for r in archive_results if r.status == 'succeeded')} succeeded[/green], "
+            f"[grey35]{sum(1 for r in archive_results if r.status == 'noresult')} noresult[/grey35], "
+            f"[red]{sum(1 for r in archive_results if r.status == 'failed')} failed[/red], "
+            f"[bright_black]{sum(1 for r in archive_results if r.status == 'skipped')} skipped[/bright_black]",
+        )
+        self.ui_console.print(f"[dim]Output: {output_dir.absolute()}[/dim]")
+
+    def _refresh_live(self, *, force: bool = False, min_interval: float = 0.1) -> None:
+        if self.live is None:
+            return
+        now = time.monotonic()
+        if not force and (now - self.last_live_refresh) < min_interval:
+            return
+        self.last_live_refresh = now
+        self.live.refresh()
+
+    def _print_completed_row(self, record: VisibleRecord) -> None:
+        self.ui_console.print(
+            _build_archive_results_table(
+                [record],
+                timeout_seconds=self.timeout_seconds,
+                show_header=not self.streamed_header,
+                stream=True,
+            ),
+        )
+        self.streamed_header = True
+
+    def _fallback_row_key(self, *, plugin_name: str, hook_name: str, snapshot_id: str = "", output_dir: str = "") -> str | None:
+        pending_key = _process_event_key(
+            plugin_name=plugin_name,
+            hook_name=hook_name,
+            snapshot_id=snapshot_id,
+            output_dir=output_dir,
+        )
+        return self.pending_process_rows[pending_key][0] if self.pending_process_rows[pending_key] else None
+
+    def _match_row_key(self, event) -> str | None:
+        parent_id = getattr(event, "event_parent_id", None) or ""
+        if parent_id and parent_id in self.row_key_by_event_id:
+            return self.row_key_by_event_id[parent_id]
+        process_id = getattr(event, "process_id", "") or ""
+        if process_id and process_id in self.process_id_to_row_key:
+            return self.process_id_to_row_key[process_id]
+        return self._fallback_row_key(
+            plugin_name=getattr(event, "plugin_name", "") or getattr(event, "plugin", ""),
+            hook_name=getattr(event, "hook_name", ""),
+            snapshot_id=getattr(event, "snapshot_id", ""),
+            output_dir=getattr(event, "output_dir", ""),
+        )
+
+    def _apply_archive_result(self, row: _LiveProcessRecord, event: ArchiveResultEvent) -> None:
+        row.final_status = event.status or row.final_status
+        final_output = event.error or event.output_str or row.final_output
+        if final_output:
+            row.final_output = final_output
+            row.output = final_output
+            row.final_output_is_archive_result = bool(event.output_str)
+        if row.ended_at:
+            row.status = row.final_status or row.status
+
+    async def on_ProcessEvent(self, event: ProcessEvent) -> None:
+        if _is_binary_provider_hook_name(event.hook_name) or self.progress is None or self.task_id is None:
+            return
+        self.process_row_num += 1
+        row_key = f"process:{self.process_row_num}"
+        self.pending_process_rows[
+            _process_event_key(
+                plugin_name=event.plugin_name,
+                hook_name=event.hook_name,
+                snapshot_id=event.snapshot_id,
+                output_dir=event.output_dir,
+            )
+        ].append(row_key)
+        self.row_key_by_event_id[event.event_id] = row_key
+        self.process_event_by_row_key[row_key] = event
+        self.active_row_keys.append(row_key)
+        self.live_results[row_key] = _LiveProcessRecord(
+            id=row_key,
+            plugin=event.plugin_name,
+            hook_name=event.hook_name,
+            timeout=event.timeout,
+            phase=_phase_label_for_event(self.bus, event),
+            started_at=datetime.now().isoformat(),
+            cmd=[event.hook_path, *event.hook_args],
+        )
+        current_task = self.progress.tasks[self.task_id]
+        seen_hooks = current_task.completed + len(self.active_row_keys)
+        total = current_task.total
+        if total is not None and seen_hooks > total:
+            self.progress.update(self.task_id, total=seen_hooks)
+        self.progress.update(self.task_id, description=_progress_hook_description(event.hook_name))
+        self._refresh_live(force=True)
+
+    async def on_ProcessStdoutEvent(self, event: ProcessStdoutEvent) -> None:
+        if _is_binary_provider_hook_name(event.hook_name):
+            return
+        row_key = self._match_row_key(event)
+        if row_key is None:
+            return
+        self.row_key_by_event_id[event.event_id] = row_key
+        if event.process_id:
+            self.process_id_to_row_key[event.process_id] = row_key
+        existing = self.live_results.get(row_key)
+        if not isinstance(existing, _LiveProcessRecord):
+            return
+        if event.start_ts and not existing.started_at:
+            existing.started_at = event.start_ts
+        if not existing.final_output:
+            existing.output = event.line
+            if self.active_row_keys and row_key == self.active_row_keys[-1]:
+                self._refresh_live(min_interval=0.5)
+
+    async def on_ArchiveResultEvent(self, event: ArchiveResultEvent) -> None:
+        row_key = self._match_row_key(event)
+        if row_key is None:
+            return
+        self.row_key_by_event_id[event.event_id] = row_key
+        if event.process_id:
+            self.process_id_to_row_key[event.process_id] = row_key
+        existing = self.live_results.get(row_key)
+        if isinstance(existing, _LiveProcessRecord):
+            self._apply_archive_result(existing, event)
+            self._refresh_live(force=True)
+
+    async def on_ProcessCompletedEvent(self, event: ProcessCompletedEvent) -> None:
+        if _is_binary_provider_hook_name(event.hook_name) or self.progress is None or self.task_id is None:
+            return
+        row_key = self._match_row_key(event)
+        pending_key = _process_event_key(
+            plugin_name=event.plugin_name,
+            hook_name=event.hook_name,
+            snapshot_id=event.snapshot_id,
+            output_dir=event.output_dir,
+        )
+        if row_key is None:
+            row_key = event.process_id or f"process:completed:{len(self.live_results) + 1}"
+        elif self.pending_process_rows[pending_key] and self.pending_process_rows[pending_key][0] == row_key:
+            self.pending_process_rows[pending_key].popleft()
+        if not self.pending_process_rows[pending_key]:
+            self.pending_process_rows.pop(pending_key, None)
+        self.row_key_by_event_id[event.event_id] = row_key
+        if event.process_id:
+            self.process_id_to_row_key[event.process_id] = row_key
+        existing = self.live_results.get(row_key)
+        row = (
+            existing
+            if isinstance(existing, _LiveProcessRecord)
+            else _LiveProcessRecord(
+                id=row_key,
+                plugin=event.plugin_name,
+                hook_name=event.hook_name,
+                timeout=self.timeout_seconds,
+                phase=_phase_label_for_event(self.bus, event),
+            )
+        )
+        status_marker, status_output = _parse_hook_status_marker(event.stdout, event.stderr)
+        row.started_at = event.start_ts or row.started_at
+        row.ended_at = event.end_ts or now_iso()
+        row.status = row.final_status or status_marker or ("succeeded" if event.exit_code == 0 else "failed")
+        if event.exit_code != 0:
+            row.output = event.stderr or event.stdout or row.final_output or row.output
+        elif row.final_output:
+            row.output = row.final_output
+        elif status_output:
+            row.output = status_output
+        elif event.stdout.strip():
+            row.output = event.stdout.strip().splitlines()[-1]
+        elif event.stderr.strip():
+            row.output = event.stderr.strip()
+        self.live_results[row_key] = row
+
+        process_event = self.process_event_by_row_key.get(row_key)
+        if process_event is not None and hasattr(self.bus, "find"):
+            existing_result = await self.bus.find(ArchiveResultEvent, child_of=process_event)
+            if isinstance(existing_result, ArchiveResultEvent):
+                self._apply_archive_result(row, existing_result)
+        if row_key in self.active_row_keys:
+            self.active_row_keys.remove(row_key)
+        self.live_results.pop(row_key, None)
+        self._print_completed_row(row)
+        _advance_progress(
+            self.progress,
+            self.task_id,
+            _progress_hook_description(_latest_active_hook_name(self.active_row_keys, self.live_results)),
+            headroom=len(self.active_row_keys),
+        )
+        self._refresh_live(force=True)
 
 
 @click.group(cls=DefaultGroup, context_settings={"help_option_names": ["-h", "--help"]})
@@ -742,245 +1029,21 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
             snapshot_hooks.append((plugin, hook))
     total_timeout = compute_phase_timeout(crawl_hooks, config_overrides) + compute_phase_timeout(snapshot_hooks, config_overrides)
     total_hooks = len(crawl_hooks) + len(snapshot_hooks)
-    live_results: dict[str, VisibleRecord] = {}
-    streamed_header = False
-    pending_process_rows: dict[tuple[str, str, str, str], deque[str]] = defaultdict(deque)
-    row_key_by_event_id: dict[str, str] = {}
-    process_event_by_row_key: dict[str, ProcessEvent] = {}
-    process_id_to_row_key: dict[str, str] = {}
-    active_row_keys: list[str] = []
-    process_row_num = 0
     bus = create_bus(total_timeout=total_timeout)
+    live_ui = LiveBusUI(
+        bus,
+        total_hooks=total_hooks,
+        timeout_seconds=timeout_seconds,
+        ui_console=ui_console,
+        interactive_tty=interactive_tty,
+    )
+    live_ui.print_intro(
+        url=url,
+        output_dir=out_path,
+        plugins_label=", ".join(selected) if selected else f"all ({len(plugins)} available)",
+    )
 
-    if interactive_tty:
-        progress = Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            console=ui_console,
-            transient=False,
-        )
-        status_view = _LiveStatusView(live_results, progress, timeout_seconds)
-        task_id = progress.add_task(_progress_hook_description(None), total=total_hooks)
-        live = Live(
-            status_view,
-            console=ui_console,
-            auto_refresh=True,
-            refresh_per_second=4,
-            transient=True,
-            vertical_overflow="visible",
-        )
-        last_live_refresh = 0.0
-
-        def _refresh_live(*, force: bool = False, min_interval: float = 0.1) -> None:
-            nonlocal last_live_refresh
-            if live is None:
-                return
-            now = time.monotonic()
-            if not force and (now - last_live_refresh) < min_interval:
-                return
-            last_live_refresh = now
-            live.refresh()
-
-        def _print_completed_row(record: VisibleRecord) -> None:
-            nonlocal streamed_header
-            ui_console.print(
-                _build_archive_results_table(
-                    [record],
-                    timeout_seconds=timeout_seconds,
-                    show_header=not streamed_header,
-                    stream=True,
-                ),
-            )
-            streamed_header = True
-
-        def _fallback_row_key(*, plugin_name: str, hook_name: str, snapshot_id: str = "", output_dir: str = "") -> str | None:
-            pending_key = _process_event_key(
-                plugin_name=plugin_name,
-                hook_name=hook_name,
-                snapshot_id=snapshot_id,
-                output_dir=output_dir,
-            )
-            return pending_process_rows[pending_key][0] if pending_process_rows[pending_key] else None
-
-        def _match_row_key(event) -> str | None:
-            parent_id = getattr(event, "event_parent_id", None) or ""
-            if parent_id and parent_id in row_key_by_event_id:
-                return row_key_by_event_id[parent_id]
-            process_id = getattr(event, "process_id", "") or ""
-            if process_id and process_id in process_id_to_row_key:
-                return process_id_to_row_key[process_id]
-            return _fallback_row_key(
-                plugin_name=getattr(event, "plugin_name", "") or getattr(event, "plugin", ""),
-                hook_name=getattr(event, "hook_name", ""),
-                snapshot_id=getattr(event, "snapshot_id", ""),
-                output_dir=getattr(event, "output_dir", ""),
-            )
-
-        def _apply_archive_result(row: _LiveProcessRecord, event: ArchiveResultEvent) -> None:
-            row.final_status = event.status or row.final_status
-            final_output = event.error or event.output_str or row.final_output
-            if final_output:
-                row.final_output = final_output
-                row.output = final_output
-                row.final_output_is_archive_result = bool(event.output_str)
-            if row.ended_at:
-                row.status = row.final_status or row.status
-
-        async def on_ProcessEvent(event: ProcessEvent) -> None:
-            if _is_binary_provider_hook_name(event.hook_name):
-                return
-            nonlocal process_row_num
-            process_row_num += 1
-            row_key = f"process:{process_row_num}"
-            pending_process_rows[
-                _process_event_key(
-                    plugin_name=event.plugin_name,
-                    hook_name=event.hook_name,
-                    snapshot_id=event.snapshot_id,
-                    output_dir=event.output_dir,
-                )
-            ].append(row_key)
-            row_key_by_event_id[event.event_id] = row_key
-            process_event_by_row_key[row_key] = event
-            active_row_keys.append(row_key)
-            live_results[row_key] = _LiveProcessRecord(
-                id=row_key,
-                plugin=event.plugin_name,
-                hook_name=event.hook_name,
-                timeout=event.timeout,
-                phase=_phase_label_for_event(bus, event),
-                started_at=datetime.now().isoformat(),
-                cmd=[event.hook_path, *event.hook_args],
-            )
-            current_task = progress.tasks[task_id]
-            seen_hooks = current_task.completed + len(active_row_keys)
-            total = current_task.total
-            if total is not None and seen_hooks > total:
-                progress.update(task_id, total=seen_hooks)
-            progress.update(task_id, description=_progress_hook_description(event.hook_name))
-            _refresh_live(force=True)
-
-        async def on_ProcessStdoutEvent(event: ProcessStdoutEvent) -> None:
-            if _is_binary_provider_hook_name(event.hook_name):
-                return
-            row_key = _match_row_key(event)
-            if row_key is None:
-                return
-            row_key_by_event_id[event.event_id] = row_key
-            if event.process_id:
-                process_id_to_row_key[event.process_id] = row_key
-            existing = live_results.get(row_key)
-            if not isinstance(existing, _LiveProcessRecord):
-                return
-            if event.start_ts and not existing.started_at:
-                existing.started_at = event.start_ts
-            if not existing.final_output:
-                existing.output = event.line
-                if active_row_keys and row_key == active_row_keys[-1]:
-                    _refresh_live(min_interval=0.5)
-
-        async def on_ArchiveResultEvent(event: ArchiveResultEvent) -> None:
-            row_key = _match_row_key(event)
-            if row_key is None:
-                return
-            row_key_by_event_id[event.event_id] = row_key
-            if event.process_id:
-                process_id_to_row_key[event.process_id] = row_key
-            existing = live_results.get(row_key)
-            if isinstance(existing, _LiveProcessRecord):
-                _apply_archive_result(existing, event)
-                _refresh_live(force=True)
-
-        async def on_ProcessCompletedEvent(event: ProcessCompletedEvent) -> None:
-            """Advance progress for every completed hook (fg and bg)."""
-            if _is_binary_provider_hook_name(event.hook_name):
-                return
-            row_key = _match_row_key(event)
-            pending_key = _process_event_key(
-                plugin_name=event.plugin_name,
-                hook_name=event.hook_name,
-                snapshot_id=event.snapshot_id,
-                output_dir=event.output_dir,
-            )
-            if row_key is None:
-                row_key = event.process_id or f"process:completed:{len(live_results) + 1}"
-            elif pending_process_rows[pending_key] and pending_process_rows[pending_key][0] == row_key:
-                pending_process_rows[pending_key].popleft()
-            if not pending_process_rows[pending_key]:
-                pending_process_rows.pop(pending_key, None)
-            row_key_by_event_id[event.event_id] = row_key
-            if event.process_id:
-                process_id_to_row_key[event.process_id] = row_key
-            existing = live_results.get(row_key)
-            row = (
-                existing
-                if isinstance(existing, _LiveProcessRecord)
-                else _LiveProcessRecord(
-                    id=row_key,
-                    plugin=event.plugin_name,
-                    hook_name=event.hook_name,
-                    timeout=timeout_seconds,
-                    phase=_phase_label_for_event(bus, event),
-                )
-            )
-            status_marker, status_output = _parse_hook_status_marker(event.stdout, event.stderr)
-            row.started_at = event.start_ts or row.started_at
-            row.ended_at = event.end_ts or now_iso()
-            row.status = row.final_status or status_marker or ("succeeded" if event.exit_code == 0 else "failed")
-            if event.exit_code != 0:
-                row.output = event.stderr or event.stdout or row.final_output or row.output
-            elif row.final_output:
-                row.output = row.final_output
-            elif status_output:
-                row.output = status_output
-            elif event.stdout.strip():
-                row.output = event.stdout.strip().splitlines()[-1]
-            elif event.stderr.strip():
-                row.output = event.stderr.strip()
-            live_results[row_key] = row
-
-            process_event = process_event_by_row_key.get(row_key)
-            if process_event is not None and hasattr(bus, "find"):
-                existing_result = await bus.find(ArchiveResultEvent, child_of=process_event)
-                if isinstance(existing_result, ArchiveResultEvent):
-                    _apply_archive_result(row, existing_result)
-            if row_key in active_row_keys:
-                active_row_keys.remove(row_key)
-            live_results.pop(row_key, None)
-            _print_completed_row(row)
-            _advance_progress(
-                progress,
-                task_id,
-                _progress_hook_description(_latest_active_hook_name(active_row_keys, live_results)),
-                headroom=len(active_row_keys),
-            )
-            _refresh_live(force=True)
-
-        bus.on(ProcessEvent, on_ProcessEvent)
-        bus.on(ProcessStdoutEvent, on_ProcessStdoutEvent)
-        bus.on(ArchiveResultEvent, on_ArchiveResultEvent)
-        bus.on(ProcessCompletedEvent, on_ProcessCompletedEvent)
-
-        with live:
-            results = _run_with_debug_bus_log(
-                bus,
-                debug=debug,
-                func=lambda: asyncio.run(
-                    download(
-                        url,
-                        plugins,
-                        out_path,
-                        selected,
-                        config_overrides or None,
-                        auto_install=not no_install,
-                        emit_jsonl=not stdout_is_tty,
-                        bus=bus,
-                    ),
-                ),
-            )
-    else:
+    with live_ui:
         results = _run_with_debug_bus_log(
             bus,
             debug=debug,
@@ -998,16 +1061,7 @@ def dl(ctx, url: str, plugin_list: str | None, output_dir: str | None, timeout: 
             ),
         )
 
-    if interactive_tty:
-        archive_results = [record for record in results if isinstance(record, ArchiveResult)]
-        ui_console.print()
-        ui_console.print(
-            f"[green]{sum(1 for r in archive_results if r.status == 'succeeded')} succeeded[/green], "
-            f"[grey35]{sum(1 for r in archive_results if r.status == 'noresult')} noresult[/grey35], "
-            f"[red]{sum(1 for r in archive_results if r.status == 'failed')} failed[/red], "
-            f"[bright_black]{sum(1 for r in archive_results if r.status == 'skipped')} skipped[/bright_black]",
-        )
-        ui_console.print(f"[dim]Output: {out_path.absolute()}[/dim]")
+    live_ui.print_summary(results, output_dir=out_path)
 
 
 class _BinaryRecord:

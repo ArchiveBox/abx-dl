@@ -138,8 +138,10 @@ dev = [
     "ty>=0.0.24",
 ]
 
-# [tool.uv.sources]
-# abxbus = { git = "https://github.com/pirate/bbus" }
+[tool.uv.sources]
+abxbus = { path = "../abxbus", editable = true }
+abx-pkg = { path = "../abx-pkg", editable = true }
+abx-plugins = { path = "../abx-plugins", editable = true }
 
 
 [project.scripts]

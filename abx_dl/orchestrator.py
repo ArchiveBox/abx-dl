@@ -83,6 +83,7 @@ from typing import Any
 
 from abxbus import EventBus, EventBusMiddleware, EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode
 
+from .config import ensure_default_persona_dir
 from .events import (
     ArchiveResultEvent,
     CrawlCleanupEvent,
@@ -285,6 +286,7 @@ def create_bus(
     event_slow_timeout: float | None = None,
     event_handler_slow_timeout: float | None = 60.0,
     event_handler_detect_file_paths: bool = True,
+    warn_on_duplicate_handler_names: bool = False,
     max_handler_recursion_depth: int = 6,
     middlewares: Sequence[EventBusMiddleware | type[EventBusMiddleware]] | None = None,
     id: str | None = None,
@@ -321,6 +323,7 @@ def create_bus(
         event_slow_timeout=(total_timeout * 0.8) if event_slow_timeout is None else event_slow_timeout,
         event_handler_slow_timeout=event_handler_slow_timeout,
         event_handler_detect_file_paths=event_handler_detect_file_paths,
+        warn_on_duplicate_handler_names=warn_on_duplicate_handler_names,
         # Normal abx-dl processing legitimately nests several queue-jumped
         # handler chains (stdout -> typed event -> follow-up process/event work).
         max_handler_recursion_depth=max_handler_recursion_depth,
@@ -375,6 +378,7 @@ async def download(
 
     if crawl_setup_only and crawl_cleanup_only:
         raise ValueError("crawl_setup_only and crawl_cleanup_only are mutually exclusive")
+    ensure_default_persona_dir()
     output_dir = output_dir or Path.cwd()
     output_dir.mkdir(parents=True, exist_ok=True)
     index_path = output_dir / "index.jsonl"

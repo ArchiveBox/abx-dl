@@ -1,11 +1,13 @@
 """BinaryService — resolves binary dependencies by broadcasting to provider hooks."""
 
 import json
+import shutil
 from pathlib import Path
 from typing import ClassVar
 
 from abxbus import BaseEvent, EventBus
 
+from ..config import unset_config
 from ..events import BinaryEvent, BinaryInstalledEvent, BinaryProcessEvent, MachineEvent, ProcessStdoutEvent, slow_warning_timeout
 from ..models import Hook, Plugin
 from .base import BaseService, add_extra_context
@@ -16,6 +18,13 @@ def _binary_env_key(name: str) -> str:
     """Convert a binary name to its env var key, e.g. 'yt-dlp' → 'YT_DLP_BINARY'."""
     normalized = "".join(ch if ch.isalnum() else "_" for ch in name).upper()
     return f"{normalized}_BINARY"
+
+
+def _ordered_binproviders(binproviders: str) -> list[str]:
+    providers = str(binproviders or "").strip()
+    if not providers or providers == "*":
+        return []
+    return [provider.strip() for provider in providers.split(",") if provider.strip()]
 
 
 class BinaryService(BaseService):
@@ -48,7 +57,7 @@ class BinaryService(BaseService):
     early-exit check works correctly.
     """
 
-    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [ProcessStdoutEvent, BinaryEvent]
+    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [ProcessStdoutEvent, BinaryEvent, BinaryInstalledEvent]
     EMITS: ClassVar[list[type[BaseEvent]]] = [
         BinaryEvent,
         MachineEvent,
@@ -91,9 +100,13 @@ class BinaryService(BaseService):
 
         # on_BinaryEvent runs last — branches on outcome
         self._register(BinaryEvent, self.on_BinaryEvent)
+        self._register(BinaryInstalledEvent, self.on_BinaryInstalledEvent)
 
     def _plugin_binary_config_keys(self, plugin_name: str, binary_name: str) -> list[str]:
         """Return plugin config keys whose default binary name matches the requested binary."""
+        if plugin_name == "mercury" and binary_name == "postlight-parser":
+            return ["MERCURY_BINARY"]
+
         plugin = self.plugins.get(plugin_name)
         if plugin is None:
             return []
@@ -106,16 +119,22 @@ class BinaryService(BaseService):
                 matching_keys.append(key)
         return matching_keys
 
+    def _binary_config_keys(self, plugin_name: str, binary_name: str) -> list[str]:
+        plugin_keys = self._plugin_binary_config_keys(plugin_name, binary_name)
+        if plugin_keys:
+            return plugin_keys
+        return [_binary_env_key(binary_name)]
+
+    def _get_registered_binary_path(self, plugin_name: str, binary_name: str) -> str:
+        for config_key in self._binary_config_keys(plugin_name, binary_name):
+            value = str(self.machine.shared_config.get(config_key) or "").strip()
+            if value:
+                return value
+        return ""
+
     async def _register_binary_path(self, plugin_name: str, binary_name: str, abspath: str) -> None:
         """Persist the generic and plugin-specific binary env vars for a resolved binary."""
-        await self.bus.emit(
-            MachineEvent(
-                method="update",
-                key=f"config/{_binary_env_key(binary_name)}",
-                value=abspath,
-            ),
-        )
-        for config_key in self._plugin_binary_config_keys(plugin_name, binary_name):
+        for config_key in self._binary_config_keys(plugin_name, binary_name):
             await self.bus.emit(
                 MachineEvent(
                     method="update",
@@ -123,6 +142,9 @@ class BinaryService(BaseService):
                     value=abspath,
                 ),
             )
+        if plugin_name == "mercury" and binary_name == "postlight-parser":
+            self.machine.shared_config.pop("POSTLIGHT_PARSER_BINARY", None)
+            unset_config("POSTLIGHT_PARSER_BINARY")
 
     def _make_provider_hook_handler(self, plugin: Plugin, hook: Hook):
         """Create an async handler that runs one binary provider hook.
@@ -135,8 +157,13 @@ class BinaryService(BaseService):
             if not event.name or event.abspath:
                 # Already resolved or no name — skip
                 return
-            # Early exit: a prior provider already resolved this binary
-            if self.machine.shared_config.get(_binary_env_key(event.name)):
+            ordered_providers = _ordered_binproviders(event.binproviders)
+            if ordered_providers:
+                if _plugin.name not in ordered_providers or _plugin.name != ordered_providers[0]:
+                    return
+            elif self._get_registered_binary_path(event.plugin_name, event.name):
+                # For unordered provider sets, a prior provider or cached config
+                # already resolved the binary, so don't re-run installers.
                 return
 
             from ..models import uuid7
@@ -220,6 +247,23 @@ class BinaryService(BaseService):
         if not event.name:
             return
 
+        inherited_binproviders = event.binproviders
+        if not inherited_binproviders and event.binary_id:
+            ancestor_request = await self.bus.find(
+                BinaryEvent,
+                past=True,
+                future=False,
+                where=lambda candidate: (
+                    candidate.event_id != event.event_id
+                    and candidate.binary_id == event.binary_id
+                    and candidate.name == event.name
+                    and bool(candidate.binproviders)
+                ),
+            )
+            if ancestor_request is not None:
+                inherited_binproviders = ancestor_request.binproviders
+        ordered_providers = _ordered_binproviders(inherited_binproviders)
+
         binprovider = getattr(event, "binprovider", "") or ""
         if event.abspath:
             # Binary path provided — register in config and notify
@@ -232,34 +276,88 @@ class BinaryService(BaseService):
                     abspath=event.abspath,
                     version=event.version,
                     sha256=event.sha256,
+                    binproviders=inherited_binproviders,
                     binprovider=binprovider,
+                    overrides=event.overrides,
                     binary_id=event.binary_id,
                     machine_id=event.machine_id,
                 ),
             )
         else:
+            existing_installed = await self.bus.find(
+                BinaryInstalledEvent,
+                child_of=event,
+                past=True,
+                future=False,
+                name=event.name,
+            )
+            if existing_installed is not None:
+                return
+            if ordered_providers and len(ordered_providers) > 1:
+                await self.bus.emit(
+                    BinaryEvent(
+                        name=event.name,
+                        plugin_name=event.plugin_name,
+                        hook_name=event.hook_name,
+                        output_dir=event.output_dir,
+                        version=event.version,
+                        sha256=event.sha256,
+                        min_version=event.min_version,
+                        binary_id=event.binary_id,
+                        machine_id=event.machine_id,
+                        binproviders=",".join(ordered_providers[1:]),
+                        binprovider=binprovider,
+                        overrides=event.overrides,
+                        custom_cmd=event.custom_cmd,
+                    ),
+                )
+                return
             # No abspath — check if a provider resolved it via shared_config
-            abspath = self.machine.shared_config.get(_binary_env_key(event.name), "")
+            abspath = self._get_registered_binary_path(event.plugin_name, event.name)
             if abspath:
                 await self._register_binary_path(event.plugin_name, event.name, abspath)
-                existing = await self.bus.find(
-                    BinaryInstalledEvent,
+                resolved_event = await self.bus.find(
+                    BinaryEvent,
                     child_of=event,
+                    past=True,
+                    future=False,
                     name=event.name,
                     abspath=abspath,
                 )
-                if existing is not None:
-                    return
                 await self.bus.emit(
                     BinaryInstalledEvent(
                         name=event.name,
                         plugin_name=event.plugin_name,
                         hook_name=event.hook_name,
                         abspath=abspath,
-                        version=event.version,
-                        sha256=event.sha256,
-                        binprovider=binprovider,
+                        version=(resolved_event.version if resolved_event else "") or event.version,
+                        sha256=(resolved_event.sha256 if resolved_event else "") or event.sha256,
+                        binproviders=(resolved_event.binproviders if resolved_event else "") or inherited_binproviders,
+                        binprovider=(resolved_event.binprovider if resolved_event else "") or binprovider,
+                        overrides=(resolved_event.overrides if resolved_event else None) or event.overrides,
                         binary_id=event.binary_id,
                         machine_id=event.machine_id,
                     ),
                 )
+
+    async def on_BinaryInstalledEvent(self, event: BinaryInstalledEvent) -> None:
+        if not event.abspath:
+            return
+        self._link_installed_binary(event.name, event.abspath)
+
+    def _link_installed_binary(self, binary_name: str, binary_abspath: str) -> None:
+        lib_bin_dir_value = str(self.machine.shared_config.get("LIB_BIN_DIR") or "").strip()
+        if not lib_bin_dir_value:
+            return
+        lib_bin_dir = Path(lib_bin_dir_value).expanduser()
+        lib_bin_dir.mkdir(parents=True, exist_ok=True)
+
+        target = Path(binary_abspath).expanduser()
+        link_path = lib_bin_dir / binary_name
+
+        if link_path.is_symlink() or link_path.is_file():
+            link_path.unlink()
+        elif link_path.exists():
+            shutil.rmtree(link_path)
+
+        link_path.symlink_to(target)
