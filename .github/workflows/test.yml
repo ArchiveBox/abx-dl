@@ -32,7 +32,7 @@ jobs:
           enable-cache: true
 
       - name: Install Python dependencies
-        run: uv sync --extra dev
+        run: uv sync --no-sources --extra dev
 
       - name: Run prek
         run: uv run prek run --all-files
@@ -58,7 +58,7 @@ jobs:
           enable-cache: true
 
       - name: Install Python dependencies
-        run: uv sync --extra dev
+        run: uv sync --no-sources --extra dev
 
       - name: Run repo test suite
         run: uv run pytest -q tests server/tests
@@ -163,7 +163,7 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          uv sync --extra dev
+          uv sync --no-sources --extra dev
           uv pip install -e ./abx-plugins
 
       - name: Verify Chromium launch
@@ -241,7 +241,7 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          uv sync --extra dev
+          uv sync --no-sources --extra dev
           uv pip install -e ./abx-plugins
 
       - name: Verify Chromium launch
