@@ -56,3 +56,36 @@ def test_build_env_for_plugin_strips_uv_recursion_depth_from_env_and_overrides(m
     )
 
     assert "UV_RUN_RECURSION_DEPTH" not in env
+
+
+def test_build_env_for_plugin_run_output_dir_overrides_default_shared_snap_dirs(tmp_path: Path) -> None:
+    env = build_env_for_plugin(
+        "demo",
+        {},
+        overrides={
+            "DATA_DIR": str(tmp_path / "data"),
+            "CRAWL_DIR": str(tmp_path / "data"),
+            "SNAP_DIR": str(tmp_path / "data"),
+        },
+        run_output_dir=tmp_path / "run",
+    )
+
+    assert env["CRAWL_DIR"] == str(tmp_path / "run")
+    assert env["SNAP_DIR"] == str(tmp_path / "run")
+
+
+def test_build_env_for_plugin_preserves_explicit_shared_snap_dir_override(tmp_path: Path) -> None:
+    explicit_snap_dir = tmp_path / "explicit-snap"
+    env = build_env_for_plugin(
+        "demo",
+        {},
+        overrides={
+            "DATA_DIR": str(tmp_path / "data"),
+            "CRAWL_DIR": str(explicit_snap_dir),
+            "SNAP_DIR": str(explicit_snap_dir),
+        },
+        run_output_dir=tmp_path / "run",
+    )
+
+    assert env["CRAWL_DIR"] == str(explicit_snap_dir)
+    assert env["SNAP_DIR"] == str(explicit_snap_dir)

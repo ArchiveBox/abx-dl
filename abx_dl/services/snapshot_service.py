@@ -1,13 +1,12 @@
 """SnapshotService — orchestrates the snapshot extraction phase."""
 
 import asyncio
+import json
 
 from pathlib import Path
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 from abxbus import BaseEvent, EventBus
-
-import json
 
 from ..events import (
     ProcessEvent,
@@ -23,6 +22,9 @@ from ..models import Snapshot
 from ..models import Hook, Plugin
 from .base import BaseService, make_hook_handler
 from .machine_service import MachineService
+
+if TYPE_CHECKING:
+    from .process_service import ProcessService
 
 
 class SnapshotService(BaseService):
@@ -84,6 +86,7 @@ class SnapshotService(BaseService):
         snapshot: Snapshot,
         output_dir: Path,
         machine: MachineService,
+        process: "ProcessService",
         hooks: list[tuple[Plugin, Hook]],
         phase_timeout: float = 300.0,
     ):
@@ -91,6 +94,7 @@ class SnapshotService(BaseService):
         self.snapshot = snapshot
         self.output_dir = output_dir
         self.machine = machine
+        self.process = process
         self.hooks = hooks
         self.phase_timeout = phase_timeout
         self.limit_state = CrawlLimitState.from_config(machine.shared_config)
@@ -182,6 +186,7 @@ class SnapshotService(BaseService):
         """
         if event.snapshot_id != self.snapshot.id or event.output_dir != str(self.output_dir):
             return
+        await self.process.wait_for_background_monitors(include_daemons=False)
         url = self.url
         snapshot_id = self.snapshot.id
         output_dir = str(self.output_dir)

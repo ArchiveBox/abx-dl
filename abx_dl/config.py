@@ -400,6 +400,24 @@ def _derive_runtime_paths(
     return derived
 
 
+def _runtime_override_is_explicit(key: str, value: Any, overrides: dict[str, Any]) -> bool:
+    """Treat default SNAP/CRAWL paths from shared config as non-explicit.
+
+    ``MachineService.shared_config`` is seeded from ``get_config()``, which always
+    includes default ``SNAP_DIR``/``CRAWL_DIR`` values pointing at ``DATA_DIR``.
+    Those defaults should not block per-run ``run_output_dir`` from taking over.
+    Only preserve these runtime-path overrides when the caller supplied a
+    non-default value.
+    """
+    if key not in {"SNAP_DIR", "CRAWL_DIR"}:
+        return True
+
+    serialized = _serialize_value(value)
+    default_runtime = _serialize_value(GLOBAL_DEFAULTS.get(key, ""))
+    default_data_dir = _serialize_value(overrides.get("DATA_DIR", GLOBAL_DEFAULTS.get("DATA_DIR", "")))
+    return serialized not in {"", default_runtime, default_data_dir}
+
+
 def build_env_for_plugin(
     plugin_name: str,
     schema: dict[str, Any],
@@ -419,7 +437,9 @@ def build_env_for_plugin(
         env.pop(key, None)
     explicit_keys = set(env.keys())
     if overrides:
-        explicit_keys.update(key for key in overrides.keys() if key not in blocked_env_keys)
+        explicit_keys.update(
+            key for key, value in overrides.items() if key not in blocked_env_keys and _runtime_override_is_explicit(key, value, overrides)
+        )
 
     # Fix NO_PROXY to allow proxied downloads from googleapis.com/google.com.
     # In some sandboxed environments (e.g. Claude Code), NO_PROXY includes

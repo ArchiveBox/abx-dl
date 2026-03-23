@@ -496,6 +496,7 @@ async def download(
                 snapshot=snapshot,
                 output_dir=output_dir,
                 machine=shared.machine,
+                process=shared.process,
                 hooks=snapshot_hooks,
                 phase_timeout=snapshot_phase_timeout,
             ),

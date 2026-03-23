@@ -167,9 +167,9 @@ def make_hook_handler(
             event_handler_timeout=effective_timeout + 30.0,
             event_handler_slow_timeout=slow_warning_timeout(effective_timeout),
         )
-        if run_in_background:
-            service.bus.emit(process_event)
-        else:
-            await service.bus.emit(process_event)
+        # Background hooks all follow the same orchestrator path. Awaiting the
+        # ProcessEvent only waits for ProcessService to start and register the
+        # process; the hook itself keeps running in the background.
+        await service.bus.emit(process_event)
 
     return handler

@@ -794,6 +794,36 @@ def test_download_finalizes_background_hooks_after_sigterm(tmp_path: Path) -> No
     assert final_process["exit_code"] == 0
 
 
+def test_snapshot_finite_bg_hook_finishes_before_cleanup(tmp_path: Path) -> None:
+    plugins_root = tmp_path / "plugins"
+    artifact = tmp_path / "run" / "bgdemo" / "artifact.txt"
+
+    _write(
+        plugins_root / "bgdemo" / "on_Snapshot__05_write.finite.bg.py",
+        "\n".join(
+            [
+                "import json",
+                "import time",
+                "from pathlib import Path",
+                "",
+                "time.sleep(0.3)",
+                "output = Path('artifact.txt')",
+                "output.write_text('finished')",
+                'print(json.dumps({"type": "ArchiveResult", "status": "succeeded", "output_str": "artifact.txt"}), flush=True)',
+            ],
+        )
+        + "\n",
+    )
+
+    plugins = discover_plugins(plugins_root)
+    results = _run_download("https://example.com", plugins, tmp_path / "run", auto_install=True)
+
+    result = next(r for r in results if r.plugin == "bgdemo")
+    assert result.status == "succeeded"
+    assert result.output_str == "artifact.txt"
+    assert artifact.read_text() == "finished"
+
+
 def test_download_preserves_full_hook_stderr_in_archive_result(tmp_path: Path) -> None:
     plugins_root = tmp_path / "plugins"
     full_error = "ERROR: " + ("proxy-blocked " * 80) + "storage.googleapis.com"
