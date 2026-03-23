@@ -23,8 +23,9 @@ class MachineService(BaseService):
     State:
     - ``shared_config``: mutable dict updated by MachineEvent handlers. Read by
       ``get_env_for_plugin()`` each time a hook needs an env dict. This is how
-      config propagates between hooks: hook A sets CHROME_BINARY via MachineEvent,
-      hook B's env dict picks it up when get_env_for_plugin() is called later.
+      config propagates between phases: an Install or BinaryRequest hook sets
+      ``CHROME_BINARY`` via MachineEvent, and later CrawlSetup or Snapshot hooks
+      pick it up when ``get_env_for_plugin()`` is called.
 
     Config update flow::
 
@@ -92,7 +93,7 @@ class MachineService(BaseService):
 
         Called fresh before each hook execution, so it always reflects the latest
         shared_config state (including updates from hooks that ran earlier in the
-        same CrawlEvent/SnapshotEvent).
+        same InstallEvent / CrawlSetupEvent / SnapshotEvent chain).
         """
         return build_env_for_plugin(
             plugin.name,

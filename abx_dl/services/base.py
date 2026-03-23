@@ -9,7 +9,6 @@ from collections.abc import Mapping
 
 from abxbus import BaseEvent, EventBus, EventHandler
 
-from ..models import INSTALL_URL
 from ..events import ProcessEvent, slow_warning_timeout
 from ..limits import CrawlLimitState
 from ..models import Hook, Plugin, Snapshot
@@ -28,7 +27,9 @@ class BaseService:
     Handler name resolution:
     - ``on_ProcessEvent`` → matches ``ProcessEvent`` directly
     - ``on_ProcessCompletedEvent`` → matches ``ProcessCompletedEvent`` directly
+    - ``on_Install__plugin_hook`` → tries "Install", then "InstallEvent" (matches)
     - ``on_CrawlSetup__plugin_hook`` → tries "CrawlSetup", then "CrawlSetupEvent" (matches)
+    - ``on_BinaryRequest__provider`` → tries "BinaryRequest", then "BinaryRequestEvent" (matches)
 
     Note: CrawlService and SnapshotService override ``_attach_handlers()`` to
     control registration order explicitly. They register per-hook handlers on
@@ -65,7 +66,7 @@ class BaseService:
         class in ``LISTENS_TO``.
 
         The double-underscore split handles dynamic handler names like
-        ``on_CrawlSetup__10_wget_install`` — only the prefix before ``__`` is
+        ``on_CrawlSetup__90_chrome_launch`` — only the prefix before ``__`` is
         used for event class matching ("CrawlSetup" → "CrawlSetupEvent").
         """
         for attr_name in dir(self):
@@ -115,7 +116,8 @@ def make_hook_handler(
     factory function.
 
     The env dict is built fresh each time from ``MachineService.shared_config``,
-    so fg hooks pick up config updates (e.g. CHROME_BINARY path) from earlier hooks.
+    so later hooks pick up config updates (e.g. a BinaryEvent causing
+    ``CHROME_BINARY`` to be persisted via MachineEvent) from earlier phases.
 
     For background daemons, ``phase_timeout`` is used as the process timeout
     ceiling instead of the per-hook timeout (daemons should survive until
@@ -127,10 +129,10 @@ def make_hook_handler(
             return
         if getattr(event, "output_dir", str(output_dir)) != str(output_dir):
             return
-        if "Snapshot" in _hook.name and machine.shared_config.get("ABX_SKIP_SNAPSHOT_HOOKS"):
+        if _hook.event == "Snapshot" and machine.shared_config.get("ABX_SKIP_SNAPSHOT_HOOKS"):
             return
         env = machine.get_env_for_plugin(_plugin, run_output_dir=output_dir)
-        if "Snapshot" in _hook.name:
+        if _hook.event == "Snapshot":
             limit_state = CrawlLimitState.from_config(machine.shared_config)
             if limit_state.has_limits():
                 admission = limit_state.admit_snapshot(snapshot.id)
@@ -142,12 +144,7 @@ def make_hook_handler(
         plugin_output_dir = output_dir / _plugin.name
         plugin_output_dir.mkdir(parents=True, exist_ok=True)
 
-        # During the install-only crawl (archivebox://install), finite.bg
-        # hooks must run to completion before cleanup or they get killed
-        # before their Binary/Machine stdout can be projected.
         run_in_background = _hook.is_background
-        if url == INSTALL_URL and _hook.is_background and ".daemon." not in _hook.name:
-            run_in_background = False
 
         # BG daemons use the full phase timeout as their ceiling (they should
         # survive until cleanup, but not outlive the phase). FG hooks use

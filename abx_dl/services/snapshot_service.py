@@ -30,10 +30,12 @@ if TYPE_CHECKING:
 class SnapshotService(BaseService):
     """Orchestrates the snapshot phase: extraction hooks, cleanup, completion.
 
-    The SnapshotEvent is emitted by CrawlService.on_CrawlStartEvent::
+    The SnapshotEvent is emitted by CrawlService.on_CrawlStartEvent after the
+    install and crawl-setup phases have already completed::
 
+        InstallEvent
         CrawlEvent
-        ├── CrawlSetupEvent (crawl hooks)
+        ├── CrawlSetupEvent (crawl-setup hooks)
         ├── CrawlStartEvent
         │   └── SnapshotEvent (depth=0)                    # triggers this service
         │       │
@@ -60,9 +62,10 @@ class SnapshotService(BaseService):
         ├── CrawlCleanupEvent
         └── CrawlCompletedEvent
 
-    Depth guard: SnapshotEvents with depth > 0 are silently ignored by
-    abx-dl. These represent discovered URLs from hook output (recursive
-    crawling). ArchiveBox handles them by queueing new snapshots.
+    Depth guard: SnapshotEvents with depth > 0 are not executed recursively by
+    abx-dl itself. These represent discovered URLs from hook output. ArchiveBox
+    handles recursion by subscribing to those events and scheduling additional
+    explicit snapshot runs on the shared bus.
     """
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [

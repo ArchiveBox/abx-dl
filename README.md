@@ -41,14 +41,18 @@ abx-dl --plugins=wget,title,screenshot,pdf,readability,git 'https://example.com'
 
 `abx-dl` uses the **[ABX Plugin Library](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement)** (shared with [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox)) to run a collection of downloading and scraping tools.
 
-Plugins are loaded from the installed `abx-plugins` package (or from `ABX_PLUGINS_DIR` if you override it) and execute hooks in order:
-1. **Crawl hooks** run first (setup/install dependencies like Chrome)
-2. **Snapshot hooks** run per-URL to extract content
+Plugins are loaded from the installed `abx-plugins` package (or from `ABX_PLUGINS_DIR` if you override it) and execute in distinct phases:
+1. **Install hooks** (`on_Install__*`) request binaries needed for the run
+2. **BinaryRequest hooks** (`on_BinaryRequest__*`) resolve or install those binaries and emit resolved `Binary` records
+3. **CrawlSetup hooks** (`on_CrawlSetup__*`) launch/configure crawl-scoped daemons and shared runtime state
+4. **Snapshot hooks** (`on_Snapshot__*`) run per URL to extract content and emit archive results
 
-Each plugin can output:
+Hooks can emit:
 - Files to its output directory
-- JSONL records for status reporting
-- Config updates that propagate to subsequent plugins
+- JSONL records for status reporting and event routing
+- `Machine` config updates that propagate to later hooks in the same run
+- `BinaryRequest` records to ask provider hooks for dependencies
+- resolved `Binary` records with `abspath`/`version` metadata
 
 <br/>
 
@@ -152,8 +156,8 @@ abx-dl config --set TIMEOUT=120           # Set a config value persistently
 
 Many plugins require external binaries (e.g., `wget`, `chrome`, `yt-dlp`, `single-file`).
 
-By default, `abx-dl` lazily auto-installs missing dependencies as needed when you download a URL.
-Use `--no-install` to skip plugins with missing dependencies instead. `install` runs crawl/install hooks ahead of time without downloading a snapshot:
+By default, `abx-dl` lazily installs missing dependencies as needed when you download a URL.
+Use `--no-install` to skip plugins with missing dependencies instead. `install` runs only the pre-run install pipeline (`InstallEvent` → `BinaryRequestEvent` → `BinaryEvent`) without starting crawl setup or snapshot extraction:
 
 ```bash
 # Auto-installs missing deps on-the-fly (default behavior)

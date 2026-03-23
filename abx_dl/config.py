@@ -216,7 +216,7 @@ GLOBAL_DEFAULTS = {
     "NODE_PATH": str(NODE_MODULES_DIR),
     "NPM_BIN_DIR": str(NPM_BIN_DIR),
     # Prevent puppeteer's postinstall from downloading Chrome automatically;
-    # abx-dl handles Chromium installation via on_Binary__12_puppeteer_install instead.
+    # abx-dl handles Chromium installation via on_BinaryRequest__12_puppeteer_install instead.
     "PUPPETEER_SKIP_DOWNLOAD": "1",
     "PUPPETEER_CACHE_DIR": str(LIB_DIR / "puppeteer"),
     # Keep Chrome's sandbox enabled by default; callers that need --no-sandbox
@@ -438,7 +438,9 @@ def build_env_for_plugin(
     explicit_keys = set(env.keys())
     if overrides:
         explicit_keys.update(
-            key for key, value in overrides.items() if key not in blocked_env_keys and _runtime_override_is_explicit(key, value, overrides)
+            key
+            for key, value in overrides.items()
+            if key not in blocked_env_keys and value is not None and _runtime_override_is_explicit(key, value, overrides)
         )
 
     # Fix NO_PROXY to allow proxied downloads from googleapis.com/google.com.
@@ -468,6 +470,9 @@ def build_env_for_plugin(
         for key, value in overrides.items():
             if key in blocked_env_keys:
                 continue
+            if value is None:
+                env.pop(key, None)
+                continue
             env[key] = _serialize_value(value)
 
     # Keep path values coherent with the effective LIB_DIR and current run dir.
@@ -478,6 +483,8 @@ def build_env_for_plugin(
 
 def _serialize_value(value: Any) -> str:
     """Serialize value to string for environment variable."""
+    if value is None:
+        return ""
     if isinstance(value, bool):
         return "True" if value else "False"
     elif isinstance(value, list):

@@ -2,40 +2,42 @@
 
 Events form a hierarchy during execution::
 
-    CrawlEvent                                      # orchestrator.download()
-    ├── CrawlSetupEvent                             # crawl hooks run here
-    │   ├── ProcessEvent (on_Crawl hooks)
+    InstallEvent                                    # orchestrator.download()
+    ├── ProcessEvent (on_Install hooks)
     │   │   ├── ProcessStdoutEvent                   # for each stdout line
-    │   │   │   ├── BinaryEvent (via BinaryService)
-    │   │   │   │   └── BinaryProcessEvent (provider hook) → BinaryInstalledEvent
+    │   │   │   ├── BinaryRequestEvent (via BinaryService)
+    │   │   │   │   └── BinaryRequestProcessEvent (provider hook) → BinaryEvent
     │   │   │   └── MachineEvent (via MachineService)
     │   │   └── ProcessCompletedEvent
-    │   └── ...
-    ├── CrawlStartEvent                    # triggers snapshot phase
-    │   └── SnapshotEvent (depth=0)
-    │       ├── ProcessEvent (on_Snapshot hooks)
-    │       │   ├── ProcessStdoutEvent
-    │       │   │   ├── SnapshotEvent (depth>0, ignored by abx-dl)
-    │       │   │   └── ArchiveResultEvent (inline)
-    │       │   └── ProcessCompletedEvent
-    │       │       └── ArchiveResultEvent (synthetic, on_Snapshot only)
-    │       ├── SnapshotCleanupEvent
-    │       │   └── ProcessKillEvent × N
-    │       └── SnapshotCompletedEvent
-    ├── CrawlCleanupEvent
-    │   └── ProcessKillEvent × N
-    └── CrawlCompletedEvent
+    ├── CrawlEvent                                  # emitted after install phase
+    │   ├── CrawlSetupEvent                         # crawl setup hooks run here
+    │   │   ├── ProcessEvent (on_CrawlSetup hooks)
+    │   │   └── ...
+    │   ├── CrawlStartEvent                         # triggers snapshot phase
+    │   │   └── SnapshotEvent (depth=0)
+    │   │       ├── ProcessEvent (on_Snapshot hooks)
+    │   │       │   ├── ProcessStdoutEvent
+    │   │       │   │   ├── SnapshotEvent (depth>0, ignored by abx-dl)
+    │   │       │   │   └── ArchiveResultEvent (inline)
+    │   │       │   └── ProcessCompletedEvent
+    │   │       │       └── ArchiveResultEvent (synthetic, on_Snapshot only)
+    │   │       ├── SnapshotCleanupEvent
+    │   │       │   └── ProcessKillEvent × N
+    │   │       └── SnapshotCompletedEvent
+    │   ├── CrawlCleanupEvent
+    │   │   └── ProcessKillEvent × N
+    │   └── CrawlCompletedEvent
 
 Event types:
-- **Lifecycle events** drive phases: CrawlEvent, CrawlSetupEvent,
+- **Lifecycle events** drive phases: InstallEvent, CrawlEvent, CrawlSetupEvent,
   CrawlStartEvent, SnapshotEvent, SnapshotCleanupEvent,
   SnapshotCompletedEvent, CrawlCleanupEvent, CrawlCompletedEvent
 - **Routing events** decouple services: ProcessStdoutEvent
   carries each stdout line; each service parses and handles its own type
 - **Command events** trigger actions: ProcessEvent, ProcessKillEvent,
-  BinaryEvent, MachineEvent
+  BinaryRequestEvent, MachineEvent
 - **Completion events** notify results: ProcessCompletedEvent,
-  ArchiveResultEvent, BinaryInstalledEvent
+  ArchiveResultEvent, BinaryEvent
 
 abxbus behavior:
 - Each event has ``event_timeout`` — the hard deadline for the event and all its
@@ -64,6 +66,19 @@ def slow_warning_timeout(timeout: float | int | None) -> float | None:
 # ── Crawl lifecycle ──────────────────────────────────────────────────────────
 
 
+class InstallEvent(BaseEvent):
+    """Root pre-run phase: runs all on_Install hooks before any crawl setup.
+
+    on_Install hooks typically emit BinaryRequest records and Machine config
+    updates. They should not emit Snapshot or ArchiveResult records.
+    """
+
+    url: str
+    snapshot_id: str
+    output_dir: str
+    event_timeout: float | None = 300.0
+
+
 class CrawlEvent(BaseEvent):
     """Root event: kicks off the full crawl → snapshot → cleanup lifecycle.
 
@@ -79,10 +94,11 @@ class CrawlEvent(BaseEvent):
 
 
 class CrawlSetupEvent(BaseEvent):
-    """Phase: run all on_Crawl hooks (installs, daemons, config propagation).
+    """Phase: run all on_CrawlSetup hooks (daemons, config propagation).
 
     Emitted by CrawlService.on_CrawlEvent. Per-hook handlers are registered
-    on this event, so they run serially in hook sort order.
+    on this event, so they run serially in hook sort order. Crawl setup hooks
+    may emit Machine and Process records, but not ArchiveResult records.
     """
 
     url: str
@@ -209,7 +225,7 @@ class ProcessEvent(BaseEvent):
     event_timeout: float | None = 360.0
 
 
-class BinaryProcessEvent(ProcessEvent):
+class BinaryRequestProcessEvent(ProcessEvent):
     """Command: run a binary provider hook subprocess.
 
     Uses a separate event type from ProcessEvent so nested provider installs do
@@ -289,6 +305,7 @@ class ProcessStdoutEvent(BaseEvent):
     Emitted by ProcessService for every stdout line. Each consuming service
     parses the line and checks for the JSON shape it cares about:
 
+    - BinaryService: ``{"type": "BinaryRequest", ...}`` → emits BinaryRequestEvent
     - BinaryService: ``{"type": "Binary", ...}`` → emits BinaryEvent
     - MachineService: ``{"type": "Machine", ...}`` → emits MachineEvent
     - SnapshotService: ``{"type": "Snapshot", ...}`` → emits SnapshotEvent
@@ -317,42 +334,40 @@ class ProcessStdoutEvent(BaseEvent):
 # ── Binary resolution ────────────────────────────────────────────────────────
 
 
-class BinaryEvent(BaseEvent):
+class BinaryRequestEvent(BaseEvent):
     """A hook needs a binary resolved or installed.
 
     Emitted by BinaryService.on_ProcessStdoutEvent when a hook outputs
-    ``{"type": "Binary", ...}`` JSONL. Handled by BinaryService's provider hooks
-    and on_BinaryEvent, which either registers the path (if abspath is provided)
-    or broadcasts to provider hooks to install it.
+    ``{"type": "BinaryRequest", ...}`` JSONL. Handled by BinaryService's provider hooks
+    and on_BinaryRequestEvent, which either emits a cached BinaryEvent
+    or broadcasts to provider hooks to resolve/install it.
 
     The ``binproviders`` field controls which providers are tried (e.g.
-    "puppeteer" means only the puppeteer provider hook should attempt install).
-    Provider hooks self-select based on this field.
+    "puppeteer" means only the puppeteer provider hook should attempt
+    resolution). Provider hooks self-select based on this field.
     """
 
     name: str
     plugin_name: str = ""
     hook_name: str = ""
     output_dir: str = ""
-    abspath: str = ""
-    version: str = ""
-    sha256: str = ""
     min_version: str = ""
     binary_id: str = ""
     machine_id: str = ""
     binproviders: str = ""
-    binprovider: str = ""
     overrides: dict[str, Any] | None = None
     custom_cmd: str = ""
     event_timeout: float | None = 300.0
 
 
-class BinaryInstalledEvent(BaseEvent):
-    """Informational: a binary was resolved (discovered or installed).
+class BinaryEvent(BaseEvent):
+    """Informational: a binary request was resolved.
 
-    Emitted by BinaryService.on_BinaryEvent after binary resolution completes,
+    Emitted by BinaryService.on_BinaryRequestEvent after binary resolution completes,
     whether the binary was already present (discovered by env provider) or
-    freshly installed by another provider (apt, pip, npm, etc.).
+    freshly installed by another provider (apt, pip, npm, etc.). Carries the
+    concrete metadata that later hooks should use: resolved ``abspath``,
+    detected ``version``, ``sha256`` when available, and the winning provider.
     """
 
     name: str

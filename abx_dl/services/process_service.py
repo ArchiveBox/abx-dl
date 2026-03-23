@@ -8,7 +8,14 @@ from typing import ClassVar
 from abxbus import BaseEvent, EventBus
 from abxbus.base_event import EventHandler
 
-from ..events import BinaryProcessEvent, ProcessCompletedEvent, ProcessEvent, ProcessKillEvent, ProcessStartedEvent, ProcessStdoutEvent
+from ..events import (
+    BinaryRequestProcessEvent,
+    ProcessCompletedEvent,
+    ProcessEvent,
+    ProcessKillEvent,
+    ProcessStartedEvent,
+    ProcessStdoutEvent,
+)
 from ..models import Process, write_jsonl, now_iso
 from ..output_files import collect_output_files, collect_output_files_from_paths
 from ..process_utils import write_pid_file_with_mtime, write_cmd_file, graceful_kill_process, graceful_kill_by_pid_file
@@ -84,7 +91,7 @@ class ProcessService(BaseService):
 
     Realtime event emission is critical: ProcessStdoutEvent is emitted with
     ``await self.bus.emit()`` (queue-jump), so the entire handler chain
-    (e.g. BinaryEvent → provider install → MachineEvent) completes before the
+    (e.g. BinaryRequestEvent → provider install → MachineEvent) completes before the
     next stdout line is read.
 
     ArchiveResult construction is handled entirely by ArchiveResultService,
@@ -111,7 +118,7 @@ class ProcessService(BaseService):
       process group doesn't accidentally kill them.
     """
 
-    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, BinaryProcessEvent, ProcessKillEvent]
+    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, BinaryRequestProcessEvent, ProcessKillEvent]
     EMITS: ClassVar[list[type[BaseEvent]]] = [
         ProcessStartedEvent,
         ProcessStdoutEvent,
@@ -164,7 +171,7 @@ class ProcessService(BaseService):
     async def on_ProcessEvent(self, event: ProcessEvent) -> None:
         await self._run_process_event(event)
 
-    async def on_BinaryProcessEvent(self, event: BinaryProcessEvent) -> None:
+    async def on_BinaryRequestProcessEvent(self, event: BinaryRequestProcessEvent) -> None:
         await self._run_process_event(event)
 
     async def _run_process_event(self, event: ProcessEvent) -> None:
@@ -182,7 +189,7 @@ class ProcessService(BaseService):
         )
 
         artifact_stem = event.hook_name
-        if isinstance(event, BinaryProcessEvent) or event.hook_name.startswith("on_Binary__"):
+        if isinstance(event, BinaryRequestProcessEvent) or event.hook_name.startswith("on_BinaryRequest__"):
             artifact_stem = f"{event.hook_name}.{proc.id}"
 
         cmd = [event.hook_path, *event.hook_args]
@@ -265,7 +272,7 @@ class ProcessService(BaseService):
         except Exception as e:
             # Kill the subprocess if it was created — without this, bg hooks
             # started with start_new_session=True would leak as orphan processes
-            # (e.g. if BinaryEvent(**record) raises ValidationError on malformed
+            # (e.g. if BinaryRequestEvent(**record) raises ValidationError on malformed
             # JSONL, or if bus.emit() fails during the streaming phase).
             if process is not None:
                 await graceful_kill_process(process)

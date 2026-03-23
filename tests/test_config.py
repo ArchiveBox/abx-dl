@@ -89,3 +89,18 @@ def test_build_env_for_plugin_preserves_explicit_shared_snap_dir_override(tmp_pa
 
     assert env["CRAWL_DIR"] == str(explicit_snap_dir)
     assert env["SNAP_DIR"] == str(explicit_snap_dir)
+
+
+def test_build_env_for_plugin_omits_none_runtime_overrides(tmp_path: Path) -> None:
+    env = build_env_for_plugin(
+        "demo",
+        {},
+        overrides={
+            "SNAPSHOT_DEPTH": None,
+            "PARENT_SNAPSHOT_ID": None,
+        },
+        run_output_dir=tmp_path,
+    )
+
+    assert "SNAPSHOT_DEPTH" not in env
+    assert "PARENT_SNAPSHOT_ID" not in env

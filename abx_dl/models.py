@@ -34,14 +34,6 @@ def now_iso() -> str:
     return datetime.now().isoformat()
 
 
-# ── Special URLs ───────────────────────────────────────────────────────────
-
-INSTALL_URL = "archivebox://install"
-"""Sentinel URL used by ``abx install`` to run crawl hooks (install/setup)
-without triggering the snapshot phase. CrawlService detects this URL and
-skips emitting SnapshotEvent."""
-
-
 # ── Plugin models ──────────────────────────────────────────────────────────
 
 
@@ -53,7 +45,7 @@ class Hook(BaseModel):
         on_{Event}__{XX}_{description}[.finite][.daemon][.bg].{ext}
 
     Where:
-    - ``{Event}`` is the event type (Crawl, Snapshot, Binary)
+    - ``{Event}`` is the exact bus event family (Install, BinaryRequest, CrawlSetup, Snapshot)
     - ``{XX}`` is the two-digit execution order (00-99)
     - ``.bg.`` in the filename marks it as a background hook
     - ``.finite.`` means the bg hook exits on its own (vs ``.daemon.`` which runs until killed)
@@ -62,6 +54,7 @@ class Hook(BaseModel):
     model_config = {"arbitrary_types_allowed": True}
 
     name: str
+    event: str
     plugin_name: str
     path: Path
     order: int  # Two-digit execution order (00-99)
@@ -107,21 +100,28 @@ class Plugin(BaseModel):
     def get_snapshot_hooks(self) -> list[Hook]:
         """Get hooks that run during the snapshot phase (extraction/indexing)."""
         return sorted(
-            [h for h in self.hooks if "Snapshot" in h.name],
+            [h for h in self.hooks if h.event == "Snapshot"],
             key=lambda h: h.sort_key,
         )
 
-    def get_crawl_hooks(self) -> list[Hook]:
-        """Get hooks that run during the crawl phase (install/setup/daemons)."""
+    def get_install_hooks(self) -> list[Hook]:
+        """Get hooks that run during the install phase."""
         return sorted(
-            [h for h in self.hooks if "Crawl" in h.name],
+            [h for h in self.hooks if h.event == "Install"],
             key=lambda h: h.sort_key,
         )
 
-    def get_binary_hooks(self) -> list[Hook]:
+    def get_crawl_setup_hooks(self) -> list[Hook]:
+        """Get hooks that run during crawl setup."""
+        return sorted(
+            [h for h in self.hooks if h.event == "CrawlSetup"],
+            key=lambda h: h.sort_key,
+        )
+
+    def get_binary_request_hooks(self) -> list[Hook]:
         """Get hooks that resolve/install binary dependencies."""
         return sorted(
-            [h for h in self.hooks if "Binary" in h.name],
+            [h for h in self.hooks if h.event == "BinaryRequest"],
             key=lambda h: h.sort_key,
         )
 
@@ -304,6 +304,7 @@ def load_plugin(plugin_dir: Path) -> Plugin | None:
 
         hook = Hook(
             name=hook_file.stem,
+            event=event,
             plugin_name=plugin_name,
             path=hook_file,
             order=order,
@@ -348,8 +349,8 @@ def filter_plugins(plugins: dict[str, Plugin], names: list[str] | None, *, inclu
     Dependencies are resolved via:
     1. ``required_plugins`` field in each plugin's config.json
     2. When *include_providers* is True (default), binary provider plugins
-       (those with ``on_Binary__*`` hooks) are automatically included when any
-       selected plugin has crawl hooks, since crawl hooks may request binary
+       (those with ``on_BinaryRequest__*`` hooks) are automatically included when any
+       selected plugin has install hooks, since install hooks may request binary
        resolution at runtime.
     """
     if not names:
@@ -370,12 +371,12 @@ def filter_plugins(plugins: dict[str, Plugin], names: list[str] | None, *, inclu
                 if dep_lower not in resolved:
                     queue.append(dep_lower)
 
-    # If any resolved plugin has crawl hooks, include all binary provider plugins
+    # If any resolved plugin has install hooks, include all binary provider plugins
     if include_providers:
-        needs_providers = any(plugin.get_crawl_hooks() for name, plugin in plugins.items() if name.lower() in resolved)
+        needs_providers = any(plugin.get_install_hooks() for name, plugin in plugins.items() if name.lower() in resolved)
         if needs_providers:
             for name, plugin in plugins.items():
-                if plugin.get_binary_hooks():
+                if plugin.get_binary_request_hooks():
                     resolved.add(name.lower())
 
     return {name: plugin for name, plugin in plugins.items() if name.lower() in resolved}

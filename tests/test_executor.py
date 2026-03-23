@@ -1,13 +1,14 @@
 import asyncio
 import json
+import time
 from pathlib import Path
 
 from abxbus import EventBus
 
 from abx_dl.orchestrator import create_bus, download, install_plugins
-from abx_dl.events import ArchiveResultEvent, BinaryEvent, BinaryInstalledEvent, SnapshotEvent
+from abx_dl.events import ArchiveResultEvent, BinaryRequestEvent, BinaryEvent, SnapshotEvent
 from abx_dl.models import ArchiveResult, Plugin, Snapshot
-from abx_dl.models import INSTALL_URL, discover_plugins
+from abx_dl.models import discover_plugins
 from abx_dl.output_files import OutputFile
 from abx_dl.services.binary_service import BinaryService
 from abx_dl.services.machine_service import MachineService
@@ -30,18 +31,18 @@ def test_download_dispatches_binary_hooks_and_applies_machine_updates(tmp_path: 
     plugins_root = tmp_path / "plugins"
 
     _write(
-        plugins_root / "producer" / "on_Crawl__00_emit.py",
+        plugins_root / "producer" / "on_Install__00_emit.py",
         "\n".join(
             [
                 "import json",
-                'print(json.dumps({"type": "Binary", "name": "demo", "binproviders": "provider"}))',
+                'print(json.dumps({"type": "BinaryRequest", "name": "demo", "binproviders": "provider"}))',
                 'print(json.dumps({"type": "Machine", "config": {"DEMO_FLAG": "ready"}}))',
             ],
         )
         + "\n",
     )
     _write(
-        plugins_root / "provider" / "on_Binary__10_provider_install.py",
+        plugins_root / "provider" / "on_BinaryRequest__10_provider_install.py",
         "\n".join(
             [
                 "import json",
@@ -98,12 +99,13 @@ def test_download_dispatches_binary_hooks_and_applies_machine_updates(tmp_path: 
 
     index_lines = [json.loads(line) for line in (tmp_path / "run" / "index.jsonl").read_text().splitlines()]
     assert any(
-        line.get("type") == "Process" and "on_Binary__10_provider_install.py" in " ".join(line.get("cmd", [])) for line in index_lines
+        line.get("type") == "Process" and "on_BinaryRequest__10_provider_install.py" in " ".join(line.get("cmd", []))
+        for line in index_lines
     )
     provider_process = next(
         line
         for line in index_lines
-        if line.get("type") == "Process" and "on_Binary__10_provider_install.py" in " ".join(line.get("cmd", []))
+        if line.get("type") == "Process" and "on_BinaryRequest__10_provider_install.py" in " ".join(line.get("cmd", []))
     )
     assert "--binary-id=" not in " ".join(provider_process["cmd"])
     assert "--machine-id=" not in " ".join(provider_process["cmd"])
@@ -111,30 +113,30 @@ def test_download_dispatches_binary_hooks_and_applies_machine_updates(tmp_path: 
     assert "--hook-name=" not in " ".join(provider_process["cmd"])
 
 
-def test_install_url_runs_finite_background_crawl_hooks_to_completion(tmp_path: Path) -> None:
+def test_install_event_runs_finite_background_install_hooks_to_completion(tmp_path: Path) -> None:
     plugins_root = tmp_path / "plugins"
     captured: list[tuple[str, str]] = []
     bus = create_bus(total_timeout=120.0)
 
-    async def on_installed(event: BinaryInstalledEvent) -> None:
+    async def on_installed(event: BinaryEvent) -> None:
         captured.append((event.name, event.abspath))
 
-    bus.on(BinaryInstalledEvent, on_installed)
+    bus.on(BinaryEvent, on_installed)
 
     _write(
-        plugins_root / "emitter" / "on_Crawl__10_emit_install.finite.bg.py",
+        plugins_root / "emitter" / "on_Install__10_emit.finite.bg.py",
         "\n".join(
             [
                 "import json",
                 "import time",
                 "time.sleep(0.1)",
-                'print(json.dumps({"type": "Binary", "name": "demo", "binproviders": "provider"}), flush=True)',
+                'print(json.dumps({"type": "BinaryRequest", "name": "demo", "binproviders": "provider"}), flush=True)',
             ],
         )
         + "\n",
     )
     _write(
-        plugins_root / "provider" / "on_Binary__10_provider_install.py",
+        plugins_root / "provider" / "on_BinaryRequest__10_provider_install.py",
         "\n".join(
             [
                 "import argparse",
@@ -155,7 +157,7 @@ def test_install_url_runs_finite_background_crawl_hooks_to_completion(tmp_path: 
     )
 
     plugins = discover_plugins(plugins_root)
-    asyncio.run(download(INSTALL_URL, plugins, tmp_path / "install-run", auto_install=True, emit_jsonl=False, bus=bus))
+    asyncio.run(install_plugins(plugins=plugins, output_dir=tmp_path / "install-run", auto_install=True, emit_jsonl=False, bus=bus))
 
     assert captured
     assert captured[-1][0] == "demo"
@@ -166,17 +168,17 @@ def test_download_forwards_binary_min_version_to_provider_hooks(tmp_path: Path) 
     plugins_root = tmp_path / "plugins"
 
     _write(
-        plugins_root / "producer" / "on_Crawl__00_emit.py",
+        plugins_root / "producer" / "on_Install__00_emit.py",
         "\n".join(
             [
                 "import json",
-                'print(json.dumps({"type": "Binary", "name": "java", "binproviders": "provider", "min_version": "11.0.0"}))',
+                'print(json.dumps({"type": "BinaryRequest", "name": "java", "binproviders": "provider", "min_version": "11.0.0"}))',
             ],
         )
         + "\n",
     )
     _write(
-        plugins_root / "provider" / "on_Binary__10_provider_install.py",
+        plugins_root / "provider" / "on_BinaryRequest__10_provider_install.py",
         "\n".join(
             [
                 "import argparse",
@@ -227,17 +229,17 @@ def test_binary_installed_event_preserves_child_provider_metadata(tmp_path: Path
     plugins_root = tmp_path / "plugins"
 
     _write(
-        plugins_root / "producer" / "on_Crawl__00_emit.py",
+        plugins_root / "producer" / "on_Install__00_emit.py",
         "\n".join(
             [
                 "import json",
-                'print(json.dumps({"type": "Binary", "name": "demo", "binproviders": "provider"}))',
+                'print(json.dumps({"type": "BinaryRequest", "name": "demo", "binproviders": "provider"}))',
             ],
         )
         + "\n",
     )
     _write(
-        plugins_root / "provider" / "on_Binary__10_provider_install.py",
+        plugins_root / "provider" / "on_BinaryRequest__10_provider_install.py",
         "\n".join(
             [
                 "import argparse",
@@ -261,12 +263,12 @@ def test_binary_installed_event_preserves_child_provider_metadata(tmp_path: Path
 
     plugins = discover_plugins(plugins_root)
     bus = EventBus(name="binary_installed_metadata_test")
-    installed_events: list[BinaryInstalledEvent] = []
+    installed_events: list[BinaryEvent] = []
 
-    async def on_installed(event: BinaryInstalledEvent) -> None:
+    async def on_installed(event: BinaryEvent) -> None:
         installed_events.append(event)
 
-    bus.on(BinaryInstalledEvent, on_installed)
+    bus.on(BinaryEvent, on_installed)
 
     _run_download(
         "https://example.com",
@@ -289,7 +291,7 @@ def test_binary_installed_event_uses_machine_config_seeded_from_persistent_confi
 
     set_config(None, MERCURY_BINARY="/opt/homebrew/bin/postlight-parser")
 
-    async def run() -> list[BinaryInstalledEvent]:
+    async def run() -> list[BinaryEvent]:
         bus = create_bus(total_timeout=10.0)
         machine = MachineService(bus)
         BinaryService(
@@ -299,18 +301,18 @@ def test_binary_installed_event_uses_machine_config_seeded_from_persistent_confi
             auto_install=True,
         )
 
-        installed_events: list[BinaryInstalledEvent] = []
+        installed_events: list[BinaryEvent] = []
 
-        async def on_installed(event: BinaryInstalledEvent) -> None:
+        async def on_installed(event: BinaryEvent) -> None:
             installed_events.append(event)
 
-        bus.on(BinaryInstalledEvent, on_installed)
+        bus.on(BinaryEvent, on_installed)
         try:
             await bus.emit(
-                BinaryEvent(
+                BinaryRequestEvent(
                     name="postlight-parser",
                     plugin_name="mercury",
-                    hook_name="on_Crawl__40_mercury_install.finite.bg",
+                    hook_name="on_Install__40_mercury.finite.bg",
                     output_dir=".",
                     binproviders="env",
                     overrides={"env": {"abspath": "/opt/homebrew/bin/postlight-parser"}},
@@ -327,7 +329,7 @@ def test_binary_installed_event_uses_machine_config_seeded_from_persistent_confi
 
 
 def test_binary_installed_event_resolves_config_backed_command_name() -> None:
-    async def run() -> list[BinaryInstalledEvent]:
+    async def run() -> list[BinaryEvent]:
         bus = create_bus(total_timeout=10.0)
         machine = MachineService(bus, initial_config={"DEMO_BINARY": "python3"})
         BinaryService(
@@ -344,18 +346,18 @@ def test_binary_installed_event_resolves_config_backed_command_name() -> None:
             auto_install=True,
         )
 
-        installed_events: list[BinaryInstalledEvent] = []
+        installed_events: list[BinaryEvent] = []
 
-        async def on_installed(event: BinaryInstalledEvent) -> None:
+        async def on_installed(event: BinaryEvent) -> None:
             installed_events.append(event)
 
-        bus.on(BinaryInstalledEvent, on_installed)
+        bus.on(BinaryEvent, on_installed)
         try:
             await bus.emit(
-                BinaryEvent(
+                BinaryRequestEvent(
                     name="python3",
                     plugin_name="demo",
-                    hook_name="on_Crawl__00_demo_install",
+                    hook_name="on_Install__00_demo",
                     output_dir=".",
                     binproviders="env",
                 ),
@@ -368,9 +370,140 @@ def test_binary_installed_event_resolves_config_backed_command_name() -> None:
     assert demo_events
     assert Path(str(demo_events[-1].abspath)).is_absolute()
     assert Path(str(demo_events[-1].abspath)).name.startswith("python")
-    assert demo_events[-1].abspath != "python3"
+
+
+def test_binary_installed_event_probes_version_for_config_backed_absolute_path(tmp_path: Path) -> None:
+    binary_path = tmp_path / "fake-chromium"
+    binary_path.write_text("#!/bin/sh\necho 'Chromium 123.4.5'\n")
+    binary_path.chmod(0o755)
+
+    async def run() -> list[BinaryEvent]:
+        bus = create_bus(total_timeout=10.0)
+        machine = MachineService(bus, initial_config={"CHROME_BINARY": str(binary_path)})
+        BinaryService(
+            bus,
+            machine=machine,
+            plugins={
+                "chrome": Plugin(
+                    name="chrome",
+                    path=Path("."),
+                    hooks=[],
+                    config_schema={"CHROME_BINARY": {"type": "string", "default": "chromium"}},
+                ),
+            },
+            auto_install=True,
+        )
+
+        installed_events: list[BinaryEvent] = []
+
+        async def on_installed(event: BinaryEvent) -> None:
+            installed_events.append(event)
+
+        bus.on(BinaryEvent, on_installed)
+        try:
+            await bus.emit(
+                BinaryRequestEvent(
+                    name="chromium",
+                    plugin_name="chrome",
+                    hook_name="on_Install__70_chrome.finite.bg",
+                    output_dir=".",
+                    binproviders="puppeteer",
+                ),
+            )
+            return installed_events
+        finally:
+            await bus.stop()
+
+    demo_events = [event for event in asyncio.run(run()) if event.name == "chromium"]
+    assert demo_events
+    assert demo_events[-1].abspath == str(binary_path)
+    assert demo_events[-1].version == "123.4.5"
     assert demo_events[-1].binprovider == "env"
-    assert demo_events[-1].version
+    assert demo_events[-1].abspath != "python3"
+
+
+def test_binary_installed_event_infers_provider_from_config_backed_managed_path(tmp_path: Path) -> None:
+    npm_binary_path = tmp_path / "lib" / "npm" / "node_modules" / ".bin" / "postlight-parser"
+    npm_binary_path.parent.mkdir(parents=True, exist_ok=True)
+    npm_package_dir = tmp_path / "lib" / "npm" / "node_modules" / "@postlight" / "parser"
+    npm_package_dir.mkdir(parents=True, exist_ok=True)
+    (npm_package_dir / "package.json").write_text(json.dumps({"name": "@postlight/parser", "version": "2.2.3"}))
+    npm_cli = npm_package_dir / "cli.js"
+    npm_cli.write_text("#!/usr/bin/env node\nconsole.log('parser')\n")
+    npm_cli.chmod(0o755)
+    npm_binary_path.symlink_to(Path("..") / "@postlight" / "parser" / "cli.js")
+
+    pip_binary_path = tmp_path / "lib" / "pip" / "venv" / "bin" / "opendataloader-pdf"
+    pip_binary_path.parent.mkdir(parents=True, exist_ok=True)
+    pip_binary_path.write_text("#!/bin/sh\necho '2.0.2'\n")
+    pip_binary_path.chmod(0o755)
+
+    async def run() -> list[BinaryEvent]:
+        bus = create_bus(total_timeout=10.0)
+        machine = MachineService(
+            bus,
+            initial_config={
+                "MERCURY_BINARY": str(npm_binary_path),
+                "OPENDATALOADER_BINARY": str(pip_binary_path),
+            },
+        )
+        BinaryService(
+            bus,
+            machine=machine,
+            plugins={
+                "mercury": Plugin(
+                    name="mercury",
+                    path=Path("."),
+                    hooks=[],
+                    config_schema={"MERCURY_BINARY": {"type": "string", "default": "postlight-parser"}},
+                ),
+                "opendataloader": Plugin(
+                    name="opendataloader",
+                    path=Path("."),
+                    hooks=[],
+                    config_schema={"OPENDATALOADER_BINARY": {"type": "string", "default": "opendataloader-pdf"}},
+                ),
+            },
+            auto_install=True,
+        )
+
+        installed_events: list[BinaryEvent] = []
+
+        async def on_installed(event: BinaryEvent) -> None:
+            installed_events.append(event)
+
+        bus.on(BinaryEvent, on_installed)
+        try:
+            await bus.emit(
+                BinaryRequestEvent(
+                    name="postlight-parser",
+                    plugin_name="mercury",
+                    hook_name="on_Install__40_mercury.finite.bg",
+                    output_dir=".",
+                    binproviders="npm,env",
+                ),
+            )
+            await bus.emit(
+                BinaryRequestEvent(
+                    name="opendataloader-pdf",
+                    plugin_name="opendataloader",
+                    hook_name="on_Install__42_opendataloader.finite.bg",
+                    output_dir=".",
+                    binproviders="env,pip",
+                ),
+            )
+            return installed_events
+        finally:
+            await bus.stop()
+
+    events = asyncio.run(run())
+    by_name = {event.name: event for event in events}
+    assert by_name["postlight-parser"].abspath == str(npm_binary_path)
+    assert by_name["postlight-parser"].version == "2.2.3"
+    assert by_name["postlight-parser"].binprovider == "npm"
+    assert by_name["opendataloader-pdf"].abspath == str(pip_binary_path)
+    assert by_name["opendataloader-pdf"].version == "2.0.2"
+    assert by_name["opendataloader-pdf"].binprovider == "pip"
 
 
 def test_binary_event_uses_cached_config_binary_before_provider_hooks(tmp_path: Path) -> None:
@@ -381,17 +514,17 @@ def test_binary_event_uses_cached_config_binary_before_provider_hooks(tmp_path: 
     cached_binary.chmod(0o755)
 
     _write(
-        plugins_root / "producer" / "on_Crawl__00_emit.py",
+        plugins_root / "producer" / "on_Install__00_emit.py",
         "\n".join(
             [
                 "import json",
-                'print(json.dumps({"type": "Binary", "name": "demo-tool", "binproviders": "provider,env"}))',
+                'print(json.dumps({"type": "BinaryRequest", "name": "demo-tool", "binproviders": "provider,env"}))',
             ],
         )
         + "\n",
     )
     _write(
-        plugins_root / "env" / "on_Binary__00_env_discover.py",
+        plugins_root / "env" / "on_BinaryRequest__00_env_discover.py",
         "\n".join(
             [
                 "import json",
@@ -401,7 +534,7 @@ def test_binary_event_uses_cached_config_binary_before_provider_hooks(tmp_path: 
         + "\n",
     )
     _write(
-        plugins_root / "provider" / "on_Binary__10_provider_install.py",
+        plugins_root / "provider" / "on_BinaryRequest__10_provider_install.py",
         "\n".join(
             [
                 "import argparse",
@@ -426,12 +559,12 @@ def test_binary_event_uses_cached_config_binary_before_provider_hooks(tmp_path: 
     bus = create_bus(total_timeout=60.0)
     machine = MachineService(bus, initial_config={"DEMO_TOOL_BINARY": str(cached_binary)})
     BinaryService(bus, machine=machine, plugins=plugins, auto_install=True)
-    installed_events: list[BinaryInstalledEvent] = []
+    installed_events: list[BinaryEvent] = []
 
-    async def on_installed(event: BinaryInstalledEvent) -> None:
+    async def on_installed(event: BinaryEvent) -> None:
         installed_events.append(event)
 
-    bus.on(BinaryInstalledEvent, on_installed)
+    bus.on(BinaryEvent, on_installed)
     try:
         _run_download("https://example.com", plugins, tmp_path / "run", auto_install=True, bus=bus)
     finally:
@@ -453,17 +586,17 @@ def test_binary_event_uses_lib_bin_binary_before_provider_hooks(tmp_path: Path) 
     cached_binary.chmod(0o755)
 
     _write(
-        plugins_root / "producer" / "on_Crawl__00_emit.py",
+        plugins_root / "producer" / "on_Install__00_emit.py",
         "\n".join(
             [
                 "import json",
-                'print(json.dumps({"type": "Binary", "name": "demo-tool", "binproviders": "provider"}))',
+                'print(json.dumps({"type": "BinaryRequest", "name": "demo-tool", "binproviders": "provider"}))',
             ],
         )
         + "\n",
     )
     _write(
-        plugins_root / "provider" / "on_Binary__10_provider_install.py",
+        plugins_root / "provider" / "on_BinaryRequest__10_provider_install.py",
         "\n".join(
             [
                 "from pathlib import Path",
@@ -475,12 +608,12 @@ def test_binary_event_uses_lib_bin_binary_before_provider_hooks(tmp_path: Path) 
 
     plugins = discover_plugins(plugins_root)
     bus = create_bus(total_timeout=60.0)
-    installed_events: list[BinaryInstalledEvent] = []
+    installed_events: list[BinaryEvent] = []
 
-    async def on_installed(event: BinaryInstalledEvent) -> None:
+    async def on_installed(event: BinaryEvent) -> None:
         installed_events.append(event)
 
-    bus.on(BinaryInstalledEvent, on_installed)
+    bus.on(BinaryEvent, on_installed)
     try:
         _run_download(
             "https://example.com",
@@ -514,7 +647,7 @@ def test_binary_installed_event_updates_lib_bin_symlink(tmp_path: Path) -> None:
 
         try:
             await bus.emit(
-                BinaryInstalledEvent(
+                BinaryEvent(
                     name="demo",
                     plugin_name="demo",
                     hook_name="install",
@@ -526,7 +659,7 @@ def test_binary_installed_event_updates_lib_bin_symlink(tmp_path: Path) -> None:
             assert link_path.resolve() == first_target.resolve()
 
             await bus.emit(
-                BinaryInstalledEvent(
+                BinaryEvent(
                     name="demo",
                     plugin_name="demo",
                     hook_name="install",
@@ -605,11 +738,11 @@ def test_download_sets_plugin_specific_binary_env_from_binary_default(tmp_path: 
         + "\n",
     )
     _write(
-        plugins_root / "demo" / "on_Crawl__00_emit.py",
+        plugins_root / "demo" / "on_Install__00_emit.py",
         "\n".join(
             [
                 "import json",
-                'print(json.dumps({"type": "Binary", "name": "demo-tool", "binproviders": "provider"}))',
+                'print(json.dumps({"type": "BinaryRequest", "name": "demo-tool", "binproviders": "provider"}))',
             ],
         )
         + "\n",
@@ -633,7 +766,7 @@ def test_download_sets_plugin_specific_binary_env_from_binary_default(tmp_path: 
         + "\n",
     )
     _write(
-        plugins_root / "provider" / "on_Binary__10_provider_install.py",
+        plugins_root / "provider" / "on_BinaryRequest__10_provider_install.py",
         "\n".join(
             [
                 "import argparse",
@@ -669,18 +802,18 @@ def test_download_applies_side_effects_from_completed_background_hooks(tmp_path:
     plugins_root = tmp_path / "plugins"
 
     _write(
-        plugins_root / "producer" / "on_Crawl__00_emit.bg.py",
+        plugins_root / "producer" / "on_Install__00_emit.finite.bg.py",
         "\n".join(
             [
                 "import json",
-                'print(json.dumps({"type": "Binary", "name": "demo", "binproviders": "provider"}), flush=True)',
+                'print(json.dumps({"type": "BinaryRequest", "name": "demo", "binproviders": "provider"}), flush=True)',
                 'print(json.dumps({"type": "Machine", "config": {"DEMO_FLAG": "ready"}}), flush=True)',
             ],
         )
         + "\n",
     )
     _write(
-        plugins_root / "delay" / "on_Crawl__01_wait.py",
+        plugins_root / "delay" / "on_Install__01_wait.py",
         "\n".join(
             [
                 "import time",
@@ -690,7 +823,7 @@ def test_download_applies_side_effects_from_completed_background_hooks(tmp_path:
         + "\n",
     )
     _write(
-        plugins_root / "provider" / "on_Binary__10_provider_install.py",
+        plugins_root / "provider" / "on_BinaryRequest__10_provider_install.py",
         "\n".join(
             [
                 "import json",
@@ -742,7 +875,7 @@ def test_download_finalizes_background_hooks_after_sigterm(tmp_path: Path) -> No
     plugins_root = tmp_path / "plugins"
 
     _write(
-        plugins_root / "bgdemo" / "on_Snapshot__05_wait.bg.py",
+        plugins_root / "bgdemo" / "on_Snapshot__05_wait.daemon.bg.py",
         "\n".join(
             [
                 "import json",
@@ -775,7 +908,7 @@ def test_download_finalizes_background_hooks_after_sigterm(tmp_path: Path) -> No
 
     plugins = discover_plugins(plugins_root)
     all_results = _run_download("https://example.com", plugins, tmp_path / "run", auto_install=True)
-    results = [result for result in all_results if result.plugin == "bgdemo" and result.hook_name == "on_Snapshot__05_wait.bg"]
+    results = [result for result in all_results if result.plugin == "bgdemo" and result.hook_name == "on_Snapshot__05_wait.daemon.bg"]
 
     # Only the hook's own SIGTERM handler emits the ArchiveResult — no synthetic records.
     assert len(results) == 1
@@ -787,7 +920,7 @@ def test_download_finalizes_background_hooks_after_sigterm(tmp_path: Path) -> No
     final_process = next(
         line
         for line in reversed(index_lines)
-        if line.get("type") == "Process" and "on_Snapshot__05_wait.bg.py" in " ".join(line.get("cmd", []))
+        if line.get("type") == "Process" and "on_Snapshot__05_wait.daemon.bg.py" in " ".join(line.get("cmd", []))
     )
 
     assert final_result["status"] == "succeeded"
@@ -918,19 +1051,19 @@ def test_binary_provider_runs_keep_separate_stderr_logs(tmp_path: Path) -> None:
     plugins_root = tmp_path / "plugins"
 
     _write(
-        plugins_root / "producer" / "on_Crawl__00_emit.py",
+        plugins_root / "producer" / "on_Install__00_emit.py",
         "\n".join(
             [
                 "import json",
-                'print(json.dumps({"type": "Binary", "name": "alpha", "binproviders": "provider"}), flush=True)',
-                'print(json.dumps({"type": "Binary", "name": "beta", "binproviders": "provider"}), flush=True)',
+                'print(json.dumps({"type": "BinaryRequest", "name": "alpha", "binproviders": "provider"}), flush=True)',
+                'print(json.dumps({"type": "BinaryRequest", "name": "beta", "binproviders": "provider"}), flush=True)',
             ],
         )
         + "\n",
     )
 
     _write(
-        plugins_root / "provider" / "on_Binary__10_provider_install.py",
+        plugins_root / "provider" / "on_BinaryRequest__10_provider_install.py",
         "\n".join(
             [
                 "import argparse",
@@ -963,7 +1096,7 @@ def test_binary_provider_runs_keep_separate_stderr_logs(tmp_path: Path) -> None:
     provider_processes = [
         line
         for line in index_lines
-        if line.get("type") == "Process" and "on_Binary__10_provider_install.py" in " ".join(line.get("cmd", []))
+        if line.get("type") == "Process" and "on_BinaryRequest__10_provider_install.py" in " ".join(line.get("cmd", []))
     ]
     assert len(provider_processes) == 2
     assert sorted(process["stderr"].strip() for process in provider_processes) == stderr_contents
@@ -973,7 +1106,7 @@ def test_download_applies_background_side_effects_in_hook_lifecycle_order(tmp_pa
     plugins_root = tmp_path / "plugins"
 
     _write(
-        plugins_root / "crawlbg" / "on_Crawl__90_emit.bg.py",
+        plugins_root / "crawlbg" / "on_CrawlSetup__90_emit.finite.bg.py",
         "\n".join(
             [
                 "import json",
@@ -985,7 +1118,7 @@ def test_download_applies_background_side_effects_in_hook_lifecycle_order(tmp_pa
         + "\n",
     )
     _write(
-        plugins_root / "snapshotbg" / "on_Snapshot__05_emit.bg.py",
+        plugins_root / "snapshotbg" / "on_Snapshot__05_emit.finite.bg.py",
         "\n".join(
             [
                 "import json",
@@ -1248,7 +1381,7 @@ def test_cleanup_runs_after_all_hooks_not_interleaved(tmp_path: Path) -> None:
 
     # bg daemon that creates a marker file when SIGTERMed
     _write(
-        plugins_root / "bgdemo" / "on_Snapshot__05_daemon.bg.py",
+        plugins_root / "bgdemo" / "on_Snapshot__05_wait.daemon.bg.py",
         "\n".join(
             [
                 "import json",
@@ -1308,7 +1441,7 @@ def test_bg_daemon_survives_past_timeout(tmp_path: Path) -> None:
 
     # bg daemon with a very short timeout — writes a marker every 0.1s
     _write(
-        plugins_root / "bgdemo" / "on_Snapshot__05_daemon.bg.py",
+        plugins_root / "bgdemo" / "on_Snapshot__05_wait.daemon.bg.py",
         "\n".join(
             [
                 "import json",
@@ -1373,7 +1506,7 @@ def test_crawl_bg_daemon_does_not_block_snapshot_phase(tmp_path: Path) -> None:
     cleaned_marker = tmp_path / "run" / "crawlbg" / "cleaned.marker"
 
     _write(
-        plugins_root / "crawlbg" / "on_Crawl__05_daemon.bg.py",
+        plugins_root / "crawlbg" / "on_CrawlSetup__05_wait.daemon.bg.py",
         "\n".join(
             [
                 "import signal",
@@ -1418,6 +1551,52 @@ def test_crawl_bg_daemon_does_not_block_snapshot_phase(tmp_path: Path) -> None:
     assert cleaned_marker.exists(), "Crawl cleanup never SIGTERMed the crawl-scoped bg daemon"
 
 
+def test_crawl_setup_only_does_not_wait_for_crawl_daemons(tmp_path: Path) -> None:
+    """crawl_setup_only should leave crawl daemons running and return immediately."""
+    plugins_root = tmp_path / "plugins"
+    alive_marker = tmp_path / "run" / "crawlbg" / "alive.marker"
+
+    _write(
+        plugins_root / "crawlbg" / "on_CrawlSetup__05_wait.daemon.bg.py",
+        "\n".join(
+            [
+                "import signal",
+                "import sys",
+                "import time",
+                "from pathlib import Path",
+                "",
+                "def handle_sigterm(signum, frame):",
+                "    sys.exit(0)",
+                "",
+                "signal.signal(signal.SIGTERM, handle_sigterm)",
+                'print("[*] crawl daemon ready", flush=True)',
+                "while True:",
+                f"    Path({str(alive_marker)!r}).write_text(str(time.time()))",
+                "    time.sleep(0.05)",
+            ],
+        )
+        + "\n",
+    )
+
+    plugins = discover_plugins(plugins_root)
+    snapshot = Snapshot(url="https://example.com", id="crawl-setup-only")
+    results = _run_download(
+        "https://example.com",
+        plugins,
+        tmp_path / "run",
+        auto_install=True,
+        snapshot=snapshot,
+        crawl_setup_only=True,
+    )
+
+    assert results == []
+    for _ in range(20):
+        if alive_marker.exists():
+            break
+        time.sleep(0.05)
+    assert alive_marker.exists(), "crawl_setup_only blocked until the daemon exited instead of returning once setup finished"
+
+
 def test_explicit_depth_one_snapshot_runs_snapshot_hooks(tmp_path: Path) -> None:
     """Explicit child snapshot runs should still execute snapshot hooks."""
     plugins_root = tmp_path / "plugins"
@@ -1450,22 +1629,22 @@ def test_explicit_depth_one_snapshot_runs_snapshot_hooks(tmp_path: Path) -> None
 
 
 def test_binary_installed_events(tmp_path: Path) -> None:
-    """Verify BinaryInstalledEvent fires for both pre-existing and provider-installed binaries.
+    """Verify BinaryEvent fires for both pre-existing and provider-installed binaries.
 
     Sets up two binaries in the same run:
     - "preloaded": hook outputs Binary with abspath already set (detected on disk)
     - "installme": hook outputs Binary without abspath (needs provider to install)
 
-    Both should emit BinaryInstalledEvent with the resolved abspath.
+    Both should emit BinaryEvent with the resolved abspath.
     """
     plugins_root = tmp_path / "plugins"
     captured: list[tuple[str, str]] = []  # (name, abspath)
     bus = create_bus(total_timeout=60.0)
 
-    async def on_installed(e: BinaryInstalledEvent) -> None:
+    async def on_installed(e: BinaryEvent) -> None:
         captured.append((e.name, e.abspath))
 
-    bus.on(BinaryInstalledEvent, on_installed)
+    bus.on(BinaryEvent, on_installed)
 
     # Hook that emits two Binary requests: one pre-existing, one needing install
     preloaded_path = str(tmp_path / "bin" / "preloaded")
@@ -1473,14 +1652,14 @@ def test_binary_installed_events(tmp_path: Path) -> None:
     Path(preloaded_path).write_text("stub")
 
     _write(
-        plugins_root / "emitter" / "on_Crawl__00_emit.py",
+        plugins_root / "emitter" / "on_Install__00_emit.py",
         "\n".join(
             [
                 "import json",
                 # Pre-existing binary — abspath already known
                 f'print(json.dumps({{"type": "Binary", "name": "preloaded", "abspath": {preloaded_path!r}}}))',
                 # Binary that needs provider installation
-                'print(json.dumps({"type": "Binary", "name": "installme", "binproviders": "provider"}))',
+                'print(json.dumps({"type": "BinaryRequest", "name": "installme", "binproviders": "provider"}))',
             ],
         )
         + "\n",
@@ -1488,7 +1667,7 @@ def test_binary_installed_events(tmp_path: Path) -> None:
 
     # Provider hook that "installs" the binary
     _write(
-        plugins_root / "provider" / "on_Binary__10_provider_install.py",
+        plugins_root / "provider" / "on_BinaryRequest__10_provider_install.py",
         "\n".join(
             [
                 "import json",
@@ -1537,17 +1716,15 @@ def test_binary_installed_events(tmp_path: Path) -> None:
     plugins = discover_plugins(plugins_root)
     results = _run_download("https://example.com", plugins, tmp_path / "run", auto_install=True, bus=bus)
 
-    # --- Verify BinaryInstalledEvent for both binaries ---
+    # --- Verify BinaryEvent for both binaries ---
 
     preloaded_events = [(n, p) for n, p in captured if n == "preloaded"]
     installme_events = [(n, p) for n, p in captured if n == "installme"]
 
-    assert len(preloaded_events) == 1, f"Expected BinaryInstalledEvent for preloaded, got: {preloaded_events}"
-    assert preloaded_events[0][1] == preloaded_path, (
-        f"BinaryInstalledEvent abspath mismatch: {preloaded_events[0][1]!r} != {preloaded_path!r}"
-    )
+    assert len(preloaded_events) == 1, f"Expected BinaryEvent for preloaded, got: {preloaded_events}"
+    assert preloaded_events[0][1] == preloaded_path, f"BinaryEvent abspath mismatch: {preloaded_events[0][1]!r} != {preloaded_path!r}"
 
-    assert len(installme_events) == 1, f"Expected BinaryInstalledEvent for installme, got: {installme_events}"
+    assert len(installme_events) == 1, f"Expected BinaryEvent for installme, got: {installme_events}"
 
     # --- Verify config propagation (both binaries visible to subsequent hooks) ---
 
@@ -1650,7 +1827,7 @@ def test_download_dry_run_sets_env_and_skips_snapshot_processes(tmp_path: Path) 
     plugins_root = tmp_path / "plugins"
 
     _write(
-        plugins_root / "crawlprobe" / "on_Crawl__00_probe.py",
+        plugins_root / "crawlprobe" / "on_Install__00_probe.py",
         "\n".join(
             [
                 "import os",
@@ -1686,7 +1863,7 @@ def test_install_plugins_dry_run_sets_env_for_install_hooks(tmp_path: Path) -> N
     plugins_root = tmp_path / "plugins"
 
     _write(
-        plugins_root / "installer" / "on_Crawl__00_install_probe.py",
+        plugins_root / "installer" / "on_Install__00_probe.py",
         "\n".join(
             [
                 "import os",

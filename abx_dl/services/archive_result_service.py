@@ -32,7 +32,8 @@ class ArchiveResultService(BaseService):
          ``succeeded`` result.
        - If exit_code == 0 and no content files → synthetic ``noresult`` result.
 
-       Crawl and Binary hooks are excluded — they don't produce ArchiveResults.
+       Install, CrawlSetup, and BinaryRequest hooks are excluded — they don't
+       produce ArchiveResults.
        Uses ``bus.find()`` to check whether an ArchiveResultEvent was already
        emitted for this hook, avoiding the need for manual pending-state tracking.
     """

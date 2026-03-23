@@ -2,25 +2,30 @@
 Event-driven orchestrator for abx-dl.
 
 This is the main entry point for downloading a URL. It wires up all services
-on a caller-provided abxbus EventBus and emits a single CrawlEvent to kick off
+on a caller-provided abxbus EventBus and emits the phase root events that drive
 the entire lifecycle. Everything else is driven by services reacting to events.
 
 Full event tree for a typical run::
 
-    CrawlEvent                                  # emitted here by download()
+    InstallEvent                                # emitted here first by download()
     │
-    ├── CrawlSetupEvent                         # on_Crawl hooks run here
-    │   ├── ProcessEvent  (bg: wget_install)
-    │   ├── ProcessEvent  (bg: chrome_install)
-    │   ├── ProcessEvent  (bg: chrome_launch)
-    │   ├── ProcessEvent  (FG: chrome_wait)
+    ├── ProcessEvent  (on_Install hooks)
     │   │   ├── ProcessStdoutEvent
-    │   │   │   │  (side-effect chain from chrome_install):
-    │   │   │   │  BinaryEvent → provider hooks → BinaryInstalledEvent
+    │   │   │   ├── BinaryRequestEvent → provider hooks → BinaryEvent
+    │   │   │   └── MachineEvent
     │   │   └── ProcessCompletedEvent
     │   └── ...
     │
-    ├── CrawlStartEvent                # triggers snapshot phase
+    CrawlEvent                                  # emitted after install phase succeeds
+    │
+    ├── CrawlSetupEvent                         # on_CrawlSetup hooks run here
+    │   ├── ProcessEvent  (bg: chrome_launch)
+    │   ├── ProcessEvent  (FG: chrome_wait)
+    │   │   ├── ProcessStdoutEvent
+    │   │   └── ProcessCompletedEvent
+    │   └── ...
+    │
+    ├── CrawlStartEvent                         # triggers snapshot phase
     │   └── SnapshotEvent (depth=0)
     │       ├── ProcessEvent  (on_Snapshot hooks)
     │       │   ├── ProcessStdoutEvent
@@ -39,8 +44,9 @@ Full event tree for a typical run::
 
 Result collection:
 - ArchiveResultEvents are only emitted during the snapshot phase (under
-  CrawlStartEvent → SnapshotEvent). CrawlSetupEvent only produces Binary,
-  Machine, and Process events — never ArchiveResults or Snapshots.
+  CrawlStartEvent → SnapshotEvent). InstallEvent and CrawlSetupEvent only
+  produce BinaryRequest, Binary, Machine, and Process events — never
+  ArchiveResults or Snapshots.
 - ArchiveResultService emits ArchiveResultEvents in two cases: directly from
   hook JSONL output (inline), or as a synthetic fallback on ProcessCompletedEvent
   when the hook didn't report one itself (failed, or succeeded with output files).
@@ -62,8 +68,8 @@ Key abxbus concepts used:
 - **Queue-jump** (``await bus.emit(...)``): the emitted event and ALL its
   descendants complete synchronously before the await returns. This is how
   config propagation works: hook outputs Binary JSONL → ProcessService emits
-  ProcessStdoutEvent → BinaryService emits BinaryEvent → provider
-  hooks install it → MachineEvent updates config → all before the next
+  ProcessStdoutEvent → BinaryService emits BinaryRequestEvent → provider
+  hooks resolve/install it → BinaryEvent / MachineEvent update config → all before the next
   stdout line is read.
 
 - **Fire-and-forget** (``bus.emit(...)`` without await): the event becomes a
@@ -77,23 +83,25 @@ Key abxbus concepts used:
 
 import sys
 from collections.abc import Sequence
+from contextlib import nullcontext
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
 
-from abxbus import EventBus, EventBusMiddleware, EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode
+from abxbus import BaseEvent, EventBus, EventBusMiddleware, EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode
 
 from .config import ensure_default_persona_dir
 from .events import (
     ArchiveResultEvent,
     CrawlCleanupEvent,
     CrawlCompletedEvent,
+    CrawlEvent,
     CrawlSetupEvent,
-    CrawlStartEvent,
+    InstallEvent,
     SnapshotEvent,
     slow_warning_timeout,
 )
-from .models import INSTALL_URL, ArchiveResult, Snapshot, write_jsonl
+from .models import ArchiveResult, Snapshot, write_jsonl
 from .models import Hook, Plugin, discover_plugins, filter_plugins
 
 
@@ -189,8 +197,7 @@ def prepare_install_plugins(
                 "hooks": [
                     hook
                     for hook in plugin.hooks
-                    if "Binary" in hook.name
-                    or (name.lower() in visible_plugins and "Crawl" in hook.name and "install" in hook.name.lower())
+                    if hook.event == "BinaryRequest" or (name.lower() in visible_plugins and hook.event == "Install")
                 ],
             },
         )
@@ -209,7 +216,7 @@ async def install_plugins(
     bus: EventBus | None = None,
     dry_run: bool = False,
 ) -> list[ArchiveResult]:
-    """Run the abx-dl install flow on an existing bus or a temporary one."""
+    """Run the install phase directly on an existing bus or a temporary one."""
     all_plugins = plugins or discover_plugins()
     selected = prepare_install_plugins(all_plugins, plugin_names=plugin_names)
     if not selected:
@@ -219,29 +226,81 @@ async def install_plugins(
     if dry_run:
         merged_config["DRY_RUN"] = True
 
-    if output_dir is not None:
-        return await download(
-            INSTALL_URL,
-            selected,
-            output_dir,
-            auto_install=auto_install,
-            emit_jsonl=emit_jsonl,
-            config_overrides=merged_config or None,
-            bus=bus,
-            dry_run=dry_run,
-        )
+    install_output_dir = output_dir
+    temp_dir_ctx = nullcontext(output_dir) if output_dir is not None else TemporaryDirectory(prefix="abx-dl-install-")
 
-    with TemporaryDirectory(prefix="abx-dl-install-") as temp_dir:
-        return await download(
-            INSTALL_URL,
-            selected,
-            Path(temp_dir),
+    with temp_dir_ctx as temp_dir:
+        install_output_dir = install_output_dir or Path(temp_dir)
+        install_output_dir.mkdir(parents=True, exist_ok=True)
+        stderr_is_tty = getattr(sys.stderr, "isatty", lambda: False)()
+        owns_bus = bus is None
+        active_bus = bus or create_bus(total_timeout=60.0)
+        results: list[ArchiveResult] = []
+
+        async def on_ArchiveResultEvent(event: ArchiveResultEvent) -> None:
+            results.append(
+                ArchiveResult(
+                    snapshot_id=event.snapshot_id,
+                    plugin=event.plugin,
+                    id=event.id,
+                    hook_name=event.hook_name,
+                    status=event.status,
+                    process_id=event.process_id or None,
+                    output_str=event.output_str,
+                    output_json=event.output_json,
+                    output_files=event.output_files,
+                    start_ts=event.start_ts or None,
+                    end_ts=event.end_ts or None,
+                    error=event.error or None,
+                ),
+            )
+
+        collector = active_bus.on(ArchiveResultEvent, on_ArchiveResultEvent)
+        from .services import CrawlService
+
+        shared = _get_or_create_bus_services(
+            active_bus,
+            plugins=selected,
+            config_overrides=merged_config or None,
             auto_install=auto_install,
             emit_jsonl=emit_jsonl,
-            config_overrides=merged_config or None,
-            bus=bus,
-            dry_run=dry_run,
+            stderr_is_tty=bool(stderr_is_tty),
         )
+        snapshot = Snapshot(url="", title="install")
+        install_hooks = [(plugin, hook) for plugin in selected.values() for hook in plugin.get_install_hooks()]
+        install_hooks.sort(key=lambda item: item[1].sort_key)
+        install_phase_timeout = compute_phase_timeout(install_hooks, merged_config or None)
+        run_service = CrawlService(
+            active_bus,
+            url="",
+            snapshot=snapshot,
+            output_dir=install_output_dir,
+            machine=shared.machine,
+            process=shared.process,
+            install_hooks=install_hooks,
+            crawl_setup_hooks=[],
+            crawl_only=True,
+            install_phase_timeout=install_phase_timeout,
+            crawl_setup_phase_timeout=60.0,
+        )
+        try:
+            await active_bus.emit(
+                InstallEvent(
+                    url="",
+                    snapshot_id=snapshot.id,
+                    output_dir=str(install_output_dir),
+                    event_timeout=install_phase_timeout,
+                    event_handler_slow_timeout=slow_warning_timeout(install_phase_timeout),
+                ),
+            )
+            await shared.process.wait_for_background_monitors(include_daemons=False)
+            await shared.process.wait_for_background_monitors()
+        finally:
+            active_bus.off(ArchiveResultEvent, collector)
+            run_service.close()
+            if owns_bus:
+                await active_bus.stop()
+        return results
 
 
 def get_plugin_timeout(plugin: Plugin, config: dict[str, Any] | None = None) -> int:
@@ -303,6 +362,8 @@ def create_bus(
     Callers should subscribe to events on the bus before passing it to
     download(). Common subscriptions::
 
+        bus.on(BinaryRequestEvent, my_request_handler)
+        bus.on(BinaryEvent, my_binary_handler)
         bus.on(ProcessCompletedEvent, my_process_handler)
         bus.on(ArchiveResultEvent, my_result_handler)
 
@@ -363,7 +424,7 @@ async def download(
     1. Discovers and sorts hooks from selected plugins
     2. Wires up all services on the bus
     3. Registers a bus handler for ArchiveResultEvents to collect results
-    4. Emits CrawlEvent (which cascades through the entire lifecycle)
+    4. Emits InstallEvent, then CrawlEvent (unless phase flags request a subset)
     5. Returns all ArchiveResult records collected from ArchiveResultEvents
 
     Args:
@@ -373,7 +434,7 @@ async def download(
         selected_plugins: If set, only use these plugins (with dependency resolution).
         config_overrides: Extra config values (e.g. TIMEOUT) merged into shared_config.
         auto_install: Whether to auto-install missing binaries.
-        crawl_only: If True, skip the snapshot phase (only run on_Crawl hooks).
+        crawl_only: If True, stop after install + crawl-setup and skip SnapshotEvent.
         bus: Pre-configured EventBus. Callers subscribe to events (e.g.
             ProcessCompletedEvent, ArchiveResultEvent) before calling download().
             If None, a default bus is created via create_bus().
@@ -398,7 +459,8 @@ async def download(
     if emit_jsonl is None:
         emit_jsonl = not stdout_is_tty
 
-    # Filter plugins (no binary pre-check — on_Crawl hooks handle installation)
+    # Filter plugins (no binary pre-check — on_Install hooks request binaries,
+    # then on_BinaryRequest hooks resolve/install them)
     if selected_plugins:
         plugins = filter_plugins(plugins, selected_plugins)
 
@@ -408,20 +470,25 @@ async def download(
 
     # Collect and sort hooks by (order, name) so execution order matches
     # the numeric prefix in hook filenames (e.g. __10, __41, __70, __90, __91)
-    crawl_hooks: list[tuple[Plugin, Hook]] = []
+    install_hooks: list[tuple[Plugin, Hook]] = []
+    crawl_setup_hooks: list[tuple[Plugin, Hook]] = []
     snapshot_hooks: list[tuple[Plugin, Hook]] = []
     for plugin in plugins.values():
-        for hook in plugin.get_crawl_hooks():
-            crawl_hooks.append((plugin, hook))
+        for hook in plugin.get_install_hooks():
+            install_hooks.append((plugin, hook))
+        for hook in plugin.get_crawl_setup_hooks():
+            crawl_setup_hooks.append((plugin, hook))
         for hook in plugin.get_snapshot_hooks():
             snapshot_hooks.append((plugin, hook))
-    crawl_hooks.sort(key=lambda x: x[1].sort_key)
+    install_hooks.sort(key=lambda x: x[1].sort_key)
+    crawl_setup_hooks.sort(key=lambda x: x[1].sort_key)
     snapshot_hooks.sort(key=lambda x: x[1].sort_key)
 
     # Compute per-phase timeouts from plugin-specific settings
-    crawl_phase_timeout = compute_phase_timeout(crawl_hooks, config_overrides or None)
+    install_phase_timeout = compute_phase_timeout(install_hooks, config_overrides or None)
+    crawl_setup_phase_timeout = compute_phase_timeout(crawl_setup_hooks, config_overrides or None)
     snapshot_phase_timeout = compute_phase_timeout(snapshot_hooks, config_overrides or None)
-    total_timeout = crawl_phase_timeout + snapshot_phase_timeout
+    total_timeout = install_phase_timeout + crawl_setup_phase_timeout + snapshot_phase_timeout
 
     # Create bus if caller didn't provide one
     owns_bus = bus is None
@@ -433,7 +500,7 @@ async def download(
     # Collect ArchiveResult records from the bus
     results: list[ArchiveResult] = []
 
-    tracked_events: list[CrawlStartEvent | SnapshotEvent] = []
+    tracked_events: list[BaseEvent] = []
 
     async def on_ArchiveResultEvent(event: ArchiveResultEvent) -> None:
         """Collects all ArchiveResultEvents."""
@@ -483,9 +550,12 @@ async def download(
                 snapshot=snapshot,
                 output_dir=output_dir,
                 machine=shared.machine,
-                hooks=crawl_hooks,
+                process=shared.process,
+                install_hooks=install_hooks,
+                crawl_setup_hooks=crawl_setup_hooks,
                 crawl_only=crawl_only,
-                phase_timeout=crawl_phase_timeout,
+                install_phase_timeout=install_phase_timeout,
+                crawl_setup_phase_timeout=crawl_setup_phase_timeout,
             ),
         )
     if not crawl_setup_only and not crawl_cleanup_only and not crawl_only:
@@ -505,50 +575,60 @@ async def download(
     try:
         if crawl_setup_only:
             await active_bus.emit(
+                InstallEvent(
+                    url=url,
+                    snapshot_id=snapshot.id,
+                    output_dir=str(output_dir),
+                    event_timeout=install_phase_timeout,
+                    event_handler_slow_timeout=slow_warning_timeout(install_phase_timeout),
+                ),
+            )
+            await active_bus.emit(
                 CrawlSetupEvent(
                     url=url,
                     snapshot_id=snapshot.id,
                     output_dir=str(output_dir),
-                    event_timeout=crawl_phase_timeout,
-                    event_handler_slow_timeout=slow_warning_timeout(crawl_phase_timeout),
+                    event_timeout=crawl_setup_phase_timeout,
+                    event_handler_slow_timeout=slow_warning_timeout(crawl_setup_phase_timeout),
                 ),
             )
+            await shared.process.wait_for_background_monitors(include_daemons=False)
         elif crawl_cleanup_only:
             await active_bus.emit(
                 CrawlCleanupEvent(
                     url=url,
                     snapshot_id=snapshot.id,
                     output_dir=str(output_dir),
-                    event_timeout=crawl_phase_timeout,
-                    event_handler_slow_timeout=slow_warning_timeout(crawl_phase_timeout),
+                    event_timeout=crawl_setup_phase_timeout,
+                    event_handler_slow_timeout=slow_warning_timeout(crawl_setup_phase_timeout),
                 ),
             )
             await active_bus.emit(CrawlCompletedEvent(url=url, snapshot_id=snapshot.id, output_dir=str(output_dir)))
         else:
             if not skip_crawl_setup:
                 await active_bus.emit(
-                    CrawlSetupEvent(
+                    InstallEvent(
                         url=url,
                         snapshot_id=snapshot.id,
                         output_dir=str(output_dir),
-                        event_timeout=crawl_phase_timeout,
-                        event_handler_slow_timeout=slow_warning_timeout(crawl_phase_timeout),
+                        event_timeout=install_phase_timeout,
+                        event_handler_slow_timeout=slow_warning_timeout(install_phase_timeout),
                     ),
                 )
                 await shared.process.wait_for_background_monitors(include_daemons=False)
-            if not crawl_only:
+                crawl_event = CrawlEvent(
+                    url=url,
+                    snapshot_id=snapshot.id,
+                    output_dir=str(output_dir),
+                    event_timeout=crawl_setup_phase_timeout + snapshot_phase_timeout,
+                    event_handler_slow_timeout=slow_warning_timeout(crawl_setup_phase_timeout + snapshot_phase_timeout),
+                )
+                tracked_events.append(crawl_event)
+                await active_bus.emit(crawl_event)
+            elif not crawl_only:
                 if dry_run:
                     shared.process.suspend_process_events()
                 try:
-                    crawl_start = CrawlStartEvent(
-                        url=url,
-                        snapshot_id=snapshot.id,
-                        output_dir=str(output_dir),
-                        event_timeout=snapshot_phase_timeout,
-                        event_handler_slow_timeout=slow_warning_timeout(snapshot_phase_timeout),
-                    )
-                    tracked_events.append(crawl_start)
-                    await active_bus.emit(crawl_start)
                     snapshot_event = SnapshotEvent(
                         url=url,
                         snapshot_id=snapshot.id,
@@ -563,18 +643,21 @@ async def download(
                 finally:
                     if dry_run:
                         shared.process.resume_process_events()
-            if not skip_crawl_cleanup:
+            if skip_crawl_setup and not crawl_only and not skip_crawl_cleanup:
                 await active_bus.emit(
                     CrawlCleanupEvent(
                         url=url,
                         snapshot_id=snapshot.id,
                         output_dir=str(output_dir),
-                        event_timeout=crawl_phase_timeout,
-                        event_handler_slow_timeout=slow_warning_timeout(crawl_phase_timeout),
+                        event_timeout=crawl_setup_phase_timeout,
+                        event_handler_slow_timeout=slow_warning_timeout(crawl_setup_phase_timeout),
                     ),
                 )
                 await active_bus.emit(CrawlCompletedEvent(url=url, snapshot_id=snapshot.id, output_dir=str(output_dir)))
-        await shared.process.wait_for_background_monitors()
+        if crawl_setup_only:
+            await shared.process.wait_for_background_monitors(include_daemons=False)
+        else:
+            await shared.process.wait_for_background_monitors()
     finally:
         active_bus.off(ArchiveResultEvent, collector)
         while run_services:
