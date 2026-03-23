@@ -18,6 +18,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
+from .output_files import OutputFile
+
 
 # ── Utility functions ──────────────────────────────────────────────────────
 
@@ -191,7 +193,7 @@ class ArchiveResult(BaseModel):
     process_id: str | None = None
     output_str: str = ""
     output_json: dict[str, Any] | None = None
-    output_files: list[str] = Field(default_factory=list)
+    output_files: list[OutputFile] = Field(default_factory=list)
     start_ts: str | None = None
     end_ts: str | None = None
     error: str | None = None

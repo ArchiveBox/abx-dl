@@ -1,6 +1,7 @@
 """BinaryService — resolves binary dependencies by broadcasting to provider hooks."""
 
 import json
+import os
 import shutil
 from pathlib import Path
 from typing import ClassVar
@@ -120,17 +121,36 @@ class BinaryService(BaseService):
         return matching_keys
 
     def _binary_config_keys(self, plugin_name: str, binary_name: str) -> list[str]:
-        plugin_keys = self._plugin_binary_config_keys(plugin_name, binary_name)
-        if plugin_keys:
-            return plugin_keys
-        return [_binary_env_key(binary_name)]
+        keys = [_binary_env_key(binary_name)]
+        for plugin_key in self._plugin_binary_config_keys(plugin_name, binary_name):
+            keys.insert(0, plugin_key)
+        return list(dict.fromkeys(keys))
 
-    def _get_registered_binary_path(self, plugin_name: str, binary_name: str) -> str:
+    def _iter_registered_binary_values(self, plugin_name: str, binary_name: str) -> list[str]:
+        values: list[str] = []
         for config_key in self._binary_config_keys(plugin_name, binary_name):
             value = str(self.machine.shared_config.get(config_key) or "").strip()
             if value:
-                return value
-        return ""
+                values.append(value)
+
+        candidate_dirs: list[Path] = []
+        lib_bin_dir_value = str(self.machine.shared_config.get("LIB_BIN_DIR") or "").strip()
+        if lib_bin_dir_value:
+            candidate_dirs.append(Path(lib_bin_dir_value).expanduser())
+        lib_dir_value = str(self.machine.shared_config.get("LIB_DIR") or "").strip()
+        if lib_dir_value:
+            candidate_dirs.append(Path(lib_dir_value).expanduser() / "bin")
+
+        for candidate_dir in candidate_dirs:
+            candidate = candidate_dir / binary_name
+            if candidate.exists():
+                values.append(str(candidate))
+
+        return list(dict.fromkeys(values))
+
+    def _get_registered_binary_path(self, plugin_name: str, binary_name: str) -> str:
+        values = self._iter_registered_binary_values(plugin_name, binary_name)
+        return values[0] if values else ""
 
     def _resolve_registered_binary(
         self,
@@ -143,20 +163,23 @@ class BinaryService(BaseService):
         min_version: str | None,
     ) -> tuple[str, str, str, str]:
         """Resolve a config-backed binary name/path into concrete abspath/version/provider metadata."""
+        registered_path = Path(registered_value).expanduser()
         try:
             from ..dependencies import load_binary
 
             merged_overrides = dict(overrides or {})
-            registered_path = Path(registered_value).expanduser()
+            effective_binproviders = binproviders or "env"
             if registered_path.is_absolute() or "/" in registered_value:
                 env_overrides = dict(merged_overrides.get("env", {}))
                 env_overrides["abspath"] = registered_value
                 merged_overrides["env"] = env_overrides
+                provider_order = ["env", *_ordered_binproviders(effective_binproviders)]
+                effective_binproviders = ",".join(dict.fromkeys(provider_order))
 
             binary = load_binary(
                 {
                     "name": binary_name,
-                    "binproviders": binproviders or "env",
+                    "binproviders": effective_binproviders,
                     "overrides": merged_overrides,
                     "min_version": min_version,
                 },
@@ -169,7 +192,40 @@ class BinaryService(BaseService):
                 return resolved_abspath, resolved_version, resolved_sha256, resolved_provider
         except Exception:
             pass
+        if registered_path.exists() and os.access(registered_path, os.X_OK):
+            return str(registered_path), "", "", "env"
         return "", "", "", ""
+
+    async def _emit_cached_binary_installed(self, event: BinaryEvent, *, inherited_binproviders: str) -> bool:
+        for registered_value in self._iter_registered_binary_values(event.plugin_name, event.name):
+            resolved_abspath, resolved_version, resolved_sha256, resolved_provider = self._resolve_registered_binary(
+                plugin_name=event.plugin_name,
+                binary_name=event.name,
+                registered_value=registered_value,
+                binproviders=inherited_binproviders,
+                overrides=event.overrides,
+                min_version=event.min_version,
+            )
+            if not resolved_abspath:
+                continue
+            await self._register_binary_path(event.plugin_name, event.name, resolved_abspath)
+            await self.bus.emit(
+                BinaryInstalledEvent(
+                    name=event.name,
+                    plugin_name=event.plugin_name,
+                    hook_name=event.hook_name,
+                    abspath=resolved_abspath,
+                    version=resolved_version or event.version,
+                    sha256=resolved_sha256 or event.sha256,
+                    binproviders=inherited_binproviders or event.binproviders,
+                    binprovider=resolved_provider or event.binprovider or "env",
+                    overrides=event.overrides,
+                    binary_id=event.binary_id,
+                    machine_id=event.machine_id,
+                ),
+            )
+            return True
+        return False
 
     async def _register_binary_path(self, plugin_name: str, binary_name: str, abspath: str) -> None:
         """Persist the generic and plugin-specific binary env vars for a resolved binary."""
@@ -196,14 +252,36 @@ class BinaryService(BaseService):
             if not event.name or event.abspath:
                 # Already resolved or no name — skip
                 return
-            ordered_providers = _ordered_binproviders(event.binproviders)
+            inherited_binproviders = event.binproviders
+            if not inherited_binproviders and event.binary_id:
+                ancestor_request = await self.bus.find(
+                    BinaryEvent,
+                    past=True,
+                    future=False,
+                    where=lambda candidate: (
+                        candidate.event_id != event.event_id
+                        and candidate.binary_id == event.binary_id
+                        and candidate.name == event.name
+                        and bool(candidate.binproviders)
+                    ),
+                )
+                if ancestor_request is not None:
+                    inherited_binproviders = ancestor_request.binproviders
+            existing_installed = await self.bus.find(
+                BinaryInstalledEvent,
+                child_of=event,
+                past=True,
+                future=False,
+                name=event.name,
+            )
+            if existing_installed is not None:
+                return
+            if await self._emit_cached_binary_installed(event, inherited_binproviders=inherited_binproviders):
+                return
+            ordered_providers = _ordered_binproviders(inherited_binproviders)
             if ordered_providers:
                 if _plugin.name not in ordered_providers or _plugin.name != ordered_providers[0]:
                     return
-            elif self._get_registered_binary_path(event.plugin_name, event.name):
-                # For unordered provider sets, a prior provider or cached config
-                # already resolved the binary, so don't re-run installers.
-                return
 
             from ..models import uuid7
 
@@ -332,6 +410,8 @@ class BinaryService(BaseService):
             )
             if existing_installed is not None:
                 return
+            if await self._emit_cached_binary_installed(event, inherited_binproviders=inherited_binproviders):
+                return
             if ordered_providers and len(ordered_providers) > 1:
                 await self.bus.emit(
                     BinaryEvent(
@@ -351,43 +431,6 @@ class BinaryService(BaseService):
                     ),
                 )
                 return
-            # No abspath — check if a provider resolved it via shared_config
-            abspath = self._get_registered_binary_path(event.plugin_name, event.name)
-            if abspath:
-                resolved_abspath, resolved_version, resolved_sha256, resolved_provider = self._resolve_registered_binary(
-                    plugin_name=event.plugin_name,
-                    binary_name=event.name,
-                    registered_value=abspath,
-                    binproviders=inherited_binproviders,
-                    overrides=event.overrides,
-                    min_version=event.min_version,
-                )
-                if not resolved_abspath:
-                    return
-                await self._register_binary_path(event.plugin_name, event.name, resolved_abspath)
-                resolved_event = await self.bus.find(
-                    BinaryEvent,
-                    child_of=event,
-                    past=True,
-                    future=False,
-                    name=event.name,
-                    abspath=resolved_abspath,
-                )
-                await self.bus.emit(
-                    BinaryInstalledEvent(
-                        name=event.name,
-                        plugin_name=event.plugin_name,
-                        hook_name=event.hook_name,
-                        abspath=resolved_abspath,
-                        version=(resolved_event.version if resolved_event else "") or resolved_version or event.version,
-                        sha256=(resolved_event.sha256 if resolved_event else "") or resolved_sha256 or event.sha256,
-                        binproviders=(resolved_event.binproviders if resolved_event else "") or inherited_binproviders,
-                        binprovider=(resolved_event.binprovider if resolved_event else "") or resolved_provider or binprovider,
-                        overrides=(resolved_event.overrides if resolved_event else None) or event.overrides,
-                        binary_id=event.binary_id,
-                        machine_id=event.machine_id,
-                    ),
-                )
 
     async def on_BinaryInstalledEvent(self, event: BinaryInstalledEvent) -> None:
         if not event.abspath:

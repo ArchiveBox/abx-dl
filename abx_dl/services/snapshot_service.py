@@ -18,6 +18,7 @@ from ..events import (
     SnapshotEvent,
     slow_warning_timeout,
 )
+from ..limits import CrawlLimitState
 from ..models import Snapshot
 from ..models import Hook, Plugin
 from .base import BaseService, make_hook_handler
@@ -92,6 +93,7 @@ class SnapshotService(BaseService):
         self.machine = machine
         self.hooks = hooks
         self.phase_timeout = phase_timeout
+        self.limit_state = CrawlLimitState.from_config(machine.shared_config)
         super().__init__(bus)
 
     def _attach_handlers(self) -> None:
@@ -102,6 +104,7 @@ class SnapshotService(BaseService):
         3. on_SnapshotEvent last (cleanup + completion)
         """
         self._register(ProcessStdoutEvent, self.on_ProcessStdoutEvent)
+        self._register(SnapshotEvent, self.on_SnapshotEvent__LimitsGate)
 
         for plugin, hook in self.hooks:
             inner = make_hook_handler(
@@ -118,6 +121,8 @@ class SnapshotService(BaseService):
             async def guarded(event: SnapshotEvent, _inner=inner) -> None:
                 if event.snapshot_id != self.snapshot.id or event.output_dir != str(self.output_dir):
                     return
+                if self.machine.shared_config.get("ABX_SKIP_SNAPSHOT_HOOKS"):
+                    return
                 await _inner(event)
 
             hook_handler_name = f"{hook.name}__{self.snapshot.id.replace('-', '_')[-12:]}"
@@ -127,6 +132,18 @@ class SnapshotService(BaseService):
 
         self._register(SnapshotEvent, self.on_SnapshotEvent)
         self._register(SnapshotCleanupEvent, self.on_SnapshotCleanupEvent)
+
+    async def on_SnapshotEvent__LimitsGate(self, event: SnapshotEvent) -> None:
+        if event.snapshot_id != self.snapshot.id or event.output_dir != str(self.output_dir):
+            return
+        if not self.limit_state.has_limits():
+            self.machine.shared_config.pop("ABX_SKIP_SNAPSHOT_HOOKS", None)
+            return
+        admission = self.limit_state.admit_snapshot(event.snapshot_id)
+        if admission.allowed:
+            self.machine.shared_config.pop("ABX_SKIP_SNAPSHOT_HOOKS", None)
+            return
+        self.machine.shared_config["ABX_SKIP_SNAPSHOT_HOOKS"] = True
 
     async def on_ProcessStdoutEvent(self, event: ProcessStdoutEvent) -> None:
         """Route type=Snapshot records to SnapshotEvent.
@@ -141,6 +158,8 @@ class SnapshotService(BaseService):
         except (json.JSONDecodeError, ValueError):
             return
         if not isinstance(record, dict) or record.get("type") != "Snapshot":
+            return
+        if not self.limit_state.should_emit_discovered_snapshots():
             return
         await self.bus.emit(
             SnapshotEvent(

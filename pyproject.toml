@@ -132,6 +132,7 @@ pythonPlatform = "Linux"
 
 [dependency-groups]
 dev = [
+    "flask>=3.0",
     "prek>=0.3.6",
     "pyright>=1.1.408",
     "ruff>=0.15.7",

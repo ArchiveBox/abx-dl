@@ -30,6 +30,7 @@ from rich import box
 from .config import get_config, set_config, CONFIG_FILE
 from .dependencies import load_binary
 from .events import ArchiveResultEvent, BinaryEvent, BinaryInstalledEvent, ProcessCompletedEvent, ProcessEvent, ProcessStdoutEvent
+from .limits import parse_filesize_to_bytes
 from .orchestrator import compute_phase_timeout, create_bus, download
 from .models import ArchiveResult, Process, now_iso
 from .models import INSTALL_URL, Hook, Plugin, discover_plugins, filter_plugins
@@ -731,9 +732,13 @@ class LiveBusUI:
         self._registrations.append((event_cls, registration))
 
     def close(self) -> None:
+        off = getattr(self.bus, "off", None)
+        if off is None:
+            self._registrations.clear()
+            return
         while self._registrations:
             event_cls, registration = self._registrations.pop()
-            self.bus.off(event_cls, registration)
+            off(event_cls, registration)
 
     def __enter__(self):
         if self.live is not None:
@@ -980,6 +985,8 @@ def cli(ctx):
 @click.option("--plugins", "-p", "plugin_list", help="Comma-separated list of plugins to use")
 @click.option("--output", "-o", "output_dir", type=click.Path(), help="Output directory")
 @click.option("--timeout", "-t", type=int, help="Timeout in seconds")
+@click.option("--max-urls", type=int, default=0, help="Maximum number of URLs to snapshot for this crawl (0 = unlimited)")
+@click.option("--max-size", default="0", help="Maximum total crawl size in bytes or units like 45mb / 1gb (0 = unlimited)")
 @click.option("--dry-run", is_flag=True, help="Enable abx-pkg dry-run mode and skip running snapshot hook subprocesses")
 @click.option("--no-install", "no_install", is_flag=True, help="Skip plugins with missing dependencies instead of auto-installing")
 @click.option("--debug", is_flag=True, help="Print the EventBus tree on exit or abort")
@@ -990,9 +997,11 @@ def dl(
     plugin_list: str | None,
     output_dir: str | None,
     timeout: int | None,
-    dry_run: bool,
-    no_install: bool,
-    debug: bool,
+    dry_run: bool = False,
+    no_install: bool = False,
+    debug: bool = False,
+    max_urls: int = 0,
+    max_size: str = "0",
 ):
     """Download a URL using all enabled plugins.
 
@@ -1017,6 +1026,16 @@ def dl(
     selected = [p.strip() for p in plugin_list.split(",")] if plugin_list else None
     out_path = Path(output_dir) if output_dir else Path.cwd()
     config_overrides: dict[str, object] = {"TIMEOUT": timeout} if timeout else {}
+    if max_urls < 0:
+        raise click.BadParameter("max_urls must be 0 or a positive integer.", param_hint="--max-urls")
+    try:
+        max_size_bytes = parse_filesize_to_bytes(max_size)
+    except ValueError as err:
+        raise click.BadParameter(str(err), param_hint="--max-size") from err
+    if max_urls:
+        config_overrides["MAX_URLS"] = max_urls
+    if max_size_bytes:
+        config_overrides["MAX_SIZE"] = max_size_bytes
     if dry_run:
         config_overrides["DRY_RUN"] = True
     timeout_value = config_overrides.get("TIMEOUT")

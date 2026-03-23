@@ -8,6 +8,7 @@ from abx_dl.orchestrator import create_bus, download, install_plugins
 from abx_dl.events import ArchiveResultEvent, BinaryEvent, BinaryInstalledEvent, SnapshotEvent
 from abx_dl.models import ArchiveResult, Plugin, Snapshot
 from abx_dl.models import INSTALL_URL, discover_plugins
+from abx_dl.output_files import OutputFile
 from abx_dl.services.binary_service import BinaryService
 from abx_dl.services.machine_service import MachineService
 
@@ -372,8 +373,12 @@ def test_binary_installed_event_resolves_config_backed_command_name() -> None:
     assert demo_events[-1].version
 
 
-def test_binary_provider_order_prefers_first_provider_over_cached_env_path(tmp_path: Path) -> None:
+def test_binary_event_uses_cached_config_binary_before_provider_hooks(tmp_path: Path) -> None:
     plugins_root = tmp_path / "plugins"
+    cached_binary = tmp_path / "config-bin" / "demo-tool"
+    cached_binary.parent.mkdir(parents=True, exist_ok=True)
+    cached_binary.write_text("demo")
+    cached_binary.chmod(0o755)
 
     _write(
         plugins_root / "producer" / "on_Crawl__00_emit.py",
@@ -401,18 +406,17 @@ def test_binary_provider_order_prefers_first_provider_over_cached_env_path(tmp_p
             [
                 "import argparse",
                 "import json",
-                "import os",
                 "from pathlib import Path",
                 "parser = argparse.ArgumentParser()",
                 'parser.add_argument("--name", required=True)',
                 'parser.add_argument("--binproviders", default="*")',
                 'parser.add_argument("--overrides", default=None)',
                 "args = parser.parse_args()",
-                'context = json.loads(os.environ["EXTRA_CONTEXT"])',
+                'Path.cwd().joinpath("provider-ran.txt").write_text(args.name)',
                 'bin_path = Path.cwd() / "bin" / args.name',
                 "bin_path.parent.mkdir(parents=True, exist_ok=True)",
                 'bin_path.write_text("demo")',
-                'print(json.dumps({"type": "Binary", "name": args.name, "abspath": str(bin_path), "version": "1.2.3", "sha256": "abc123", "binary_id": context["binary_id"], "machine_id": context["machine_id"], "plugin_name": context["plugin_name"], "hook_name": context["hook_name"], "binprovider": "provider"}))',
+                'print(json.dumps({"type": "Binary", "name": args.name, "abspath": str(bin_path), "version": "1.2.3", "sha256": "abc123", "binprovider": "provider"}))',
             ],
         )
         + "\n",
@@ -420,7 +424,7 @@ def test_binary_provider_order_prefers_first_provider_over_cached_env_path(tmp_p
 
     plugins = discover_plugins(plugins_root)
     bus = create_bus(total_timeout=60.0)
-    machine = MachineService(bus, initial_config={"DEMO_TOOL_BINARY": "/tmp/env/demo-tool"})
+    machine = MachineService(bus, initial_config={"DEMO_TOOL_BINARY": str(cached_binary)})
     BinaryService(bus, machine=machine, plugins=plugins, auto_install=True)
     installed_events: list[BinaryInstalledEvent] = []
 
@@ -435,9 +439,65 @@ def test_binary_provider_order_prefers_first_provider_over_cached_env_path(tmp_p
 
     demo_events = [event for event in installed_events if event.name == "demo-tool"]
     assert demo_events
-    assert demo_events[-1].binprovider == "provider"
-    assert demo_events[-1].version == "1.2.3"
-    assert str(demo_events[-1].abspath).endswith("/provider/bin/demo-tool")
+    assert demo_events[-1].binprovider == "env"
+    assert demo_events[-1].abspath == str(cached_binary)
+    assert not (tmp_path / "run" / "provider" / "provider-ran.txt").exists()
+
+
+def test_binary_event_uses_lib_bin_binary_before_provider_hooks(tmp_path: Path) -> None:
+    plugins_root = tmp_path / "plugins"
+    lib_bin_dir = tmp_path / "lib-bin"
+    cached_binary = lib_bin_dir / "demo-tool"
+    lib_bin_dir.mkdir(parents=True, exist_ok=True)
+    cached_binary.write_text("demo")
+    cached_binary.chmod(0o755)
+
+    _write(
+        plugins_root / "producer" / "on_Crawl__00_emit.py",
+        "\n".join(
+            [
+                "import json",
+                'print(json.dumps({"type": "Binary", "name": "demo-tool", "binproviders": "provider"}))',
+            ],
+        )
+        + "\n",
+    )
+    _write(
+        plugins_root / "provider" / "on_Binary__10_provider_install.py",
+        "\n".join(
+            [
+                "from pathlib import Path",
+                'Path.cwd().joinpath("provider-ran.txt").write_text("demo-tool")',
+            ],
+        )
+        + "\n",
+    )
+
+    plugins = discover_plugins(plugins_root)
+    bus = create_bus(total_timeout=60.0)
+    installed_events: list[BinaryInstalledEvent] = []
+
+    async def on_installed(event: BinaryInstalledEvent) -> None:
+        installed_events.append(event)
+
+    bus.on(BinaryInstalledEvent, on_installed)
+    try:
+        _run_download(
+            "https://example.com",
+            plugins,
+            tmp_path / "run",
+            auto_install=True,
+            bus=bus,
+            config_overrides={"LIB_BIN_DIR": str(lib_bin_dir)},
+        )
+    finally:
+        asyncio.run(bus.stop())
+
+    demo_events = [event for event in installed_events if event.name == "demo-tool"]
+    assert demo_events
+    assert demo_events[-1].binprovider == "env"
+    assert demo_events[-1].abspath == str(cached_binary)
+    assert not (tmp_path / "run" / "provider" / "provider-ran.txt").exists()
 
 
 def test_binary_installed_event_updates_lib_bin_symlink(tmp_path: Path) -> None:
@@ -778,6 +838,107 @@ def test_pid_file_removed_after_failed_hook_exits(tmp_path: Path) -> None:
     assert not pid_file.exists(), "stale pid file left behind after process exit"
 
 
+def test_failed_hook_logs_survive_later_successful_retry(tmp_path: Path) -> None:
+    plugins_root = tmp_path / "plugins"
+    hook_path = plugins_root / "broken" / "on_Snapshot__00_fail.py"
+    run_dir = tmp_path / "run"
+
+    _write(
+        hook_path,
+        "\n".join(
+            [
+                "import sys",
+                'print("first failure", file=sys.stderr)',
+                "raise SystemExit(1)",
+            ],
+        )
+        + "\n",
+    )
+
+    plugins = discover_plugins(plugins_root)
+    first_results = _run_download("https://example.com", plugins, run_dir, auto_install=True)
+    first_failure = next(result for result in first_results if result.plugin == "broken")
+    assert first_failure.status == "failed"
+
+    stderr_log = run_dir / "broken" / "on_Snapshot__00_fail.stderr.log"
+    assert stderr_log.exists()
+    assert "first failure" in stderr_log.read_text()
+
+    _write(
+        hook_path,
+        "\n".join(
+            [
+                "import json",
+                'print(json.dumps({"type": "ArchiveResult", "status": "succeeded", "output_str": "ok"}))',
+            ],
+        )
+        + "\n",
+    )
+
+    second_results = _run_download("https://example.com", plugins, run_dir, auto_install=True)
+    second_result = next(result for result in second_results if result.plugin == "broken")
+    assert second_result.status == "succeeded"
+
+    archived_logs = sorted((run_dir / "broken").glob("on_Snapshot__00_fail.stderr.*.log"))
+    assert archived_logs, "failed stderr log should be rotated aside before retry overwrites it"
+    assert any("first failure" in path.read_text() for path in archived_logs)
+
+
+def test_binary_provider_runs_keep_separate_stderr_logs(tmp_path: Path) -> None:
+    plugins_root = tmp_path / "plugins"
+
+    _write(
+        plugins_root / "producer" / "on_Crawl__00_emit.py",
+        "\n".join(
+            [
+                "import json",
+                'print(json.dumps({"type": "Binary", "name": "alpha", "binproviders": "provider"}), flush=True)',
+                'print(json.dumps({"type": "Binary", "name": "beta", "binproviders": "provider"}), flush=True)',
+            ],
+        )
+        + "\n",
+    )
+
+    _write(
+        plugins_root / "provider" / "on_Binary__10_provider_install.py",
+        "\n".join(
+            [
+                "import argparse",
+                "import sys",
+                "import time",
+                "parser = argparse.ArgumentParser()",
+                'parser.add_argument("--name", required=True)',
+                'parser.add_argument("--binproviders", default="*")',
+                "args = parser.parse_args()",
+                "time.sleep(0.2)",
+                'print(f"provider failure for {args.name}", file=sys.stderr, flush=True)',
+                "raise SystemExit(1)",
+            ],
+        )
+        + "\n",
+    )
+
+    plugins = discover_plugins(plugins_root)
+    _run_download("https://example.com", plugins, tmp_path / "run", auto_install=True)
+
+    stderr_logs = sorted((tmp_path / "run" / "provider").glob("*.stderr.log"))
+    assert len(stderr_logs) == 2
+    stderr_contents = sorted(path.read_text().strip() for path in stderr_logs)
+    assert stderr_contents == [
+        "provider failure for alpha",
+        "provider failure for beta",
+    ]
+
+    index_lines = [json.loads(line) for line in (tmp_path / "run" / "index.jsonl").read_text().splitlines()]
+    provider_processes = [
+        line
+        for line in index_lines
+        if line.get("type") == "Process" and "on_Binary__10_provider_install.py" in " ".join(line.get("cmd", []))
+    ]
+    assert len(provider_processes) == 2
+    assert sorted(process["stderr"].strip() for process in provider_processes) == stderr_contents
+
+
 def test_download_applies_background_side_effects_in_hook_lifecycle_order(tmp_path: Path) -> None:
     plugins_root = tmp_path / "plugins"
 
@@ -968,6 +1129,80 @@ def test_output_str_is_stored_verbatim_from_hook(tmp_path: Path) -> None:
     assert len(results) == 1
     # output_str is stored verbatim — the hook reported an absolute path
     assert results[0].output_str == str(tmp_path / "run" / "demo" / "media.mp4")
+
+
+def test_output_files_include_path_extension_mimetype_and_size(tmp_path: Path) -> None:
+    plugins_root = tmp_path / "plugins"
+
+    _write(
+        plugins_root / "demo" / "on_Snapshot__10_emit.py",
+        "\n".join(
+            [
+                "import json",
+                "from pathlib import Path",
+                'output = Path.cwd() / "artifact.json"',
+                'payload = "{\\"ok\\": true}\\n"',
+                "output.write_text(payload)",
+                'print(json.dumps({"type": "ArchiveResult", "status": "succeeded", "output_str": "wrote artifact"}))',
+            ],
+        )
+        + "\n",
+    )
+
+    plugins = discover_plugins(plugins_root)
+    results = [
+        result
+        for result in _run_download("https://example.com", plugins, tmp_path / "run", auto_install=True)
+        if isinstance(result, ArchiveResult)
+    ]
+
+    assert len(results) == 1
+    assert results[0].output_files == [
+        OutputFile(path="artifact.json", extension="json", mimetype="application/json", size=13),
+    ]
+
+    index_lines = [json.loads(line) for line in (tmp_path / "run" / "index.jsonl").read_text().splitlines()]
+    archive_result = next(line for line in index_lines if line.get("type") == "ArchiveResult" and line.get("plugin") == "demo")
+    assert archive_result["output_files"] == [
+        {"path": "artifact.json", "extension": "json", "mimetype": "application/json", "size": 13},
+    ]
+
+
+def test_output_files_detect_warc_gz_as_application_warc(tmp_path: Path) -> None:
+    plugins_root = tmp_path / "plugins"
+
+    _write(
+        plugins_root / "demo" / "on_Snapshot__10_emit.py",
+        "\n".join(
+            [
+                "import json",
+                "from pathlib import Path",
+                'output = Path.cwd() / "warc" / "capture.warc.gz"',
+                "output.parent.mkdir(parents=True, exist_ok=True)",
+                'output.write_bytes(b"warc-bytes")',
+                'print(json.dumps({"type": "ArchiveResult", "status": "succeeded", "output_str": "wrote warc"}))',
+            ],
+        )
+        + "\n",
+    )
+
+    plugins = discover_plugins(plugins_root)
+    results = [
+        result
+        for result in _run_download("https://example.com", plugins, tmp_path / "run", auto_install=True)
+        if isinstance(result, ArchiveResult)
+    ]
+
+    assert len(results) == 1
+    assert results[0].output_files == [
+        OutputFile(path="warc/capture.warc.gz", extension="gz", mimetype="application/warc", size=10),
+    ]
+
+    index_lines = [json.loads(line) for line in (tmp_path / "run" / "index.jsonl").read_text().splitlines()]
+    archive_result = next(line for line in index_lines if line.get("type") == "ArchiveResult" and line.get("plugin") == "demo")
+    assert archive_result["output_files"] == [
+        {"path": "warc/capture.warc.gz", "extension": "gz", "mimetype": "application/warc", "size": 10},
+    ]
 
 
 def test_cleanup_runs_after_all_hooks_not_interleaved(tmp_path: Path) -> None:

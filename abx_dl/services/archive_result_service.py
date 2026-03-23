@@ -6,8 +6,10 @@ from typing import ClassVar
 
 from abxbus import BaseEvent, EventBus
 
-from ..events import ArchiveResultEvent, ProcessCompletedEvent, ProcessStdoutEvent
+from ..events import ArchiveResultEvent, ProcessCompletedEvent, ProcessKillEvent, ProcessStdoutEvent
+from ..limits import CrawlLimitState
 from ..models import ArchiveResult, write_jsonl
+from ..output_files import OutputFile
 from .base import BaseService
 
 # File extensions that are process metadata, not real hook output
@@ -39,7 +41,7 @@ class ArchiveResultService(BaseService):
         ProcessStdoutEvent,
         ProcessCompletedEvent,
     ]
-    EMITS: ClassVar[list[type[BaseEvent]]] = [ArchiveResultEvent]
+    EMITS: ClassVar[list[type[BaseEvent]]] = [ArchiveResultEvent, ProcessKillEvent]
 
     def __init__(self, bus: EventBus, *, emit_jsonl: bool):
         self.emit_jsonl = emit_jsonl
@@ -61,6 +63,7 @@ class ArchiveResultService(BaseService):
             status=record.get("status", ""),
             output_str=record.get("output_str", ""),
             output_json=record.get("output_json") if isinstance(record.get("output_json"), dict) else None,
+            output_files=event.output_files,
             error=record.get("error") or None,
         )
 
@@ -89,6 +92,15 @@ class ArchiveResultService(BaseService):
         if not event.hook_name.startswith("on_Snapshot"):
             return
 
+        limit_state = CrawlLimitState.from_env(event.env)
+        stop_reason = limit_state.record_process_output(
+            event.process_id,
+            Path(event.output_dir),
+            [output_file.path for output_file in event.output_files],
+        )
+        if stop_reason == "max_size":
+            await self._kill_running_snapshot_processes(limit_state.crawl_dir)
+
         existing = await self.bus.find(
             ArchiveResultEvent,
             snapshot_id=event.snapshot_id,
@@ -106,6 +118,7 @@ class ArchiveResultService(BaseService):
                 plugin=event.plugin_name,
                 hook_name=event.hook_name,
                 status="failed",
+                output_files=event.output_files,
                 error=event.stderr or None,
             )
         elif _has_content_files(event.output_files):
@@ -115,6 +128,7 @@ class ArchiveResultService(BaseService):
                 plugin=event.plugin_name,
                 hook_name=event.hook_name,
                 status="succeeded",
+                output_files=event.output_files,
             )
         else:
             # Succeeded but no content files → noresult
@@ -123,6 +137,7 @@ class ArchiveResultService(BaseService):
                 plugin=event.plugin_name,
                 hook_name=event.hook_name,
                 status="noresult",
+                output_files=event.output_files,
             )
 
         index_path = Path(event.output_dir).parent / "index.jsonl"
@@ -144,10 +159,22 @@ class ArchiveResultService(BaseService):
             ),
         )
 
+    async def _kill_running_snapshot_processes(self, crawl_dir: Path) -> None:
+        for pid_file in sorted(crawl_dir.glob("**/*.pid")):
+            await self.bus.emit(
+                ProcessKillEvent(
+                    plugin_name=pid_file.parent.name,
+                    hook_name=pid_file.stem,
+                    output_dir=str(pid_file.parent),
+                    grace_period=1.0,
+                    event_timeout=15.0,
+                ),
+            )
+
 
 # ── Pure helpers ────────────────────────────────────────────────────────────
 
 
-def _has_content_files(output_files: list[str]) -> bool:
+def _has_content_files(output_files: list[OutputFile]) -> bool:
     """Return True if any output file is not process metadata (.log, .pid, .sh)."""
-    return any(Path(f).suffix not in _METADATA_SUFFIXES for f in output_files)
+    return any(Path(output_file.path).suffix not in _METADATA_SUFFIXES for output_file in output_files)

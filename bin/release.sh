@@ -228,7 +228,7 @@ wait_for_pypi() {
 }
 
 run_checks() {
-    uv sync --extra dev --no-cache --upgrade
+    uv sync --all-extras --all-groups --no-cache --upgrade
     uv run prek run --all-files
     uv build
 }

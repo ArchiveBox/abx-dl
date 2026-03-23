@@ -10,8 +10,43 @@ from abxbus.base_event import EventHandler
 
 from ..events import BinaryProcessEvent, ProcessCompletedEvent, ProcessEvent, ProcessKillEvent, ProcessStartedEvent, ProcessStdoutEvent
 from ..models import Process, write_jsonl, now_iso
+from ..output_files import collect_output_files, collect_output_files_from_paths
 from ..process_utils import write_pid_file_with_mtime, write_cmd_file, graceful_kill_process, graceful_kill_by_pid_file
 from .base import BaseService
+
+
+_PROCESS_METADATA_SUFFIXES = (".stdout.log", ".stderr.log", ".pid", ".sh")
+
+
+def _rotate_existing_log(path: Path) -> Path | None:
+    """Move an existing non-empty log file aside before reusing its canonical name.
+
+    Hook retries reuse the same ``{hook_name}.stdout.log`` / ``.stderr.log`` paths.
+    Without rotation, a later retry overwrites the previous attempt's logs, and a
+    later successful retry deletes the canonical files entirely. Preserve the old
+    contents under a timestamped filename so failed attempts remain debuggable.
+    """
+    if not path.exists():
+        return None
+
+    try:
+        if path.stat().st_size == 0:
+            path.unlink(missing_ok=True)
+            return None
+    except OSError:
+        return None
+
+    timestamp = time.strftime("%Y%m%dT%H%M%S", time.gmtime())
+    suffix = path.suffix
+    stem = path.name[: -len(suffix)] if suffix else path.name
+    archived = path.with_name(f"{stem}.{timestamp}{suffix}")
+    counter = 1
+    while archived.exists():
+        archived = path.with_name(f"{stem}.{timestamp}.{counter}{suffix}")
+        counter += 1
+
+    path.replace(archived)
+    return archived
 
 
 class ProcessService(BaseService):
@@ -93,6 +128,8 @@ class ProcessService(BaseService):
         self.emit_jsonl = emit_jsonl
         self.stderr_is_tty = stderr_is_tty
         self._background_monitors: set[asyncio.Task[None]] = set()
+        self._finite_background_monitors: set[asyncio.Task[None]] = set()
+        self._daemon_background_monitors: set[asyncio.Task[None]] = set()
         self._process_event_registrations: list = []
         super().__init__(bus)
 
@@ -135,20 +172,28 @@ class ProcessService(BaseService):
         plugin_output_dir = Path(event.output_dir)
         plugin_output_dir.mkdir(parents=True, exist_ok=True)
 
-        cmd = [event.hook_path, *event.hook_args]
-        stdout_file = plugin_output_dir / f"{event.hook_name}.stdout.log"
-        stderr_file = plugin_output_dir / f"{event.hook_name}.stderr.log"
-        pid_file = plugin_output_dir / f"{event.hook_name}.pid"
-        cmd_file = plugin_output_dir / f"{event.hook_name}.sh"
-
         proc = Process(
-            cmd=cmd,
+            cmd=[event.hook_path, *event.hook_args],
             pwd=str(plugin_output_dir),
             timeout=event.timeout,
             started_at=now_iso(),
             plugin=event.plugin_name,
             hook_name=event.hook_name,
         )
+
+        artifact_stem = event.hook_name
+        if isinstance(event, BinaryProcessEvent) or event.hook_name.startswith("on_Binary__"):
+            artifact_stem = f"{event.hook_name}.{proc.id}"
+
+        cmd = [event.hook_path, *event.hook_args]
+        stdout_file = plugin_output_dir / f"{artifact_stem}.stdout.log"
+        stderr_file = plugin_output_dir / f"{artifact_stem}.stderr.log"
+        pid_file = plugin_output_dir / f"{artifact_stem}.pid"
+        cmd_file = plugin_output_dir / f"{artifact_stem}.sh"
+
+        _rotate_existing_log(stdout_file)
+        _rotate_existing_log(stderr_file)
+
         write_cmd_file(cmd_file, cmd)
         files_before = set(plugin_output_dir.rglob("*")) if plugin_output_dir.exists() else set()
 
@@ -179,6 +224,8 @@ class ProcessService(BaseService):
                     process_id=proc.id,
                     snapshot_id=event.snapshot_id,
                     is_background=event.is_background,
+                    process_type=event.process_type,
+                    worker_type=event.worker_type,
                     start_ts=proc.started_at or "",
                 ),
             )
@@ -197,7 +244,10 @@ class ProcessService(BaseService):
                     ),
                 )
                 self._background_monitors.add(monitor)
+                monitor_set = self._daemon_background_monitors if event.daemon else self._finite_background_monitors
+                monitor_set.add(monitor)
                 monitor.add_done_callback(self._background_monitors.discard)
+                monitor.add_done_callback(monitor_set.discard)
                 return
 
             await self._monitor_process_until_exit(
@@ -241,6 +291,8 @@ class ProcessService(BaseService):
                     process_id=proc.id,
                     snapshot_id=event.snapshot_id,
                     pid=process.pid if process is not None else 0,
+                    process_type=event.process_type,
+                    worker_type=event.worker_type,
                     start_ts=proc.started_at or "",
                     end_ts=proc.ended_at or "",
                 ),
@@ -260,10 +312,11 @@ class ProcessService(BaseService):
         cmd_file = output_dir / f"{event.hook_name}.sh"
         await graceful_kill_by_pid_file(pid_file, cmd_file, grace_period=event.grace_period)
 
-    async def wait_for_background_monitors(self) -> None:
-        """Wait for all detached background-process monitor tasks to finish."""
-        while self._background_monitors:
-            pending = tuple(self._background_monitors)
+    async def wait_for_background_monitors(self, *, include_daemons: bool = True) -> None:
+        """Wait for detached background-process monitors to finish."""
+        monitor_set = self._background_monitors if include_daemons else self._finite_background_monitors
+        while monitor_set:
+            pending = tuple(monitor_set)
             await asyncio.gather(*pending, return_exceptions=True)
 
     async def _emit_event(self, event: BaseEvent, *, detach_from_parent: bool) -> None:
@@ -290,31 +343,36 @@ class ProcessService(BaseService):
         stdout_lines: list[str] = []
         assert process.stdout is not None
         with open(stdout_file, "w") as out_fh:
-            async for raw_line in process.stdout:
-                line = raw_line.decode(errors="replace")
-                out_fh.write(line)
-                out_fh.flush()
-                stdout_lines.append(line)
+            try:
+                async for raw_line in process.stdout:
+                    line = raw_line.decode(errors="replace")
+                    out_fh.write(line)
+                    out_fh.flush()
+                    stdout_lines.append(line)
 
-                output_dir = Path(event.output_dir)
-                current_files = (
-                    [str(f.relative_to(output_dir)) for f in output_dir.rglob("*") if f.is_file()] if output_dir.is_dir() else []
-                )
+                    output_dir = Path(event.output_dir)
+                    current_files = [
+                        output_file
+                        for output_file in collect_output_files(output_dir)
+                        if not any(output_file.path.endswith(suffix) for suffix in _PROCESS_METADATA_SUFFIXES)
+                    ]
 
-                await self._emit_event(
-                    ProcessStdoutEvent(
-                        line=line.strip(),
-                        plugin_name=event.plugin_name,
-                        hook_name=event.hook_name,
-                        output_dir=event.output_dir,
-                        snapshot_id=event.snapshot_id,
-                        process_id=proc.id,
-                        start_ts=proc.started_at or "",
-                        end_ts=now_iso(),
-                        output_files=current_files,
-                    ),
-                    detach_from_parent=detach_events,
-                )
+                    await self._emit_event(
+                        ProcessStdoutEvent(
+                            line=line.strip(),
+                            plugin_name=event.plugin_name,
+                            hook_name=event.hook_name,
+                            output_dir=event.output_dir,
+                            snapshot_id=event.snapshot_id,
+                            process_id=proc.id,
+                            start_ts=proc.started_at or "",
+                            end_ts=now_iso(),
+                            output_files=current_files,
+                        ),
+                        detach_from_parent=detach_events,
+                    )
+            except asyncio.CancelledError:
+                return stdout_lines
         return stdout_lines
 
     async def _monitor_process_until_exit(
@@ -329,27 +387,42 @@ class ProcessService(BaseService):
         pid_file: Path,
         files_before: set[Path],
         detach_events: bool,
+        wait_for_stdout_first: bool = True,
     ) -> int:
         timed_out = False
+        stdout_lines: list[str] = []
+        stdout_task = asyncio.create_task(
+            self._stream_stdout(
+                event=event,
+                proc=proc,
+                process=process,
+                stdout_file=stdout_file,
+                detach_events=detach_events,
+            ),
+        )
         try:
-            stdout_lines = await asyncio.wait_for(
-                self._stream_stdout(
-                    event=event,
-                    proc=proc,
-                    process=process,
-                    stdout_file=stdout_file,
-                    detach_events=detach_events,
-                ),
-                timeout=event.timeout or None,
-            )
-            if process.returncode is None:
-                remaining_timeout = event.timeout or None
-                await asyncio.wait_for(process.wait(), timeout=remaining_timeout)
+            if wait_for_stdout_first:
+                stdout_lines = await asyncio.wait_for(stdout_task, timeout=event.timeout or None)
+                if process.returncode is None:
+                    remaining_timeout = event.timeout or None
+                    await asyncio.wait_for(process.wait(), timeout=remaining_timeout)
+            else:
+                await asyncio.wait_for(process.wait(), timeout=event.timeout or None)
+                try:
+                    stdout_lines = await asyncio.wait_for(stdout_task, timeout=1.0)
+                except TimeoutError:
+                    stdout_task.cancel()
+                    stdout_lines = await stdout_task
         except TimeoutError:
             timed_out = True
             await graceful_kill_process(process)
-            stdout_lines = []
+            if not stdout_task.done():
+                stdout_task.cancel()
+                stdout_lines = await stdout_task
         except Exception:
+            if not stdout_task.done():
+                stdout_task.cancel()
+                await stdout_task
             await graceful_kill_process(process)
             raise
 
@@ -367,9 +440,8 @@ class ProcessService(BaseService):
         proc.ended_at = now_iso()
 
         files_after = set(plugin_output_dir.rglob("*")) if plugin_output_dir.exists() else set()
-        new_files = sorted(str(f.relative_to(plugin_output_dir)) for f in (files_after - files_before) if f.is_file())
-        excluded_suffixes = (".stdout.log", ".stderr.log", ".pid", ".sh")
-        new_files = [f for f in new_files if not any(f.endswith(s) for s in excluded_suffixes)]
+        new_files = collect_output_files_from_paths(plugin_output_dir, files_after - files_before)
+        new_files = [f for f in new_files if not any(f.path.endswith(s) for s in _PROCESS_METADATA_SUFFIXES)]
 
         pid_file.unlink(missing_ok=True)
 
@@ -426,6 +498,7 @@ class ProcessService(BaseService):
                 pid_file=pid_file,
                 files_before=files_before,
                 detach_events=True,
+                wait_for_stdout_first=False,
             )
         except Exception:
             pid_file.unlink(missing_ok=True)

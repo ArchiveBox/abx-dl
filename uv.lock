@@ -30,6 +30,7 @@ dev = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "flask" },
     { name = "prek" },
     { name = "pyright" },
     { name = "ruff" },
@@ -58,6 +59,7 @@ provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "flask", specifier = ">=3.0" },
     { name = "prek", specifier = ">=0.3.6" },
     { name = "pyright", specifier = ">=1.1.408" },
     { name = "ruff", specifier = ">=0.15.7" },
@@ -118,7 +120,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "abx-pkg", specifier = ">=1.9.18" },
+    { name = "abx-pkg", editable = "../abx-pkg" },
     { name = "feedparser", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "jinja2", marker = "extra == 'dev'", specifier = ">=3.1.0" },
     { name = "pydantic-settings", specifier = ">=2.0.0" },
@@ -137,7 +139,7 @@ dev = [{ name = "prek", specifier = ">=0.3.6" }]
 
 [[package]]
 name = "abxbus"
-version = "2.4.7"
+version = "2.4.8"
 source = { editable = "../abxbus" }
 dependencies = [
     { name = "aiofiles" },

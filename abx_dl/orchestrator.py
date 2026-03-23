@@ -437,10 +437,12 @@ async def download(
 
     async def on_ArchiveResultEvent(event: ArchiveResultEvent) -> None:
         """Collects all ArchiveResultEvents."""
-        if tracked_events and not any(
-            event.event_id == tracked.event_id or active_bus.event_is_child_of(event, tracked) for tracked in tracked_events
-        ):
-            return
+        if tracked_events:
+            is_tracked_child = any(
+                event.event_id == tracked.event_id or active_bus.event_is_child_of(event, tracked) for tracked in tracked_events
+            )
+            if not is_tracked_child and event.snapshot_id != snapshot.id:
+                return
         results.append(
             ArchiveResult(
                 snapshot_id=event.snapshot_id,
@@ -532,6 +534,7 @@ async def download(
                         event_handler_slow_timeout=slow_warning_timeout(crawl_phase_timeout),
                     ),
                 )
+                await shared.process.wait_for_background_monitors(include_daemons=False)
             if not crawl_only:
                 if dry_run:
                     shared.process.suspend_process_events()
@@ -570,6 +573,7 @@ async def download(
                     ),
                 )
                 await active_bus.emit(CrawlCompletedEvent(url=url, snapshot_id=snapshot.id, output_dir=str(output_dir)))
+        await shared.process.wait_for_background_monitors()
     finally:
         active_bus.off(ArchiveResultEvent, collector)
         while run_services:

@@ -208,9 +208,10 @@ def test_run_download_reaps_timed_out_child(server_client, monkeypatch, tmp_path
             self.kill_called = False
             self.wait_calls = 0
 
-        def wait(self, timeout=None):
+        def wait(self, timeout: int | float | None = None) -> int:
             self.wait_calls += 1
             if self.wait_calls == 1:
+                assert timeout is not None
                 raise server_module.subprocess.TimeoutExpired(cmd=["abx-dl"], timeout=timeout)
             return self.returncode
 

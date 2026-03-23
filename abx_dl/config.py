@@ -8,6 +8,8 @@ import json
 import os
 import platform
 import re
+import shutil
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -194,6 +196,8 @@ NPM_BIN_DIR = NODE_MODULES_DIR / ".bin"
 
 # Global config defaults
 GLOBAL_DEFAULTS = {
+    "DATA_DIR": str(DATA_DIR),
+    "ABX_RUNTIME": "abx-dl",
     "DRY_RUN": False,
     "TIMEOUT": 60,
     "USER_AGENT": "Mozilla/5.0 (compatible; abx-dl/1.0; +https://github.com/ArchiveBox/abx-dl)",
@@ -379,7 +383,14 @@ def _derive_runtime_paths(
         path_dirs = [part for part in current_path.split(":") if part]
 
     derived_path = current_path
-    for extra_dir in (str(pip_bin_dir), str(npm_bin_dir)):
+    runtime_bin_dirs = [
+        str(Path(sys.executable).parent),
+    ]
+    resolved_uv = shutil.which("uv", path=current_path or None)
+    if resolved_uv:
+        runtime_bin_dirs.append(str(Path(resolved_uv).resolve().parent))
+
+    for extra_dir in (*runtime_bin_dirs, str(pip_bin_dir), str(npm_bin_dir)):
         if extra_dir and extra_dir not in path_dirs:
             derived_path = f"{extra_dir}:{derived_path}" if derived_path else extra_dir
             path_dirs.insert(0, extra_dir)

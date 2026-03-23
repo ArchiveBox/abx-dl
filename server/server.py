@@ -174,29 +174,34 @@ def _run_download(sid: str, url: str, plugins: list[str], timeout: int) -> None:
 
     stdout_path = sdir / "abx-dl.stdout.log"
     stderr_path = sdir / "abx-dl.stderr.log"
+    proc: subprocess.Popen[bytes] | None = None
 
     try:
         with open(stdout_path, "w") as stdout_f, open(stderr_path, "w") as stderr_f:
-            proc = subprocess.Popen(
+            current_proc = subprocess.Popen(
                 cmd,
                 stdout=stdout_f,
                 stderr=stderr_f,
                 cwd=str(sdir),
             )
+            proc = current_proc
             with sessions_lock:
                 sessions[sid]["status"] = "running"
-                sessions[sid]["pid"] = proc.pid
+                sessions[sid]["pid"] = current_proc.pid
             _persist_session(sid)
 
-            proc.wait(timeout=timeout + 30)
+            current_proc.wait(timeout=timeout + 30)
 
             with sessions_lock:
-                sessions[sid]["exit_code"] = proc.returncode
-                sessions[sid]["status"] = "completed" if proc.returncode == 0 else "failed"
+                sessions[sid]["exit_code"] = current_proc.returncode
+                sessions[sid]["status"] = "completed" if current_proc.returncode == 0 else "failed"
                 sessions[sid]["finished_at"] = datetime.now(timezone.utc).isoformat()
             _persist_session(sid)
 
     except subprocess.TimeoutExpired:
+        if proc is None:
+            raise
+
         proc.kill()
         proc.wait()
         with sessions_lock:
@@ -372,6 +377,8 @@ def session_page(sid: str):
     info = get_session_info(sid)
     if not info:
         abort(404)
+    # Flask's abort() never returns, but type checkers do not infer that here.
+    assert info is not None
     files = list_session_files(sid)
     logs = get_session_logs(sid)
     log_entries = get_visible_log_entries(logs)

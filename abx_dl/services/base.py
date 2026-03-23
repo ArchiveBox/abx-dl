@@ -11,6 +11,7 @@ from abxbus import BaseEvent, EventBus, EventHandler
 
 from ..models import INSTALL_URL
 from ..events import ProcessEvent, slow_warning_timeout
+from ..limits import CrawlLimitState
 from ..models import Hook, Plugin, Snapshot
 
 if TYPE_CHECKING:
@@ -126,7 +127,16 @@ def make_hook_handler(
             return
         if getattr(event, "output_dir", str(output_dir)) != str(output_dir):
             return
+        if "Snapshot" in _hook.name and machine.shared_config.get("ABX_SKIP_SNAPSHOT_HOOKS"):
+            return
         env = machine.get_env_for_plugin(_plugin, run_output_dir=output_dir)
+        if "Snapshot" in _hook.name:
+            limit_state = CrawlLimitState.from_config(machine.shared_config)
+            if limit_state.has_limits():
+                admission = limit_state.admit_snapshot(snapshot.id)
+                if not admission.allowed:
+                    machine.shared_config["ABX_SKIP_SNAPSHOT_HOOKS"] = True
+                    return
         env = add_extra_context(env, {"snapshot_id": snapshot.id})
         timeout = int(env.get(f"{_plugin.name.upper()}_TIMEOUT", env.get("TIMEOUT", "60")))
         plugin_output_dir = output_dir / _plugin.name
@@ -149,6 +159,7 @@ def make_hook_handler(
             hook_path=str(_hook.path),
             hook_args=[f"--url={url}"],
             is_background=run_in_background,
+            daemon=".daemon." in _hook.name,
             output_dir=str(plugin_output_dir),
             env=env,
             snapshot_id=snapshot.id,

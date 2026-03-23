@@ -51,6 +51,8 @@ from typing import Any
 from abxbus import BaseEvent, EventConcurrencyMode
 from pydantic import ConfigDict, Field
 
+from .output_files import OutputFile
+
 
 def slow_warning_timeout(timeout: float | int | None) -> float | None:
     """Warn only after most of the timeout budget has been consumed."""
@@ -198,6 +200,12 @@ class ProcessEvent(BaseEvent):
     env: dict[str, str]
     snapshot_id: str = ""
     timeout: int = 60
+    daemon: bool = False
+    daemon_startup_host: str = ""
+    daemon_startup_port: int = 0
+    daemon_startup_timeout: float = 0.0
+    process_type: str = ""
+    worker_type: str = ""
     event_timeout: float | None = 360.0
 
 
@@ -239,6 +247,8 @@ class ProcessStartedEvent(BaseEvent):
     process_id: str = ""
     snapshot_id: str = ""
     is_background: bool = False
+    process_type: str = ""
+    worker_type: str = ""
     start_ts: str = ""
     event_timeout: float | None = 60.0
 
@@ -261,11 +271,13 @@ class ProcessCompletedEvent(BaseEvent):
     stderr: str
     exit_code: int
     output_dir: str
-    output_files: list[str] = []
+    output_files: list[OutputFile] = Field(default_factory=list)
     is_background: bool = False
     process_id: str = ""
     snapshot_id: str = ""
     pid: int = 0
+    process_type: str = ""
+    worker_type: str = ""
     start_ts: str = ""
     end_ts: str = ""
     event_timeout: float | None = 60.0
@@ -281,6 +293,7 @@ class ProcessStdoutEvent(BaseEvent):
     - MachineService: ``{"type": "Machine", ...}`` → emits MachineEvent
     - SnapshotService: ``{"type": "Snapshot", ...}`` → emits SnapshotEvent
     - ArchiveResultService: ``{"type": "ArchiveResult", ...}`` → emits ArchiveResultEvent
+    - ArchiveBox-only services may also consume additional record types
 
     Context fields from the parent ProcessEvent are passed through for
     services that need them.
@@ -297,7 +310,7 @@ class ProcessStdoutEvent(BaseEvent):
     process_id: str = ""
     start_ts: str = ""
     end_ts: str = ""
-    output_files: list[str] = Field(default_factory=list)
+    output_files: list[OutputFile] = Field(default_factory=list)
     event_timeout: float | None = 360.0
 
 
@@ -397,16 +410,15 @@ class ArchiveResultEvent(BaseEvent):
 
     1. **Inline from stdout**: when a hook outputs ``{"type": "ArchiveResult", ...}``
        JSONL during execution (via ProcessStdoutEvent routing). Process
-       metadata fields (process_id, output_files, start_ts, end_ts) are empty
-       at this stage — they get populated on ProcessCompletedEvent.
+       metadata fields (process_id, output_files, start_ts, end_ts) reflect
+       the current process context at the moment the line was emitted.
 
     2. **Synthetic fallback**: on ProcessCompletedEvent, only if the hook didn't
        already report an ArchiveResult — e.g. failed (nonzero exit) or succeeded
        with output files but no explicit JSONL output.
 
-    Both cases carry process_id, output_files, start_ts, end_ts when emitted
-    from ProcessCompletedEvent context (copied from the process, not merged
-    into the ArchiveResult model).
+    Both cases carry process_id, output_files, start_ts, end_ts copied from
+    the process context.
     """
 
     snapshot_id: str = ""
@@ -417,7 +429,7 @@ class ArchiveResultEvent(BaseEvent):
     process_id: str = ""
     output_str: str = ""
     output_json: dict[str, Any] | None = None
-    output_files: list[str] = Field(default_factory=list)
+    output_files: list[OutputFile] = Field(default_factory=list)
     start_ts: str = ""
     end_ts: str = ""
     error: str = ""
