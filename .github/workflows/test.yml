@@ -35,7 +35,7 @@ jobs:
         run: uv sync --no-sources --extra dev
 
       - name: Run prek
-        run: uv run prek run --all-files
+        run: uv run --no-sync prek run --all-files
 
   unit-tests:
     name: Unit tests
@@ -61,7 +61,7 @@ jobs:
         run: uv sync --no-sources --extra dev
 
       - name: Run repo test suite
-        run: uv run pytest -q tests server/tests
+        run: uv run --no-sync pytest -q tests server/tests
 
   discover-plugins:
     name: Discover plugins
@@ -164,7 +164,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           uv sync --no-sources --extra dev
-          uv pip install -e ./abx-plugins
+          uv pip install --no-deps -e ./abx-plugins
 
       - name: Verify Chromium launch
         if: ${{ matrix.plugin.needs_chromium }}
@@ -179,7 +179,7 @@ jobs:
           while true; do
             attempts=$((attempts + 1))
             set +e
-            uv run pytest -q "$plugin_tests"
+            uv run --no-sync pytest -q "$plugin_tests"
             status=$?
             set -e
 
@@ -242,14 +242,14 @@ jobs:
       - name: Install Python dependencies
         run: |
           uv sync --no-sources --extra dev
-          uv pip install -e ./abx-plugins
+          uv pip install --no-deps -e ./abx-plugins
 
       - name: Verify Chromium launch
         uses: ./.github/actions/verify-chromium-launch
 
       - name: Test all plugins
         run: |
-          uv run abx-dl dl 'https://example.com' --output=./test-output --timeout=120
+          uv run --no-sync abx-dl dl 'https://example.com' --output=./test-output --timeout=120
 
           echo "=== Output structure ==="
           find ./test-output -type f | head -50

@@ -60,10 +60,12 @@ def _cli_env(tmp_path: Path) -> dict[str, str]:
     for key in ABX_ENV_KEYS:
         env.pop(key, None)
     config_dir = tmp_path / "config"
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(REPO_ROOT), env.get("PYTHONPATH", "")]))
     env["CONFIG_DIR"] = str(config_dir)
     env["LIB_DIR"] = str(config_dir / "lib")
     env["PERSONAS_DIR"] = str(config_dir / "personas")
     env["DATA_DIR"] = str(tmp_path / "data")
+    env["TMP_DIR"] = str(tmp_path / "tmp")
     env["HOME"] = str(tmp_path / "home")
     path_entries = [entry for entry in env.get("PATH", "").split(os.pathsep) if entry]
     for common_dir in ("/opt/homebrew/bin", "/usr/local/bin", "/opt/homebrew/opt/node/bin"):
@@ -74,9 +76,11 @@ def _cli_env(tmp_path: Path) -> dict[str, str]:
 
 
 def _run_cli(tmp_path: Path, *args: str, timeout: int = 180) -> subprocess.CompletedProcess[str]:
+    cwd = tmp_path / "cwd"
+    cwd.mkdir(parents=True, exist_ok=True)
     return subprocess.run(
         [sys.executable, "-m", "abx_dl", *args],
-        cwd=REPO_ROOT,
+        cwd=cwd,
         env=_cli_env(tmp_path),
         text=True,
         capture_output=True,
