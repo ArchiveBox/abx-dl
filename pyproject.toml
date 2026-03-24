@@ -117,6 +117,10 @@ include = [
 extraPaths = [
     "abx-plugins",
     "../abx-plugins",
+    "abx-pkg",
+    "../abx-pkg",
+    "archivebox",
+    "../archivebox",
 ]
 exclude = [
     ".venv",
