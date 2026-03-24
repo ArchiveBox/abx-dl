@@ -75,7 +75,15 @@ def _cli_env(tmp_path: Path) -> dict[str, str]:
     env["TMP_DIR"] = str(tmp_path / "tmp")
     env["HOME"] = str(tmp_path / "home")
     path_entries = [entry for entry in env.get("PATH", "").split(os.pathsep) if entry]
-    for common_dir in ("/opt/homebrew/bin", "/usr/local/bin", "/opt/homebrew/opt/node/bin"):
+    for common_dir in (
+        "/usr/bin",
+        "/bin",
+        "/usr/sbin",
+        "/sbin",
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/opt/homebrew/opt/node/bin",
+    ):
         if common_dir not in path_entries:
             path_entries.insert(0, common_dir)
     env["PATH"] = os.pathsep.join(path_entries)
