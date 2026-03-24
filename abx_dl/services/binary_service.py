@@ -164,7 +164,20 @@ class BinaryService(BaseService):
                 continue
             if hydrated_name == event.name:
                 matching_keys.append(key)
-        return matching_keys
+        if matching_keys:
+            return list(dict.fromkeys(matching_keys))
+        for key, prop in plugin.config_schema.items():
+            if not key.endswith("_BINARY"):
+                continue
+            configured_value = str(plugin_env.get(key) or prop.get("default") or "").strip()
+            if not configured_value:
+                continue
+            if configured_value == event.name:
+                matching_keys.append(key)
+                continue
+            if _is_path_like_binary_value(configured_value) and Path(configured_value).expanduser().name == event.name:
+                matching_keys.append(key)
+        return list(dict.fromkeys(matching_keys))
 
     def _binary_config_keys(self, event: BinaryRequestEvent) -> list[str]:
         return list(dict.fromkeys(self._plugin_binary_config_keys(event)))
@@ -194,6 +207,12 @@ class BinaryService(BaseService):
                 self._invalidate_derived_binary(config_key)
                 continue
             values.append(((config_key,), derived_value, False))
+
+        lib_bin_dir_value = str(self.machine.shared_config.get("LIB_BIN_DIR") or "").strip()
+        if lib_bin_dir_value and not _is_path_like_binary_value(request_name):
+            lib_bin_candidate = Path(lib_bin_dir_value).expanduser() / request_name
+            if lib_bin_candidate.exists():
+                values.append((tuple(), str(lib_bin_candidate), False))
 
         deduped: list[tuple[tuple[str, ...], str, bool]] = []
         seen_values: set[str] = set()
@@ -523,7 +542,17 @@ class BinaryService(BaseService):
         )
         if request_event is not None:
             await self._register_binary_path(request_event, persisted_abspath)
-            return
+        generic_key = ""
+        if event.name and not _is_path_like_binary_value(event.name):
+            generic_key = re.sub(r"[^A-Z0-9]+", "_", event.name.upper()).strip("_") + "_BINARY"
+        if generic_key:
+            await self.bus.emit(
+                MachineEvent(
+                    method="update",
+                    key=f"config/{generic_key}",
+                    value=persisted_abspath,
+                ),
+            )
 
     def _link_installed_binary(self, binary_name: str, binary_abspath: str) -> str:
         if _is_path_like_binary_value(binary_name):

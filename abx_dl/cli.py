@@ -194,7 +194,7 @@ def _format_binary_requested_output(text: str) -> Text | None:
 
 
 def _format_install_output(text: str):
-    text = _flatten_output(_humanize_special_output(text)).replace('"', "")
+    text = _compact_output(_flatten_output(_humanize_special_output(text)).replace('"', ""), limit=220)
     special = _format_binary_requested_output(text)
     if special is not None:
         return special
@@ -1301,6 +1301,7 @@ class _InstallRow:
     providers: tuple[str, ...] = ()
     related_names: tuple[str, ...] = ()
     failure_output: str = ""
+    failure_details: str = ""
     provider_failure: bool = False
     ok: bool = True
 
@@ -1430,26 +1431,44 @@ def _run_plugin_install(
         if event.exit_code in (None, 0) or not event.hook_name.startswith("on_BinaryRequest__"):
             return
         details = (proc.stderr or "").strip() or _parse_process_output(proc)
+        detail_lines = [line.strip().replace('"', "") for line in details.splitlines() if line.strip()]
+        no_proxy_hint = next((line for line in detail_lines if "NO_PROXY=" in line), "")
+        summary_output = details
+        if detail_lines:
+            summary_output = _compact_output(
+                " ".join(part for part in [detail_lines[0], no_proxy_hint] if part),
+                limit=220,
+            )
         requested_name = next(
             (arg.split("=", 1)[1] for arg in event.hook_args if isinstance(arg, str) and arg.startswith("--name=")),
             "",
         )
         related_names = ()
+        matching_request_rows: list[_InstallRow] = []
         if requested_name:
             related_names = (requested_name,)
-            for row in request_rows_by_name.get(requested_name, []):
-                if row.ok and event.plugin_name in row.providers:
-                    row.failure_output = details
+            matching_request_rows = [
+                row for row in request_rows_by_name.get(requested_name, []) if row.ok and event.plugin_name in row.providers
+            ]
         else:
-            related_names = tuple(
-                row.name for request_rows in request_rows_by_name.values() for row in request_rows if event.plugin_name in row.providers
-            )
+            matching_request_rows = [
+                row
+                for request_rows in request_rows_by_name.values()
+                for row in request_rows
+                if row.ok and event.plugin_name in row.providers
+            ]
+            related_names = tuple(row.name for row in matching_request_rows)
+        for row in matching_request_rows:
+            row.failure_output = summary_output
+            row.failure_details = details
+            row.hook_name = event.hook_name
         row = _InstallRow(
             kind="Binary",
             name=",".join(related_names) if related_names else event.hook_name,
             plugin=event.plugin_name,
             hook_name=event.hook_name,
-            output=details,
+            output=summary_output,
+            failure_details=details,
             related_names=related_names,
             provider_failure=True,
             ok=False,
@@ -1490,6 +1509,7 @@ def _run_plugin_install(
                 continue
             row.ok = False
             row.output = row.failure_output or f"Requested binary not resolved: {name}"
+            row.failure_details = row.failure_details or row.output
     failed_request_rows = [row for request_rows in request_rows_by_name.values() for row in request_rows if not row.ok]
     rows.extend(
         row for row in failed_install_rows if not row.related_names or any(name not in installed_names for name in row.related_names)
@@ -1506,8 +1526,8 @@ def _run_plugin_install(
         console.print("\n[bold red]Failure details:[/bold red]")
         for row in failed_request_rows:
             console.print(f"\n[bold cyan]{row.plugin} / {row.hook_name}[/bold cyan]")
-            console.print(escape(row.output))
-        console.print(f"\n[bold red]{len(failed_request_rows)} install step(s) failed.[/bold red]")
+            console.print(escape(row.failure_details or row.output))
+        console.print(f"\n[bold red]❌ {len(failed_request_rows)} install step(s) failed.[/bold red]")
         return 1
 
     console.print("\n[bold green]Done![/bold green]")

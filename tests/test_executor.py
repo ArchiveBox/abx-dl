@@ -1056,7 +1056,7 @@ def test_download_applies_side_effects_from_completed_background_hooks(tmp_path:
     results = _run_download("https://example.com", plugins, tmp_path / "run", auto_install=True)
 
     consumer_result = next(result for result in results if result.plugin == "consumer")
-    assert consumer_result.output_str == str(tmp_path / "run" / "provider" / "bin" / "demo") + "|ready"
+    assert consumer_result.output_str == str(tmp_path / "home" / ".config" / "abx" / "lib" / "bin" / "demo") + "|ready"
     # producer is an on_Crawl hook — no ArchiveResult expected (only on_Snapshot hooks get them)
 
 

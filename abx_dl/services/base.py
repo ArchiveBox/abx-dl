@@ -9,7 +9,7 @@ from collections.abc import Mapping
 
 from abxbus import BaseEvent, EventBus, EventHandler
 
-from ..events import ProcessEvent, slow_warning_timeout
+from ..events import ProcessEvent, ProcessStartedEvent, slow_warning_timeout
 from ..limits import CrawlLimitState
 from ..models import Hook, Plugin, Snapshot
 
@@ -175,5 +175,12 @@ def make_hook_handler(
         # ProcessEvent only waits for ProcessService to start and register the
         # process; the hook itself keeps running in the background.
         await service.bus.emit(process_event)
+        if run_in_background and hasattr(service.bus, "find"):
+            await service.bus.find(
+                ProcessStartedEvent,
+                child_of=process_event,
+                past=False,
+                future=10.0,
+            )
 
     return handler

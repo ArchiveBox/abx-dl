@@ -2,10 +2,11 @@
 Dependency management for abx-dl using abx-pkg.
 """
 
-from typing import Any
+from typing import Any, cast
 
 from abx_pkg import (
     Binary,
+    BinaryOverrides,
     BinProvider,
     EnvProvider,
     PipProvider,
@@ -44,6 +45,9 @@ def load_binary(spec: dict[str, Any]) -> Binary:
     providers_str = spec.get("binproviders", "env")
     providers = [p for p in DEFAULT_PROVIDERS if p.name in providers_str.split(",")]
     overrides = spec.get("overrides", {})
+    if isinstance(overrides, dict):
+        overrides = {provider: ({"install_args": value} if isinstance(value, list) else value) for provider, value in overrides.items()}
+    overrides = cast(BinaryOverrides, overrides)
     min_version = spec.get("min_version") or None
 
     binary = Binary(
@@ -64,6 +68,9 @@ def install_binary(spec: dict[str, Any]) -> Binary:
     providers_str = spec.get("binproviders", "env")
     providers = [p for p in DEFAULT_PROVIDERS if p.name in providers_str.split(",")]
     overrides = spec.get("overrides", {})
+    if isinstance(overrides, dict):
+        overrides = {provider: ({"install_args": value} if isinstance(value, list) else value) for provider, value in overrides.items()}
+    overrides = cast(BinaryOverrides, overrides)
     min_version = spec.get("min_version") or None
 
     binary = Binary(

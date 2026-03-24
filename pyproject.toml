@@ -44,6 +44,7 @@ dependencies = [
     "abxbus>=2.4.9",
     "abx-pkg>=1.9.19",
     "abx-plugins>=1.10.19",
+    "jambo>=0.1.7",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
     "platformdirs>=4.0.0",
@@ -56,6 +57,7 @@ dev = [
     # TESTING
     "flask>=3.0",
     "pytest>=8.0.0",
+    "pytest-httpserver>=1.1.0",
     "pytest-xdist>=3.5.0",
     # DEBUGGING
     # "ipdb>=0.13.13",
@@ -112,6 +114,10 @@ include = [
     "tests",
     "server",
 ]
+extraPaths = [
+    "abx-plugins",
+    "../abx-plugins",
+]
 exclude = [
     ".venv",
     "**/*.pyi",
@@ -139,12 +145,6 @@ dev = [
     "ruff>=0.15.7",
     "ty>=0.0.24",
 ]
-
-[tool.uv.sources]
-abxbus = { path = "../abxbus", editable = true }
-abx-pkg = { path = "../abx-pkg", editable = true }
-abx-plugins = { path = "../abx-plugins", editable = true }
-
 
 [project.scripts]
 abx-dl = "abx_dl:main"

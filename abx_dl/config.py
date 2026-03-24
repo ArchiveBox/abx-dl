@@ -200,7 +200,7 @@ def get_plugin_config(
     if base_config:
         global_config.update(base_config)
     user_config = load_config_file()
-    if config_path is not None:
+    if config_path is not None and config_path.exists():
         return normalize_config_value(
             load_plugin_config(
                 config_path,

@@ -10,6 +10,7 @@ dependencies = [
     { name = "abx-pkg" },
     { name = "abx-plugins" },
     { name = "abxbus" },
+    { name = "jambo" },
     { name = "platformdirs" },
     { name = "psutil" },
     { name = "pydantic" },
@@ -25,6 +26,7 @@ dev = [
     { name = "flask" },
     { name = "mypy" },
     { name = "pytest" },
+    { name = "pytest-httpserver" },
     { name = "pytest-xdist" },
     { name = "ruff" },
 ]
@@ -40,17 +42,19 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "abx-pkg", editable = "../abx-pkg" },
-    { name = "abx-plugins", editable = "../abx-plugins" },
-    { name = "abxbus", editable = "../abxbus" },
+    { name = "abx-pkg", specifier = ">=1.9.19" },
+    { name = "abx-plugins", specifier = ">=1.10.19" },
+    { name = "abxbus", specifier = ">=2.4.9" },
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=7.1.1" },
     { name = "flask", marker = "extra == 'dev'", specifier = ">=3.0" },
+    { name = "jambo", specifier = ">=0.1.7" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.11.2" },
     { name = "platformdirs", specifier = ">=4.0.0" },
     { name = "psutil", specifier = ">=7.2.1" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pydantic-settings", specifier = ">=2.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
+    { name = "pytest-httpserver", marker = "extra == 'dev'", specifier = ">=1.1.0" },
     { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.5.0" },
     { name = "requests", specifier = ">=2.28.0" },
     { name = "rich", specifier = ">=13.0.0" },
@@ -71,121 +75,47 @@ dev = [
 [[package]]
 name = "abx-pkg"
 version = "1.9.19"
-source = { editable = "../abx-pkg" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pip" },
     { name = "platformdirs" },
     { name = "pydantic" },
     { name = "typing-extensions" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "abx-pkg", extras = ["rich", "pyinfra", "ansible"], marker = "extra == 'all'" },
-    { name = "ansible", marker = "extra == 'ansible'", specifier = ">=12.3.0" },
-    { name = "ansible-core", marker = "extra == 'ansible'", specifier = ">=2.0.0" },
-    { name = "ansible-runner", marker = "extra == 'ansible'", specifier = ">=2.4.2" },
-    { name = "pip", specifier = ">=26.0.1" },
-    { name = "platformdirs", specifier = ">=4.9.2" },
-    { name = "pydantic", specifier = ">=2.12.5" },
-    { name = "pyinfra", marker = "extra == 'pyinfra'", specifier = ">=3.6.1" },
-    { name = "rich", marker = "extra == 'rich'", specifier = ">=14.0.0" },
-    { name = "typing-extensions", specifier = ">=4.15.0" },
-]
-provides-extras = ["rich", "pyinfra", "ansible", "all"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "django", specifier = ">=4.0" },
-    { name = "django-admin-data-views", specifier = ">=0.3.1" },
-    { name = "django-jsonform", specifier = ">=2.22.0" },
-    { name = "django-pydantic-field", specifier = ">=0.3.9" },
-    { name = "django-stubs", specifier = ">=5.0.0" },
-    { name = "mypy", specifier = ">=1.19.1" },
-    { name = "prek", specifier = ">=0.3.6" },
-    { name = "pyright" },
-    { name = "pytest", specifier = ">=9.0.2" },
-    { name = "rich", specifier = ">=14.0.0" },
-    { name = "ruff", specifier = ">=0.15.7" },
-    { name = "ty", specifier = ">=0.0.24" },
+sdist = { url = "https://files.pythonhosted.org/packages/d0/54/a195241e80c9d814bf8a2895c10c661554264d45c92deec26c6b6f30785e/abx_pkg-1.9.19.tar.gz", hash = "sha256:7e32173953e5194fb8dbaf038167a69d0347869eb9118a00b5d6711b8f4e78c1", size = 152588, upload-time = "2026-03-23T19:35:43.469Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/67/68/2362eccb3515f88e507494ee7d50a43531effeeba73041618d67f44927ce/abx_pkg-1.9.19-py3-none-any.whl", hash = "sha256:dc9ea2639369fca32626205c2519febaf8517058ad57ad62b38700368ffd43ac", size = 64769, upload-time = "2026-03-23T19:35:44.449Z" },
 ]
 
 [[package]]
 name = "abx-plugins"
 version = "1.10.19"
-source = { editable = "../abx-plugins" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "abx-pkg" },
-    { name = "abxbus" },
-    { name = "jambo" },
+    { name = "pydantic-settings" },
     { name = "rich-click" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "abx-pkg", editable = "../abx-pkg" },
-    { name = "abxbus", editable = "../abxbus" },
-    { name = "feedparser", marker = "extra == 'dev'", specifier = ">=6.0.0" },
-    { name = "jambo", specifier = ">=0.1.7" },
-    { name = "jinja2", marker = "extra == 'dev'", specifier = ">=3.1.0" },
-    { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.408" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.2" },
-    { name = "pytest-httpserver", marker = "extra == 'dev'", specifier = ">=1.1.0" },
-    { name = "requests", marker = "extra == 'dev'", specifier = ">=2.28.0" },
-    { name = "rich-click", specifier = ">=1.9.7" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.2" },
-    { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.18" },
+sdist = { url = "https://files.pythonhosted.org/packages/80/87/32386ec18b046e5f746ab50d80e3c032f5b42b394fee7db02929f650baf5/abx_plugins-1.10.19.tar.gz", hash = "sha256:fc78c172a68e71b05345346b4de7f808ada2e146e0364805a68ab071d777d2a3", size = 539024, upload-time = "2026-03-23T19:40:44.526Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/cc/22/13a830f446161c24389d49fd91ba23beb864ddc02c1c40bcaa28ffe41d79/abx_plugins-1.10.19-py3-none-any.whl", hash = "sha256:0f6d0853292bcce819d04b621f640d893dcaed5a19bf6aa87ac059e7d40d469b", size = 751506, upload-time = "2026-03-23T19:40:45.797Z" },
 ]
-provides-extras = ["dev"]
-
-[package.metadata.requires-dev]
-dev = [{ name = "prek", specifier = ">=0.3.6" }]
 
 [[package]]
 name = "abxbus"
 version = "2.4.9"
-source = { editable = "../abxbus" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiofiles" },
     { name = "anyio" },
+    { name = "portalocker" },
     { name = "pydantic" },
     { name = "typing-extensions" },
     { name = "uuid7" },
 ]
-
-[package.metadata]
-requires-dist = [
-    { name = "aiofiles", specifier = ">=24.1.0" },
-    { name = "anyio", specifier = ">=4.9.0" },
-    { name = "asyncpg", marker = "extra == 'bridges'", specifier = ">=0.31.0" },
-    { name = "asyncpg", marker = "extra == 'postgres'", specifier = ">=0.31.0" },
-    { name = "nats-py", marker = "extra == 'bridges'", specifier = ">=2.13.1" },
-    { name = "nats-py", marker = "extra == 'nats'", specifier = ">=2.13.1" },
-    { name = "pydantic", specifier = ">=2.11.5" },
-    { name = "redis", marker = "extra == 'bridges'", specifier = ">=7.1.1" },
-    { name = "redis", marker = "extra == 'redis'", specifier = ">=7.1.1" },
-    { name = "typing-extensions", specifier = ">=4.12.2" },
-    { name = "uuid7", specifier = ">=0.1.0" },
-]
-provides-extras = ["postgres", "nats", "redis", "bridges"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "build", specifier = ">=1.2.2" },
-    { name = "codespell", specifier = ">=2.4.1" },
-    { name = "fastapi", specifier = ">=0.118.0" },
-    { name = "ipdb", specifier = ">=0.13.13" },
-    { name = "prek", specifier = ">=0.3.3" },
-    { name = "psutil", specifier = ">=7.0.0" },
-    { name = "pyright", specifier = ">=1.1.404" },
-    { name = "pytest", specifier = ">=8.3.5" },
-    { name = "pytest-asyncio", specifier = ">=1.1.0" },
-    { name = "pytest-cov", specifier = ">=6.2.1" },
-    { name = "pytest-httpserver", specifier = ">=1.0.8" },
-    { name = "pytest-timeout", specifier = ">=2.4.0" },
-    { name = "pytest-xdist", specifier = ">=3.7.0" },
-    { name = "ruff", specifier = ">=0.15.1" },
-    { name = "ty", specifier = ">=0.0.1a19" },
+sdist = { url = "https://files.pythonhosted.org/packages/56/bf/3341d60838432dd391b812b557b1e1d5f5d367fab87fbbd16d0ecc268b76/abxbus-2.4.9.tar.gz", hash = "sha256:af2942c972d8f828346579d647a5466990d8469a3bb3727047d01d84c250879e", size = 116437, upload-time = "2026-03-23T19:34:46.556Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/41/d7/29a3823e93c8eaaca62a00cdb985c873cba7553e2b45870a1828f69908ed/abxbus-2.4.9-py3-none-any.whl", hash = "sha256:b46098e86a49cf195963cbff8be182e834368a20868c11ad4bd3c70a4e00b257", size = 111562, upload-time = "2026-03-23T19:34:45.465Z" },
 ]
 
 [[package]]
@@ -775,6 +705,18 @@ wheels = [
 ]
 
 [[package]]
+name = "portalocker"
+version = "3.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pywin32", marker = "sys_platform == 'win32'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/5e/77/65b857a69ed876e1951e88aaba60f5ce6120c33703f7cb61a3c894b8c1b6/portalocker-3.2.0.tar.gz", hash = "sha256:1f3002956a54a8c3730586c5c77bf18fae4149e07eaf1c29fc3faf4d5a3f89ac", size = 95644, upload-time = "2025-06-14T13:20:40.03Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4b/a6/38c8e2f318bf67d338f4d629e93b0b4b9af331f455f0390ea8ce4a099b26/portalocker-3.2.0-py3-none-any.whl", hash = "sha256:3cdc5f565312224bc570c49337bd21428bba0ef363bbcf58b9ef4a9f11779968", size = 22424, upload-time = "2025-06-14T13:20:38.083Z" },
+]
+
+[[package]]
 name = "prek"
 version = "0.3.8"
 source = { registry = "https://pypi.org/simple" }
@@ -1009,6 +951,18 @@ wheels = [
 ]
 
 [[package]]
+name = "pytest-httpserver"
+version = "1.1.5"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "werkzeug" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/50/17/ad187f46998814014f7cda309de700b87c0eb4b2e111e18bc8c819be7116/pytest_httpserver-1.1.5.tar.gz", hash = "sha256:dc3d82e1fe00e491829d8939c549bf4bd9b39a260f87113c619b9d517c2f8ff1", size = 70974, upload-time = "2026-02-14T13:27:23.412Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ec/df/0bdf90b84c6a586a9fd2b509523a3ab26b1cc1b1dba2fb62a32e4411ea9e/pytest_httpserver-1.1.5-py3-none-any.whl", hash = "sha256:ee83feb587ab652c0c6729598db2820e9048233bac8df756818b7845a1621d0a", size = 23330, upload-time = "2026-02-14T13:27:22.119Z" },
+]
+
+[[package]]
 name = "pytest-xdist"
 version = "3.8.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1028,6 +982,25 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/82/ed/0301aeeac3e5353ef3d94b6ec08bbcabd04a72018415dcb29e588514bba8/python_dotenv-1.2.2.tar.gz", hash = "sha256:2c371a91fbd7ba082c2c1dc1f8bf89ca22564a087c2c287cd9b662adde799cf3", size = 50135, upload-time = "2026-03-01T16:00:26.196Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/0b/d7/1959b9648791274998a9c3526f6d0ec8fd2233e4d4acce81bbae76b44b2a/python_dotenv-1.2.2-py3-none-any.whl", hash = "sha256:1d8214789a24de455a8b8bd8ae6fe3c6b69a5e3d64aa8a8e5d68e694bbcb285a", size = 22101, upload-time = "2026-03-01T16:00:25.09Z" },
+]
+
+[[package]]
+name = "pywin32"
+version = "311"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/7c/af/449a6a91e5d6db51420875c54f6aff7c97a86a3b13a0b4f1a5c13b988de3/pywin32-311-cp311-cp311-win32.whl", hash = "sha256:184eb5e436dea364dcd3d2316d577d625c0351bf237c4e9a5fabbcfa5a58b151", size = 8697031, upload-time = "2025-07-14T20:13:13.266Z" },
+    { url = "https://files.pythonhosted.org/packages/51/8f/9bb81dd5bb77d22243d33c8397f09377056d5c687aa6d4042bea7fbf8364/pywin32-311-cp311-cp311-win_amd64.whl", hash = "sha256:3ce80b34b22b17ccbd937a6e78e7225d80c52f5ab9940fe0506a1a16f3dab503", size = 9508308, upload-time = "2025-07-14T20:13:15.147Z" },
+    { url = "https://files.pythonhosted.org/packages/44/7b/9c2ab54f74a138c491aba1b1cd0795ba61f144c711daea84a88b63dc0f6c/pywin32-311-cp311-cp311-win_arm64.whl", hash = "sha256:a733f1388e1a842abb67ffa8e7aad0e70ac519e09b0f6a784e65a136ec7cefd2", size = 8703930, upload-time = "2025-07-14T20:13:16.945Z" },
+    { url = "https://files.pythonhosted.org/packages/e7/ab/01ea1943d4eba0f850c3c61e78e8dd59757ff815ff3ccd0a84de5f541f42/pywin32-311-cp312-cp312-win32.whl", hash = "sha256:750ec6e621af2b948540032557b10a2d43b0cee2ae9758c54154d711cc852d31", size = 8706543, upload-time = "2025-07-14T20:13:20.765Z" },
+    { url = "https://files.pythonhosted.org/packages/d1/a8/a0e8d07d4d051ec7502cd58b291ec98dcc0c3fff027caad0470b72cfcc2f/pywin32-311-cp312-cp312-win_amd64.whl", hash = "sha256:b8c095edad5c211ff31c05223658e71bf7116daa0ecf3ad85f3201ea3190d067", size = 9495040, upload-time = "2025-07-14T20:13:22.543Z" },
+    { url = "https://files.pythonhosted.org/packages/ba/3a/2ae996277b4b50f17d61f0603efd8253cb2d79cc7ae159468007b586396d/pywin32-311-cp312-cp312-win_arm64.whl", hash = "sha256:e286f46a9a39c4a18b319c28f59b61de793654af2f395c102b4f819e584b5852", size = 8710102, upload-time = "2025-07-14T20:13:24.682Z" },
+    { url = "https://files.pythonhosted.org/packages/a5/be/3fd5de0979fcb3994bfee0d65ed8ca9506a8a1260651b86174f6a86f52b3/pywin32-311-cp313-cp313-win32.whl", hash = "sha256:f95ba5a847cba10dd8c4d8fefa9f2a6cf283b8b88ed6178fa8a6c1ab16054d0d", size = 8705700, upload-time = "2025-07-14T20:13:26.471Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/28/e0a1909523c6890208295a29e05c2adb2126364e289826c0a8bc7297bd5c/pywin32-311-cp313-cp313-win_amd64.whl", hash = "sha256:718a38f7e5b058e76aee1c56ddd06908116d35147e133427e59a3983f703a20d", size = 9494700, upload-time = "2025-07-14T20:13:28.243Z" },
+    { url = "https://files.pythonhosted.org/packages/04/bf/90339ac0f55726dce7d794e6d79a18a91265bdf3aa70b6b9ca52f35e022a/pywin32-311-cp313-cp313-win_arm64.whl", hash = "sha256:7b4075d959648406202d92a2310cb990fea19b535c7f4a78d3f5e10b926eeb8a", size = 8709318, upload-time = "2025-07-14T20:13:30.348Z" },
+    { url = "https://files.pythonhosted.org/packages/c9/31/097f2e132c4f16d99a22bfb777e0fd88bd8e1c634304e102f313af69ace5/pywin32-311-cp314-cp314-win32.whl", hash = "sha256:b7a2c10b93f8986666d0c803ee19b5990885872a7de910fc460f9b0c2fbf92ee", size = 8840714, upload-time = "2025-07-14T20:13:32.449Z" },
+    { url = "https://files.pythonhosted.org/packages/90/4b/07c77d8ba0e01349358082713400435347df8426208171ce297da32c313d/pywin32-311-cp314-cp314-win_amd64.whl", hash = "sha256:3aca44c046bd2ed8c90de9cb8427f581c479e594e99b5c0bb19b29c10fd6cb87", size = 9656800, upload-time = "2025-07-14T20:13:34.312Z" },
+    { url = "https://files.pythonhosted.org/packages/c0/d2/21af5c535501a7233e734b8af901574572da66fcc254cb35d0609c9080dd/pywin32-311-cp314-cp314-win_arm64.whl", hash = "sha256:a508e2d9025764a8270f93111a970e1d0fbfc33f4153b388bb649b7eec4f9b42", size = 8932540, upload-time = "2025-07-14T20:13:36.379Z" },
 ]
 
 [[package]]

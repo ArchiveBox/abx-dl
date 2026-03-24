@@ -9,16 +9,29 @@ on:
 env:
   PYTHONIOENCODING: utf-8
   USE_COLOR: "False"
+  UV_NO_SOURCES: "1"
 
 jobs:
   prek:
     name: Prek
     runs-on: ubuntu-24.04
+    env:
+      PYTHONPATH: ${{ github.workspace }}/abx-plugins:${{ github.workspace }}/abx-pkg
 
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
+
+      - name: Clone ArchiveBox plugins
+        run: |
+          rm -rf abx-plugins
+          git clone --depth=1 https://github.com/ArchiveBox/abx-plugins.git abx-plugins
+
+      - name: Clone abx-pkg
+        run: |
+          rm -rf abx-pkg
+          git clone --depth=1 https://github.com/ArchiveBox/abx-pkg.git abx-pkg
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -32,19 +45,33 @@ jobs:
           enable-cache: true
 
       - name: Install Python dependencies
-        run: uv sync --no-sources --extra dev
+        run: |
+          uv sync --no-sources --extra dev
+          uv pip install -e ./abx-pkg -e ./abx-plugins[dev]
 
       - name: Run prek
-        run: uv run --no-sync prek run --all-files
+        run: uv run --no-sync --no-sources prek run --all-files
 
   unit-tests:
     name: Unit tests
     runs-on: ubuntu-24.04
+    env:
+      PYTHONPATH: ${{ github.workspace }}/abx-plugins:${{ github.workspace }}/abx-pkg
 
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 1
+
+      - name: Clone ArchiveBox plugins
+        run: |
+          rm -rf abx-plugins
+          git clone --depth=1 https://github.com/ArchiveBox/abx-plugins.git abx-plugins
+
+      - name: Clone abx-pkg
+        run: |
+          rm -rf abx-pkg
+          git clone --depth=1 https://github.com/ArchiveBox/abx-pkg.git abx-pkg
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -58,10 +85,12 @@ jobs:
           enable-cache: true
 
       - name: Install Python dependencies
-        run: uv sync --no-sources --extra dev
+        run: |
+          uv sync --no-sources --extra dev
+          uv pip install -e ./abx-pkg -e ./abx-plugins[dev]
 
       - name: Run repo test suite
-        run: uv run --no-sync pytest -q tests server/tests
+        run: uv run --no-sync --no-sources pytest -q tests server/tests
 
   discover-plugins:
     name: Discover plugins
@@ -121,6 +150,7 @@ jobs:
       CLAUDECODEEXTRACT_MAX_TURNS: "10"
       CLAUDECODEEXTRACT_TIMEOUT: "120"
       TWOCAPTCHA_API_KEY: ${{ secrets.TWOCAPTCHA_API_KEY }}
+      PYTHONPATH: ${{ github.workspace }}/abx-plugins:${{ github.workspace }}/abx-pkg
 
     strategy:
       fail-fast: false
@@ -138,6 +168,11 @@ jobs:
         run: |
           rm -rf abx-plugins
           git clone --depth=1 https://github.com/ArchiveBox/abx-plugins.git abx-plugins
+
+      - name: Clone abx-pkg
+        run: |
+          rm -rf abx-pkg
+          git clone --depth=1 https://github.com/ArchiveBox/abx-pkg.git abx-pkg
 
       - name: Set up Python ${{ matrix.python }}
         uses: actions/setup-python@v5
@@ -164,7 +199,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           uv sync --no-sources --extra dev
-          uv pip install --no-deps -e ./abx-plugins
+          uv pip install -e ./abx-pkg -e ./abx-plugins[dev]
 
       - name: Verify Chromium launch
         if: ${{ matrix.plugin.needs_chromium }}
@@ -179,7 +214,7 @@ jobs:
           while true; do
             attempts=$((attempts + 1))
             set +e
-            uv run --no-sync pytest -q "$plugin_tests"
+            uv run --no-sync --no-sources pytest -q "$plugin_tests"
             status=$?
             set -e
 
@@ -217,6 +252,11 @@ jobs:
           rm -rf abx-plugins
           git clone --depth=1 https://github.com/ArchiveBox/abx-plugins.git abx-plugins
 
+      - name: Clone abx-pkg
+        run: |
+          rm -rf abx-pkg
+          git clone --depth=1 https://github.com/ArchiveBox/abx-pkg.git abx-pkg
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -242,14 +282,14 @@ jobs:
       - name: Install Python dependencies
         run: |
           uv sync --no-sources --extra dev
-          uv pip install --no-deps -e ./abx-plugins
+          uv pip install -e ./abx-pkg -e ./abx-plugins[dev]
 
       - name: Verify Chromium launch
         uses: ./.github/actions/verify-chromium-launch
 
       - name: Test all plugins
         run: |
-          uv run --no-sync abx-dl dl 'https://example.com' --output=./test-output --timeout=120
+          uv run --no-sync --no-sources abx-dl dl 'https://example.com' --output=./test-output --timeout=120
 
           echo "=== Output structure ==="
           find ./test-output -type f | head -50

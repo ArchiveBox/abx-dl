@@ -60,7 +60,14 @@ def _cli_env(tmp_path: Path) -> dict[str, str]:
     for key in ABX_ENV_KEYS:
         env.pop(key, None)
     config_dir = tmp_path / "config"
-    env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(REPO_ROOT), env.get("PYTHONPATH", "")]))
+    pythonpath_entries = [str(REPO_ROOT)]
+    for sibling in ("abx-plugins", "abx-pkg"):
+        sibling_path = REPO_ROOT.parent / sibling
+        if sibling_path.exists():
+            pythonpath_entries.append(str(sibling_path))
+    if env.get("PYTHONPATH"):
+        pythonpath_entries.append(env["PYTHONPATH"])
+    env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
     env["CONFIG_DIR"] = str(config_dir)
     env["LIB_DIR"] = str(config_dir / "lib")
     env["PERSONAS_DIR"] = str(config_dir / "personas")

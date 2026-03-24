@@ -1,5 +1,6 @@
 """MachineService — runtime config owner with optional derived-cache persistence."""
 
+import json
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -13,7 +14,7 @@ from ..config import (
     set_derived_config,
     unset_derived_config,
 )
-from ..events import MachineEvent
+from ..events import MachineEvent, ProcessStdoutEvent
 from ..models import Plugin
 from .base import BaseService
 
@@ -59,7 +60,7 @@ class MachineService(BaseService):
     2. Single: ``{"type": "Machine", "_method": "update", "key": "config/KEY", "value": "val"}``
     """
 
-    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [MachineEvent]
+    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [ProcessStdoutEvent, MachineEvent]
     EMITS: ClassVar[list[type[BaseEvent]]] = []
 
     def __init__(
@@ -80,6 +81,25 @@ class MachineService(BaseService):
         if initial_derived_config:
             self.derived_config.update(initial_derived_config)
         super().__init__(bus)
+
+    async def on_ProcessStdoutEvent(self, event: ProcessStdoutEvent) -> None:
+        stripped = event.line.strip()
+        if not stripped:
+            return
+        try:
+            payload = json.loads(stripped)
+        except json.JSONDecodeError:
+            return
+        if not isinstance(payload, dict) or payload.get("type") != "Machine":
+            return
+        await self.bus.emit(
+            MachineEvent(
+                method=str(payload.get("_method") or payload.get("method") or ""),
+                key=str(payload.get("key") or ""),
+                value=str(payload.get("value") or ""),
+                config=payload.get("config") if isinstance(payload.get("config"), dict) else None,
+            ),
+        )
 
     def update_derived(self, **kwargs: Any) -> None:
         updates = {key: value for key, value in kwargs.items() if value is not None}
