@@ -370,8 +370,11 @@ def test_binary_installed_event_uses_machine_config_seeded_from_persistent_confi
             machine=machine,
             plugins={
                 "demo": Plugin(
-                    name="demo", path=Path("."), hooks=[], config_schema={"DEMO_BINARY": {"type": "string", "default": "python3"}}
-                )
+                    name="demo",
+                    path=Path("."),
+                    hooks=[],
+                    config_schema={"DEMO_BINARY": {"type": "string", "default": "python3"}},
+                ),
             },
             auto_install=True,
         )
