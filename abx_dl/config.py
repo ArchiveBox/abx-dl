@@ -15,7 +15,11 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from abx_plugins.plugins.base import utils as plugin_utils
+from abx_plugins.plugins.base.utils import (
+    resolve_alias,
+    resolve_plugin_config,
+    resolve_plugin_configs,
+)
 from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -196,7 +200,7 @@ def get_plugin_config(
         global_config.update(base_config)
     user_config = load_config_file()
     if config_path is not None and config_path.exists():
-        return plugin_utils.resolve_plugin_config(
+        return resolve_plugin_config(
             plugin_name,
             schema,
             global_config=global_config,
@@ -204,7 +208,7 @@ def get_plugin_config(
             environ=os.environ,
             all_plugin_schemas={plugin_name: schema},
         )
-    return plugin_utils.resolve_plugin_configs(
+    return resolve_plugin_configs(
         {plugin_name: schema},
         global_config=global_config,
         user_config=user_config,
@@ -231,7 +235,7 @@ def get_config(*keys: str, plugin_schemas: dict[str, dict[str, Any]] | None = No
 
     result: dict[str, dict[str, Any]] = {"GLOBAL": dict(sorted(global_config.items()))}
     user_config = load_config_file()
-    resolved_plugins = plugin_utils.resolve_plugin_configs(
+    resolved_plugins = resolve_plugin_configs(
         plugin_schemas,
         global_config=global_config,
         user_config=user_config,
@@ -244,7 +248,7 @@ def get_config(*keys: str, plugin_schemas: dict[str, dict[str, Any]] | None = No
 
     if keys:
         flat = {}
-        alias_map = {key: plugin_utils.resolve_alias(key, plugin_schemas) for key in keys}
+        alias_map = {key: resolve_alias(key, plugin_schemas) for key in keys}
         for section_config in result.values():
             for k in keys:
                 canonical_key = alias_map[k]
@@ -269,7 +273,7 @@ def set_config(plugin_schemas: dict[str, dict[str, Any]] | None = None, **kwargs
     # Resolve aliases and update values (store as JSON)
     saved = {}
     for key, value in kwargs.items():
-        canonical_key = plugin_utils.resolve_alias(key, plugin_schemas)
+        canonical_key = resolve_alias(key, plugin_schemas)
         config[canonical_key] = _serialize_persisted_value(value)
         saved[canonical_key] = value
 
