@@ -1,4 +1,4 @@
-"""Fixtures for test isolation — prevent config file pollution across tests."""
+"""Fixtures for test isolation — prevent config/derived file pollution across tests."""
 
 import os
 from pathlib import Path
@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 
-# Keys that test hooks write via MachineEvent → set_config.
+# Keys that test hooks may mirror into runtime envs.
 # Clean these from os.environ before each test so a previous test's side effects
 # don't leak into subprocess env dicts built by build_env_for_plugin().
 _TEST_CONFIG_KEYS = frozenset(
@@ -37,7 +37,7 @@ _TEST_CONFIG_KEYS = frozenset(
 
 @pytest.fixture(autouse=True)
 def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    """Point CONFIG_DIR/CONFIG_FILE at a temp dir so tests don't share state."""
+    """Point config.env and derived.env at a temp dir so tests don't share state."""
     home_dir = tmp_path / "home"
     config_dir = home_dir / ".config" / "abx"
     data_dir = tmp_path / "data"
@@ -61,6 +61,7 @@ def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(config_mod, "CONFIG_DIR", config_dir)
     monkeypatch.setattr(config_mod, "CONFIG_FILE", config_dir / "config.env")
+    monkeypatch.setattr(config_mod, "DERIVED_CONFIG_FILE", config_dir / "derived.env")
     monkeypatch.setattr(config_mod, "DATA_DIR", data_dir)
     monkeypatch.setattr(config_mod, "LIB_DIR", lib_dir)
     monkeypatch.setattr(config_mod, "LIB_BIN_DIR", lib_bin_dir)

@@ -104,13 +104,6 @@ class Plugin(BaseModel):
             key=lambda h: h.sort_key,
         )
 
-    def get_install_hooks(self) -> list[Hook]:
-        """Get hooks that run during the install phase."""
-        return sorted(
-            [h for h in self.hooks if h.event == "Install"],
-            key=lambda h: h.sort_key,
-        )
-
     def get_crawl_setup_hooks(self) -> list[Hook]:
         """Get hooks that run during crawl setup."""
         return sorted(
@@ -287,6 +280,11 @@ def load_plugin(plugin_dir: Path) -> Plugin | None:
             plugin.description = schema.get("description", "")
             plugin.output_mimetypes = schema.get("output_mimetypes", [])
             plugin.config_schema = schema.get("properties", {})
+            plugin.binaries = [
+                spec
+                for spec in schema.get("required_binaries", [])
+                if isinstance(spec, dict) and isinstance(spec.get("name"), str) and spec["name"]
+            ]
             plugin.required_plugins = schema.get("required_plugins", [])
         except json.JSONDecodeError:
             pass
@@ -294,6 +292,8 @@ def load_plugin(plugin_dir: Path) -> Plugin | None:
     # Discover hooks
     for hook_file in plugin_dir.glob("on_*"):
         if not hook_file.is_file():
+            continue
+        if not os.access(hook_file, os.X_OK):
             continue
 
         parsed = parse_hook_filename(hook_file.name)
@@ -350,8 +350,8 @@ def filter_plugins(plugins: dict[str, Plugin], names: list[str] | None, *, inclu
     1. ``required_plugins`` field in each plugin's config.json
     2. When *include_providers* is True (default), binary provider plugins
        (those with ``on_BinaryRequest__*`` hooks) are automatically included when any
-       selected plugin has install hooks, since install hooks may request binary
-       resolution at runtime.
+       selected plugin declares ``required_binaries``, since install resolution
+       may request binary provider hooks at runtime.
     """
     if not names:
         return plugins
@@ -371,9 +371,9 @@ def filter_plugins(plugins: dict[str, Plugin], names: list[str] | None, *, inclu
                 if dep_lower not in resolved:
                     queue.append(dep_lower)
 
-    # If any resolved plugin has install hooks, include all binary provider plugins
+    # If any resolved plugin declares required binaries, include all binary provider plugins
     if include_providers:
-        needs_providers = any(plugin.get_install_hooks() for name, plugin in plugins.items() if name.lower() in resolved)
+        needs_providers = any(plugin.binaries for name, plugin in plugins.items() if name.lower() in resolved)
         if needs_providers:
             for name, plugin in plugins.items():
                 if plugin.get_binary_request_hooks():

@@ -1,13 +1,17 @@
 """CrawlService — orchestrates the install + crawl lifecycle phases."""
 
 import asyncio
+import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
 from typing import ClassVar
 
 from abxbus import BaseEvent, EventBus
 
+from ..config import get_plugin_config, get_required_binary_requests
 from ..events import (
+    BinaryRequestEvent,
     CrawlCleanupEvent,
     CrawlCompletedEvent,
     CrawlEvent,
@@ -19,7 +23,7 @@ from ..events import (
     SnapshotEvent,
     slow_warning_timeout,
 )
-from ..models import Snapshot
+from ..models import Snapshot, uuid7
 from ..models import Hook, Plugin
 from .base import BaseService, make_hook_handler
 from .machine_service import MachineService
@@ -35,9 +39,9 @@ class CrawlService(BaseService):
 
         CrawlEvent                                    # emitted by orchestrator
         │
-        ├── InstallEvent                              # on_Install hooks run here
-        │   ├── on_Install__10_wget.finite.bg
-        │   ├── on_Install__70_chrome.finite.bg
+        ├── InstallEvent                              # emits required_binaries
+        │   ├── BinaryRequestEvent
+        │   ├── BinaryRequestEvent
         │   └── ...
         │
         ├── CrawlSetupEvent                           # on_CrawlSetup hooks run here
@@ -53,8 +57,8 @@ class CrawlService(BaseService):
         └── CrawlCompletedEvent                       # informational
 
     InstallEvent and CrawlEvent are the two root phase drivers.
-    Per-hook handlers are registered on InstallEvent / CrawlSetupEvent rather
-    than the roots themselves so phase ordering stays explicit.
+    Crawl setup per-hook handlers are registered on CrawlSetupEvent so phase
+    ordering stays explicit.
     """
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [
@@ -83,7 +87,7 @@ class CrawlService(BaseService):
         output_dir: Path,
         machine: MachineService,
         process: "ProcessService",
-        install_hooks: list[tuple[Plugin, Hook]],
+        install_plugins: list[Plugin],
         crawl_setup_hooks: list[tuple[Plugin, Hook]],
         crawl_only: bool = False,
         install_phase_timeout: float = 300.0,
@@ -94,7 +98,7 @@ class CrawlService(BaseService):
         self.output_dir = output_dir
         self.machine = machine
         self.process = process
-        self.install_hooks = install_hooks
+        self.install_plugins = install_plugins
         self.crawl_setup_hooks = crawl_setup_hooks
         self.crawl_only = crawl_only
         self.install_phase_timeout = install_phase_timeout
@@ -104,24 +108,9 @@ class CrawlService(BaseService):
     def _attach_handlers(self) -> None:
         """Register all handlers for the crawl lifecycle.
 
-        Per-hook handlers go on InstallEvent / CrawlSetupEvent.
+        Crawl setup per-hook handlers go on CrawlSetupEvent.
         Lifecycle handlers go on the root/phase events they advance.
         """
-        for plugin, hook in self.install_hooks:
-            handler = make_hook_handler(
-                self,
-                plugin,
-                hook,
-                url=self.url,
-                snapshot=self.snapshot,
-                output_dir=self.output_dir,
-                machine=self.machine,
-                phase_timeout=self.install_phase_timeout,
-            )
-            handler.__name__ = hook.name
-            handler.__qualname__ = hook.name
-            self._register(InstallEvent, handler)
-
         for plugin, hook in self.crawl_setup_hooks:
             handler = make_hook_handler(
                 self,
@@ -143,9 +132,63 @@ class CrawlService(BaseService):
         self._register(CrawlStartEvent, self.on_CrawlStartEvent)
         self._register(CrawlCleanupEvent, self.on_CrawlCleanupEvent)
 
+    def _plugin_enabled(self, plugin: Plugin) -> bool:
+        plugin_config = get_plugin_config(
+            plugin.name,
+            plugin.config_schema,
+            config_path=plugin.path / "config.json",
+            base_config=self.machine.declared_config,
+        )
+        return bool(plugin_config.get(plugin.enabled_key, True))
+
     async def on_InstallEvent(self, event: InstallEvent) -> None:
         if event.snapshot_id != self.snapshot.id or event.output_dir != str(self.output_dir):
             return
+        install_cache = self.machine.derived_config.get("ABX_INSTALL_CACHE")
+        if not isinstance(install_cache, dict):
+            install_cache = {}
+        now = datetime.now(timezone.utc)
+        pruned_install_cache: dict[str, str] = {}
+        for binary_name, cached_at in install_cache.items():
+            try:
+                cache_time = datetime.fromisoformat(str(cached_at))
+            except ValueError:
+                continue
+            if cache_time.tzinfo is None:
+                cache_time = cache_time.replace(tzinfo=timezone.utc)
+            if now - cache_time < timedelta(hours=24):
+                pruned_install_cache[str(binary_name)] = cache_time.isoformat()
+        if pruned_install_cache != install_cache:
+            self.machine.update_derived(ABX_INSTALL_CACHE=pruned_install_cache)
+        seen: set[str] = set()
+        for plugin in self.install_plugins:
+            if not self._plugin_enabled(plugin):
+                continue
+            plugin_output_dir = self.output_dir / plugin.name
+            for record in get_required_binary_requests(
+                plugin.name,
+                plugin.config_schema,
+                plugin.binaries,
+                overrides=self.machine.declared_config,
+                config_path=plugin.path / "config.json",
+                run_output_dir=self.output_dir,
+            ):
+                signature = json.dumps(record, sort_keys=True, default=str)
+                if signature in seen:
+                    continue
+                seen.add(signature)
+                binary_name = str(record.get("name") or "").strip()
+                if binary_name and binary_name in pruned_install_cache:
+                    continue
+                binary_id = str(record.pop("binary_id", "") or uuid7())
+                await self.bus.emit(
+                    BinaryRequestEvent(
+                        plugin_name=plugin.name,
+                        output_dir=str(plugin_output_dir),
+                        binary_id=binary_id,
+                        **record,
+                    ),
+                )
 
     async def on_CrawlEvent(self, event: CrawlEvent) -> None:
         """Drive the full crawl lifecycle by emitting phase events in sequence.

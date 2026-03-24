@@ -10,7 +10,6 @@ after the original exited).
 import asyncio
 import os
 import shlex
-import shutil
 import signal
 from pathlib import Path
 
@@ -51,9 +50,6 @@ def _resolve_recorded_exec(exec_path: str) -> str:
         return ""
     if os.path.isabs(exec_path):
         return os.path.realpath(exec_path)
-    resolved = shutil.which(exec_path)
-    if resolved:
-        return os.path.realpath(resolved)
     return ""
 
 
@@ -63,9 +59,6 @@ def _resolve_live_exec(exec_path: str) -> str:
         return ""
     if os.path.isabs(exec_path):
         return os.path.realpath(exec_path)
-    resolved = shutil.which(exec_path)
-    if resolved:
-        return os.path.realpath(resolved)
     return ""
 
 
@@ -114,15 +107,16 @@ def validate_pid_file(pid_file: Path, cmd_file: Path | None = None, tolerance: f
             recorded_exec = _resolve_recorded_exec(recorded_argv[0]) if recorded_argv else ""
             process_exec = _resolve_live_exec(proc_argv[0]) if proc_argv else ""
             shebang_rewrite = False
-            if recorded_exec and process_exec and recorded_exec != process_exec:
-                # Shebang rewrite: kernel turns "./script.py" into "python3 ./script.py",
-                # shifting argv by 1. Check if the recorded script appears as proc_argv[1].
-                if len(proc_argv) > 1:
-                    live_script = _resolve_live_exec(proc_argv[1])
-                    if live_script and live_script == recorded_exec:
-                        shebang_rewrite = True
-                    else:
-                        return False
+            if recorded_exec:
+                live_script = (_resolve_live_exec(proc_argv[1]) or _normalize_recorded_arg(proc_argv[1])) if len(proc_argv) > 1 else ""
+                if process_exec:
+                    if recorded_exec != process_exec:
+                        if live_script and live_script == recorded_exec:
+                            shebang_rewrite = True
+                        else:
+                            return False
+                elif live_script and live_script == recorded_exec:
+                    shebang_rewrite = True
                 else:
                     return False
             if not recorded_exec:

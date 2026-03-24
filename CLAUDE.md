@@ -76,7 +76,6 @@ uv run mypy abx_dl/
 
 - **Plugins with Crawl hooks** (like chrome) self-install their dependencies - the executor skips pre-checking binaries for these
 - **Background hooks** (`.bg.js` suffix) run as daemons and are cleaned up via PID files at the end
-- **Config propagation**: Crawl hooks can output `{"type": "Machine", "_method": "update", "key": "config/KEY", "value": "..."}` JSONL to set config for subsequent hooks
 - **Binary discovery**: Hooks output `{"type": "Binary", "name": "...", "abspath": "..."}` to register binary paths
 
 ## Common Issues

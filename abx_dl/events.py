@@ -3,12 +3,8 @@
 Events form a hierarchy during execution::
 
     InstallEvent                                    # orchestrator.download()
-    ├── ProcessEvent (on_Install hooks)
-    │   │   ├── ProcessStdoutEvent                   # for each stdout line
-    │   │   │   ├── BinaryRequestEvent (via BinaryService)
-    │   │   │   │   └── BinaryRequestProcessEvent (provider hook) → BinaryEvent
-    │   │   │   └── MachineEvent (via MachineService)
-    │   │   └── ProcessCompletedEvent
+    ├── BinaryRequestEvent                          # from plugin config required_binaries
+    │   └── BinaryRequestProcessEvent (provider hook) → BinaryEvent
     ├── CrawlEvent                                  # emitted after install phase
     │   ├── CrawlSetupEvent                         # crawl setup hooks run here
     │   │   ├── ProcessEvent (on_CrawlSetup hooks)
@@ -67,11 +63,7 @@ def slow_warning_timeout(timeout: float | int | None) -> float | None:
 
 
 class InstallEvent(BaseEvent):
-    """Root pre-run phase: runs all on_Install hooks before any crawl setup.
-
-    on_Install hooks typically emit BinaryRequest records and Machine config
-    updates. They should not emit Snapshot or ArchiveResult records.
-    """
+    """Root pre-run phase: emits BinaryRequest records before crawl setup."""
 
     url: str
     snapshot_id: str
@@ -217,9 +209,7 @@ class ProcessEvent(BaseEvent):
     snapshot_id: str = ""
     timeout: int = 60
     daemon: bool = False
-    daemon_startup_host: str = ""
-    daemon_startup_port: int = 0
-    daemon_startup_timeout: float = 0.0
+    url: str = ""
     process_type: str = ""
     worker_type: str = ""
     event_timeout: float | None = 360.0
@@ -263,6 +253,7 @@ class ProcessStartedEvent(BaseEvent):
     process_id: str = ""
     snapshot_id: str = ""
     is_background: bool = False
+    url: str = ""
     process_type: str = ""
     worker_type: str = ""
     start_ts: str = ""
@@ -292,6 +283,7 @@ class ProcessCompletedEvent(BaseEvent):
     process_id: str = ""
     snapshot_id: str = ""
     pid: int = 0
+    url: str = ""
     process_type: str = ""
     worker_type: str = ""
     start_ts: str = ""
@@ -307,7 +299,6 @@ class ProcessStdoutEvent(BaseEvent):
 
     - BinaryService: ``{"type": "BinaryRequest", ...}`` → emits BinaryRequestEvent
     - BinaryService: ``{"type": "Binary", ...}`` → emits BinaryEvent
-    - MachineService: ``{"type": "Machine", ...}`` → emits MachineEvent
     - SnapshotService: ``{"type": "Snapshot", ...}`` → emits SnapshotEvent
     - ArchiveResultService: ``{"type": "ArchiveResult", ...}`` → emits ArchiveResultEvent
     - ArchiveBox-only services may also consume additional record types
@@ -351,7 +342,7 @@ class BinaryRequestEvent(BaseEvent):
     plugin_name: str = ""
     hook_name: str = ""
     output_dir: str = ""
-    min_version: str = ""
+    min_version: str | None = None
     binary_id: str = ""
     machine_id: str = ""
     binproviders: str = ""
@@ -363,7 +354,7 @@ class BinaryRequestEvent(BaseEvent):
 class BinaryEvent(BaseEvent):
     """Informational: a binary request was resolved.
 
-    Emitted by BinaryService.on_BinaryRequestEvent after binary resolution completes,
+    Emitted by BinaryService only after a binary resolves successfully,
     whether the binary was already present (discovered by env provider) or
     freshly installed by another provider (apt, pip, npm, etc.). Carries the
     concrete metadata that later hooks should use: resolved ``abspath``,
@@ -373,7 +364,7 @@ class BinaryEvent(BaseEvent):
     name: str
     plugin_name: str = ""
     hook_name: str = ""
-    abspath: str
+    abspath: str = ""
     version: str = ""
     sha256: str = ""
     binproviders: str = ""
@@ -388,15 +379,11 @@ class BinaryEvent(BaseEvent):
 
 
 class MachineEvent(BaseEvent):
-    """Update shared machine config.
+    """Update runtime machine config.
 
-    Emitted by MachineService.on_ProcessStdoutEvent when a hook outputs
-    ``{"type": "Machine", ...}`` JSONL. Handled by MachineService.on_MachineEvent,
-    which updates shared_config and the persistent config store.
-
-    Two formats:
-    - Batch: ``{"type": "Machine", "config": {"KEY1": "val1", "KEY2": "val2"}}``
-    - Single: ``{"type": "Machine", "_method": "update", "key": "config/KEY", "value": "val"}``
+    Emitted internally by services like ``BinaryService``. Handled by
+    ``MachineService.on_MachineEvent``, which updates runtime ``shared_config``
+    and persists derived values to ``derived.env`` for future runs.
     """
 
     model_config = ConfigDict(populate_by_name=True)

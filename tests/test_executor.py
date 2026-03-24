@@ -2,15 +2,25 @@ import asyncio
 import json
 import time
 from pathlib import Path
+from types import SimpleNamespace
+from typing import cast
 
 from abxbus import EventBus
 
-from abx_dl.orchestrator import create_bus, download, install_plugins
-from abx_dl.events import ArchiveResultEvent, BinaryRequestEvent, BinaryEvent, SnapshotEvent
-from abx_dl.models import ArchiveResult, Plugin, Snapshot
+from abx_dl.orchestrator import create_bus, download, install_plugins, setup_services
+from abx_dl.events import (
+    ArchiveResultEvent,
+    BinaryEvent,
+    BinaryRequestEvent,
+    ProcessEvent,
+    ProcessStartedEvent,
+    SnapshotEvent,
+)
+from abx_dl.models import ArchiveResult, Hook, Plugin, Snapshot
 from abx_dl.models import discover_plugins
 from abx_dl.output_files import OutputFile
 from abx_dl.services.binary_service import BinaryService
+from abx_dl.services.base import BaseService, make_hook_handler
 from abx_dl.services.machine_service import MachineService
 
 
@@ -22,6 +32,20 @@ def _write(path: Path, content: str) -> None:
     path.chmod(0o755)
 
 
+def _write_plugin_config(
+    plugin_dir: Path,
+    *,
+    required_binaries: list[dict[str, object]] | None = None,
+    properties: dict[str, object] | None = None,
+) -> None:
+    config: dict[str, object] = {}
+    if required_binaries is not None:
+        config["required_binaries"] = required_binaries
+    if properties is not None:
+        config["properties"] = properties
+    _write(plugin_dir / "config.json", json.dumps(config))
+
+
 def _run_download(*args, **kwargs):
     """Helper to run async download() from sync test code."""
     return asyncio.run(download(*args, **kwargs))
@@ -30,16 +54,9 @@ def _run_download(*args, **kwargs):
 def test_download_dispatches_binary_hooks_and_applies_machine_updates(tmp_path: Path) -> None:
     plugins_root = tmp_path / "plugins"
 
-    _write(
-        plugins_root / "producer" / "on_Install__00_emit.py",
-        "\n".join(
-            [
-                "import json",
-                'print(json.dumps({"type": "BinaryRequest", "name": "demo", "binproviders": "provider"}))',
-                'print(json.dumps({"type": "Machine", "config": {"DEMO_FLAG": "ready"}}))',
-            ],
-        )
-        + "\n",
+    _write_plugin_config(
+        plugins_root / "producer",
+        required_binaries=[{"name": "demo", "binproviders": "provider"}],
     )
     _write(
         plugins_root / "provider" / "on_BinaryRequest__10_provider_install.py",
@@ -61,7 +78,7 @@ def test_download_dispatches_binary_hooks_and_applies_machine_updates(tmp_path: 
                 'node_modules = Path.cwd() / "lib" / "node_modules"',
                 "node_modules.mkdir(parents=True, exist_ok=True)",
                 'print(json.dumps({"type": "Binary", "name": args.name, "abspath": str(bin_path), "binary_id": context["binary_id"], "machine_id": context["machine_id"], "plugin_name": context["plugin_name"], "hook_name": context["hook_name"], "binprovider": "provider"}))',
-                'print(json.dumps({"type": "Machine", "config": {"NODE_MODULES_DIR": str(node_modules), "NODE_PATH": str(node_modules)}}))',
+                'print(json.dumps({"type": "Machine", "config": {"DEMO_FLAG": "ready", "NODE_MODULES_DIR": str(node_modules), "NODE_PATH": str(node_modules)}}))',
             ],
         )
         + "\n",
@@ -113,7 +130,7 @@ def test_download_dispatches_binary_hooks_and_applies_machine_updates(tmp_path: 
     assert "--hook-name=" not in " ".join(provider_process["cmd"])
 
 
-def test_install_event_runs_finite_background_install_hooks_to_completion(tmp_path: Path) -> None:
+def test_install_event_emits_required_binaries_to_completion(tmp_path: Path) -> None:
     plugins_root = tmp_path / "plugins"
     captured: list[tuple[str, str]] = []
     bus = create_bus(total_timeout=120.0)
@@ -123,17 +140,9 @@ def test_install_event_runs_finite_background_install_hooks_to_completion(tmp_pa
 
     bus.on(BinaryEvent, on_installed)
 
-    _write(
-        plugins_root / "emitter" / "on_Install__10_emit.finite.bg.py",
-        "\n".join(
-            [
-                "import json",
-                "import time",
-                "time.sleep(0.1)",
-                'print(json.dumps({"type": "BinaryRequest", "name": "demo", "binproviders": "provider"}), flush=True)',
-            ],
-        )
-        + "\n",
+    _write_plugin_config(
+        plugins_root / "emitter",
+        required_binaries=[{"name": "demo", "binproviders": "provider"}],
     )
     _write(
         plugins_root / "provider" / "on_BinaryRequest__10_provider_install.py",
@@ -167,15 +176,9 @@ def test_install_event_runs_finite_background_install_hooks_to_completion(tmp_pa
 def test_download_forwards_binary_min_version_to_provider_hooks(tmp_path: Path) -> None:
     plugins_root = tmp_path / "plugins"
 
-    _write(
-        plugins_root / "producer" / "on_Install__00_emit.py",
-        "\n".join(
-            [
-                "import json",
-                'print(json.dumps({"type": "BinaryRequest", "name": "java", "binproviders": "provider", "min_version": "11.0.0"}))',
-            ],
-        )
-        + "\n",
+    _write_plugin_config(
+        plugins_root / "producer",
+        required_binaries=[{"name": "java", "binproviders": "provider", "min_version": "11.0.0"}],
     )
     _write(
         plugins_root / "provider" / "on_BinaryRequest__10_provider_install.py",
@@ -225,18 +228,83 @@ def test_download_forwards_binary_min_version_to_provider_hooks(tmp_path: Path) 
     assert consumer_result.output_str == "11.0.0"
 
 
-def test_binary_installed_event_preserves_child_provider_metadata(tmp_path: Path) -> None:
+def test_install_event_hydrates_required_binaries_templates(tmp_path: Path) -> None:
     plugins_root = tmp_path / "plugins"
 
+    _write_plugin_config(
+        plugins_root / "producer",
+        required_binaries=[{"name": "{DEMO_BINARY}", "binproviders": "provider", "min_version": None}],
+        properties={
+            "DEMO_BINARY": {
+                "type": "string",
+                "default": "demo-tool",
+            },
+        },
+    )
     _write(
-        plugins_root / "producer" / "on_Install__00_emit.py",
+        plugins_root / "provider" / "on_BinaryRequest__10_provider_install.py",
         "\n".join(
             [
+                "import argparse",
                 "import json",
-                'print(json.dumps({"type": "BinaryRequest", "name": "demo", "binproviders": "provider"}))',
+                "from pathlib import Path",
+                "parser = argparse.ArgumentParser()",
+                'parser.add_argument("--name", required=True)',
+                'parser.add_argument("--binproviders", default="*")',
+                'parser.add_argument("--min-version", default=None)',
+                'parser.add_argument("--overrides", default=None)',
+                "args = parser.parse_args()",
+                'bin_path = Path.cwd() / "bin" / args.name',
+                "bin_path.parent.mkdir(parents=True, exist_ok=True)",
+                'bin_path.write_text("demo")',
+                'print(json.dumps({"type": "Binary", "name": args.name, "abspath": str(bin_path), "binprovider": "provider"}), flush=True)',
             ],
         )
         + "\n",
+    )
+
+    plugins = discover_plugins(plugins_root)
+    bus = create_bus(total_timeout=60.0)
+    requested_events: list[BinaryRequestEvent] = []
+    installed_events: list[BinaryEvent] = []
+
+    async def on_requested(event: BinaryRequestEvent) -> None:
+        requested_events.append(event)
+
+    async def on_installed(event: BinaryEvent) -> None:
+        installed_events.append(event)
+
+    bus.on(BinaryRequestEvent, on_requested)
+    bus.on(BinaryEvent, on_installed)
+    try:
+        asyncio.run(
+            install_plugins(
+                plugins=plugins,
+                output_dir=tmp_path / "install-run",
+                auto_install=True,
+                emit_jsonl=False,
+                bus=bus,
+            ),
+        )
+    finally:
+        asyncio.run(bus.stop())
+
+    producer_requests = [event for event in requested_events if event.plugin_name == "producer"]
+    assert producer_requests
+    assert producer_requests[0].name == "demo-tool"
+    assert producer_requests[0].min_version is None
+
+    demo_installs = [event for event in installed_events if event.name == "demo-tool"]
+    assert demo_installs
+    assert Path(demo_installs[-1].abspath).name == "demo-tool"
+
+
+def test_binary_installed_event_preserves_child_provider_metadata(tmp_path: Path) -> None:
+    plugins_root = tmp_path / "plugins"
+
+    _write_plugin_config(
+        plugins_root / "producer",
+        required_binaries=[{"name": "demo", "binproviders": "provider"}],
     )
     _write(
         plugins_root / "provider" / "on_BinaryRequest__10_provider_install.py",
@@ -286,10 +354,13 @@ def test_binary_installed_event_preserves_child_provider_metadata(tmp_path: Path
     assert all(event.binprovider == "provider" for event in demo_events)
 
 
-def test_binary_installed_event_uses_machine_config_seeded_from_persistent_config() -> None:
+def test_binary_installed_event_uses_machine_config_seeded_from_persistent_config(tmp_path: Path) -> None:
     from abx_dl.config import set_config
 
-    set_config(None, MERCURY_BINARY="/opt/homebrew/bin/postlight-parser")
+    binary_path = tmp_path / "python3"
+    binary_path.write_text("#!/bin/sh\necho 'Python 3.12.0'\n")
+    binary_path.chmod(0o755)
+    set_config(None, DEMO_BINARY=str(binary_path))
 
     async def run() -> list[BinaryEvent]:
         bus = create_bus(total_timeout=10.0)
@@ -297,7 +368,11 @@ def test_binary_installed_event_uses_machine_config_seeded_from_persistent_confi
         BinaryService(
             bus,
             machine=machine,
-            plugins={"mercury": Plugin(name="mercury", path=Path("."), hooks=[], config_schema={})},
+            plugins={
+                "demo": Plugin(
+                    name="demo", path=Path("."), hooks=[], config_schema={"DEMO_BINARY": {"type": "string", "default": "python3"}}
+                )
+            },
             auto_install=True,
         )
 
@@ -310,28 +385,31 @@ def test_binary_installed_event_uses_machine_config_seeded_from_persistent_confi
         try:
             await bus.emit(
                 BinaryRequestEvent(
-                    name="postlight-parser",
-                    plugin_name="mercury",
-                    hook_name="on_Install__40_mercury.finite.bg",
+                    name=str(binary_path),
+                    plugin_name="demo",
                     output_dir=".",
                     binproviders="env",
-                    overrides={"env": {"abspath": "/opt/homebrew/bin/postlight-parser"}},
+                    overrides={"env": {"abspath": str(binary_path)}},
                 ),
             )
             return installed_events
         finally:
             await bus.stop()
 
-    demo_events = [event for event in asyncio.run(run()) if event.name == "postlight-parser"]
+    demo_events = [event for event in asyncio.run(run()) if event.name == str(binary_path)]
     assert demo_events
-    assert Path(str(demo_events[-1].abspath)).name == "postlight-parser"
+    assert Path(str(demo_events[-1].abspath)).name == "python3"
     assert demo_events[-1].binproviders == "env"
 
 
-def test_binary_installed_event_resolves_config_backed_command_name() -> None:
+def test_binary_installed_event_resolves_config_backed_command_name(tmp_path: Path) -> None:
+    cached_binary = tmp_path / "python3"
+    cached_binary.write_text("#!/bin/sh\necho 'Python 3.12.1'\n")
+    cached_binary.chmod(0o755)
+
     async def run() -> list[BinaryEvent]:
         bus = create_bus(total_timeout=10.0)
-        machine = MachineService(bus, initial_config={"DEMO_BINARY": "python3"})
+        machine = MachineService(bus, initial_derived_config={"DEMO_BINARY": str(cached_binary)})
         BinaryService(
             bus,
             machine=machine,
@@ -357,7 +435,6 @@ def test_binary_installed_event_resolves_config_backed_command_name() -> None:
                 BinaryRequestEvent(
                     name="python3",
                     plugin_name="demo",
-                    hook_name="on_Install__00_demo",
                     output_dir=".",
                     binproviders="env",
                 ),
@@ -369,7 +446,7 @@ def test_binary_installed_event_resolves_config_backed_command_name() -> None:
     demo_events = [event for event in asyncio.run(run()) if event.name == "python3"]
     assert demo_events
     assert Path(str(demo_events[-1].abspath)).is_absolute()
-    assert Path(str(demo_events[-1].abspath)).name.startswith("python")
+    assert Path(str(demo_events[-1].abspath)).name == "python3"
 
 
 def test_binary_installed_event_probes_version_for_config_backed_absolute_path(tmp_path: Path) -> None:
@@ -403,9 +480,8 @@ def test_binary_installed_event_probes_version_for_config_backed_absolute_path(t
         try:
             await bus.emit(
                 BinaryRequestEvent(
-                    name="chromium",
+                    name=str(binary_path),
                     plugin_name="chrome",
-                    hook_name="on_Install__70_chrome.finite.bg",
                     output_dir=".",
                     binproviders="puppeteer",
                 ),
@@ -414,7 +490,7 @@ def test_binary_installed_event_probes_version_for_config_backed_absolute_path(t
         finally:
             await bus.stop()
 
-    demo_events = [event for event in asyncio.run(run()) if event.name == "chromium"]
+    demo_events = [event for event in asyncio.run(run()) if event.name == str(binary_path)]
     assert demo_events
     assert demo_events[-1].abspath == str(binary_path)
     assert demo_events[-1].version == "123.4.5"
@@ -442,7 +518,7 @@ def test_binary_installed_event_infers_provider_from_config_backed_managed_path(
         bus = create_bus(total_timeout=10.0)
         machine = MachineService(
             bus,
-            initial_config={
+            initial_derived_config={
                 "MERCURY_BINARY": str(npm_binary_path),
                 "OPENDATALOADER_BINARY": str(pip_binary_path),
             },
@@ -478,7 +554,6 @@ def test_binary_installed_event_infers_provider_from_config_backed_managed_path(
                 BinaryRequestEvent(
                     name="postlight-parser",
                     plugin_name="mercury",
-                    hook_name="on_Install__40_mercury.finite.bg",
                     output_dir=".",
                     binproviders="npm,env",
                 ),
@@ -487,7 +562,6 @@ def test_binary_installed_event_infers_provider_from_config_backed_managed_path(
                 BinaryRequestEvent(
                     name="opendataloader-pdf",
                     plugin_name="opendataloader",
-                    hook_name="on_Install__42_opendataloader.finite.bg",
                     output_dir=".",
                     binproviders="env,pip",
                 ),
@@ -510,18 +584,18 @@ def test_binary_event_uses_cached_config_binary_before_provider_hooks(tmp_path: 
     plugins_root = tmp_path / "plugins"
     cached_binary = tmp_path / "config-bin" / "demo-tool"
     cached_binary.parent.mkdir(parents=True, exist_ok=True)
-    cached_binary.write_text("demo")
+    cached_binary.write_text('#!/bin/sh\nif [ "$1" = "--version" ]; then\n  echo \'demo-tool 0.0.1\'\n  exit 0\nfi\nexit 0\n')
     cached_binary.chmod(0o755)
 
-    _write(
-        plugins_root / "producer" / "on_Install__00_emit.py",
-        "\n".join(
-            [
-                "import json",
-                'print(json.dumps({"type": "BinaryRequest", "name": "demo-tool", "binproviders": "provider,env"}))',
-            ],
-        )
-        + "\n",
+    _write_plugin_config(
+        plugins_root / "producer",
+        required_binaries=[{"name": "{DEMO_TOOL_BINARY}", "binproviders": "provider,env"}],
+        properties={
+            "DEMO_TOOL_BINARY": {
+                "type": "string",
+                "default": "demo-tool",
+            },
+        },
     )
     _write(
         plugins_root / "env" / "on_BinaryRequest__00_env_discover.py",
@@ -557,8 +631,13 @@ def test_binary_event_uses_cached_config_binary_before_provider_hooks(tmp_path: 
 
     plugins = discover_plugins(plugins_root)
     bus = create_bus(total_timeout=60.0)
-    machine = MachineService(bus, initial_config={"DEMO_TOOL_BINARY": str(cached_binary)})
-    BinaryService(bus, machine=machine, plugins=plugins, auto_install=True)
+    setup_services(
+        bus,
+        plugins=plugins,
+        derived_config_overrides={"DEMO_TOOL_BINARY": str(cached_binary)},
+        auto_install=True,
+        emit_jsonl=False,
+    )
     installed_events: list[BinaryEvent] = []
 
     async def on_installed(event: BinaryEvent) -> None:
@@ -577,23 +656,139 @@ def test_binary_event_uses_cached_config_binary_before_provider_hooks(tmp_path: 
     assert not (tmp_path / "run" / "provider" / "provider-ran.txt").exists()
 
 
+def test_binary_event_falls_back_from_stale_cached_config_binary_to_provider_hooks(tmp_path: Path) -> None:
+    plugins_root = tmp_path / "plugins"
+    managed_lib_dir = tmp_path / "lib"
+    stale_binary = managed_lib_dir / "pip" / "venv" / "bin" / "demo-tool"
+    stale_binary.parent.mkdir(parents=True, exist_ok=True)
+    stale_binary.write_text('#!/bin/sh\nif [ "$1" = "--version" ]; then\n  echo \'broken binary\' >&2\n  exit 1\nfi\nexit 1\n')
+    stale_binary.chmod(0o755)
+
+    _write_plugin_config(
+        plugins_root / "producer",
+        required_binaries=[{"name": "{DEMO_TOOL_BINARY}", "binproviders": "provider,env"}],
+        properties={
+            "DEMO_TOOL_BINARY": {
+                "type": "string",
+                "default": "demo-tool",
+            },
+        },
+    )
+    _write(
+        plugins_root / "provider" / "on_BinaryRequest__10_provider_install.py",
+        "\n".join(
+            [
+                "import argparse",
+                "import json",
+                "from pathlib import Path",
+                "parser = argparse.ArgumentParser()",
+                'parser.add_argument("--name", required=True)',
+                'parser.add_argument("--binproviders", default="*")',
+                'parser.add_argument("--overrides", default=None)',
+                "args = parser.parse_args()",
+                'Path.cwd().joinpath("provider-ran.txt").write_text(args.name)',
+                'bin_path = Path.cwd() / "bin" / args.name',
+                "bin_path.parent.mkdir(parents=True, exist_ok=True)",
+                'bin_path.write_text("demo")',
+                'print(json.dumps({"type": "Binary", "name": args.name, "abspath": str(bin_path), "version": "1.2.3", "sha256": "abc123", "binprovider": "provider"}))',
+            ],
+        )
+        + "\n",
+    )
+
+    plugins = discover_plugins(plugins_root)
+    bus = create_bus(total_timeout=60.0)
+    services = setup_services(
+        bus,
+        plugins=plugins,
+        config_overrides={"LIB_DIR": str(managed_lib_dir)},
+        derived_config_overrides={"DEMO_TOOL_BINARY": str(stale_binary)},
+        auto_install=True,
+        emit_jsonl=False,
+    )
+    installed_events: list[BinaryEvent] = []
+
+    async def on_installed(event: BinaryEvent) -> None:
+        installed_events.append(event)
+
+    bus.on(BinaryEvent, on_installed)
+    try:
+        _run_download("https://example.com", plugins, tmp_path / "run", auto_install=True, bus=bus)
+    finally:
+        asyncio.run(bus.stop())
+
+    demo_events = [event for event in installed_events if event.name == "demo-tool"]
+    assert demo_events
+    assert demo_events[-1].binprovider == "provider"
+    assert demo_events[-1].abspath.endswith("/provider/bin/demo-tool")
+    assert (tmp_path / "run" / "provider" / "provider-ran.txt").exists()
+    assert services.machine.shared_config["DEMO_TOOL_BINARY"] == str(managed_lib_dir / "bin" / "demo-tool")
+
+
+def test_binary_event_does_not_fallback_from_user_binary_abspath_override(tmp_path: Path) -> None:
+    plugins_root = tmp_path / "plugins"
+    user_binary = tmp_path / "custom-bin" / "demo-tool"
+    user_binary.parent.mkdir(parents=True, exist_ok=True)
+    user_binary.write_text('#!/bin/sh\nif [ "$1" = "--version" ]; then\n  echo \'broken binary\' >&2\n  exit 1\nfi\nexit 1\n')
+    user_binary.chmod(0o755)
+
+    _write_plugin_config(
+        plugins_root / "producer",
+        required_binaries=[{"name": "{DEMO_TOOL_BINARY}", "binproviders": "provider,env"}],
+        properties={
+            "DEMO_TOOL_BINARY": {
+                "type": "string",
+                "default": "demo-tool",
+            },
+        },
+    )
+    _write(
+        plugins_root / "provider" / "on_BinaryRequest__10_provider_install.py",
+        "\n".join(
+            [
+                "from pathlib import Path",
+                'Path.cwd().joinpath("provider-ran.txt").write_text("demo-tool")',
+            ],
+        )
+        + "\n",
+    )
+
+    plugins = discover_plugins(plugins_root)
+    bus = create_bus(total_timeout=60.0)
+    setup_services(
+        bus,
+        plugins=plugins,
+        config_overrides={"DEMO_TOOL_BINARY": str(user_binary), "LIB_DIR": str(tmp_path / "lib")},
+        auto_install=True,
+        emit_jsonl=False,
+    )
+    installed_events: list[BinaryEvent] = []
+
+    async def on_installed(event: BinaryEvent) -> None:
+        installed_events.append(event)
+
+    bus.on(BinaryEvent, on_installed)
+    try:
+        _run_download("https://example.com", plugins, tmp_path / "run", auto_install=True, bus=bus)
+    finally:
+        asyncio.run(bus.stop())
+
+    demo_events = [event for event in installed_events if event.name == "demo-tool"]
+    assert not demo_events
+    assert not (tmp_path / "run" / "provider" / "provider-ran.txt").exists()
+
+
 def test_binary_event_uses_lib_bin_binary_before_provider_hooks(tmp_path: Path) -> None:
     plugins_root = tmp_path / "plugins"
     lib_bin_dir = tmp_path / "lib-bin"
     cached_binary = lib_bin_dir / "demo-tool"
     lib_bin_dir.mkdir(parents=True, exist_ok=True)
-    cached_binary.write_text("demo")
+    cached_binary.write_text('#!/bin/sh\nif [ "$1" = "--version" ]; then\n  echo \'demo-tool 0.0.1\'\n  exit 0\nfi\nexit 0\n')
     cached_binary.chmod(0o755)
 
-    _write(
-        plugins_root / "producer" / "on_Install__00_emit.py",
-        "\n".join(
-            [
-                "import json",
-                'print(json.dumps({"type": "BinaryRequest", "name": "demo-tool", "binproviders": "provider"}))',
-            ],
-        )
-        + "\n",
+    _write_plugin_config(
+        plugins_root / "producer",
+        required_binaries=[{"name": "demo-tool", "binproviders": "provider"}],
     )
     _write(
         plugins_root / "provider" / "on_BinaryRequest__10_provider_install.py",
@@ -726,6 +921,7 @@ def test_download_sets_plugin_specific_binary_env_from_binary_default(tmp_path: 
         "\n".join(
             [
                 "{",
+                '  "required_binaries": [{"name": "demo-tool", "binproviders": "provider"}],',
                 '  "properties": {',
                 '    "DEMO_BINARY": {',
                 '      "type": "string",',
@@ -733,16 +929,6 @@ def test_download_sets_plugin_specific_binary_env_from_binary_default(tmp_path: 
                 "    }",
                 "  }",
                 "}",
-            ],
-        )
-        + "\n",
-    )
-    _write(
-        plugins_root / "demo" / "on_Install__00_emit.py",
-        "\n".join(
-            [
-                "import json",
-                'print(json.dumps({"type": "BinaryRequest", "name": "demo-tool", "binproviders": "provider"}))',
             ],
         )
         + "\n",
@@ -793,7 +979,7 @@ def test_download_sets_plugin_specific_binary_env_from_binary_default(tmp_path: 
     results = _run_download("https://example.com", plugins, tmp_path / "run", auto_install=True)
 
     demo_result = next(result for result in results if result.plugin == "demo")
-    generic_key = str(tmp_path / "run" / "provider" / "bin" / "demo-tool")
+    generic_key = str(tmp_path / "home" / ".config" / "abx" / "lib" / "bin" / "demo-tool")
     assert demo_result.status == "succeeded"
     assert demo_result.output_str == f"{generic_key}|{generic_key}"
 
@@ -802,7 +988,7 @@ def test_download_applies_side_effects_from_completed_background_hooks(tmp_path:
     plugins_root = tmp_path / "plugins"
 
     _write(
-        plugins_root / "producer" / "on_Install__00_emit.finite.bg.py",
+        plugins_root / "producer" / "on_CrawlSetup__00_emit.finite.bg.py",
         "\n".join(
             [
                 "import json",
@@ -813,7 +999,7 @@ def test_download_applies_side_effects_from_completed_background_hooks(tmp_path:
         + "\n",
     )
     _write(
-        plugins_root / "delay" / "on_Install__01_wait.py",
+        plugins_root / "delay" / "on_CrawlSetup__01_wait.py",
         "\n".join(
             [
                 "import time",
@@ -930,6 +1116,7 @@ def test_download_finalizes_background_hooks_after_sigterm(tmp_path: Path) -> No
 def test_snapshot_finite_bg_hook_finishes_before_cleanup(tmp_path: Path) -> None:
     plugins_root = tmp_path / "plugins"
     artifact = tmp_path / "run" / "bgdemo" / "artifact.txt"
+    _write_plugin_config(plugins_root / "bgdemo")
 
     _write(
         plugins_root / "bgdemo" / "on_Snapshot__05_write.finite.bg.py",
@@ -955,6 +1142,84 @@ def test_snapshot_finite_bg_hook_finishes_before_cleanup(tmp_path: Path) -> None
     assert result.status == "succeeded"
     assert result.output_str == "artifact.txt"
     assert artifact.read_text() == "finished"
+
+
+def test_make_hook_handler_waits_for_background_process_start(tmp_path: Path) -> None:
+    class FakeBus:
+        def __init__(self) -> None:
+            self.emitted: list[object] = []
+            self.find_calls: list[dict[str, object]] = []
+
+        async def emit(self, event):
+            self.emitted.append(event)
+            return event
+
+        async def find(self, event_type, **kwargs):
+            self.find_calls.append({"event_type": event_type, **kwargs})
+            return ProcessStartedEvent(
+                plugin_name="bgdemo",
+                hook_name="on_Snapshot__05_write.finite.bg",
+                hook_path="/tmp/bg.py",
+                hook_args=["--url=https://example.com"],
+                output_dir=str(tmp_path / "run" / "bgdemo"),
+                env={},
+                timeout=60,
+                pid=123,
+                process_id="proc-123",
+                snapshot_id="snap-123",
+                is_background=True,
+                url="https://example.com",
+            )
+
+    class FakeMachine:
+        def __init__(self) -> None:
+            self.shared_config: dict[str, str] = {}
+
+        def get_env_for_plugin(self, _plugin, *, run_output_dir):
+            return {}
+
+    bus = FakeBus()
+    service = SimpleNamespace(bus=bus)
+    machine = FakeMachine()
+    snapshot = Snapshot(url="https://example.com", id="snap-123")
+    plugin = Plugin(name="bgdemo", path=tmp_path / "plugins" / "bgdemo")
+    hook = Hook(
+        name="on_Snapshot__05_write.finite.bg",
+        event="Snapshot",
+        plugin_name="bgdemo",
+        path=tmp_path / "plugins" / "bgdemo" / "on_Snapshot__05_write.finite.bg.py",
+        order=5,
+        is_background=True,
+    )
+
+    handler = make_hook_handler(
+        cast(BaseService, service),
+        plugin,
+        hook,
+        url="https://example.com",
+        snapshot=snapshot,
+        output_dir=tmp_path / "run",
+        machine=cast(MachineService, machine),
+        phase_timeout=300.0,
+    )
+
+    asyncio.run(
+        handler(
+            SnapshotEvent(
+                url="https://example.com",
+                snapshot_id=snapshot.id,
+                output_dir=str(tmp_path / "run"),
+            ),
+        ),
+    )
+
+    assert len(bus.emitted) == 1
+    assert isinstance(bus.emitted[0], ProcessEvent)
+    assert len(bus.find_calls) == 1
+    assert bus.find_calls[0]["event_type"] is ProcessStartedEvent
+    assert bus.find_calls[0]["child_of"] is bus.emitted[0]
+    assert bus.find_calls[0]["past"] is False
+    assert bus.find_calls[0]["future"] == 10.0
 
 
 def test_download_preserves_full_hook_stderr_in_archive_result(tmp_path: Path) -> None:
@@ -1050,16 +1315,12 @@ def test_failed_hook_logs_survive_later_successful_retry(tmp_path: Path) -> None
 def test_binary_provider_runs_keep_separate_stderr_logs(tmp_path: Path) -> None:
     plugins_root = tmp_path / "plugins"
 
-    _write(
-        plugins_root / "producer" / "on_Install__00_emit.py",
-        "\n".join(
-            [
-                "import json",
-                'print(json.dumps({"type": "BinaryRequest", "name": "alpha", "binproviders": "provider"}), flush=True)',
-                'print(json.dumps({"type": "BinaryRequest", "name": "beta", "binproviders": "provider"}), flush=True)',
-            ],
-        )
-        + "\n",
+    _write_plugin_config(
+        plugins_root / "producer",
+        required_binaries=[
+            {"name": "alpha", "binproviders": "provider"},
+            {"name": "beta", "binproviders": "provider"},
+        ],
     )
 
     _write(
@@ -1652,7 +1913,7 @@ def test_binary_installed_events(tmp_path: Path) -> None:
     Path(preloaded_path).write_text("stub")
 
     _write(
-        plugins_root / "emitter" / "on_Install__00_emit.py",
+        plugins_root / "emitter" / "on_CrawlSetup__00_emit.py",
         "\n".join(
             [
                 "import json",
@@ -1730,8 +1991,10 @@ def test_binary_installed_events(tmp_path: Path) -> None:
 
     consumer = next(r for r in results if r.plugin == "consumer")
     parts = consumer.output_str.split("|")
-    assert parts[0] == preloaded_path, f"PRELOADED_BINARY env var mismatch: {parts[0]!r}"
-    assert parts[1] != "missing", "INSTALLME_BINARY not set in consumer env — install chain broken"
+    expected_preloaded = str(tmp_path / "home" / ".config" / "abx" / "lib" / "bin" / "preloaded")
+    expected_installme = str(tmp_path / "home" / ".config" / "abx" / "lib" / "bin" / "installme")
+    assert parts[0] == expected_preloaded, f"PRELOADED_BINARY env var mismatch: {parts[0]!r}"
+    assert parts[1] == expected_installme, f"INSTALLME_BINARY env var mismatch: {parts[1]!r}"
 
 
 def test_archive_result_events_no_synthetic_when_inline_reported(tmp_path: Path) -> None:
@@ -1827,7 +2090,7 @@ def test_download_dry_run_sets_env_and_skips_snapshot_processes(tmp_path: Path) 
     plugins_root = tmp_path / "plugins"
 
     _write(
-        plugins_root / "crawlprobe" / "on_Install__00_probe.py",
+        plugins_root / "crawlprobe" / "on_CrawlSetup__00_probe.py",
         "\n".join(
             [
                 "import os",
@@ -1859,15 +2122,24 @@ def test_download_dry_run_sets_env_and_skips_snapshot_processes(tmp_path: Path) 
     assert results == []
 
 
-def test_install_plugins_dry_run_sets_env_for_install_hooks(tmp_path: Path) -> None:
+def test_install_plugins_dry_run_sets_env_for_binary_providers(tmp_path: Path) -> None:
     plugins_root = tmp_path / "plugins"
 
+    _write_plugin_config(
+        plugins_root / "installer",
+        required_binaries=[{"name": "demo", "binproviders": "provider"}],
+    )
     _write(
-        plugins_root / "installer" / "on_Install__00_probe.py",
+        plugins_root / "provider" / "on_BinaryRequest__10_probe.py",
         "\n".join(
             [
                 "import os",
+                "import argparse",
                 "from pathlib import Path",
+                "parser = argparse.ArgumentParser()",
+                'parser.add_argument("--name", required=True)',
+                'parser.add_argument("--binproviders", default="*")',
+                "parser.parse_args()",
                 'Path.cwd().joinpath("dry_run_install.txt").write_text(os.environ.get("DRY_RUN", ""))',
             ],
         )
@@ -1877,4 +2149,4 @@ def test_install_plugins_dry_run_sets_env_for_install_hooks(tmp_path: Path) -> N
     plugins = discover_plugins(plugins_root)
     asyncio.run(install_plugins(plugins=plugins, output_dir=tmp_path / "install-run", dry_run=True))
 
-    assert (tmp_path / "install-run" / "installer" / "dry_run_install.txt").read_text() == "True"
+    assert (tmp_path / "install-run" / "provider" / "dry_run_install.txt").read_text() == "True"

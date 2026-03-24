@@ -119,7 +119,7 @@ def test_format_table_output_humanizes_binary_records() -> None:
 
 def test_latest_active_hook_name_prefers_most_recent_still_running_hook() -> None:
     live_results = {
-        "row-1": cli_module._LiveProcessRecord(id="row-1", plugin="wget", hook_name="on_Install__10_wget.finite.bg", timeout=60),
+        "row-1": cli_module._LiveProcessRecord(id="row-1", plugin="wget", hook_name="install", timeout=60),
         "row-2": cli_module._LiveProcessRecord(
             id="row-2",
             plugin="chrome",
@@ -128,7 +128,7 @@ def test_latest_active_hook_name_prefers_most_recent_still_running_hook() -> Non
         ),
     }
     assert cli_module._latest_active_hook_name(["row-1", "row-2"], live_results) == "on_CrawlSetup__90_chrome_launch.daemon.bg"
-    assert cli_module._latest_active_hook_name(["row-1"], live_results) == "on_Install__10_wget.finite.bg"
+    assert cli_module._latest_active_hook_name(["row-1"], live_results) == "install"
     assert cli_module._latest_active_hook_name([], live_results) is None
 
 
@@ -136,7 +136,7 @@ def test_render_record_output_compacts_live_process_output() -> None:
     record = cli_module._LiveProcessRecord(
         id="proc-1",
         plugin="wget",
-        hook_name="on_Install__10_wget.finite.bg",
+        hook_name="install",
         timeout=60,
         output="line one\nline two " + ("x" * 200),
     )
@@ -149,7 +149,7 @@ def test_render_record_output_humanizes_long_binary_json_before_compacting() -> 
     record = cli_module._LiveProcessRecord(
         id="proc-1",
         plugin="npm",
-        hook_name="on_Install__01_npm",
+        hook_name="install",
         timeout=60,
         output='{"type": "BinaryRequest","name":"npm","binproviders":"env,apt,brew","machine_id":"","overrides":{"apt":{"install_args":["nodejs","npm"]},"brew":{"install_args":["node"]}}}',
     )
@@ -321,7 +321,7 @@ def test_phase_label_for_event_uses_ancestor_phase_event() -> None:
     phase_event = CrawlSetupEvent(url="https://example.com", snapshot_id="snap", output_dir="/tmp")
     process_event = ProcessEvent(
         plugin_name="wget",
-        hook_name="on_Install__10_wget.finite.bg",
+        hook_name="install",
         hook_path="/bin/echo",
         hook_args=["wget"],
         is_background=False,
@@ -380,7 +380,7 @@ def test_render_record_output_cell_highlights_compacted_live_output() -> None:
     record = cli_module._LiveProcessRecord(
         id="proc-1",
         plugin="wget",
-        hook_name="on_Install__10_wget.finite.bg",
+        hook_name="install",
         timeout=60,
         output='{"status": "ok"}\n"value"',
     )
@@ -391,7 +391,7 @@ def test_render_record_output_uses_process_args_for_failed_empty_live_row() -> N
     record = cli_module._LiveProcessRecord(
         id="proc-1",
         plugin="wget",
-        hook_name="on_Install__10_wget.finite.bg",
+        hook_name="install",
         timeout=60,
         status="failed",
         cmd=["/bin/echo", "--flag", "value"],
@@ -403,7 +403,7 @@ def test_render_record_output_keeps_failed_output_untruncated() -> None:
     record = cli_module._LiveProcessRecord(
         id="proc-1",
         plugin="wget",
-        hook_name="on_Install__10_wget.finite.bg",
+        hook_name="install",
         timeout=60,
         status="failed",
         output="line one\nline two " + ("x" * 200),
@@ -591,31 +591,29 @@ def test_plugins_list_includes_metadata_summary_columns(tmp_path: Path) -> None:
     assert "application/json" in normalized
 
 
-def test_readme_install_command_runs_real_install_hooks(tmp_path: Path) -> None:
+def test_readme_install_command_runs_real_install_pipeline(tmp_path: Path) -> None:
     result = _run_cli(tmp_path, "plugins", "--install", "wget")
 
     assert result.returncode == 0
     assert "Installing plugin dependencies" in result.stdout
     assert "wget" in result.stdout
     if "Install Results" in result.stdout:
-        assert "on_Install__10_wget" in result.stdout
         assert "Binary" in result.stdout or "Binary" in result.stdout
         assert "✅" in result.stdout
         assert "⬇️" in result.stdout
-        assert "on_Install__00_npm_" not in result.stdout
-        assert "on_Install__60_puppet" not in result.stdout
+        assert "providers=env,apt,brew" in result.stdout
     else:
-        assert "No install hooks found for the selected plugins." in result.stdout
+        assert "No required binaries declared for the selected plugins." in result.stdout
 
 
-def test_run_plugin_install_skips_provider_only_install_hooks(monkeypatch) -> None:
+def test_run_plugin_install_keeps_provider_plugins_but_only_selected_required_binaries(monkeypatch) -> None:
     plugins = discover_plugins()
     selected = {name: plugins[name] for name in ["forumdl", "puppeteer"]}
 
     async def fake_install_plugins(*args, **kwargs):
         install_plugins = kwargs["plugins"]
-        assert [hook.name for hook in install_plugins["forumdl"].get_install_hooks()] == ["on_Install__25_forumdl.finite.bg"]
-        assert install_plugins["puppeteer"].get_install_hooks() == []
+        assert install_plugins["forumdl"].binaries
+        assert install_plugins["puppeteer"].binaries
         assert install_plugins["puppeteer"].get_binary_request_hooks()
         return []
 
@@ -631,12 +629,12 @@ def test_run_plugin_install_skips_provider_only_install_hooks(monkeypatch) -> No
     assert exit_code == 0
 
 
-def test_run_plugin_install_keeps_explicit_plugin_install_hooks(monkeypatch) -> None:
+def test_run_plugin_install_uses_declared_required_binaries(monkeypatch) -> None:
     plugin = discover_plugins()["npm"]
 
     async def fake_install_plugins(*args, **kwargs):
         install_plugins = kwargs["plugins"]
-        assert [hook.name for hook in install_plugins["npm"].get_install_hooks()] == ["on_Install__01_npm"]
+        assert install_plugins["npm"].binaries
         return []
 
     monkeypatch.setattr(cli_module, "install_plugins", fake_install_plugins)
@@ -671,7 +669,6 @@ def test_run_plugin_install_passes_through_failed_binary_hook_stderr(monkeypatch
                 BinaryRequestEvent(
                     name="chromium",
                     plugin_name="chrome",
-                    hook_name="on_Install__70_chrome.finite.bg",
                     binproviders="puppeteer",
                 ),
             )
@@ -684,17 +681,6 @@ def test_run_plugin_install_passes_through_failed_binary_hook_stderr(monkeypatch
                     stderr=sandbox_error,
                     output_dir="",
                     process_id="proc-1",
-                ),
-            )
-            await bus.emit(
-                ProcessCompletedEvent(
-                    plugin_name="chrome",
-                    hook_name="on_Install__70_chrome.finite.bg",
-                    exit_code=0,
-                    stdout='{"type": "BinaryRequest","name":"chromium","binproviders":"puppeteer"}',
-                    stderr="",
-                    output_dir="",
-                    process_id="proc-2",
                 ),
             )
         return []
@@ -723,15 +709,6 @@ def test_run_plugin_install_passes_through_failed_binary_hook_stderr(monkeypatch
 def test_run_plugin_install_fails_when_binary_request_never_resolves(monkeypatch) -> None:
     plugin = discover_plugins()["chrome"]
     console_output = io.StringIO()
-    hook_name = "on_Install__70_chrome.finite.bg"
-    request_stdout = json.dumps(
-        {
-            "type": "BinaryRequest",
-            "name": "chromium",
-            "binproviders": "puppeteer",
-            "overrides": {"puppeteer": ["chromium@latest", "--install-deps"]},
-        },
-    )
 
     async def fake_install_plugins(*args, **kwargs):
         bus = kwargs.get("bus")
@@ -740,19 +717,7 @@ def test_run_plugin_install_fails_when_binary_request_never_resolves(monkeypatch
                 BinaryRequestEvent(
                     name="chromium",
                     plugin_name="chrome",
-                    hook_name=hook_name,
                     binproviders="puppeteer",
-                ),
-            )
-            await bus.emit(
-                ProcessCompletedEvent(
-                    plugin_name="chrome",
-                    hook_name=hook_name,
-                    exit_code=0,
-                    stdout=request_stdout,
-                    stderr="",
-                    output_dir="",
-                    process_id="proc-1",
                 ),
             )
         return []
@@ -768,7 +733,6 @@ def test_run_plugin_install_fails_when_binary_request_never_resolves(monkeypatch
 
     rendered = console_output.getvalue()
     assert exit_code == 1
-    assert hook_name in rendered
     assert "BinaryRequested" in rendered
     assert "❌" in rendered
     assert "chromium" in rendered
@@ -831,7 +795,7 @@ def test_run_plugin_install_binary_rows_show_provider_hook_name(monkeypatch) -> 
 def test_run_plugin_install_hides_failed_provider_row_after_later_success(monkeypatch) -> None:
     plugin = discover_plugins()["wget"]
     console_output = io.StringIO()
-    crawl_hook = "on_Install__10_wget.finite.bg"
+    crawl_hook = "install"
     env_hook = "on_BinaryRequest__09_env_discover"
     pip_hook = "on_BinaryRequest__11_pip_install"
     request_stdout = json.dumps(
@@ -926,7 +890,7 @@ def test_run_plugin_install_scopes_provider_failure_to_requested_binary(monkeypa
                 BinaryRequestEvent(
                     name="trafilatura",
                     plugin_name="trafilatura",
-                    hook_name="on_Install__41_trafilatura.finite.bg",
+                    hook_name="install",
                     binproviders="env,pip",
                 ),
             )
@@ -934,7 +898,7 @@ def test_run_plugin_install_scopes_provider_failure_to_requested_binary(monkeypa
                 BinaryRequestEvent(
                     name="opendataloader-pdf",
                     plugin_name="opendataloader",
-                    hook_name="on_Install__42_opendataloader.finite.bg",
+                    hook_name="install",
                     binproviders="env,pip",
                 ),
             )
@@ -965,13 +929,13 @@ def test_run_plugin_install_scopes_provider_failure_to_requested_binary(monkeypa
     assert exit_code == 1
     assert "trafilatura not found in PATH" in rendered
     assert "Requested binary not resolved: opendataloader-pdf" in rendered
-    assert "opendataloader / on_Install__42_opendataloader.finite.bg\ntrafilatura not found in PATH" not in rendered
+    assert "opendataloader / install\ntrafilatura not found in PATH" not in rendered
 
 
 def test_run_plugin_install_renders_rows_in_chronological_order(monkeypatch) -> None:
     plugin = discover_plugins()["wget"]
     console_output = io.StringIO()
-    crawl_hook = "on_Install__10_wget.finite.bg"
+    crawl_hook = "install"
     provider_hook = "on_BinaryRequest__09_env_discover"
     request_line = json.dumps(
         {
@@ -1051,7 +1015,7 @@ def test_run_plugin_install_live_view_does_not_print_no_hooks_footer(monkeypatch
                 BinaryRequestEvent(
                     name="wget",
                     plugin_name="wget",
-                    hook_name="on_Install__10_wget.finite.bg",
+                    hook_name="install",
                     binproviders="env,apt,brew",
                 ),
             )
@@ -1078,7 +1042,7 @@ def test_run_plugin_install_live_view_does_not_print_no_hooks_footer(monkeypatch
 
     rendered = console_output.getvalue()
     assert exit_code == 0
-    assert "No install hooks found for the selected plugins." not in rendered
+    assert "No required binaries declared for the selected plugins." not in rendered
 
 
 def test_dl_debug_logs_bus_tree_on_normal_exit(monkeypatch) -> None:
@@ -1162,7 +1126,7 @@ def test_dl_live_view_shows_process_rows_without_archive_results(monkeypatch, tm
         await bus.emit(
             ProcessEvent(
                 plugin_name="wget",
-                hook_name="on_Install__10_wget.finite.bg",
+                hook_name="install",
                 hook_path="/bin/echo",
                 hook_args=["wget"],
                 is_background=True,
@@ -1174,7 +1138,7 @@ def test_dl_live_view_shows_process_rows_without_archive_results(monkeypatch, tm
         await bus.emit(
             ProcessCompletedEvent(
                 plugin_name="wget",
-                hook_name="on_Install__10_wget.finite.bg",
+                hook_name="install",
                 stdout="wget installed",
                 stderr="",
                 exit_code=0,
@@ -1361,7 +1325,7 @@ def test_dl_live_view_hides_binary_provider_substeps(monkeypatch, tmp_path: Path
         await bus.emit(
             ProcessEvent(
                 plugin_name="wget",
-                hook_name="on_Install__10_wget.finite.bg",
+                hook_name="install",
                 hook_path="/bin/echo",
                 hook_args=["wget"],
                 is_background=True,
@@ -1398,7 +1362,7 @@ def test_dl_live_view_hides_binary_provider_substeps(monkeypatch, tmp_path: Path
         await bus.emit(
             ProcessCompletedEvent(
                 plugin_name="wget",
-                hook_name="on_Install__10_wget.finite.bg",
+                hook_name="install",
                 stdout="wget installed",
                 stderr="",
                 exit_code=0,

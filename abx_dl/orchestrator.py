@@ -9,11 +9,9 @@ Full event tree for a typical run::
 
     InstallEvent                                # emitted here first by download()
     │
-    ├── ProcessEvent  (on_Install hooks)
-    │   │   ├── ProcessStdoutEvent
-    │   │   │   ├── BinaryRequestEvent → provider hooks → BinaryEvent
-    │   │   │   └── MachineEvent
-    │   │   └── ProcessCompletedEvent
+    ├── BinaryRequestEvent                      # emitted from config.json required_binaries
+    │   └── provider hooks → BinaryEvent
+    ├── BinaryRequestEvent
     │   └── ...
     │
     CrawlEvent                                  # emitted after install phase succeeds
@@ -69,7 +67,7 @@ Key abxbus concepts used:
   descendants complete synchronously before the await returns. This is how
   config propagation works: hook outputs Binary JSONL → ProcessService emits
   ProcessStdoutEvent → BinaryService emits BinaryRequestEvent → provider
-  hooks resolve/install it → BinaryEvent / MachineEvent update config → all before the next
+  hooks resolve/install it → BinaryEvent / MachineEvent update runtime config → all before the next
   stdout line is read.
 
 - **Fire-and-forget** (``bus.emit(...)`` without await): the event becomes a
@@ -119,6 +117,8 @@ def _get_or_create_bus_services(
     *,
     plugins: dict[str, Plugin],
     config_overrides: dict[str, Any] | None,
+    derived_config_overrides: dict[str, Any] | None,
+    persist_derived: bool,
     auto_install: bool,
     emit_jsonl: bool,
     stderr_is_tty: bool,
@@ -127,7 +127,12 @@ def _get_or_create_bus_services(
     if state is None:
         from .services import ArchiveResultService, BinaryService, MachineService, ProcessService, TagService
 
-        machine = MachineService(bus, initial_config=config_overrides)
+        machine = MachineService(
+            bus,
+            initial_config=config_overrides,
+            initial_derived_config=derived_config_overrides,
+            persist_derived=persist_derived,
+        )
         state = _BusServices(
             machine=machine,
             binary=BinaryService(
@@ -148,8 +153,6 @@ def _get_or_create_bus_services(
             tag=TagService(bus),
         )
         setattr(bus, "_abx_dl_services", state)
-    elif config_overrides:
-        state.machine.shared_config.update(config_overrides)
     return state
 
 
@@ -158,6 +161,8 @@ def setup_services(
     *,
     plugins: dict[str, Plugin],
     config_overrides: dict[str, Any] | None = None,
+    derived_config_overrides: dict[str, Any] | None = None,
+    persist_derived: bool = True,
     auto_install: bool = True,
     emit_jsonl: bool = True,
     stderr_is_tty: bool | None = None,
@@ -173,6 +178,8 @@ def setup_services(
         bus,
         plugins=plugins,
         config_overrides=config_overrides,
+        derived_config_overrides=derived_config_overrides,
+        persist_derived=persist_derived,
         auto_install=auto_install,
         emit_jsonl=emit_jsonl,
         stderr_is_tty=bool(stderr_is_tty),
@@ -183,26 +190,89 @@ def prepare_install_plugins(
     plugins: dict[str, Plugin],
     plugin_names: Sequence[str] | None = None,
 ) -> dict[str, Plugin]:
-    """Filter plugins down to the install-only hooks used by `abx-dl install`."""
+    """Filter plugins down to the install-only hooks used by `abx-dl install`.
+
+    The explicit install flow should emit binaries for:
+    - the user-selected plugins
+    - their non-provider required_plugins
+    - only the provider plugins actually referenced by those binaries, recursively
+    """
     if plugin_names:
         selected = filter_plugins(plugins, list(plugin_names), include_providers=True)
-        visible_plugins = set(filter_plugins(plugins, list(plugin_names), include_providers=False))
+        visible_plugins = {name.lower() for name in filter_plugins(plugins, list(plugin_names), include_providers=False)}
     else:
         selected = plugins
-        visible_plugins = set(selected)
+        visible_plugins = {name.lower() for name in selected}
+
+    selected_by_lower = {name.lower(): plugin for name, plugin in selected.items()}
+    install_binary_plugins = set(visible_plugins)
+
+    def _provider_bootstrap_specs(plugin: Plugin) -> list[dict[str, Any]]:
+        plugin_name = plugin.name.lower()
+        return [
+            spec
+            for spec in plugin.binaries
+            if str(spec.get("name") or "").strip().lower() == plugin_name
+            and str(spec.get("binproviders") or "").strip() == "env"
+            and not spec.get("overrides")
+            and not spec.get("min_version")
+        ]
+
+    def _iter_binproviders(spec: dict[str, Any]) -> list[str]:
+        providers = str(spec.get("binproviders") or "").strip()
+        if not providers or providers == "*":
+            return []
+        return [provider.strip().lower() for provider in providers.split(",") if provider.strip()]
+
+    changed = True
+    while changed:
+        changed = False
+        for plugin_name in list(install_binary_plugins):
+            plugin = selected_by_lower.get(plugin_name)
+            if plugin is None:
+                continue
+            for dep in plugin.required_plugins:
+                dep_name = dep.lower()
+                if dep_name in selected_by_lower and dep_name not in install_binary_plugins:
+                    install_binary_plugins.add(dep_name)
+                    changed = True
+            for spec in plugin.binaries:
+                for provider_name in _iter_binproviders(spec):
+                    provider_plugin = selected_by_lower.get(provider_name)
+                    if provider_plugin is None or not provider_plugin.get_binary_request_hooks():
+                        continue
+                    if provider_name not in install_binary_plugins:
+                        install_binary_plugins.add(provider_name)
+                        changed = True
 
     return {
         name: plugin.model_copy(
             update={
-                "hooks": [
-                    hook
-                    for hook in plugin.hooks
-                    if hook.event == "BinaryRequest" or (name.lower() in visible_plugins and hook.event == "Install")
-                ],
+                "hooks": [hook for hook in plugin.hooks if hook.event == "BinaryRequest"],
+                "binaries": list(
+                    []
+                    if name.lower() not in install_binary_plugins
+                    else (
+                        [spec for spec in plugin.binaries if spec not in _provider_bootstrap_specs(plugin)]
+                        if plugin.get_binary_request_hooks() and name.lower() not in visible_plugins
+                        else plugin.binaries
+                    ),
+                ),
             },
         )
         for name, plugin in selected.items()
     }
+
+
+def get_install_plugins(plugins: dict[str, Plugin]) -> list[Plugin]:
+    """Return plugins that declare required binaries for the install phase."""
+    return [plugin for plugin in plugins.values() if plugin.binaries]
+
+
+def compute_install_phase_timeout(plugins: list[Plugin], config: dict[str, Any] | None = None) -> float:
+    """Sum per-plugin timeouts across plugins that declare required binaries."""
+    total = sum(get_plugin_timeout(plugin, config) for plugin in plugins)
+    return max(float(total), 60.0)
 
 
 async def install_plugins(
@@ -262,14 +332,15 @@ async def install_plugins(
             active_bus,
             plugins=selected,
             config_overrides=merged_config or None,
+            derived_config_overrides=None,
+            persist_derived=True,
             auto_install=auto_install,
             emit_jsonl=emit_jsonl,
             stderr_is_tty=bool(stderr_is_tty),
         )
         snapshot = Snapshot(url="", title="install")
-        install_hooks = [(plugin, hook) for plugin in selected.values() for hook in plugin.get_install_hooks()]
-        install_hooks.sort(key=lambda item: item[1].sort_key)
-        install_phase_timeout = compute_phase_timeout(install_hooks, merged_config or None)
+        install_plugins_for_phase = get_install_plugins(selected)
+        install_phase_timeout = compute_install_phase_timeout(install_plugins_for_phase, merged_config or None)
         run_service = CrawlService(
             active_bus,
             url="",
@@ -277,7 +348,7 @@ async def install_plugins(
             output_dir=install_output_dir,
             machine=shared.machine,
             process=shared.process,
-            install_hooks=install_hooks,
+            install_plugins=install_plugins_for_phase,
             crawl_setup_hooks=[],
             crawl_only=True,
             install_phase_timeout=install_phase_timeout,
@@ -459,8 +530,8 @@ async def download(
     if emit_jsonl is None:
         emit_jsonl = not stdout_is_tty
 
-    # Filter plugins (no binary pre-check — on_Install hooks request binaries,
-    # then on_BinaryRequest hooks resolve/install them)
+    # Filter plugins for runtime phases (includes provider plugins so their
+    # on_BinaryRequest hooks are available during install resolution).
     if selected_plugins:
         plugins = filter_plugins(plugins, selected_plugins)
 
@@ -470,22 +541,21 @@ async def download(
 
     # Collect and sort hooks by (order, name) so execution order matches
     # the numeric prefix in hook filenames (e.g. __10, __41, __70, __90, __91)
-    install_hooks: list[tuple[Plugin, Hook]] = []
+    install_plugins_for_phase = (
+        get_install_plugins(prepare_install_plugins(plugins, selected_plugins)) if selected_plugins else get_install_plugins(plugins)
+    )
     crawl_setup_hooks: list[tuple[Plugin, Hook]] = []
     snapshot_hooks: list[tuple[Plugin, Hook]] = []
     for plugin in plugins.values():
-        for hook in plugin.get_install_hooks():
-            install_hooks.append((plugin, hook))
         for hook in plugin.get_crawl_setup_hooks():
             crawl_setup_hooks.append((plugin, hook))
         for hook in plugin.get_snapshot_hooks():
             snapshot_hooks.append((plugin, hook))
-    install_hooks.sort(key=lambda x: x[1].sort_key)
     crawl_setup_hooks.sort(key=lambda x: x[1].sort_key)
     snapshot_hooks.sort(key=lambda x: x[1].sort_key)
 
     # Compute per-phase timeouts from plugin-specific settings
-    install_phase_timeout = compute_phase_timeout(install_hooks, config_overrides or None)
+    install_phase_timeout = compute_install_phase_timeout(install_plugins_for_phase, config_overrides or None)
     crawl_setup_phase_timeout = compute_phase_timeout(crawl_setup_hooks, config_overrides or None)
     snapshot_phase_timeout = compute_phase_timeout(snapshot_hooks, config_overrides or None)
     total_timeout = install_phase_timeout + crawl_setup_phase_timeout + snapshot_phase_timeout
@@ -536,6 +606,8 @@ async def download(
         active_bus,
         plugins=plugins,
         config_overrides=config_overrides or None,
+        derived_config_overrides=None,
+        persist_derived=True,
         auto_install=auto_install,
         emit_jsonl=emit_jsonl,
         stderr_is_tty=stderr_is_tty,
@@ -551,7 +623,7 @@ async def download(
                 output_dir=output_dir,
                 machine=shared.machine,
                 process=shared.process,
-                install_hooks=install_hooks,
+                install_plugins=install_plugins_for_phase,
                 crawl_setup_hooks=crawl_setup_hooks,
                 crawl_only=crawl_only,
                 install_phase_timeout=install_phase_timeout,
@@ -654,7 +726,7 @@ async def download(
                     ),
                 )
                 await active_bus.emit(CrawlCompletedEvent(url=url, snapshot_id=snapshot.id, output_dir=str(output_dir)))
-        if crawl_setup_only:
+        if crawl_setup_only or skip_crawl_cleanup:
             await shared.process.wait_for_background_monitors(include_daemons=False)
         else:
             await shared.process.wait_for_background_monitors()

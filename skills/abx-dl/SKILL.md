@@ -100,7 +100,7 @@ CHROME_BINARY=/usr/bin/chromium abx-dl --plugins=screenshot,pdf 'https://example
 LIB_DIR=./.abx/lib PERSONAS_DIR=./.abx/personas abx-dl 'https://example.com'
 ```
 
-- Persistent config is stored in `~/.config/abx/config.env`.
+- User config is stored in `~/.config/abx/config.env`; runtime-derived cache entries are stored in `~/.config/abx/derived.env`.
 - Use `abx-dl config` to inspect or save defaults:
 
 ```bash

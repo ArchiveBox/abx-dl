@@ -27,7 +27,6 @@ class BaseService:
     Handler name resolution:
     - ``on_ProcessEvent`` → matches ``ProcessEvent`` directly
     - ``on_ProcessCompletedEvent`` → matches ``ProcessCompletedEvent`` directly
-    - ``on_Install__plugin_hook`` → tries "Install", then "InstallEvent" (matches)
     - ``on_CrawlSetup__plugin_hook`` → tries "CrawlSetup", then "CrawlSetupEvent" (matches)
     - ``on_BinaryRequest__provider`` → tries "BinaryRequest", then "BinaryRequestEvent" (matches)
 
@@ -116,8 +115,7 @@ def make_hook_handler(
     factory function.
 
     The env dict is built fresh each time from ``MachineService.shared_config``,
-    so later hooks pick up config updates (e.g. a BinaryEvent causing
-    ``CHROME_BINARY`` to be persisted via MachineEvent) from earlier phases.
+    so later hooks pick up any runtime config updates emitted by earlier phases.
 
     For background daemons, ``phase_timeout`` is used as the process timeout
     ceiling instead of the per-hook timeout (daemons should survive until
@@ -140,6 +138,15 @@ def make_hook_handler(
                     machine.shared_config["ABX_SKIP_SNAPSHOT_HOOKS"] = True
                     return
         env = add_extra_context(env, {"snapshot_id": snapshot.id})
+        if snapshot.crawl_id:
+            env["CRAWL_ID"] = snapshot.crawl_id
+        if snapshot.parent_snapshot_id:
+            env["PARENT_SNAPSHOT_ID"] = snapshot.parent_snapshot_id
+        env["SOURCE_URL"] = url
+        if _hook.event == "Snapshot":
+            env["SNAP_DIR"] = str(output_dir)
+            env["SNAPSHOT_ID"] = snapshot.id
+            env["SNAPSHOT_DEPTH"] = str(snapshot.depth)
         timeout = int(env.get(f"{_plugin.name.upper()}_TIMEOUT", env.get("TIMEOUT", "60")))
         plugin_output_dir = output_dir / _plugin.name
         plugin_output_dir.mkdir(parents=True, exist_ok=True)

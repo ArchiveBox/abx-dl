@@ -42,7 +42,7 @@ abx-dl --plugins=wget,title,screenshot,pdf,readability,git 'https://example.com'
 `abx-dl` uses the **[ABX Plugin Library](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement)** (shared with [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox)) to run a collection of downloading and scraping tools.
 
 Plugins are loaded from the installed `abx-plugins` package (or from `ABX_PLUGINS_DIR` if you override it) and execute in distinct phases:
-1. **Install hooks** (`on_Install__*`) request binaries needed for the run
+1. **Install phase** reads each enabled plugin's `config.json > required_binaries`
 2. **BinaryRequest hooks** (`on_BinaryRequest__*`) resolve or install those binaries and emit resolved `Binary` records
 3. **CrawlSetup hooks** (`on_CrawlSetup__*`) launch/configure crawl-scoped daemons and shared runtime state
 4. **Snapshot hooks** (`on_Snapshot__*`) run per URL to extract content and emit archive results
@@ -58,7 +58,7 @@ Hooks can emit:
 
 #### ⚙️ Configuration
 
-Configuration is handled via environment variables or persistent config file (`~/.config/abx/config.env`):
+Configuration is handled via environment variables plus a user config file (`~/.config/abx/config.env`). Runtime-derived cache entries such as resolved binary paths are stored separately in `~/.config/abx/derived.env`:
 
 ```bash
 abx-dl config                        # show all config (global + per-plugin)
