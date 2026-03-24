@@ -1147,7 +1147,7 @@ def test_snapshot_finite_bg_hook_finishes_before_cleanup(tmp_path: Path) -> None
     assert artifact.read_text() == "finished"
 
 
-def test_make_hook_handler_waits_for_background_process_start(tmp_path: Path) -> None:
+def test_make_hook_handler_emits_background_process_without_extra_wait(tmp_path: Path) -> None:
     class FakeBus:
         def __init__(self) -> None:
             self.emitted: list[object] = []
@@ -1218,11 +1218,7 @@ def test_make_hook_handler_waits_for_background_process_start(tmp_path: Path) ->
 
     assert len(bus.emitted) == 1
     assert isinstance(bus.emitted[0], ProcessEvent)
-    assert len(bus.find_calls) == 1
-    assert bus.find_calls[0]["event_type"] is ProcessStartedEvent
-    assert bus.find_calls[0]["child_of"] is bus.emitted[0]
-    assert bus.find_calls[0]["past"] is False
-    assert bus.find_calls[0]["future"] == 10.0
+    assert bus.find_calls == []
 
 
 def test_download_preserves_full_hook_stderr_in_archive_result(tmp_path: Path) -> None:
