@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import mimetypes
+import stat
 from pathlib import Path
 from collections.abc import Iterable
 
@@ -46,7 +47,7 @@ def output_file_from_path(file_path: Path, *, relative_to: Path) -> OutputFile:
     """Build OutputFile metadata from a file path using stat + extension lookup."""
     rel_path = file_path.relative_to(relative_to)
     try:
-        size = file_path.stat().st_size
+        size = file_path.lstat().st_size
     except OSError:
         size = 0
     return OutputFile(
@@ -65,7 +66,11 @@ def scan_output_files(output_dir: Path, file_paths: Iterable[Path] | None = None
     paths = output_dir.rglob("*") if file_paths is None else file_paths
     output_files = []
     for file_path in paths:
-        if not file_path.is_file() or file_path.is_symlink():
+        try:
+            stat_result = file_path.lstat()
+        except OSError:
+            continue
+        if stat.S_ISLNK(stat_result.st_mode) or not stat.S_ISREG(stat_result.st_mode):
             continue
         relative_path = file_path.relative_to(output_dir).as_posix()
         if any(relative_path.endswith(suffix) for suffix in OUTPUT_FILE_METADATA_SUFFIXES):

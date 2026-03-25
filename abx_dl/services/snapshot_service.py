@@ -96,6 +96,7 @@ class SnapshotService(BaseService):
         snapshot_phase_timeout: float = 300.0,
         snapshot_cleanup_enabled: bool = True,
         snapshot_cleanup_phase_timeout: float = 300.0,
+        force_interrupt: asyncio.Event | None = None,
     ):
         self.url = url
         self.snapshot = snapshot
@@ -108,6 +109,7 @@ class SnapshotService(BaseService):
         self.snapshot_phase_timeout = snapshot_phase_timeout
         self.snapshot_cleanup_enabled = snapshot_cleanup_enabled
         self.snapshot_cleanup_phase_timeout = snapshot_cleanup_phase_timeout
+        self.force_interrupt = force_interrupt or asyncio.Event()
         self.limit_state: CrawlLimitState | None = None
         super().__init__(bus)
         self.bus.on(ProcessStdoutEvent, self.on_ProcessStdoutEvent)
@@ -125,6 +127,8 @@ class SnapshotService(BaseService):
         async def on_SnapshotEvent__hook(event: SnapshotEvent) -> None:
             parent_event = self.bus.event_history.get(event.event_parent_id or "")
             if not isinstance(parent_event, CrawlStartEvent):
+                return
+            if self.force_interrupt.is_set():
                 return
             assert self.limit_state is not None
             if self.limit_state.has_limits() and not self.limit_state.admit_snapshot(event.event_id).allowed:

@@ -80,7 +80,8 @@ from __future__ import annotations
 
 import sys
 import json
-from collections.abc import Sequence
+import asyncio
+from collections.abc import Callable, Sequence
 from contextlib import nullcontext
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -119,7 +120,10 @@ def setup_services(
     persist_derived: bool = True,
     auto_install: bool = True,
     emit_jsonl: bool = True,
-    stderr_is_tty: bool | None = None,
+    interactive_tty: bool | None = None,
+    interrupt_requested: asyncio.Event | None = None,
+    force_interrupt: asyncio.Event | None = None,
+    set_live_paused: Callable[[bool], None] | None = None,
     MachineService: type[MachineService] | None = MachineService,
     BinaryService: type[BinaryService] | None = BinaryService,
     ProcessService: type[ProcessService] | None = ProcessService,
@@ -133,8 +137,8 @@ def setup_services(
     This is the public entrypoint for embedding abx-dl as an event-driven
     runtime without immediately starting a crawl via ``download()``.
     """
-    if stderr_is_tty is None:
-        stderr_is_tty = sys.stderr.isatty()
+    if interactive_tty is None:
+        interactive_tty = sys.stdout.isatty() or sys.stderr.isatty()
 
     if MachineService is not None:
         MachineService(bus, persist_derived=persist_derived)
@@ -154,7 +158,10 @@ def setup_services(
         ProcessService(
             bus,
             emit_jsonl=emit_jsonl,
-            stderr_is_tty=bool(stderr_is_tty),
+            interactive_tty=bool(interactive_tty),
+            interrupt_requested=interrupt_requested,
+            force_interrupt=force_interrupt,
+            set_live_paused=set_live_paused,
         )
 
     if ArchiveResultService is not None:
@@ -185,6 +192,7 @@ def setup_services(
             crawl_setup_phase_timeout=crawl_setup_phase_timeout,
             snapshot_phase_timeout=snapshot_phase_timeout,
             crawl_cleanup_phase_timeout=crawl_cleanup_phase_timeout,
+            force_interrupt=force_interrupt,
         )
         if SnapshotService is not None and (crawl_start_enabled or snapshot_cleanup_enabled):
             SnapshotService(
@@ -196,6 +204,7 @@ def setup_services(
                 snapshot_phase_timeout=snapshot_phase_timeout,
                 snapshot_cleanup_enabled=snapshot_cleanup_enabled,
                 snapshot_cleanup_phase_timeout=snapshot_cleanup_phase_timeout,
+                force_interrupt=force_interrupt,
             )
 
     return None
@@ -253,7 +262,6 @@ async def install_plugins(
     with temp_dir_ctx as temp_dir:
         install_output_dir = install_output_dir or Path(temp_dir)
         install_output_dir.mkdir(parents=True, exist_ok=True)
-        stderr_is_tty = sys.stderr.isatty()
         owns_bus = bus is None
         bus = bus or create_bus(total_timeout=60.0)
         snapshot = Snapshot(url="")
@@ -277,7 +285,9 @@ async def install_plugins(
             persist_derived=True,
             auto_install=True,
             emit_jsonl=emit_jsonl,
-            stderr_is_tty=bool(stderr_is_tty),
+            interactive_tty=sys.stdout.isatty() or sys.stderr.isatty(),
+            interrupt_requested=None,
+            force_interrupt=None,
             MachineService=MachineService,
             BinaryService=BinaryService,
             ProcessService=ProcessService,
@@ -417,12 +427,16 @@ async def download(
     *,
     bus: EventBus | None = None,
     emit_jsonl: bool | None = None,
+    interactive_tty: bool | None = None,
     install_enabled: bool = True,
     crawl_setup_enabled: bool = True,
     crawl_start_enabled: bool = True,
     snapshot_cleanup_enabled: bool = True,
     crawl_cleanup_enabled: bool = True,
     dry_run: bool = False,
+    interrupt_requested: asyncio.Event | None = None,
+    force_interrupt: asyncio.Event | None = None,
+    set_live_paused: Callable[[bool], None] | None = None,
     MachineService: type[MachineService] | None = MachineService,
     BinaryService: type[BinaryService] | None = BinaryService,
     ProcessService: type[ProcessService] | None = ProcessService,
@@ -467,9 +481,10 @@ async def download(
     output_dir.mkdir(parents=True, exist_ok=True)
     index_path = output_dir / "index.jsonl"
     stdout_is_tty = sys.stdout.isatty()
-    stderr_is_tty = sys.stderr.isatty()
     if emit_jsonl is None:
         emit_jsonl = not stdout_is_tty
+    if interactive_tty is None:
+        interactive_tty = stdout_is_tty or sys.stderr.isatty()
 
     # Filter plugins for runtime phases (includes provider plugins so their
     # on_BinaryRequest hooks are available during install resolution).
@@ -541,7 +556,10 @@ async def download(
         persist_derived=True,
         auto_install=auto_install,
         emit_jsonl=emit_jsonl,
-        stderr_is_tty=stderr_is_tty,
+        interactive_tty=interactive_tty,
+        interrupt_requested=interrupt_requested,
+        force_interrupt=force_interrupt,
+        set_live_paused=set_live_paused,
         MachineService=MachineService,
         BinaryService=BinaryService,
         ProcessService=ProcessService,

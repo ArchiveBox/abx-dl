@@ -369,6 +369,7 @@ class BinaryService(BaseService):
                 if authoritative_override:
                     return True, f"{event.name} not available at {registered_value}"
                 continue
+            binary_id = event.binary_id or uuid7()
             await self.bus.emit(
                 BinaryEvent(
                     name=event.name,
@@ -380,7 +381,7 @@ class BinaryService(BaseService):
                     binproviders=inherited_binproviders or event.binproviders,
                     binprovider="",
                     overrides=event.overrides,
-                    binary_id=event.binary_id,
+                    binary_id=binary_id,
                     machine_id=event.machine_id,
                 ),
             )
@@ -424,6 +425,7 @@ class BinaryService(BaseService):
             where=lambda candidate: candidate.name == binary_payload.name and self.bus.event_is_child_of(event, candidate),
         )
         assert request_event is not None
+        binary_id = request_event.binary_id or uuid7()
 
         binary_event = BinaryEvent(
             name=binary_payload.name,
@@ -435,7 +437,7 @@ class BinaryService(BaseService):
             binproviders=binary_payload.binproviders or request_event.binproviders,
             binprovider=binary_payload.binprovider,
             overrides=binary_payload.overrides if binary_payload.overrides is not None else request_event.overrides,
-            binary_id=request_event.binary_id,
+            binary_id=binary_id,
             machine_id=request_event.machine_id,
         )
 

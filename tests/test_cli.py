@@ -13,7 +13,7 @@ from rich.progress import Progress
 
 import abx_dl.cli as cli_module
 from abx_dl.cli import _build_archive_results_table, _compact_output, _format_archive_result_line, _format_elapsed, cli as cli_group
-from abx_dl.events import CrawlSetupEvent, ProcessCompletedEvent, ProcessEvent, ProcessStdoutEvent, SnapshotEvent
+from abx_dl.events import CrawlSetupEvent, ProcessCompletedEvent, ProcessEvent, ProcessStartedEvent, ProcessStdoutEvent, SnapshotEvent
 from abx_dl.limits import CrawlLimitState, parse_filesize_to_bytes
 from abx_dl.models import ArchiveResult, discover_plugins
 from abx_dl.orchestrator import create_bus
@@ -188,10 +188,11 @@ def test_build_archive_results_table_shows_output_size_column() -> None:
 
 def test_render_output_size_cell_uses_expected_threshold_styles() -> None:
     assert cli_module._render_output_size_cell(99 * 1024).style == cli_module.SIZE_GREEN_STYLE
-    assert cli_module._render_output_size_cell(100 * 1024).style == cli_module.SIZE_YELLOW_STYLE
-    assert cli_module._render_output_size_cell(5 * 1024 * 1024).style == cli_module.SIZE_ORANGE_STYLE
-    assert cli_module._render_output_size_cell(50 * 1024 * 1024).style == cli_module.SIZE_RED_STYLE
-    assert cli_module._render_output_size_cell(100 * 1024 * 1024).style == cli_module.SIZE_ANGRY_STYLE
+    assert cli_module._render_output_size_cell(100 * 1024).style == cli_module.SIZE_GREEN_STYLE
+    assert cli_module._render_output_size_cell(2 * 1024 * 1024).style == cli_module.SIZE_YELLOW_STYLE
+    assert cli_module._render_output_size_cell(10 * 1024 * 1024).style == cli_module.SIZE_YELLOW_STYLE
+    assert cli_module._render_output_size_cell(50 * 1024 * 1024).style == cli_module.SIZE_ORANGE_STYLE
+    assert cli_module._render_output_size_cell(100 * 1024 * 1024).style == cli_module.SIZE_RED_STYLE
     assert cli_module._render_output_size_cell(1024 * 1024 * 1024).style == cli_module.SIZE_FLASHING_STYLE
 
 
@@ -345,47 +346,59 @@ def test_process_completed_preserves_output_files_when_inline_archive_result_has
         ui_console=Console(file=output, force_terminal=False, color_system=None),
         interactive_tty=True,
     )
-    process_event = ProcessEvent(
-        plugin_name="pdf",
-        hook_name="on_Snapshot__52_pdf",
-        hook_path="/bin/echo",
-        hook_args=[],
-        is_background=False,
-        output_dir="/tmp",
-        env={},
-        timeout=60,
-    )
-    archive_result_event = ArchiveResultEvent(
-        snapshot_id="snap-1",
-        plugin="pdf",
-        hook_name="on_Snapshot__52_pdf",
-        status="succeeded",
-        output_str="pdf/output.pdf",
-        output_files=[],
-        event_parent_id=process_event.event_id,
-    )
-    completed_event = ProcessCompletedEvent(
-        plugin_name="pdf",
-        hook_name="on_Snapshot__52_pdf",
-        hook_path="/bin/echo",
-        hook_args=[],
-        env={},
-        timeout=60,
-        stdout='{"type":"ArchiveResult","status":"succeeded","output_str":"pdf/output.pdf"}\n',
-        stderr="",
-        exit_code=0,
-        status="succeeded",
-        output_dir="/tmp",
-        output_files=[OutputFile(path="output.pdf", size=4096)],
-        start_ts="2026-03-25T12:00:00",
-        end_ts="2026-03-25T12:00:01",
-        event_parent_id=process_event.event_id,
-    )
 
-    asyncio.run(live_ui.on_ProcessEvent(process_event))
-    asyncio.run(live_ui.on_ArchiveResultEvent(archive_result_event))
-    bus.event_history[archive_result_event.event_id] = archive_result_event
-    asyncio.run(live_ui.on_ProcessCompletedEvent(completed_event))
+    async def run() -> None:
+        process = await asyncio.create_subprocess_exec("/bin/sh", "-c", "true")
+        await process.wait()
+        started_event = ProcessStartedEvent(
+            plugin_name="pdf",
+            hook_name="on_Snapshot__52_pdf",
+            hook_path="/bin/echo",
+            hook_args=[],
+            output_dir="/tmp",
+            env={},
+            timeout=60,
+            pid=process.pid or 0,
+            subprocess=process,
+            stdout_file=Path("/tmp/process_completed_preserve_output_files.stdout.log"),
+            stderr_file=Path("/tmp/process_completed_preserve_output_files.stderr.log"),
+            pid_file=Path("/tmp/process_completed_preserve_output_files.pid"),
+            cmd_file=Path("/tmp/process_completed_preserve_output_files.sh"),
+            files_before=set(),
+            start_ts="2026-03-25T12:00:00",
+        )
+        archive_result_event = ArchiveResultEvent(
+            snapshot_id="snap-1",
+            plugin="pdf",
+            hook_name="on_Snapshot__52_pdf",
+            status="succeeded",
+            output_str="pdf/output.pdf",
+            output_files=[],
+            event_parent_id=started_event.event_id,
+        )
+        completed_event = ProcessCompletedEvent(
+            plugin_name="pdf",
+            hook_name="on_Snapshot__52_pdf",
+            hook_path="/bin/echo",
+            hook_args=[],
+            env={},
+            timeout=60,
+            stdout='{"type":"ArchiveResult","status":"succeeded","output_str":"pdf/output.pdf"}\n',
+            stderr="",
+            exit_code=0,
+            status="succeeded",
+            output_dir="/tmp",
+            output_files=[OutputFile(path="output.pdf", size=4096)],
+            start_ts="2026-03-25T12:00:00",
+            end_ts="2026-03-25T12:00:01",
+            event_parent_id=started_event.event_id,
+        )
+        await live_ui.on_ProcessStartedEvent(started_event)
+        await live_ui.on_ArchiveResultEvent(archive_result_event)
+        bus.event_history[archive_result_event.event_id] = archive_result_event
+        await live_ui.on_ProcessCompletedEvent(completed_event)
+
+    asyncio.run(run())
 
     rendered = output.getvalue()
     assert "4KB" in rendered
@@ -400,26 +413,39 @@ def test_process_stdout_updates_live_row_with_last_non_json_line() -> None:
         ui_console=Console(file=io.StringIO(), force_terminal=False, color_system=None),
         interactive_tty=True,
     )
-    process_event = ProcessEvent(
-        plugin_name="chrome",
-        hook_name="on_CrawlSetup__90_chrome_launch.daemon.bg",
-        hook_path="/bin/echo",
-        hook_args=[],
-        is_background=True,
-        output_dir="/tmp",
-        env={},
-        timeout=360,
-    )
-    stdout_event = ProcessStdoutEvent(
-        line="[*] Chromium launch hook staying alive to handle cleanup...",
-        plugin_name=process_event.plugin_name,
-        hook_name=process_event.hook_name,
-        output_dir=process_event.output_dir,
-        event_parent_id=process_event.event_id,
-    )
 
-    asyncio.run(live_ui.on_ProcessEvent(process_event))
-    asyncio.run(live_ui.on_ProcessStdoutEvent(stdout_event))
+    async def run() -> None:
+        process = await asyncio.create_subprocess_exec("/bin/sh", "-c", "true")
+        await process.wait()
+        started_event = ProcessStartedEvent(
+            plugin_name="chrome",
+            hook_name="on_CrawlSetup__90_chrome_launch.daemon.bg",
+            hook_path="/bin/echo",
+            hook_args=[],
+            output_dir="/tmp",
+            env={},
+            timeout=360,
+            pid=process.pid or 0,
+            is_background=True,
+            subprocess=process,
+            stdout_file=Path("/tmp/process_stdout_live_row.stdout.log"),
+            stderr_file=Path("/tmp/process_stdout_live_row.stderr.log"),
+            pid_file=Path("/tmp/process_stdout_live_row.pid"),
+            cmd_file=Path("/tmp/process_stdout_live_row.sh"),
+            files_before=set(),
+            start_ts="2026-03-25T12:00:00",
+        )
+        stdout_event = ProcessStdoutEvent(
+            line="[*] Chromium launch hook staying alive to handle cleanup...",
+            plugin_name=started_event.plugin_name,
+            hook_name=started_event.hook_name,
+            output_dir=started_event.output_dir,
+            event_parent_id=started_event.event_id,
+        )
+        await live_ui.on_ProcessStartedEvent(started_event)
+        await live_ui.on_ProcessStdoutEvent(stdout_event)
+
+    asyncio.run(run())
 
     row = live_ui.live_results["process:1"]
     assert isinstance(row, cli_module._LiveProcessRecord)

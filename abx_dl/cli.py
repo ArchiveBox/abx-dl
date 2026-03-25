@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import re
+import signal
 import sys
 import time
 from collections import defaultdict, deque
@@ -39,7 +40,7 @@ from .config import (
     set_user_config,
 )
 from .dependencies import load_binary
-from .events import ArchiveResultEvent, BinaryRequestEvent, BinaryEvent, ProcessCompletedEvent, ProcessEvent, ProcessStdoutEvent
+from .events import ArchiveResultEvent, BinaryRequestEvent, BinaryEvent, ProcessCompletedEvent, ProcessStartedEvent, ProcessStdoutEvent
 from .limits import parse_filesize_to_bytes
 from .orchestrator import compute_install_phase_timeout, compute_phase_timeout, create_bus, download, get_install_plugins, install_plugins
 from .models import ArchiveResult, PluginEnv, Process, now_iso
@@ -71,12 +72,10 @@ SIZE_GREEN_STYLE = "#16a34a"
 SIZE_YELLOW_STYLE = "#eab308"
 SIZE_ORANGE_STYLE = "#f97316"
 SIZE_RED_STYLE = "#dc2626"
-SIZE_ANGRY_STYLE = "bold #ff2d55"
 SIZE_FLASHING_STYLE = "blink bold #ff2d55"
-SIZE_GREEN_MAX = 100 * 1024
-SIZE_YELLOW_MAX = 5 * 1024 * 1024
-SIZE_ORANGE_MAX = 50 * 1024 * 1024
-SIZE_RED_MAX = 100 * 1024 * 1024
+SIZE_GREEN_MAX = 2 * 1024 * 1024
+SIZE_YELLOW_MAX = 50 * 1024 * 1024
+SIZE_ORANGE_MAX = 100 * 1024 * 1024
 SIZE_FLASHING_MIN = 1024 * 1024 * 1024
 
 
@@ -486,10 +485,8 @@ def _render_output_size_cell(size: int, *, muted_style: str | None = None) -> Te
         return Text(label, style=SIZE_YELLOW_STYLE)
     if size < SIZE_ORANGE_MAX:
         return Text(label, style=SIZE_ORANGE_STYLE)
-    if size < SIZE_RED_MAX:
-        return Text(label, style=SIZE_RED_STYLE)
     if size < SIZE_FLASHING_MIN:
-        return Text(label, style=SIZE_ANGRY_STYLE)
+        return Text(label, style=SIZE_RED_STYLE)
     return Text(label, style=SIZE_FLASHING_STYLE)
 
 
@@ -730,11 +727,12 @@ class LiveBusUI:
         self.streamed_header = False
         self.pending_binary_rows: dict[str, deque[str]] = defaultdict(deque)
         self.row_key_by_event_id: dict[str, str] = {}
-        self.process_event_by_row_key: dict[str, ProcessEvent] = {}
+        self.process_event_by_row_key: dict[str, ProcessStartedEvent] = {}
         self.active_row_keys: list[str] = []
         self.process_row_num = 0
         self.binary_row_num = 0
         self.last_live_refresh = 0.0
+        self.paused = False
 
         if self.interactive_tty:
             self.progress = Progress(
@@ -756,7 +754,7 @@ class LiveBusUI:
                 vertical_overflow="visible",
             )
             for event_cls, handler in (
-                (ProcessEvent, self.on_ProcessEvent),
+                (ProcessStartedEvent, self.on_ProcessStartedEvent),
                 (ProcessStdoutEvent, self.on_ProcessStdoutEvent),
                 (BinaryRequestEvent, self.on_BinaryRequestEvent),
                 (BinaryEvent, self.on_BinaryEvent),
@@ -778,6 +776,18 @@ class LiveBusUI:
     def __exit__(self, exc_type, exc, tb) -> None:
         if self.live is not None:
             self.live.__exit__(exc_type, exc, tb)
+
+    def set_paused(self, paused: bool) -> None:
+        if self.live is None or self.paused == paused:
+            return
+        self.paused = paused
+        if paused and self.live.is_started:
+            self.live.stop()
+            return
+        if not paused and not self.live.is_started:
+            self.live.start(refresh=True)
+            self.last_live_refresh = 0.0
+            self.live.refresh()
 
     def print_intro(self, *, url: str, output_dir: Path, plugins_label: str) -> None:
         if not self.interactive_tty:
@@ -801,7 +811,7 @@ class LiveBusUI:
         self.ui_console.print(f"[dim]Output: {_abbreviate_home_paths(str(output_dir.absolute()))}[/dim]")
 
     def _refresh_live(self, *, force: bool = False, min_interval: float = 0.1) -> None:
-        if self.live is None:
+        if self.live is None or self.paused:
             return
         now = time.monotonic()
         if not force and (now - self.last_live_refresh) < min_interval:
@@ -851,7 +861,7 @@ class LiveBusUI:
         if row.ended_at:
             row.status = row.final_status or row.status
 
-    async def on_ProcessEvent(self, event: ProcessEvent) -> None:
+    async def on_ProcessStartedEvent(self, event: ProcessStartedEvent) -> None:
         if _is_binary_provider_hook_name(event.hook_name) or self.progress is None or self.task_id is None:
             return
         self.process_row_num += 1
@@ -865,7 +875,7 @@ class LiveBusUI:
             hook_name=event.hook_name,
             timeout=event.timeout,
             phase=_phase_label_for_event(self.bus, event),
-            started_at=datetime.now().isoformat(),
+            started_at=event.start_ts or datetime.now().isoformat(),
             cmd=[event.hook_path, *event.hook_args],
         )
         current_task = self.progress.tasks[self.task_id]
@@ -1193,11 +1203,29 @@ def dl(
         plugins_label=", ".join(selected) if selected else f"all ({len(plugins)} available)",
     )
 
-    with live_ui:
-        _run_with_debug_bus_log(
-            bus,
-            debug=debug,
-            func=lambda: asyncio.run(
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    interrupt_requested = asyncio.Event()
+    force_interrupt = asyncio.Event()
+    previous_sigint_handler = signal.getsignal(signal.SIGINT)
+
+    signal_handler_installed = False
+    try:
+
+        def on_sigint() -> None:
+            if interrupt_requested.is_set():
+                force_interrupt.set()
+                return
+            interrupt_requested.set()
+
+        loop.add_signal_handler(
+            signal.SIGINT,
+            on_sigint,
+        )
+        signal_handler_installed = True
+        with live_ui:
+            aborted = False
+            download_task = loop.create_task(
                 download(
                     url,
                     plugins,
@@ -1206,12 +1234,33 @@ def dl(
                     config_overrides or None,
                     auto_install=not no_install,
                     emit_jsonl=not stdout_is_tty,
+                    interactive_tty=interactive_tty,
                     bus=bus,
                     dry_run=dry_run,
+                    interrupt_requested=interrupt_requested,
+                    force_interrupt=force_interrupt,
+                    set_live_paused=live_ui.set_paused,
                 ),
-            ),
-        )
+            )
+            try:
+                loop.run_until_complete(asyncio.shield(download_task))
+            except KeyboardInterrupt:
+                aborted = True
+                loop.run_until_complete(asyncio.gather(download_task, return_exceptions=True))
+            finally:
+                aborted = aborted or force_interrupt.is_set()
+                if debug:
+                    bus.log_tree()
+                loop.run_until_complete(bus.stop())
+    finally:
+        if signal_handler_installed:
+            loop.remove_signal_handler(signal.SIGINT)
+        signal.signal(signal.SIGINT, previous_sigint_handler)
+        asyncio.set_event_loop(None)
+        loop.close()
 
+    if aborted:
+        raise click.Abort()
     live_ui.print_summary(output_dir=out_path)
 
 
@@ -1424,23 +1473,29 @@ def _run_plugin_install(
     with TemporaryDirectory(prefix="abx-dl-install-") as temp_dir:
         live_enabled = console.is_terminal
         live_cm = Live(_build_install_table([]), console=console, refresh_per_second=8) if live_enabled else nullcontext()
-        with live_cm as active_live:
-            live = active_live
-            _run_with_debug_bus_log(
-                bus,
-                debug=debug,
-                func=lambda: asyncio.run(
-                    install_plugins(
-                        plugin_names=tuple(label_plugins or ()) or None,
-                        plugins=selected,
-                        output_dir=Path(temp_dir),
-                        emit_jsonl=False,
-                        bus=bus,
-                        config_overrides={"DRY_RUN": True} if dry_run else None,
-                        dry_run=dry_run,
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            with live_cm as active_live:
+                live = active_live
+                _run_with_debug_bus_log(
+                    bus,
+                    debug=debug,
+                    func=lambda: loop.run_until_complete(
+                        install_plugins(
+                            plugin_names=tuple(label_plugins or ()) or None,
+                            plugins=selected,
+                            output_dir=Path(temp_dir),
+                            emit_jsonl=False,
+                            bus=bus,
+                            config_overrides={"DRY_RUN": True} if dry_run else None,
+                            dry_run=dry_run,
+                        ),
                     ),
-                ),
-            )
+                )
+        finally:
+            asyncio.set_event_loop(None)
+            loop.close()
 
     for name, request_rows in request_rows_by_name.items():
         if name in installed_names:

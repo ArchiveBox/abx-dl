@@ -79,6 +79,7 @@ class CrawlService(BaseService):
         crawl_setup_phase_timeout: float = 300.0,
         snapshot_phase_timeout: float = 300.0,
         crawl_cleanup_phase_timeout: float = 300.0,
+        force_interrupt: asyncio.Event | None = None,
     ):
         self.url = url
         self.snapshot = snapshot
@@ -94,6 +95,7 @@ class CrawlService(BaseService):
         self.crawl_setup_phase_timeout = crawl_setup_phase_timeout
         self.snapshot_phase_timeout = snapshot_phase_timeout
         self.crawl_cleanup_phase_timeout = crawl_cleanup_phase_timeout
+        self.force_interrupt = force_interrupt or asyncio.Event()
         super().__init__(bus)
         for plugin, hook in self.crawl_setup_hooks:
             self.bus.on(CrawlSetupEvent, self.on_CrawlSetupEvent__for_hook(plugin, hook))
@@ -107,6 +109,8 @@ class CrawlService(BaseService):
 
         async def on_CrawlSetupEvent__hook(event: CrawlSetupEvent) -> None:
             if event.output_dir != str(self.output_dir):
+                return
+            if self.force_interrupt.is_set():
                 return
             runtime = get_plugin_env(
                 self.bus,
@@ -167,6 +171,19 @@ class CrawlService(BaseService):
                     event_handler_slow_timeout=slow_warning_timeout(self.crawl_setup_phase_timeout),
                 ),
             )
+        if self.force_interrupt.is_set():
+            if self.crawl_cleanup_enabled:
+                await self.bus.emit(
+                    CrawlCleanupEvent(
+                        url=url,
+                        snapshot_id=snapshot_id,
+                        output_dir=output_dir,
+                        event_timeout=self.crawl_cleanup_phase_timeout,
+                        event_handler_slow_timeout=slow_warning_timeout(self.crawl_cleanup_phase_timeout),
+                    ),
+                )
+            await self.bus.emit(CrawlCompletedEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir))
+            return
         if self.crawl_start_enabled:
             await self.bus.emit(
                 CrawlStartEvent(
@@ -197,6 +214,8 @@ class CrawlService(BaseService):
         if event.output_dir != str(self.output_dir):
             return
         if not self.crawl_start_enabled:
+            return
+        if self.force_interrupt.is_set():
             return
         await self.bus.emit(
             SnapshotEvent(

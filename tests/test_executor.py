@@ -596,7 +596,7 @@ def test_nested_snapshot_events_are_emitted_but_ignored_by_snapshot_hooks(tmp_pa
 
     bus.on(SnapshotEvent, on_SnapshotEvent)
     MachineService(bus, persist_derived=False)
-    ProcessService(bus, emit_jsonl=False, stderr_is_tty=False)
+    ProcessService(bus, emit_jsonl=False, interactive_tty=False)
     snapshot = Snapshot(url="https://example.com", depth=0, id="root-depth-0")
     SnapshotService(
         bus,
@@ -660,7 +660,7 @@ def test_discovered_snapshot_depth_increments_from_parent_snapshot(tmp_path: Pat
 
     bus.on(SnapshotEvent, on_SnapshotEvent)
     MachineService(bus, persist_derived=False)
-    ProcessService(bus, emit_jsonl=False, stderr_is_tty=False)
+    ProcessService(bus, emit_jsonl=False, interactive_tty=False)
     snapshot = Snapshot(url="https://example.com/parent", depth=2, id="parent-depth-2")
     SnapshotService(
         bus,
@@ -723,7 +723,7 @@ def test_inline_archive_result_collects_current_output_files(tmp_path: Path) -> 
         seen_archive_results.append(event)
 
     bus.on(ArchiveResultEvent, on_ArchiveResultEvent)
-    ProcessService(bus, emit_jsonl=False, stderr_is_tty=False)
+    ProcessService(bus, emit_jsonl=False, interactive_tty=False)
     ArchiveResultService(bus, emit_jsonl=False)
 
     script_path = tmp_path / "emit_archive_result.sh"
