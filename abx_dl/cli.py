@@ -40,7 +40,18 @@ from .config import (
     set_user_config,
 )
 from .dependencies import load_binary
-from .events import ArchiveResultEvent, BinaryRequestEvent, BinaryEvent, ProcessCompletedEvent, ProcessStartedEvent, ProcessStdoutEvent
+from .events import (
+    ArchiveResultEvent,
+    BinaryEvent,
+    BinaryRequestEvent,
+    CrawlAbortEvent,
+    CrawlPauseEvent,
+    CrawlResumeAndRetryEvent,
+    CrawlResumeAndSkipEvent,
+    ProcessCompletedEvent,
+    ProcessStartedEvent,
+    ProcessStdoutEvent,
+)
 from .limits import parse_filesize_to_bytes
 from .orchestrator import compute_install_phase_timeout, compute_phase_timeout, create_bus, download, get_install_plugins, install_plugins
 from .models import ArchiveResult, PluginEnv, Process, now_iso
@@ -760,6 +771,10 @@ class LiveBusUI:
                 (BinaryEvent, self.on_BinaryEvent),
                 (ArchiveResultEvent, self.on_ArchiveResultEvent),
                 (ProcessCompletedEvent, self.on_ProcessCompletedEvent),
+                (CrawlPauseEvent, self.on_CrawlPauseEvent),
+                (CrawlAbortEvent, self.on_CrawlControlEvent),
+                (CrawlResumeAndRetryEvent, self.on_CrawlControlEvent),
+                (CrawlResumeAndSkipEvent, self.on_CrawlControlEvent),
             ):
                 self.bus.on(event_cls, handler)
         else:
@@ -1080,6 +1095,15 @@ class LiveBusUI:
         )
         self._refresh_live(force=True)
 
+    async def on_CrawlPauseEvent(self, event: CrawlPauseEvent) -> None:
+        self.set_paused(True)
+
+    async def on_CrawlControlEvent(
+        self,
+        event: CrawlAbortEvent | CrawlResumeAndRetryEvent | CrawlResumeAndSkipEvent,
+    ) -> None:
+        self.set_paused(False)
+
 
 @click.group(cls=DefaultGroup, context_settings={"help_option_names": ["-h", "--help"]})
 @click.version_option(package_name="abx-dl", message="%(version)s")
@@ -1171,9 +1195,6 @@ def dl(
     interactive_tty = stdout_is_tty or stderr_is_tty
     ui_console = stderr_console if stderr_is_tty else console
 
-    if interactive_tty:
-        pass
-
     selected_plugins = filter_plugins(plugins, selected) if selected else plugins
     install_plugins_for_phase = get_install_plugins(selected_plugins)
     crawl_setup_hooks: list[tuple[Plugin, Hook]] = []
@@ -1205,18 +1226,36 @@ def dl(
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    interrupt_requested = asyncio.Event()
-    force_interrupt = asyncio.Event()
     previous_sigint_handler = signal.getsignal(signal.SIGINT)
+    pause_requested = False
 
     signal_handler_installed = False
     try:
 
+        async def on_CrawlPauseEvent(event: CrawlPauseEvent) -> None:
+            nonlocal pause_requested
+            pause_requested = True
+
+        async def on_CrawlControlEvent(
+            event: CrawlAbortEvent | CrawlResumeAndRetryEvent | CrawlResumeAndSkipEvent,
+        ) -> None:
+            nonlocal pause_requested
+            pause_requested = False
+
+        bus.on(CrawlPauseEvent, on_CrawlPauseEvent)
+        bus.on(CrawlAbortEvent, on_CrawlControlEvent)
+        bus.on(CrawlResumeAndRetryEvent, on_CrawlControlEvent)
+        bus.on(CrawlResumeAndSkipEvent, on_CrawlControlEvent)
+
         def on_sigint() -> None:
-            if interrupt_requested.is_set():
-                force_interrupt.set()
-                return
-            interrupt_requested.set()
+            nonlocal pause_requested
+            next_event = CrawlAbortEvent() if pause_requested else CrawlPauseEvent()
+            pause_requested = True
+
+            async def emit_control_event() -> None:
+                await bus.emit(next_event)
+
+            loop.create_task(emit_control_event())
 
         loop.add_signal_handler(
             signal.SIGINT,
@@ -1237,9 +1276,6 @@ def dl(
                     interactive_tty=interactive_tty,
                     bus=bus,
                     dry_run=dry_run,
-                    interrupt_requested=interrupt_requested,
-                    force_interrupt=force_interrupt,
-                    set_live_paused=live_ui.set_paused,
                 ),
             )
             try:
@@ -1248,7 +1284,7 @@ def dl(
                 aborted = True
                 loop.run_until_complete(asyncio.gather(download_task, return_exceptions=True))
             finally:
-                aborted = aborted or force_interrupt.is_set()
+                aborted = aborted or any(isinstance(event, CrawlAbortEvent) for event in bus.event_history.values())
                 if debug:
                     bus.log_tree()
                 loop.run_until_complete(bus.stop())

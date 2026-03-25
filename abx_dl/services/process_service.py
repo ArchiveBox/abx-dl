@@ -1,18 +1,20 @@
 """ProcessService — owns hook subprocess execution and raw process events."""
 
 import asyncio
-import signal
 import time
 from pathlib import Path
 from typing import ClassVar, Literal
-from collections.abc import Callable
 
 from abxbus import BaseEvent, EventBus
 import click
 from ..events import (
     PROCESS_EXIT_SKIPPED,
+    CrawlAbortEvent,
     CrawlCleanupEvent,
     CrawlEvent,
+    CrawlPauseEvent,
+    CrawlResumeAndRetryEvent,
+    CrawlResumeAndSkipEvent,
     ProcessCompletedEvent,
     ProcessEvent,
     ProcessKillEvent,
@@ -89,10 +91,15 @@ class ProcessService(BaseService):
     """
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [
+        CrawlPauseEvent,
+        CrawlAbortEvent,
         ProcessEvent,
         ProcessKillEvent,
     ]
     EMITS: ClassVar[list[type[BaseEvent]]] = [
+        CrawlAbortEvent,
+        CrawlResumeAndRetryEvent,
+        CrawlResumeAndSkipEvent,
         ProcessStartedEvent,
         ProcessStdoutEvent,
         ProcessCompletedEvent,
@@ -105,16 +112,14 @@ class ProcessService(BaseService):
         *,
         emit_jsonl: bool,
         interactive_tty: bool,
-        interrupt_requested: asyncio.Event | None = None,
-        force_interrupt: asyncio.Event | None = None,
-        set_live_paused: Callable[[bool], None] | None = None,
     ):
         self.emit_jsonl = emit_jsonl
         self.interactive_tty = interactive_tty
-        self.interrupt_requested = interrupt_requested or asyncio.Event()
-        self.force_interrupt = force_interrupt or asyncio.Event()
-        self.set_live_paused = set_live_paused or (lambda _paused: None)
+        self.pause_requested = asyncio.Event()
+        self.abort_requested = False
         super().__init__(bus)
+        self.bus.on(CrawlPauseEvent, self.on_CrawlPauseEvent)
+        self.bus.on(CrawlAbortEvent, self.on_CrawlAbortEvent)
         self.bus.on(ProcessEvent, self.on_ProcessEvent)
         self.bus.on(ProcessKillEvent, self.on_ProcessKillEvent)
 
@@ -127,18 +132,12 @@ class ProcessService(BaseService):
         click.echo("  1. exit now and abort the whole crawl", err=True)
         click.echo("  2. continue and retry the aborted hook", err=True)
         click.echo("  3. continue and skip the aborted hook", err=True)
-
-        def on_prompt_sigint(_signum, _frame) -> None:
-            raise EOFError
-
-        previous_sigint_handler = signal.getsignal(signal.SIGINT)
-        signal.signal(signal.SIGINT, on_prompt_sigint)
         try:
             click.echo("Choice [1]: ", nl=False, err=True)
             while True:
                 choice_char = click.getchar()
                 click.echo("", err=True)
-                if choice_char in ("\x04", "\r", "\n"):
+                if choice_char in ("\x03", "\x04", "\r", "\n"):
                     return "abort"
                 if choice_char == "1":
                     return "abort"
@@ -150,8 +149,14 @@ class ProcessService(BaseService):
                 click.echo("Choice [1]: ", nl=False, err=True)
         except (EOFError, KeyboardInterrupt, click.Abort):
             return "abort"
-        finally:
-            signal.signal(signal.SIGINT, previous_sigint_handler)
+
+    async def on_CrawlPauseEvent(self, event: CrawlPauseEvent) -> None:
+        """Request interruption of the current foreground hook."""
+        self.pause_requested.set()
+
+    async def on_CrawlAbortEvent(self, event: CrawlAbortEvent) -> None:
+        """Remember that the crawl should stop after the interrupted hook finishes."""
+        self.abort_requested = True
 
     async def on_ProcessEvent(self, event: ProcessEvent) -> None:
         """Spawn one hook subprocess and emit ProcessStartedEvent.
@@ -162,8 +167,8 @@ class ProcessService(BaseService):
         """
         interactive_interrupts = not event.is_background and self.interactive_tty
         if interactive_interrupts:
-            self.interrupt_requested.clear()
-            self.force_interrupt.clear()
+            self.pause_requested.clear()
+            self.abort_requested = False
         plugin_output_dir = Path(event.output_dir)
         plugin_output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -197,6 +202,7 @@ class ProcessService(BaseService):
         files_before = set(plugin_output_dir.rglob("*")) if plugin_output_dir.exists() else set()
 
         process: asyncio.subprocess.Process | None = None
+        started_event: ProcessStartedEvent | None = None
         try:
             try:
                 with open(stderr_file, "w") as err_fh:
@@ -276,6 +282,7 @@ class ProcessService(BaseService):
                     event_handler_slow_timeout=10000.0,
                 ),
             )
+            assert started_event is not None
             proc = Process(
                 cmd=[event.hook_path, *event.hook_args],
                 pwd=event.output_dir,
@@ -301,7 +308,7 @@ class ProcessService(BaseService):
                     interrupt_task: asyncio.Task[bool] | None = None
                     pending = {wait_task}
                     if interactive_interrupts:
-                        interrupt_task = asyncio.create_task(self.interrupt_requested.wait())
+                        interrupt_task = asyncio.create_task(self.pause_requested.wait())
                         pending.add(interrupt_task)
                     remaining = None if deadline is None else max(deadline - asyncio.get_running_loop().time(), 0.0)
                     done, pending = await asyncio.wait(
@@ -319,9 +326,8 @@ class ProcessService(BaseService):
                     if wait_task in done:
                         break
                     if interrupt_task is not None and interrupt_task in done:
-                        self.interrupt_requested.clear()
+                        self.pause_requested.clear()
                         interrupted = True
-                        self.set_live_paused(True)
                         await self.bus.emit(
                             ProcessKillEvent(
                                 plugin_name=event.plugin_name,
@@ -355,13 +361,17 @@ class ProcessService(BaseService):
                 returncode = PROCESS_EXIT_SKIPPED
                 status = "skipped"
                 stderr = "Hook interrupted by user"
-                if self.force_interrupt.is_set():
+                if self.abort_requested:
                     action = "abort"
                 else:
                     action = self.on_InterruptedHookPrompt(event.hook_name)
-                self.set_live_paused(False)
-                if action == "abort":
-                    self.force_interrupt.set()
+                await self.bus.emit(
+                    {
+                        "abort": CrawlAbortEvent,
+                        "retry": CrawlResumeAndRetryEvent,
+                        "skip": CrawlResumeAndSkipEvent,
+                    }[action](),
+                )
 
             proc.exit_code = returncode
             proc.status = status
@@ -428,7 +438,7 @@ class ProcessService(BaseService):
                     ),
                 )
         finally:
-            self.interrupt_requested.clear()
+            self.pause_requested.clear()
 
     async def on_ProcessKillEvent(self, event: ProcessKillEvent) -> None:
         """Gracefully shut down a running background hook.

@@ -8,6 +8,7 @@ from abxbus import BaseEvent, EventBus
 
 from ..config import get_plugin_env
 from ..events import (
+    CrawlAbortEvent,
     CrawlCleanupEvent,
     CrawlCompletedEvent,
     CrawlEvent,
@@ -51,6 +52,7 @@ class CrawlService(BaseService):
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [
         CrawlEvent,
+        CrawlAbortEvent,
         CrawlSetupEvent,
         CrawlStartEvent,
         CrawlCleanupEvent,
@@ -79,7 +81,6 @@ class CrawlService(BaseService):
         crawl_setup_phase_timeout: float = 300.0,
         snapshot_phase_timeout: float = 300.0,
         crawl_cleanup_phase_timeout: float = 300.0,
-        force_interrupt: asyncio.Event | None = None,
     ):
         self.url = url
         self.snapshot = snapshot
@@ -95,12 +96,13 @@ class CrawlService(BaseService):
         self.crawl_setup_phase_timeout = crawl_setup_phase_timeout
         self.snapshot_phase_timeout = snapshot_phase_timeout
         self.crawl_cleanup_phase_timeout = crawl_cleanup_phase_timeout
-        self.force_interrupt = force_interrupt or asyncio.Event()
+        self.abort_requested = False
         super().__init__(bus)
         for plugin, hook in self.crawl_setup_hooks:
             self.bus.on(CrawlSetupEvent, self.on_CrawlSetupEvent__for_hook(plugin, hook))
 
         self.bus.on(CrawlEvent, self.on_CrawlEvent)
+        self.bus.on(CrawlAbortEvent, self.on_CrawlAbortEvent)
         self.bus.on(CrawlStartEvent, self.on_CrawlStartEvent)
         self.bus.on(CrawlCleanupEvent, self.on_CrawlCleanupEvent)
 
@@ -110,7 +112,7 @@ class CrawlService(BaseService):
         async def on_CrawlSetupEvent__hook(event: CrawlSetupEvent) -> None:
             if event.output_dir != str(self.output_dir):
                 return
-            if self.force_interrupt.is_set():
+            if self.abort_requested:
                 return
             runtime = get_plugin_env(
                 self.bus,
@@ -171,7 +173,7 @@ class CrawlService(BaseService):
                     event_handler_slow_timeout=slow_warning_timeout(self.crawl_setup_phase_timeout),
                 ),
             )
-        if self.force_interrupt.is_set():
+        if self.abort_requested:
             if self.crawl_cleanup_enabled:
                 await self.bus.emit(
                     CrawlCleanupEvent(
@@ -215,7 +217,7 @@ class CrawlService(BaseService):
             return
         if not self.crawl_start_enabled:
             return
-        if self.force_interrupt.is_set():
+        if self.abort_requested:
             return
         await self.bus.emit(
             SnapshotEvent(
@@ -324,3 +326,7 @@ class CrawlService(BaseService):
                     for started_process in started_processes
                 ],
             )
+
+    async def on_CrawlAbortEvent(self, event: CrawlAbortEvent) -> None:
+        """Stop scheduling any further crawl work after a user abort."""
+        self.abort_requested = True

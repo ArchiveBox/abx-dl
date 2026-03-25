@@ -80,8 +80,7 @@ from __future__ import annotations
 
 import sys
 import json
-import asyncio
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from contextlib import nullcontext
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -121,9 +120,6 @@ def setup_services(
     auto_install: bool = True,
     emit_jsonl: bool = True,
     interactive_tty: bool | None = None,
-    interrupt_requested: asyncio.Event | None = None,
-    force_interrupt: asyncio.Event | None = None,
-    set_live_paused: Callable[[bool], None] | None = None,
     MachineService: type[MachineService] | None = MachineService,
     BinaryService: type[BinaryService] | None = BinaryService,
     ProcessService: type[ProcessService] | None = ProcessService,
@@ -159,9 +155,6 @@ def setup_services(
             bus,
             emit_jsonl=emit_jsonl,
             interactive_tty=bool(interactive_tty),
-            interrupt_requested=interrupt_requested,
-            force_interrupt=force_interrupt,
-            set_live_paused=set_live_paused,
         )
 
     if ArchiveResultService is not None:
@@ -192,7 +185,6 @@ def setup_services(
             crawl_setup_phase_timeout=crawl_setup_phase_timeout,
             snapshot_phase_timeout=snapshot_phase_timeout,
             crawl_cleanup_phase_timeout=crawl_cleanup_phase_timeout,
-            force_interrupt=force_interrupt,
         )
         if SnapshotService is not None and (crawl_start_enabled or snapshot_cleanup_enabled):
             SnapshotService(
@@ -204,7 +196,6 @@ def setup_services(
                 snapshot_phase_timeout=snapshot_phase_timeout,
                 snapshot_cleanup_enabled=snapshot_cleanup_enabled,
                 snapshot_cleanup_phase_timeout=snapshot_cleanup_phase_timeout,
-                force_interrupt=force_interrupt,
             )
 
     return None
@@ -286,8 +277,6 @@ async def install_plugins(
             auto_install=True,
             emit_jsonl=emit_jsonl,
             interactive_tty=sys.stdout.isatty() or sys.stderr.isatty(),
-            interrupt_requested=None,
-            force_interrupt=None,
             MachineService=MachineService,
             BinaryService=BinaryService,
             ProcessService=ProcessService,
@@ -434,9 +423,6 @@ async def download(
     snapshot_cleanup_enabled: bool = True,
     crawl_cleanup_enabled: bool = True,
     dry_run: bool = False,
-    interrupt_requested: asyncio.Event | None = None,
-    force_interrupt: asyncio.Event | None = None,
-    set_live_paused: Callable[[bool], None] | None = None,
     MachineService: type[MachineService] | None = MachineService,
     BinaryService: type[BinaryService] | None = BinaryService,
     ProcessService: type[ProcessService] | None = ProcessService,
@@ -557,9 +543,6 @@ async def download(
         auto_install=auto_install,
         emit_jsonl=emit_jsonl,
         interactive_tty=interactive_tty,
-        interrupt_requested=interrupt_requested,
-        force_interrupt=force_interrupt,
-        set_live_paused=set_live_paused,
         MachineService=MachineService,
         BinaryService=BinaryService,
         ProcessService=ProcessService,

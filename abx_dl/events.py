@@ -147,6 +147,30 @@ class CrawlCompletedEvent(BaseEvent):
     event_timeout: float | None = 10.0
 
 
+class CrawlPauseEvent(BaseEvent):
+    """Request interruption of the current foreground hook and pause the crawl."""
+
+    event_timeout: float | None = 60.0
+
+
+class CrawlAbortEvent(BaseEvent):
+    """Abort the crawl after the current interrupted hook has been handled."""
+
+    event_timeout: float | None = 60.0
+
+
+class CrawlResumeAndRetryEvent(BaseEvent):
+    """Resume the crawl by retrying the foreground hook that was interrupted."""
+
+    event_timeout: float | None = 60.0
+
+
+class CrawlResumeAndSkipEvent(BaseEvent):
+    """Resume the crawl and leave the interrupted foreground hook skipped."""
+
+    event_timeout: float | None = 60.0
+
+
 # ── Snapshot lifecycle ───────────────────────────────────────────────────────
 
 
