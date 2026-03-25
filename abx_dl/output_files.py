@@ -13,6 +13,9 @@ for strict in (True, False):
     mimetypes.add_type("application/warc", ".warc", strict=strict)
 
 
+OUTPUT_FILE_METADATA_SUFFIXES = (".stdout.log", ".stderr.log", ".log", ".pid", ".sh")
+
+
 class OutputFile(BaseModel):
     """Metadata for a file emitted by a hook."""
 
@@ -54,26 +57,20 @@ def output_file_from_path(file_path: Path, *, relative_to: Path) -> OutputFile:
     )
 
 
-def collect_output_files(output_dir: Path) -> list[OutputFile]:
-    """Collect metadata for all non-symlink files under an output directory."""
+def scan_output_files(output_dir: Path, file_paths: Iterable[Path] | None = None) -> list[OutputFile]:
+    """Collect metadata for real hook output files, excluding process artifacts."""
     if not output_dir.is_dir():
         return []
 
-    output_files = [
-        output_file_from_path(file_path, relative_to=output_dir)
-        for file_path in output_dir.rglob("*")
-        if file_path.is_file() and not file_path.is_symlink()
-    ]
-    output_files.sort(key=lambda output_file: output_file.path)
-    return output_files
+    paths = output_dir.rglob("*") if file_paths is None else file_paths
+    output_files = []
+    for file_path in paths:
+        if not file_path.is_file() or file_path.is_symlink():
+            continue
+        relative_path = file_path.relative_to(output_dir).as_posix()
+        if any(relative_path.endswith(suffix) for suffix in OUTPUT_FILE_METADATA_SUFFIXES):
+            continue
+        output_files.append(output_file_from_path(file_path, relative_to=output_dir))
 
-
-def collect_output_files_from_paths(output_dir: Path, file_paths: Iterable[Path]) -> list[OutputFile]:
-    """Collect metadata for a specific set of non-symlink files under an output directory."""
-    output_files = [
-        output_file_from_path(file_path, relative_to=output_dir)
-        for file_path in file_paths
-        if file_path.is_file() and not file_path.is_symlink()
-    ]
     output_files.sort(key=lambda output_file: output_file.path)
     return output_files

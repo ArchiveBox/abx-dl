@@ -11,12 +11,15 @@ import os
 import platform
 import re
 import socket
+import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, Field
+from abx_pkg import BinaryOverrides
+from pydantic import BaseModel, ConfigDict, Field
+from abx_plugins import get_plugins_dir
 
 from .output_files import OutputFile
 
@@ -42,23 +45,26 @@ class Hook(BaseModel):
 
     Hook filenames follow the convention::
 
-        on_{Event}__{XX}_{description}[.finite][.daemon][.bg].{ext}
+        on_{Event}__[{order}_]{description}[.finite][.daemon][.bg].{ext}
 
     Where:
-    - ``{Event}`` is the exact bus event family (Install, BinaryRequest, CrawlSetup, Snapshot)
-    - ``{XX}`` is the two-digit execution order (00-99)
-    - ``.bg.`` in the filename marks it as a background hook
-    - ``.finite.`` means the bg hook exits on its own (vs ``.daemon.`` which runs until killed)
+    - `{Event}` is the exact bus event family (Install, BinaryRequest, CrawlSetup, Snapshot)
+    - `{order}` is an optional execution order prefix; omitted order defaults to 0
+    - `.bg.` in the filename marks it as a background hook
+    - `.finite.` means the bg hook exits on its own (vs `.daemon.` which runs until killed)
     """
 
-    model_config = {"arbitrary_types_allowed": True}
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    name: str
-    event: str
-    plugin_name: str
-    path: Path
-    order: int  # Two-digit execution order (00-99)
-    is_background: bool
+    name: str  # e.g. on_Snapshot__24_chrome_navigate.js
+    event: str  # e.g. SnapshotEvent
+    plugin_name: str  # e.g. chrome
+    path: Path  # e.g. /path/to/plugins/chrome/on_Snapshot__24_chrome_navigate.js
+    order: int  # Execution order parsed from filename, defaults to 0 when omitted
+    is_background: bool  # whether hook file has .bg or not in the name
+
+    # is_finite / is_daemon <--- DO NOT ADD THESE. the only introspection on hooks we should do is bg/fg, otherwise treat all bg hooks the same (some exit early some dont, it's up to them)
+    # interpreter <--- DO NOT ADD THIS. treat hooks like black-box +x executables, do not attempt to introspect how they are implemented
 
     @property
     def full_name(self) -> str:
@@ -70,53 +76,179 @@ class Hook(BaseModel):
         return (self.order, self.name)
 
 
+class RequiredBinary(BaseModel):
+    """A single required binary definition from plugins/<pluginname>/config.json > required_binaries[]"""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    name: str
+    binproviders: str = "env"
+    min_version: str | None = None
+    overrides: BinaryOverrides = Field(default_factory=dict)
+
+
+class PluginConfig(BaseModel):
+    """Plugin config definition loaded from plugins/<pluginname>/config.json"""
+
+    title: str = ""
+    description: str = ""
+    output_mimetypes: list[str] = Field(default_factory=list)  # e.g. ['text/html', 'video/']
+    properties: dict[str, dict[str, Any]] = Field(default_factory=dict)  # JSONSchema format describing plugin config
+    required_binaries: list[RequiredBinary] = Field(default_factory=list)  # e.g. [{'name': 'wget', 'binproviders': 'env,apt,brew'}]
+    required_plugins: list[str] = Field(default_factory=list)  # e.g. ['chrome', 'pdf']
+
+
 class Plugin(BaseModel):
     """A plugin directory containing config and hook scripts.
 
-    Plugins are discovered from the plugins directory (``ABX_PLUGINS_DIR`` env var,
-    ``abx_plugins`` package, or monorepo fallback). Each plugin directory may contain:
+    Plugins are discovered from the plugins directory (`ABX_PLUGINS_DIR` env var
+    or the installed `abx_plugins` package). Each plugin directory may contain:
 
-    - ``config.json``: schema with metadata, config properties, and ``required_plugins``
-    - ``on_*`` scripts: hook executables matching the naming convention
+    - `config.json`: schema with metadata, config properties, and `required_plugins`
+    - `on_*` scripts: hook executables matching the naming convention
     """
 
-    model_config = {"arbitrary_types_allowed": True}
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
     name: str
     path: Path
-    title: str = ""
-    description: str = ""
-    output_mimetypes: list[str] = Field(default_factory=list)
-    config_schema: dict[str, Any] = Field(default_factory=dict)
-    binaries: list[dict[str, Any]] = Field(default_factory=list)
+    config: PluginConfig = Field(default_factory=PluginConfig)
     hooks: list[Hook] = Field(default_factory=list)
-    required_plugins: list[str] = Field(default_factory=list)
 
     @property
     def enabled_key(self) -> str:
         """Config key for enabling/disabling this plugin (e.g. CHROME_ENABLED)."""
         return f"{self.name.upper()}_ENABLED"
 
-    def get_snapshot_hooks(self) -> list[Hook]:
-        """Get hooks that run during the snapshot phase (extraction/indexing)."""
+    def filter_hooks(self, event_name: str) -> list[Hook]:
+        """Return hooks for one event family sorted in execution order."""
         return sorted(
-            [h for h in self.hooks if h.event == "Snapshot"],
+            [hook for hook in self.hooks if hook.event == event_name],
             key=lambda h: h.sort_key,
         )
 
-    def get_crawl_setup_hooks(self) -> list[Hook]:
-        """Get hooks that run during crawl setup."""
-        return sorted(
-            [h for h in self.hooks if h.event == "CrawlSetup"],
-            key=lambda h: h.sort_key,
-        )
 
-    def get_binary_request_hooks(self) -> list[Hook]:
-        """Get hooks that resolve/install binary dependencies."""
-        return sorted(
-            [h for h in self.hooks if h.event == "BinaryRequest"],
-            key=lambda h: h.sort_key,
-        )
+class PluginEnv(BaseModel):
+    """Flat assembled plugin runtime config with env serialization."""
+
+    model_config = ConfigDict(extra="allow")
+    DRY_RUN: bool = False
+    TIMEOUT: int = 60
+
+    def __getitem__(self, key: str) -> Any:
+        if key in type(self).model_fields:
+            return self.__dict__[key]
+        if self.__pydantic_extra__ and key in self.__pydantic_extra__:
+            return self.__pydantic_extra__[key]
+        raise KeyError(key)
+
+    @classmethod
+    def from_config(
+        cls,
+        config: BaseModel | dict[str, Any],
+        *,
+        run_output_dir: Path,
+        extra_context: dict[str, Any] | None = None,
+    ) -> "PluginEnv":
+        """Assemble the flat runtime config model for one plugin execution.
+
+        ``config`` is already fully resolved at this point. This method only
+        applies the runtime-specific adjustments that belong on every hook run.
+        """
+        from .config import GlobalConfig
+
+        config_payload = config.model_dump(mode="json") if isinstance(config, BaseModel) else dict(config)
+        payload = GlobalConfig(**config_payload).model_dump(mode="json")
+        payload.pop("UV_RUN_RECURSION_DEPTH", None)
+        for key, value in config_payload.items():
+            if key == "UV_RUN_RECURSION_DEPTH":
+                continue
+            if key not in payload:
+                payload[key] = value
+
+        if extra_context:
+            existing_extra_context = payload.get("EXTRA_CONTEXT") or {}
+            if isinstance(existing_extra_context, str):
+                try:
+                    existing_extra_context = json.loads(existing_extra_context)
+                except json.JSONDecodeError:
+                    existing_extra_context = {}
+            payload["EXTRA_CONTEXT"] = {
+                **dict(existing_extra_context or {}),
+                **extra_context,
+            }
+
+        run_dir = str(run_output_dir.expanduser().resolve())
+        data_dir = str(Path(payload["DATA_DIR"]).expanduser().resolve())
+        crawl_dir = str(Path(payload["CRAWL_DIR"]).expanduser().resolve())
+        snap_dir = str(Path(payload["SNAP_DIR"]).expanduser().resolve())
+        # Shared defaults point at DATA_DIR. For an actual run, remap those
+        # defaults to the run-local output dir unless the caller explicitly
+        # configured separate crawl/snapshot dirs.
+        if crawl_dir == data_dir:
+            payload["CRAWL_DIR"] = run_dir
+        if snap_dir == data_dir:
+            payload["SNAP_DIR"] = run_dir
+
+        return cls(**payload)
+
+    def to_env(self) -> dict[str, str]:
+        """Serialize the flat runtime model into a subprocess env dict."""
+        from .config import dump_to_dotenv_format
+
+        env = os.environ.copy()
+        env.pop("UV_RUN_RECURSION_DEPTH", None)
+
+        # Let Google traffic bypass local proxies so Chrome/CDP and provider
+        # installs do not inherit host NO_PROXY rules that break them.
+        no_proxy_strip = {"googleapis.com", "google.com", "*.googleapis.com", "*.google.com", ".googleapis.com", ".google.com"}
+        for key in ("NO_PROXY", "no_proxy"):
+            if key in env:
+                env[key] = ",".join(part.strip() for part in env[key].split(",") if part.strip() not in no_proxy_strip)
+
+        payload = self.model_dump(mode="json")
+        for key, value in payload.items():
+            if value is not None:
+                env[key] = dump_to_dotenv_format(value)
+
+        path_dirs = [part for part in env["PATH"].split(os.pathsep) if part]
+        runtime_bin_dirs: list[str] = []
+
+        for key, raw_value in env.items():
+            if not key.endswith("_BINARY"):
+                continue
+            value = str(raw_value).strip()
+            if not value:
+                continue
+            path_value = Path(value).expanduser()
+            if not (path_value.is_absolute() or "/" in value or "\\" in value):
+                continue
+            binary_dir = str(path_value.resolve(strict=False).parent)
+            if binary_dir and binary_dir not in runtime_bin_dirs:
+                runtime_bin_dirs.append(binary_dir)
+
+        for extra_dir in (
+            str(Path(env["LIB_BIN_DIR"])),
+            str(Path(sys.executable).parent),
+            str(Path(env["PIP_BIN_DIR"])),
+            str(Path(env["NPM_BIN_DIR"])),
+        ):
+            if extra_dir and extra_dir not in runtime_bin_dirs:
+                runtime_bin_dirs.append(extra_dir)
+        if "UV" in env:
+            uv_bin_dir = str(Path(env["UV"]).expanduser().resolve(strict=False).parent)
+            if uv_bin_dir not in runtime_bin_dirs:
+                runtime_bin_dirs.append(uv_bin_dir)
+
+        # Prepend runtime-managed bin dirs ahead of the inherited PATH so hooks
+        # see abx-managed binaries before host-global ones.
+        derived_path = env["PATH"]
+        for extra_dir in reversed(runtime_bin_dirs):
+            if extra_dir and extra_dir not in path_dirs:
+                derived_path = f"{extra_dir}{os.pathsep}{derived_path}" if derived_path else extra_dir
+                path_dirs.insert(0, extra_dir)
+        env["PATH"] = derived_path
+        return env
 
 
 # ── Execution models ──────────────────────────────────────────────────────
@@ -125,8 +257,8 @@ class Plugin(BaseModel):
 class Process(BaseModel):
     """A subprocess execution — one per hook invocation."""
 
-    cmd: list[str]
     id: str = Field(default_factory=uuid7)
+    cmd: list[str]
     binary_id: str | None = None
     plugin: str | None = None
     hook_name: str | None = None
@@ -136,6 +268,7 @@ class Process(BaseModel):
     started_at: str | None = None
     ended_at: str | None = None
     exit_code: int | None = None
+    status: Literal["succeeded", "failed", "skipped"] | None = None
     stdout: str = ""
     stderr: str = ""
     machine_hostname: str = Field(default_factory=socket.gethostname)
@@ -152,21 +285,21 @@ class Process(BaseModel):
 #     name: str
 #     id: str = Field(default_factory=uuid7)
 #     version: str | None = None
+#     abspath: Path | None = None
+#     min_version: SemVer | str | None = None
+#     binprovider
+#     overrides
 #     ...
 
 
 class Snapshot(BaseModel):
     """A URL being archived — one per download() call."""
 
+    model_config = ConfigDict(extra="ignore")
+
     url: str
     id: str = Field(default_factory=uuid7)
-    title: str | None = None
-    timestamp: str = Field(default_factory=lambda: str(datetime.now().timestamp()))
-    bookmarked_at: str = Field(default_factory=now_iso)
-    created_at: str = Field(default_factory=now_iso)
-    tags: str = ""
     depth: int = 0
-    parent_snapshot_id: str | None = None
     crawl_id: str | None = None
 
     def to_jsonl(self) -> str:
@@ -175,15 +308,30 @@ class Snapshot(BaseModel):
         return json.dumps(d, default=str)
 
 
+class Tag(BaseModel):
+    """A tag emitted by a snapshot hook."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    name: str
+    snapshot_id: str = ""
+
+    def to_jsonl(self) -> str:
+        d = {k: v for k, v in self.model_dump().items() if v is not None}
+        d["type"] = "Tag"
+        return json.dumps(d, default=str)
+
+
 class ArchiveResult(BaseModel):
     """Result from running a single plugin hook."""
+
+    model_config = ConfigDict(extra="ignore")
 
     snapshot_id: str
     plugin: str
     id: str = Field(default_factory=uuid7)
     hook_name: str = ""
     status: str = "queued"
-    process_id: str | None = None
     output_str: str = ""
     output_json: dict[str, Any] | None = None
     output_files: list[OutputFile] = Field(default_factory=list)
@@ -195,9 +343,6 @@ class ArchiveResult(BaseModel):
         d = {k: v for k, v in self.model_dump().items() if v is not None}
         d["type"] = "ArchiveResult"
         return json.dumps(d, default=str)
-
-
-VisibleRecord = ArchiveResult | Process
 
 
 def write_jsonl(path: Path, record: Any, also_print: bool = False):
@@ -215,40 +360,33 @@ def write_jsonl(path: Path, record: Any, also_print: bool = False):
 def _default_plugins_dir() -> Path:
     """Determine the plugins directory.
 
-    Priority: ABX_PLUGINS_DIR env var > abx_plugins package > monorepo path > local.
+    Priority: ABX_PLUGINS_DIR env var > abx_plugins package.
     """
     override = os.environ.get("ABX_PLUGINS_DIR")
     if override:
         return Path(override)
-    try:
-        from abx_plugins import get_plugins_dir
-    except Exception:
-        repo_root = Path(__file__).resolve().parents[3]
-        monorepo_plugins = repo_root / "abx-plugins" / "abx_plugins" / "plugins"
-        if monorepo_plugins.exists():
-            return monorepo_plugins
-        return Path(__file__).parent / "plugins"
     return get_plugins_dir()
 
 
-# Plugins directory (prefer abx-plugins package, fallback to local)
+# Plugins directory
 PLUGINS_DIR = _default_plugins_dir()
 
 
 def parse_hook_filename(filename: str) -> tuple[str, int, bool] | None:
     """Parse a hook filename to extract (event_type, order, is_background).
 
-    Format: ``on_{Event}__{XX}_{description}[.bg].{ext}``
+    Format: `on_{Event}__[{order}_]{description}[.bg].{ext}`
 
     Returns None if the filename doesn't match the hook convention.
+    Never attempt to determine .finite/.daemon/interpreter, hooks should be treated like black-box executables.
     """
-    pattern = r"^on_(\w+)__(\d{2})_.+"
+    pattern = r"^on_(\w+)__(?:(\d+)_)?(.+)$"
     match = re.match(pattern, filename)
     if not match:
         return None
 
     event = match.group(1)
-    order = int(match.group(2))
+    order = int(match.group(2) or 0)
     is_background = ".bg." in filename
 
     return (event, order, is_background)
@@ -258,7 +396,7 @@ def load_plugin(plugin_dir: Path) -> Plugin | None:
     """Load a single plugin from a directory.
 
     Reads config.json for metadata/schema/dependencies and discovers hook scripts
-    matching the ``on_*`` naming convention.
+    matching the `on_*` naming convention.
     """
     if not plugin_dir.is_dir():
         return None
@@ -274,20 +412,7 @@ def load_plugin(plugin_dir: Path) -> Plugin | None:
     # Load config schema
     config_file = plugin_dir / "config.json"
     if config_file.exists():
-        try:
-            schema = json.loads(config_file.read_text())
-            plugin.title = schema.get("title", "")
-            plugin.description = schema.get("description", "")
-            plugin.output_mimetypes = schema.get("output_mimetypes", [])
-            plugin.config_schema = schema.get("properties", {})
-            plugin.binaries = [
-                spec
-                for spec in schema.get("required_binaries", [])
-                if isinstance(spec, dict) and isinstance(spec.get("name"), str) and spec["name"]
-            ]
-            plugin.required_plugins = schema.get("required_plugins", [])
-        except json.JSONDecodeError:
-            pass
+        plugin.config = PluginConfig.model_validate_json(config_file.read_text())
 
     # Discover hooks
     for hook_file in plugin_dir.glob("on_*"):
@@ -330,33 +455,19 @@ def discover_plugins(plugins_dir: Path = PLUGINS_DIR) -> dict[str, Plugin]:
     return plugins
 
 
-def get_all_snapshot_hooks(plugins: dict[str, Plugin]) -> list[Hook]:
-    """Get all snapshot hooks from all plugins, sorted by execution order."""
-    hooks = []
-    for plugin in plugins.values():
-        hooks.extend(plugin.get_snapshot_hooks())
-    return sorted(hooks, key=lambda h: h.sort_key)
-
-
-def get_plugin_names(plugins: dict[str, Plugin]) -> list[str]:
-    """Get list of available plugin names."""
-    return sorted(plugins.keys())
-
-
 def filter_plugins(plugins: dict[str, Plugin], names: list[str] | None, *, include_providers: bool = True) -> dict[str, Plugin]:
     """Filter plugins to only include specified names, plus transitive dependencies.
 
     Dependencies are resolved via:
-    1. ``required_plugins`` field in each plugin's config.json
-    2. When *include_providers* is True (default), binary provider plugins
-       (those with ``on_BinaryRequest__*`` hooks) are automatically included when any
-       selected plugin declares ``required_binaries``, since install resolution
-       may request binary provider hooks at runtime.
+    1. `required_plugins` field in each plugin's config.json
+    2. When *include_providers* is True (default), provider plugins named in
+       `required_binaries[].binproviders` are included transitively, along with
+       any required_plugins / provider dependencies they declare themselves.
     """
     if not names:
         return plugins
 
-    # Resolve transitive dependencies via required_plugins in config.json
+    # walk the required_plugins DAG and add required plugins
     resolved: set[str] = set()
     queue = [n.lower() for n in names]
     while queue:
@@ -366,17 +477,34 @@ def filter_plugins(plugins: dict[str, Plugin], names: list[str] | None, *, inclu
         resolved.add(name)
         plugin = next((plugin for plugin_name, plugin in plugins.items() if plugin_name.lower() == name), None)
         if plugin:
-            for dep in plugin.required_plugins:
+            for dep in plugin.config.required_plugins:
                 dep_lower = dep.lower()
                 if dep_lower not in resolved:
                     queue.append(dep_lower)
 
-    # If any resolved plugin declares required binaries, include all binary provider plugins
+    # walk the required_binaries DAG and add required binprovider plugins
     if include_providers:
-        needs_providers = any(plugin.binaries for name, plugin in plugins.items() if name.lower() in resolved)
-        if needs_providers:
-            for name, plugin in plugins.items():
-                if plugin.get_binary_request_hooks():
-                    resolved.add(name.lower())
+        queue = list(resolved)
+        while queue:
+            name = queue.pop()
+            plugin = next((plugin for plugin_name, plugin in plugins.items() if plugin_name.lower() == name), None)
+            if plugin is None:
+                continue
+            for spec in plugin.config.required_binaries:
+                for provider_name in (part.strip().lower() for part in spec.binproviders.split(",") if part.strip()):
+                    provider = next(
+                        (candidate for plugin_name, candidate in plugins.items() if plugin_name.lower() == provider_name),
+                        None,
+                    )
+                    if provider is None or not provider.filter_hooks("BinaryRequest"):
+                        continue
+                    if provider_name not in resolved:
+                        resolved.add(provider_name)
+                        queue.append(provider_name)
+                    for dep in provider.config.required_plugins:
+                        dep_lower = dep.lower()
+                        if dep_lower not in resolved:
+                            resolved.add(dep_lower)
+                            queue.append(dep_lower)
 
     return {name: plugin for name, plugin in plugins.items() if name.lower() in resolved}

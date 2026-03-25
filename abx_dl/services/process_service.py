@@ -1,28 +1,39 @@
-"""ProcessService — owns all hook subprocess execution and JSONL output parsing."""
+"""ProcessService — owns hook subprocess execution and raw process events."""
 
 import asyncio
 import time
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 from abxbus import BaseEvent, EventBus
-from abxbus.base_event import EventHandler
-
 from ..events import (
-    BinaryRequestProcessEvent,
+    PROCESS_EXIT_SKIPPED,
+    CrawlCleanupEvent,
+    CrawlEvent,
     ProcessCompletedEvent,
     ProcessEvent,
     ProcessKillEvent,
     ProcessStartedEvent,
     ProcessStdoutEvent,
+    SnapshotCleanupEvent,
+    SnapshotEvent,
 )
 from ..models import Process, write_jsonl, now_iso
-from ..output_files import collect_output_files, collect_output_files_from_paths
+from ..output_files import scan_output_files
 from ..process_utils import write_pid_file_with_mtime, write_cmd_file, graceful_kill_process, graceful_kill_by_pid_file
 from .base import BaseService
 
 
-_PROCESS_METADATA_SUFFIXES = (".stdout.log", ".stderr.log", ".pid", ".sh")
+ProcessStatus = Literal["succeeded", "failed", "skipped"]
+
+
+def _process_status(exit_code: int) -> ProcessStatus:
+    """Normalize process exit codes into ArchiveResult-compatible statuses."""
+    if exit_code == 0:
+        return "succeeded"
+    if exit_code == PROCESS_EXIT_SKIPPED:
+        return "skipped"
+    return "failed"
 
 
 def _rotate_existing_log(path: Path) -> Path | None:
@@ -57,72 +68,33 @@ def _rotate_existing_log(path: Path) -> Path | None:
 
 
 class ProcessService(BaseService):
-    """Runs hook subprocesses and routes their JSONL output to the bus.
+    """Runs hook subprocesses and emits only process-level lifecycle events.
 
-    This is the only service that spawns subprocesses. Every hook execution
-    flows through here via ProcessEvent. ProcessService does NOT interpret
-    stdout — it emits ProcessStdoutEvent for every stdout line, and each
-    consuming service parses lines for the shapes it cares about.
+    ProcessService does not interpret hook stdout JSONL. Its job is only to:
 
-    Subprocess lifecycle::
+    1. spawn the subprocess for a ``ProcessEvent``
+    2. emit ``ProcessStartedEvent`` with the live subprocess handle and file paths
+    3. stream stdout into ``ProcessStdoutEvent`` lines
+    4. wait for exit or kill
+    5. emit ``ProcessCompletedEvent``
 
-        ProcessEvent received
-        │
-        ├── Create subprocess: [hook_path, *hook_args]
-        │   - cwd = plugin output dir
-        │   - env = full env dict from MachineService
-        │   - stdout = PIPE (streamed line-by-line)
-        │   - stderr = written to {hook_name}.stderr.log
-        │   - PID written to {hook_name}.pid (for daemon kill)
-        │
-        ├── Stream stdout line-by-line (realtime):
-        │   - Every line → ProcessStdoutEvent
-        │     (each service parses and handles its own types)
-        │
-        ├── Wait for process exit (with timeout)
-        │   - FG hooks: per-plugin timeout (PLUGINNAME_TIMEOUT)
-        │   - BG daemons: phase timeout ceiling (sum of all plugin timeouts
-        │     in the phase); normally killed earlier by ProcessKillEvent
-        │   - On timeout: SIGTERM → wait 15s → SIGKILL
-        │
-        └── Finalize:
-            - Write Process record to index.jsonl
-            - Emit ProcessCompletedEvent (raw process info)
-
-    Realtime event emission is critical: ProcessStdoutEvent is emitted with
-    ``await self.bus.emit()`` (queue-jump), so the entire handler chain
-    (e.g. BinaryRequestEvent → provider install → MachineEvent) completes before the
-    next stdout line is read.
-
-    ArchiveResult construction is handled entirely by ArchiveResultService,
-    which listens for ProcessCompletedEvent and enriches inline ArchiveResult
-    records with process metadata.
-
-    State:
-    - No mutable state beyond constructor args. Each ProcessEvent is handled
-      independently. The subprocess's output determines what events are emitted.
-
-    File artifacts per hook execution:
-    - ``{hook_name}.stdout.log`` — full stdout (deleted on success)
-    - ``{hook_name}.stderr.log`` — full stderr (deleted on success)
-    - ``{hook_name}.pid`` — PID file used while the subprocess is alive (deleted on exit)
-    - ``{hook_name}.sh`` — command line for debugging
-
-    abxbus details:
-    - ProcessStdoutEvent is emitted with ``await``, making it a
-      synchronous child. Each consuming service's handler chain completes
-      before the next line is processed.
-    - ProcessCompletedEvent is emitted with ``await`` as an informational child.
-      ArchiveResultService handles it to build the final ArchiveResult.
-    - Background hooks use ``start_new_session=True`` so SIGTERM to the parent
-      process group doesn't accidentally kill them.
+    Background behavior is owned by abxbus and the dispatch site:
+    callers ``await bus.emit(ProcessEvent(...))`` for foreground hooks and use
+    ``bus.emit(ProcessEvent(...))`` without awaiting for background hooks. The
+    ``ProcessEvent`` itself still stays alive until the subprocess exits because
+    ``on_ProcessEvent()`` awaits its child ``ProcessStartedEvent``.
     """
 
-    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [ProcessEvent, BinaryRequestProcessEvent, ProcessKillEvent]
+    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [
+        ProcessEvent,
+        ProcessStartedEvent,
+        ProcessKillEvent,
+    ]
     EMITS: ClassVar[list[type[BaseEvent]]] = [
         ProcessStartedEvent,
         ProcessStdoutEvent,
         ProcessCompletedEvent,
+        ProcessKillEvent,
     ]
 
     def __init__(
@@ -134,48 +106,19 @@ class ProcessService(BaseService):
     ):
         self.emit_jsonl = emit_jsonl
         self.stderr_is_tty = stderr_is_tty
-        self._background_monitors: set[asyncio.Task[None]] = set()
-        self._finite_background_monitors: set[asyncio.Task[None]] = set()
-        self._daemon_background_monitors: set[asyncio.Task[None]] = set()
-        self._process_event_registrations: list = []
         super().__init__(bus)
-
-    def _attach_handlers(self) -> None:
-        super()._attach_handlers()
-        self._process_event_registrations = [
-            registration for event_pattern, registration in self._registrations if event_pattern is ProcessEvent
-        ]
-
-    def suspend_process_events(self) -> None:
-        """Temporarily unregister ProcessEvent handlers while leaving other process handlers intact."""
-        if not self._process_event_registrations:
-            return
-        remaining: list[tuple[type[BaseEvent] | str, EventHandler]] = []
-        for event_pattern, registration in self._registrations:
-            if event_pattern is ProcessEvent:
-                self.bus.off(event_pattern, registration)
-            else:
-                remaining.append((event_pattern, registration))
-        self._registrations = remaining
-        self._process_event_registrations = []
-
-    def resume_process_events(self) -> None:
-        """Re-register ProcessEvent handlers after a suspend_process_events call."""
-        if self._process_event_registrations:
-            return
-        registration = self._register(ProcessEvent, self.on_ProcessEvent)
-        self._process_event_registrations = [registration]
+        self.bus.on(ProcessEvent, self.on_ProcessEvent)
+        self.bus.on(ProcessStartedEvent, self.on_ProcessStartedEvent)
+        self.bus.on(ProcessKillEvent, self.on_ProcessKillEvent)
 
     # ── Event handlers ──────────────────────────────────────────────────────
 
     async def on_ProcessEvent(self, event: ProcessEvent) -> None:
-        await self._run_process_event(event)
+        """Spawn one hook subprocess and emit ProcessStartedEvent.
 
-    async def on_BinaryRequestProcessEvent(self, event: BinaryRequestProcessEvent) -> None:
-        await self._run_process_event(event)
-
-    async def _run_process_event(self, event: ProcessEvent) -> None:
-        """Run a hook subprocess, stream its output, and emit completion events."""
+        The child ProcessStartedEvent carries the live subprocess handle and
+        artifact paths needed for the rest of the subprocess lifetime.
+        """
         plugin_output_dir = Path(event.output_dir)
         plugin_output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -189,7 +132,9 @@ class ProcessService(BaseService):
         )
 
         artifact_stem = event.hook_name
-        if isinstance(event, BinaryRequestProcessEvent) or event.hook_name.startswith("on_BinaryRequest__"):
+        # Provider hooks can install the same named binary more than once in a run.
+        # Include the process id so retries/install attempts keep separate logs.
+        if event.hook_name.startswith("on_BinaryRequest__"):
             artifact_stem = f"{event.hook_name}.{proc.id}"
 
         cmd = [event.hook_path, *event.hook_args]
@@ -202,6 +147,8 @@ class ProcessService(BaseService):
         _rotate_existing_log(stderr_file)
 
         write_cmd_file(cmd_file, cmd)
+        # Track the directory contents before the hook runs so completion can
+        # report only newly created output files.
         files_before = set(plugin_output_dir.rglob("*")) if plugin_output_dir.exists() else set()
 
         process: asyncio.subprocess.Process | None = None
@@ -213,72 +160,19 @@ class ProcessService(BaseService):
                     stdout=asyncio.subprocess.PIPE,
                     stderr=err_fh,
                     env=event.env,
-                    # bg hooks get their own session so killing the parent process
-                    # group (e.g. on CrawlEvent timeout) doesn't cascade to daemons
+                    # Background hooks get their own process group so cleanup can
+                    # signal the hook and its children together via killpg().
                     start_new_session=event.is_background,
                 )
             write_pid_file_with_mtime(pid_file, process.pid, time.time())
-            await self.bus.emit(
-                ProcessStartedEvent(
-                    plugin_name=event.plugin_name,
-                    hook_name=event.hook_name,
-                    hook_path=event.hook_path,
-                    hook_args=event.hook_args,
-                    output_dir=event.output_dir,
-                    env=event.env,
-                    timeout=event.timeout,
-                    pid=process.pid,
-                    process_id=proc.id,
-                    snapshot_id=event.snapshot_id,
-                    is_background=event.is_background,
-                    url=event.url,
-                    process_type=event.process_type,
-                    worker_type=event.worker_type,
-                    start_ts=proc.started_at or "",
-                ),
-            )
-
-            if event.is_background:
-                monitor = asyncio.create_task(
-                    self._monitor_background_process(
-                        event=event,
-                        proc=proc,
-                        process=process,
-                        plugin_output_dir=plugin_output_dir,
-                        stdout_file=stdout_file,
-                        stderr_file=stderr_file,
-                        pid_file=pid_file,
-                        files_before=files_before,
-                    ),
-                )
-                self._background_monitors.add(monitor)
-                monitor_set = self._daemon_background_monitors if event.daemon else self._finite_background_monitors
-                monitor_set.add(monitor)
-                monitor.add_done_callback(self._background_monitors.discard)
-                monitor.add_done_callback(monitor_set.discard)
-                return
-
-            await self._monitor_process_until_exit(
-                event=event,
-                proc=proc,
-                process=process,
-                plugin_output_dir=plugin_output_dir,
-                stdout_file=stdout_file,
-                stderr_file=stderr_file,
-                pid_file=pid_file,
-                files_before=files_before,
-                detach_events=False,
-            )
-
         except Exception as e:
-            # Kill the subprocess if it was created — without this, bg hooks
-            # started with start_new_session=True would leak as orphan processes
-            # (e.g. if BinaryRequestEvent(**record) raises ValidationError on malformed
-            # JSONL, or if bus.emit() fails during the streaming phase).
+            # If spawn partially succeeded, shut it down before surfacing the
+            # failure as a normal ProcessCompletedEvent.
             if process is not None:
                 await graceful_kill_process(process)
             pid_file.unlink(missing_ok=True)
             proc.exit_code = -1
+            proc.status = "failed"
             proc.stderr = f"{type(e).__name__}: {e}"
             proc.ended_at = now_iso()
             index_path = plugin_output_dir.parent / "index.jsonl"
@@ -290,14 +184,14 @@ class ProcessService(BaseService):
                     hook_path=event.hook_path,
                     hook_args=event.hook_args,
                     env=event.env,
+                    timeout=event.timeout,
                     stdout="",
                     stderr=proc.stderr,
                     exit_code=-1,
+                    status=proc.status,
                     output_dir=event.output_dir,
                     output_files=[],
                     is_background=event.is_background,
-                    process_id=proc.id,
-                    snapshot_id=event.snapshot_id,
                     pid=process.pid if process is not None else 0,
                     url=event.url,
                     process_type=event.process_type,
@@ -307,48 +201,234 @@ class ProcessService(BaseService):
                 ),
             )
             return
+        await self.bus.emit(
+            ProcessStartedEvent(
+                plugin_name=event.plugin_name,
+                hook_name=event.hook_name,
+                hook_path=event.hook_path,
+                hook_args=event.hook_args,
+                output_dir=event.output_dir,
+                env=event.env,
+                timeout=event.timeout,
+                pid=process.pid,
+                is_background=event.is_background,
+                url=event.url,
+                process_type=event.process_type,
+                worker_type=event.worker_type,
+                start_ts=proc.started_at or "",
+                # These runtime-only fields carry the rest of the subprocess
+                # lifetime through bus history.
+                subprocess=process,
+                stdout_file=stdout_file,
+                stderr_file=stderr_file,
+                pid_file=pid_file,
+                cmd_file=cmd_file,
+                files_before=files_before,
+                event_timeout=event.timeout + 30.0,
+                event_handler_timeout=event.timeout + 30.0,
+                event_handler_slow_timeout=10000.0,
+            ),
+        )
+
+    async def on_ProcessStartedEvent(self, event: ProcessStartedEvent) -> None:
+        """Own the subprocess after spawn: stdout, exit, and completion."""
+        # ProcessStartedEvent is now the source of truth for the live subprocess.
+        process = event.subprocess
+        proc = Process(
+            cmd=[event.hook_path, *event.hook_args],
+            pwd=event.output_dir,
+            timeout=event.timeout,
+            started_at=event.start_ts,
+            plugin=event.plugin_name,
+            hook_name=event.hook_name,
+        )
+        plugin_output_dir = Path(event.output_dir)
+        try:
+            try:
+                await asyncio.wait_for(
+                    self._stream_stdout(
+                        event=event,
+                        proc=proc,
+                        process=process,
+                        stdout_file=event.stdout_file,
+                    ),
+                    timeout=event.timeout or None,
+                )
+                if process.returncode is None:
+                    await asyncio.wait_for(process.wait(), timeout=event.timeout or None)
+                timed_out = False
+            except TimeoutError:
+                timed_out = True
+                # Timeout is part of normal process lifecycle handling, so turn it
+                # into a killed process and emit a regular ProcessCompletedEvent.
+                await graceful_kill_process(process)
+            except Exception:
+                # Any streaming/parsing failure should still shut the subprocess
+                # down before the error is surfaced as ProcessCompletedEvent.
+                await graceful_kill_process(process)
+                raise
+
+            returncode = process.returncode if process.returncode is not None else 0
+            stdout = event.stdout_file.read_text() if event.stdout_file.exists() else ""
+            stderr = event.stderr_file.read_text() if event.stderr_file.exists() else ""
+
+            if timed_out:
+                returncode = -1
+                stderr = f"Hook timed out after {event.timeout} seconds"
+
+            status = _process_status(returncode)
+            proc.exit_code = returncode
+            proc.status = status
+            proc.stdout = stdout
+            proc.stderr = stderr
+            proc.ended_at = now_iso()
+
+            # Output files are derived from the directory diff, not from stdout.
+            files_after = set(plugin_output_dir.rglob("*")) if plugin_output_dir.exists() else set()
+            new_files = scan_output_files(
+                plugin_output_dir,
+                file_paths=files_after - event.files_before,
+            )
+
+            event.pid_file.unlink(missing_ok=True)
+
+            if returncode == 0:
+                event.stdout_file.unlink(missing_ok=True)
+                event.stderr_file.unlink(missing_ok=True)
+
+            index_path = plugin_output_dir.parent / "index.jsonl"
+            write_jsonl(index_path, proc, also_print=self.emit_jsonl)
+
+            await self.bus.emit(
+                ProcessCompletedEvent(
+                    plugin_name=event.plugin_name,
+                    hook_name=event.hook_name,
+                    hook_path=event.hook_path,
+                    hook_args=event.hook_args,
+                    env=event.env,
+                    timeout=event.timeout,
+                    stdout=stdout,
+                    stderr=stderr,
+                    exit_code=returncode,
+                    status=status,
+                    output_dir=event.output_dir,
+                    output_files=new_files,
+                    is_background=event.is_background,
+                    pid=process.pid,
+                    url=event.url,
+                    process_type=event.process_type,
+                    worker_type=event.worker_type,
+                    start_ts=proc.started_at or "",
+                    end_ts=proc.ended_at or "",
+                ),
+            )
+        except Exception as e:
+            if process.returncode is None:
+                await graceful_kill_process(process)
+            event.pid_file.unlink(missing_ok=True)
+            proc.exit_code = -1
+            proc.status = "failed"
+            proc.stderr = f"{type(e).__name__}: {e}"
+            proc.ended_at = now_iso()
+            index_path = plugin_output_dir.parent / "index.jsonl"
+            write_jsonl(index_path, proc, also_print=self.emit_jsonl)
+            await self.bus.emit(
+                ProcessCompletedEvent(
+                    plugin_name=event.plugin_name,
+                    hook_name=event.hook_name,
+                    hook_path=event.hook_path,
+                    hook_args=event.hook_args,
+                    env=event.env,
+                    timeout=event.timeout,
+                    stdout="",
+                    stderr=proc.stderr,
+                    exit_code=-1,
+                    status=proc.status,
+                    output_dir=event.output_dir,
+                    output_files=[],
+                    is_background=event.is_background,
+                    pid=process.pid,
+                    url=event.url,
+                    process_type=event.process_type,
+                    worker_type=event.worker_type,
+                    start_ts=proc.started_at or "",
+                    end_ts=proc.ended_at or "",
+                ),
+            )
 
     async def on_ProcessKillEvent(self, event: ProcessKillEvent) -> None:
-        """Gracefully shut down a background daemon via its PID file.
+        """Gracefully shut down a running background hook.
 
-        Triggered by CrawlCleanupEvent/SnapshotCleanupEvent handlers. Validates the
-        PID file (mtime + command check), sends SIGTERM, waits up to
-        ``grace_period`` for clean exit (the plugin's PLUGINNAME_TIMEOUT),
-        then escalates to SIGKILL if the process is still alive.
+        Cleanup emits ProcessKillEvent as a direct child of the cleanup event
+        that requested shutdown. The target ProcessStartedEvent is resolved by
+        ancestry plus ``plugin_name``/``hook_name``/``pid``. If the process is
+        already gone, pid-file validation makes this a safe no-op.
         """
-        output_dir = Path(event.output_dir)
-        pid_file = output_dir / f"{event.hook_name}.pid"
-        cmd_file = output_dir / f"{event.hook_name}.sh"
-        await graceful_kill_by_pid_file(pid_file, cmd_file, grace_period=event.grace_period)
+        cleanup_event = self.bus.event_history.get(event.event_parent_id or "")
+        if not isinstance(cleanup_event, (SnapshotCleanupEvent, CrawlCleanupEvent)):
+            raise RuntimeError(f"Missing cleanup parent for ProcessKillEvent {event.event_id}")
+        root_event: SnapshotEvent | CrawlEvent | None
+        if isinstance(cleanup_event, SnapshotCleanupEvent):
+            root_event = await self.bus.find(
+                SnapshotEvent,
+                past=True,
+                future=False,
+                where=lambda candidate: self.bus.event_is_child_of(cleanup_event, candidate),
+            )
+        else:
+            root_event = await self.bus.find(
+                CrawlEvent,
+                past=True,
+                future=False,
+                where=lambda candidate: self.bus.event_is_child_of(cleanup_event, candidate),
+            )
+        if root_event is None:
+            raise RuntimeError(f"Missing root event for ProcessKillEvent {event.event_id}")
 
-    async def wait_for_background_monitors(self, *, include_daemons: bool = True) -> None:
-        """Wait for detached background-process monitors to finish."""
-        monitor_set = self._background_monitors if include_daemons else self._finite_background_monitors
-        while monitor_set:
-            pending = tuple(monitor_set)
-            await asyncio.gather(*pending, return_exceptions=True)
-
-    async def _emit_event(self, event: BaseEvent, *, detach_from_parent: bool) -> None:
-        if not detach_from_parent:
-            await self.bus.emit(event)
-            return
-        event_token = EventBus.current_event_context.set(None)
-        handler_token = EventBus.current_handler_id_context.set(None)
-        try:
-            await self.bus.emit(event)
-        finally:
-            EventBus.current_handler_id_context.reset(handler_token)
-            EventBus.current_event_context.reset(event_token)
+        matches: list[ProcessStartedEvent] = []
+        seen_started_event_ids: set[str] = set()
+        while True:
+            started_process = await self.bus.find(
+                ProcessStartedEvent,
+                past=True,
+                future=False,
+                where=lambda candidate: (
+                    self.bus.event_is_child_of(candidate, root_event)
+                    and candidate.is_background
+                    and candidate.plugin_name == event.plugin_name
+                    and candidate.hook_name == event.hook_name
+                    and candidate.pid == event.pid
+                    and candidate.event_id not in seen_started_event_ids
+                ),
+            )
+            if started_process is None:
+                break
+            seen_started_event_ids.add(started_process.event_id)
+            matches.append(started_process)
+        if len(matches) != 1:
+            raise RuntimeError(
+                f"Expected exactly one ProcessStartedEvent for {event.plugin_name}:{event.hook_name}, found {len(matches)}",
+            )
+        started_process = matches[0]
+        await graceful_kill_by_pid_file(
+            started_process.pid_file,
+            started_process.cmd_file,
+            grace_period=event.grace_period,
+        )
 
     async def _stream_stdout(
         self,
         *,
-        event: ProcessEvent,
+        event: ProcessStartedEvent,
         proc: Process,
         process: asyncio.subprocess.Process,
         stdout_file: Path,
-        detach_events: bool,
     ) -> list[str]:
+        """Stream hook stdout line-by-line and emit ProcessStdoutEvent for each line.
+
+        Stdout is routed immediately through the bus so downstream services can
+        react while the subprocess is still running.
+        """
         stdout_lines: list[str] = []
         assert process.stdout is not None
         with open(stdout_file, "w") as out_fh:
@@ -359,156 +439,18 @@ class ProcessService(BaseService):
                     out_fh.flush()
                     stdout_lines.append(line)
 
-                    output_dir = Path(event.output_dir)
-                    current_files = [
-                        output_file
-                        for output_file in collect_output_files(output_dir)
-                        if not any(output_file.path.endswith(suffix) for suffix in _PROCESS_METADATA_SUFFIXES)
-                    ]
-
-                    await self._emit_event(
+                    # Emit each line immediately so routing services can react
+                    # while the subprocess is still running.
+                    await self.bus.emit(
                         ProcessStdoutEvent(
                             line=line.strip(),
                             plugin_name=event.plugin_name,
                             hook_name=event.hook_name,
                             output_dir=event.output_dir,
-                            snapshot_id=event.snapshot_id,
-                            process_id=proc.id,
                             start_ts=proc.started_at or "",
                             end_ts=now_iso(),
-                            output_files=current_files,
                         ),
-                        detach_from_parent=detach_events,
                     )
             except asyncio.CancelledError:
                 return stdout_lines
         return stdout_lines
-
-    async def _monitor_process_until_exit(
-        self,
-        *,
-        event: ProcessEvent,
-        proc: Process,
-        process: asyncio.subprocess.Process,
-        plugin_output_dir: Path,
-        stdout_file: Path,
-        stderr_file: Path,
-        pid_file: Path,
-        files_before: set[Path],
-        detach_events: bool,
-        wait_for_stdout_first: bool = True,
-    ) -> int:
-        timed_out = False
-        stdout_lines: list[str] = []
-        stdout_task = asyncio.create_task(
-            self._stream_stdout(
-                event=event,
-                proc=proc,
-                process=process,
-                stdout_file=stdout_file,
-                detach_events=detach_events,
-            ),
-        )
-        try:
-            if wait_for_stdout_first:
-                stdout_lines = await asyncio.wait_for(stdout_task, timeout=event.timeout or None)
-                if process.returncode is None:
-                    remaining_timeout = event.timeout or None
-                    await asyncio.wait_for(process.wait(), timeout=remaining_timeout)
-            else:
-                await asyncio.wait_for(process.wait(), timeout=event.timeout or None)
-                try:
-                    stdout_lines = await asyncio.wait_for(stdout_task, timeout=1.0)
-                except TimeoutError:
-                    stdout_task.cancel()
-                    stdout_lines = await stdout_task
-        except TimeoutError:
-            timed_out = True
-            await graceful_kill_process(process)
-            if not stdout_task.done():
-                stdout_task.cancel()
-                stdout_lines = await stdout_task
-        except Exception:
-            if not stdout_task.done():
-                stdout_task.cancel()
-                await stdout_task
-            await graceful_kill_process(process)
-            raise
-
-        returncode = process.returncode if process.returncode is not None else 0
-        stdout = "".join(stdout_lines)
-        stderr = stderr_file.read_text() if stderr_file.exists() else ""
-
-        if timed_out:
-            returncode = -1
-            stderr = f"Hook timed out after {event.timeout} seconds"
-
-        proc.exit_code = returncode
-        proc.stdout = stdout
-        proc.stderr = stderr
-        proc.ended_at = now_iso()
-
-        files_after = set(plugin_output_dir.rglob("*")) if plugin_output_dir.exists() else set()
-        new_files = collect_output_files_from_paths(plugin_output_dir, files_after - files_before)
-        new_files = [f for f in new_files if not any(f.path.endswith(s) for s in _PROCESS_METADATA_SUFFIXES)]
-
-        pid_file.unlink(missing_ok=True)
-
-        if returncode == 0:
-            stdout_file.unlink(missing_ok=True)
-            stderr_file.unlink(missing_ok=True)
-
-        index_path = plugin_output_dir.parent / "index.jsonl"
-        write_jsonl(index_path, proc, also_print=self.emit_jsonl)
-
-        await self._emit_event(
-            ProcessCompletedEvent(
-                plugin_name=event.plugin_name,
-                hook_name=event.hook_name,
-                hook_path=event.hook_path,
-                hook_args=event.hook_args,
-                env=event.env,
-                stdout=stdout,
-                stderr=stderr,
-                exit_code=returncode,
-                output_dir=event.output_dir,
-                output_files=new_files,
-                is_background=event.is_background,
-                process_id=proc.id,
-                snapshot_id=event.snapshot_id,
-                pid=process.pid if process is not None else 0,
-                url=event.url,
-                start_ts=proc.started_at or "",
-                end_ts=proc.ended_at or "",
-            ),
-            detach_from_parent=detach_events,
-        )
-        return returncode
-
-    async def _monitor_background_process(
-        self,
-        *,
-        event: ProcessEvent,
-        proc: Process,
-        process: asyncio.subprocess.Process,
-        plugin_output_dir: Path,
-        stdout_file: Path,
-        stderr_file: Path,
-        pid_file: Path,
-        files_before: set[Path],
-    ) -> None:
-        try:
-            await self._monitor_process_until_exit(
-                event=event,
-                proc=proc,
-                process=process,
-                plugin_output_dir=plugin_output_dir,
-                stdout_file=stdout_file,
-                stderr_file=stderr_file,
-                pid_file=pid_file,
-                files_before=files_before,
-                detach_events=True,
-                wait_for_stdout_first=False,
-            )
-        except Exception:
-            pid_file.unlink(missing_ok=True)

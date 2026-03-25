@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import importlib
+import sys
 from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
@@ -10,10 +12,7 @@ from pathlib import Path
 from typing import Any
 from collections.abc import Iterator
 
-try:
-    import fcntl
-except ImportError:  # pragma: no cover - non-Unix fallback
-    fcntl = None  # type: ignore[assignment]
+fcntl: Any = importlib.import_module("fcntl") if sys.platform != "win32" else None
 
 
 FILESIZE_UNITS: dict[str, int] = {
@@ -110,8 +109,8 @@ class CrawlLimitState:
             return SnapshotAdmission(allowed=True, stop_reason="")
 
         with self._locked_state() as state:
-            admitted = {str(item) for item in state.get("admitted_snapshot_ids", [])}
-            stop_reason = str(state.get("stop_reason") or "")
+            admitted = {str(item) for item in (state["admitted_snapshot_ids"] if "admitted_snapshot_ids" in state else [])}
+            stop_reason = str(state["stop_reason"]) if "stop_reason" in state else ""
 
             if stop_reason == "max_size":
                 return SnapshotAdmission(allowed=False, stop_reason=stop_reason)
@@ -132,21 +131,24 @@ class CrawlLimitState:
             if self.max_urls and len(admitted) >= self.max_urls:
                 state["stop_reason"] = "max_urls"
 
-            return SnapshotAdmission(allowed=True, stop_reason=str(state.get("stop_reason") or ""))
+            return SnapshotAdmission(
+                allowed=True,
+                stop_reason=str(state["stop_reason"]) if "stop_reason" in state else "",
+            )
 
     def should_emit_discovered_snapshots(self) -> bool:
         if not self.has_limits():
             return True
         with self._locked_state(readonly=True) as state:
-            return not bool(state.get("stop_reason"))
+            return not bool(state["stop_reason"]) if "stop_reason" in state else True
 
     def get_stop_reason(self) -> str:
         if not self.has_limits():
             return ""
         with self._locked_state(readonly=True) as state:
-            return str(state.get("stop_reason") or "")
+            return str(state["stop_reason"]) if "stop_reason" in state else ""
 
-    def record_process_output(self, process_id: str, output_dir: Path, output_files: list[str]) -> str:
+    def record_process_output(self, event_id: str, output_dir: Path, output_files: list[str]) -> str:
         if not self.max_size:
             return ""
 
@@ -159,18 +161,18 @@ class CrawlLimitState:
             added_size += file_size
 
         with self._locked_state() as state:
-            counted_process_ids = {str(item) for item in state.get("counted_process_ids", [])}
-            if process_id in counted_process_ids:
-                return str(state.get("stop_reason") or "")
+            counted_event_ids = {str(item) for item in (state["counted_event_ids"] if "counted_event_ids" in state else [])}
+            if event_id in counted_event_ids:
+                return str(state["stop_reason"]) if "stop_reason" in state else ""
 
-            counted_process_ids.add(process_id)
-            state["counted_process_ids"] = sorted(counted_process_ids)
-            state["total_size"] = int(state.get("total_size") or 0) + added_size
+            counted_event_ids.add(event_id)
+            state["counted_event_ids"] = sorted(counted_event_ids)
+            state["total_size"] = int(state["total_size"]) + added_size if "total_size" in state else added_size
 
-            if not state.get("stop_reason") and self.max_size and int(state["total_size"]) >= self.max_size:
+            if ("stop_reason" not in state or not state["stop_reason"]) and self.max_size and int(state["total_size"]) >= self.max_size:
                 state["stop_reason"] = "max_size"
 
-            return str(state.get("stop_reason") or "")
+            return str(state["stop_reason"]) if "stop_reason" in state else ""
 
     @contextmanager
     def _locked_state(self, readonly: bool = False) -> Iterator[dict[str, Any]]:
@@ -193,7 +195,7 @@ class CrawlLimitState:
         if not self.state_path.exists():
             return {
                 "admitted_snapshot_ids": [],
-                "counted_process_ids": [],
+                "counted_event_ids": [],
                 "total_size": 0,
                 "stop_reason": "",
             }
@@ -204,7 +206,7 @@ class CrawlLimitState:
         if not isinstance(payload, dict):
             payload = {}
         payload.setdefault("admitted_snapshot_ids", [])
-        payload.setdefault("counted_process_ids", [])
+        payload.setdefault("counted_event_ids", [])
         payload.setdefault("total_size", 0)
         payload.setdefault("stop_reason", "")
         return payload

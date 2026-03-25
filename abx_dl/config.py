@@ -2,7 +2,7 @@
 
 ``config.env`` stores only user-provided values.
 ``derived.env`` stores runtime-derived cache entries (e.g. resolved binary paths).
-Only user config participates in ``get_config()``. Derived values are read
+Only user config participates in ``get_initial_env()``. Derived values are read
 separately by the binary-resolution layer and never blindly merged into config.
 """
 
@@ -10,17 +10,18 @@ import json
 import os
 import platform
 import re
-import sys
 import tempfile
-from importlib import import_module
 from pathlib import Path
-from typing import Any
+from typing import Any, Self
+from collections.abc import Mapping
 
-from pydantic import Field, model_validator
+from abxbus import EventBus
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
-plugin_utils: Any = import_module("abx_plugins.plugins.base.utils")
+from .events import MachineEvent
+from .models import Plugin, PluginConfig, PluginEnv, RequiredBinary
+from abx_plugins.plugins.base import utils as plugin_utils
 
 
 def get_arch() -> str:
@@ -38,9 +39,21 @@ class BootstrapConfig(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="",
-        extra="ignore",
+        extra="allow",
         validate_default=True,
     )
+
+
+BOOTSTRAP_CONFIG = BootstrapConfig()
+
+# Paths
+CONFIG_DIR = BOOTSTRAP_CONFIG.CONFIG_DIR
+CONFIG_FILE = CONFIG_DIR / "config.env"
+DERIVED_CONFIG_FILE = CONFIG_DIR / "derived.env"
+DATA_DIR = BOOTSTRAP_CONFIG.DATA_DIR
+LIB_DIR = CONFIG_DIR / "lib" / get_arch()
+PERSONAS_DIR = CONFIG_DIR / "personas"
+TMP_DIR = Path(tempfile.mkdtemp(prefix="abx-dl-"))
 
 
 class GlobalConfig(BaseSettings):
@@ -72,12 +85,22 @@ class GlobalConfig(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_prefix="",
-        extra="ignore",
+        env_file=CONFIG_FILE,
+        extra="allow",
         validate_default=True,
     )
 
+    @field_validator("CHROME_SANDBOX", mode="before")
+    @classmethod
+    def validate_chrome_sandbox(cls, value: Any) -> Any:
+        """Normalize boolean inputs back to the string form hooks expect."""
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        return value
+
     @model_validator(mode="after")
-    def derive_runtime_paths(self) -> "GlobalConfig":
+    def derive_runtime_paths(self) -> Self:
+        """Fill runtime path defaults from CONFIG_DIR / DATA_DIR once, centrally."""
         if self.LIB_DIR is None:
             self.LIB_DIR = self.CONFIG_DIR / "lib" / get_arch()
         if self.LIB_BIN_DIR is None:
@@ -106,17 +129,16 @@ class GlobalConfig(BaseSettings):
             self.PUPPETEER_CACHE_DIR = self.LIB_DIR / "puppeteer"
         return self
 
+    def __getitem__(self, key: str) -> Any:
+        if key in type(self).model_fields:
+            return self.__dict__[key]
+        if self.__pydantic_extra__ and key in self.__pydantic_extra__:
+            return self.__pydantic_extra__[key]
+        raise KeyError(key)
 
-BOOTSTRAP_CONFIG = BootstrapConfig()
+    def __contains__(self, key: str) -> bool:
+        return key in type(self).model_fields or bool(self.__pydantic_extra__ and key in self.__pydantic_extra__)
 
-# Paths
-CONFIG_DIR = BOOTSTRAP_CONFIG.CONFIG_DIR
-CONFIG_FILE = CONFIG_DIR / "config.env"
-DERIVED_CONFIG_FILE = CONFIG_DIR / "derived.env"
-DATA_DIR = BOOTSTRAP_CONFIG.DATA_DIR
-LIB_DIR = CONFIG_DIR / "lib" / get_arch()
-PERSONAS_DIR = CONFIG_DIR / "personas"
-TMP_DIR = Path(tempfile.mkdtemp(prefix="abx-dl-"))
 
 # Ensure directories exist
 CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -152,96 +174,157 @@ def _load_env_file(path: Path) -> dict[str, str]:
 
 
 def _write_env_file(path: Path, config: dict[str, str]) -> None:
+    """Write env-style config back to disk in stable key order."""
     lines = [f"{k}={v}" for k, v in sorted(config.items())]
     path.write_text(("\n".join(lines) + "\n") if lines else "")
 
 
-def _parse_persisted_value(value: str) -> Any:
-    try:
-        return json.loads(value)
-    except json.JSONDecodeError:
-        return value
+def is_path_like_env_value(value: Any) -> bool:
+    """Return True when a config/env value names a filesystem path."""
+    text = str(value or "").strip()
+    return bool(text) and (text.startswith(("~/", "./", "/")) or "/" in text or "\\" in text)
 
 
-def _serialize_persisted_value(value: Any) -> str:
-    return json.dumps(value)
-
-
-def load_config_file() -> dict[str, str]:
-    """Load user config from ~/.config/abx/config.env."""
-    return _load_env_file(CONFIG_FILE)
-
-
-def load_derived_config_file() -> dict[str, str]:
-    """Load derived config from ~/.config/abx/derived.env."""
-    return _load_env_file(DERIVED_CONFIG_FILE)
-
-
-def _settings_to_config_dict(settings: BaseSettings) -> dict[str, Any]:
-    return dict(settings.model_dump(mode="json"))
-
-
-def _build_settings_instance() -> BaseSettings:
-    settings_kwargs: dict[str, Any] = {"_env_file": CONFIG_FILE}
-    return GlobalConfig(**settings_kwargs)
-
-
-def get_plugin_config(
-    plugin_name: str,
-    schema: dict[str, Any],
+def _load_plugin_config_model(
+    plugin: Plugin,
     *,
-    config_path: Path | None = None,
-    base_config: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    settings = _build_settings_instance()
-    global_config = {key: value for key, value in _settings_to_config_dict(settings).items() if key in GLOBAL_DEFAULTS}
-    if base_config:
-        global_config.update(base_config)
-    user_config = load_config_file()
-    if config_path is not None and config_path.exists():
-        return plugin_utils.resolve_plugin_config(
-            plugin_name,
-            schema,
-            global_config=global_config,
-            user_config=user_config,
-            environ=os.environ,
-            all_plugin_schemas={plugin_name: schema},
-        )
-    return plugin_utils.resolve_plugin_configs(
-        {plugin_name: schema},
+    user_env: GlobalConfig | Mapping[str, Any] | None = None,
+    derived_env: GlobalConfig | Mapping[str, Any] | None = None,
+) -> Any:
+    """Resolve one plugin's typed config model from the final effective env.
+
+    ``x-fallback`` should see the same effective values hooks see, so derived
+    ``*_BINARY`` cache is overlaid here before schema resolution.
+    """
+    global_config = user_env.model_dump(mode="json") if isinstance(user_env, BaseSettings) else dict(user_env or get_initial_env())
+    if derived_env:
+        effective_derived_env = derived_env.model_dump(mode="json") if isinstance(derived_env, BaseSettings) else dict(derived_env)
+        for key, value in effective_derived_env.items():
+            if value is None:
+                continue
+            if key.endswith("_BINARY"):
+                user_value = str(global_config.get(key, "")).strip()
+                if user_value and is_path_like_env_value(user_value):
+                    continue
+                configured_value = str(global_config.get(key, "")).strip()
+                derived_value = str(value).strip()
+                if not derived_value:
+                    continue
+                if not is_path_like_env_value(derived_value):
+                    continue
+                if configured_value and Path(derived_value).expanduser().name != configured_value:
+                    continue
+            global_config[key] = value
+    serialized_user_config = {key: dump_to_dotenv_format(value) for key, value in global_config.items() if value is not None}
+    config_path = plugin.path / "config.json"
+    if not config_path.exists():
+        return PluginEnv()
+    resolved_config = plugin_utils.load_config(
+        config_path,
         global_config=global_config,
-        user_config=user_config,
+        user_config=serialized_user_config,
         environ=os.environ,
-    ).get(plugin_name, {})
+    )
+    return resolved_config
 
 
-def get_config(*keys: str, plugin_schemas: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+def get_user_env(
+    bus: EventBus,
+) -> GlobalConfig:
+    """Rebuild current user config from the initial snapshot plus MachineEvents."""
+    current_user_config: dict[str, Any] = {}
+    for candidate in bus.event_history.values():
+        if not isinstance(candidate, MachineEvent):
+            continue
+        if candidate.config_type != "user":
+            continue
+        if candidate.config is not None:
+            current_user_config.update(candidate.config)
+            continue
+        key = candidate.key.removeprefix("config/")
+        if not key:
+            continue
+        if candidate.method == "update":
+            current_user_config[key] = candidate.value
+            continue
+        if candidate.method == "unset":
+            current_user_config.pop(key, None)
+    return GlobalConfig(**current_user_config)
+
+
+def get_derived_env(
+    bus: EventBus,
+) -> GlobalConfig:
+    """Rebuild current derived config from the initial snapshot plus MachineEvents."""
+    current_derived_config: dict[str, Any] = {}
+    for candidate in bus.event_history.values():
+        if not isinstance(candidate, MachineEvent):
+            continue
+        if candidate.config_type != "derived":
+            continue
+        if candidate.config is not None:
+            current_derived_config.update(candidate.config)
+            continue
+        key = candidate.key.removeprefix("config/")
+        if not key:
+            continue
+        if candidate.method == "update":
+            current_derived_config[key] = candidate.value
+            continue
+        if candidate.method == "unset":
+            current_derived_config.pop(key, None)
+    return GlobalConfig(**current_derived_config)
+
+
+def get_plugin_env(
+    bus: EventBus,
+    *,
+    plugin: Plugin,
+    run_output_dir: Path,
+    include_derived: bool = True,
+    extra_context: dict[str, Any] | None = None,
+) -> PluginEnv:
+    """Build the flat runtime env model for one plugin on the current bus.
+
+    User config stays authoritative. Derived config is only overlaid here for
+    recoverable runtime cache such as resolved ``*_BINARY`` paths.
     """
-    Get config values. Returns all config if no keys specified.
+    plugin_config = _load_plugin_config_model(
+        plugin,
+        user_env=get_user_env(bus),
+        derived_env=get_derived_env(bus) if include_derived else None,
+    )
+    return PluginEnv.from_config(plugin_config, run_output_dir=run_output_dir, extra_context=extra_context)
 
-    If plugin_schemas is provided (dict of {plugin_name: schema}), includes plugin config.
-    Returns dict grouped as: {'GLOBAL': {...}, 'plugins/name': {...}, ...}
-    If plugin_schemas is None, returns flat dict of global config only.
+
+def get_initial_env(*keys: str, plugin_schemas: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    """Load persisted user config before a bus exists.
+
+    This is bootstrap-only state from ``config.env``. It intentionally excludes
+    ``derived.env`` because derived cache is reconstructed separately at runtime.
     """
-    settings = _build_settings_instance()
-    all_config = _settings_to_config_dict(settings)
+    settings = GlobalConfig()
+    all_config = dict(settings.model_dump(mode="json"))
     global_config = {key: all_config[key] for key in GLOBAL_DEFAULTS if key in all_config}
+    raw_user_config = _load_env_file(CONFIG_FILE)
+    user_config = {key: plugin_utils._parse_config_value(value) for key, value in raw_user_config.items()}
+    flat_config = dict(global_config)
+    flat_config.update(user_config)
 
     if plugin_schemas is None:
         if keys:
-            return {k: global_config.get(k) for k in keys}
-        return dict(sorted(global_config.items()))
+            return {k: flat_config.get(k) for k in keys}
+        return dict(sorted(flat_config.items()))
 
     result: dict[str, dict[str, Any]] = {"GLOBAL": dict(sorted(global_config.items()))}
-    user_config = load_config_file()
     resolved_plugins = plugin_utils.resolve_plugin_configs(
         plugin_schemas,
         global_config=global_config,
-        user_config=user_config,
+        user_config=raw_user_config,
         environ=os.environ,
     )
     for plugin_name, schema in sorted(plugin_schemas.items()):
-        plugin_config = resolved_plugins.get(plugin_name, {})
+        plugin_config = resolved_plugins[plugin_name] if plugin_name in resolved_plugins else {}
         if plugin_config:
             result[f"plugins/{plugin_name}"] = plugin_config
 
@@ -258,35 +341,58 @@ def get_config(*keys: str, plugin_schemas: dict[str, dict[str, Any]] | None = No
     return result
 
 
-def set_config(plugin_schemas: dict[str, dict[str, Any]] | None = None, **kwargs: Any) -> dict[str, Any]:
-    """
-    Set config values persistently in ~/.config/abx/config.env.
-    Resolves aliases to canonical keys if plugin_schemas provided.
-    Returns dict of {canonical_key: value} that was actually saved.
-    """
+def set_user_config(plugin_schemas: dict[str, dict[str, Any]] | None = None, **kwargs: Any) -> dict[str, Any]:
+    """Validate and persist user-owned config updates into ``config.env``."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 
     # Load existing user config
-    config = load_config_file()
+    config = _load_env_file(CONFIG_FILE)
+    settings = GlobalConfig()
+    global_config = {key: value for key, value in dict(settings.model_dump(mode="json")).items() if key in GLOBAL_DEFAULTS}
 
     # Resolve aliases and update values (store as JSON)
-    saved = {}
+    saved: dict[str, Any] = {}
     for key, value in kwargs.items():
         canonical_key = plugin_utils.resolve_alias(key, plugin_schemas)
-        config[canonical_key] = _serialize_persisted_value(value)
-        saved[canonical_key] = value
+        validated_value: Any = None
+
+        if canonical_key in GLOBAL_DEFAULTS:
+            validated_value = GlobalConfig(**{canonical_key: value}).model_dump(mode="json")[canonical_key]
+        else:
+            if plugin_schemas is None:
+                raise KeyError(f"Unknown config key: {canonical_key}")
+
+            validation_user_config = dict(config)
+            validation_user_config[canonical_key] = value if isinstance(value, str) else json.dumps(value)
+            resolved_plugins = plugin_utils.resolve_plugin_configs(
+                plugin_schemas,
+                global_config=global_config,
+                user_config=validation_user_config,
+                environ={},
+            )
+            plugin_value_found = False
+            for plugin_config in resolved_plugins.values():
+                if canonical_key in plugin_config:
+                    validated_value = plugin_config[canonical_key]
+                    plugin_value_found = True
+                    break
+            if not plugin_value_found:
+                raise KeyError(f"Unknown config key: {canonical_key}")
+
+        config[canonical_key] = json.dumps(validated_value)
+        saved[canonical_key] = validated_value
 
     _write_env_file(CONFIG_FILE, config)
 
     return saved
 
 
-def unset_config(*keys: str) -> list[str]:
+def unset_user_config(*keys: str) -> list[str]:
     """Remove user config keys from ~/.config/abx/config.env if present."""
     if not keys:
         return []
 
-    config = load_config_file()
+    config = _load_env_file(CONFIG_FILE)
     removed: list[str] = []
     for key in keys:
         if key in config:
@@ -298,27 +404,27 @@ def unset_config(*keys: str) -> list[str]:
 
 
 def get_derived_config(current_config: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Return derived persisted values from ~/.config/abx/derived.env."""
-    raw = load_derived_config_file()
+    """Load persisted derived runtime cache from ``derived.env``."""
+    raw = _load_env_file(DERIVED_CONFIG_FILE)
     if not raw:
         return {}
 
     parsed: dict[str, Any] = {}
     for key, value in raw.items():
-        parsed[key] = _parse_persisted_value(value)
+        parsed[key] = plugin_utils._parse_config_value(value)
     return parsed
 
 
 def set_derived_config(current_config: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
-    """Persist derived runtime values in ~/.config/abx/derived.env."""
+    """Persist derived runtime cache values into ``derived.env``."""
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    config = load_derived_config_file()
+    config = _load_env_file(DERIVED_CONFIG_FILE)
 
     saved = {}
     for key, value in kwargs.items():
         if value is None:
             continue
-        config[key] = _serialize_persisted_value(value)
+        config[key] = json.dumps(value)
         saved[key] = value
 
     _write_env_file(DERIVED_CONFIG_FILE, config)
@@ -326,11 +432,11 @@ def set_derived_config(current_config: dict[str, Any] | None = None, **kwargs: A
 
 
 def unset_derived_config(*keys: str, current_config: dict[str, Any] | None = None) -> list[str]:
-    """Remove derived keys from ~/.config/abx/derived.env if present."""
+    """Remove derived cache keys from ``derived.env`` if present."""
     if not keys:
         return []
 
-    config = load_derived_config_file()
+    config = _load_env_file(DERIVED_CONFIG_FILE)
     removed: list[str] = []
     for key in keys:
         if key in config:
@@ -381,223 +487,39 @@ GLOBAL_DEFAULTS = {
 
 
 def load_plugin_schema(plugin_dir: Path) -> dict[str, Any]:
-    """Load config schema from a plugin's config.json."""
+    """Load the raw ``properties`` schema block from one plugin's config.json."""
     config_file = plugin_dir / "config.json"
     if not config_file.exists():
         return {}
 
-    try:
-        schema = json.loads(config_file.read_text())
-        return schema.get("properties", {})
-    except json.JSONDecodeError:
-        return {}
-
-
-def _derive_runtime_paths(
-    env: dict[str, str],
-    explicit_keys: set[str],
-    run_output_dir: Path | None = None,
-) -> dict[str, str]:
-    """
-    Derive path defaults that depend on LIB_DIR and per-run output location.
-    Explicit env/config values always win over these derived defaults.
-    """
-    lib_dir = Path(env["LIB_DIR"])
-    lib_bin_dir = Path(env["LIB_BIN_DIR"]) if "LIB_BIN_DIR" in explicit_keys else lib_dir / "bin"
-    pip_home = Path(env["PIP_HOME"]) if "PIP_HOME" in explicit_keys else lib_dir / "pip"
-    pip_bin_dir = Path(env["PIP_BIN_DIR"]) if "PIP_BIN_DIR" in explicit_keys else pip_home / "venv" / "bin"
-    npm_home = Path(env["NPM_HOME"]) if "NPM_HOME" in explicit_keys else lib_dir / "npm"
-    node_modules_dir = Path(env["NODE_MODULES_DIR"]) if "NODE_MODULES_DIR" in explicit_keys else npm_home / "node_modules"
-    node_path = env["NODE_PATH"] if "NODE_PATH" in explicit_keys else str(node_modules_dir)
-    npm_bin_dir = Path(env["NPM_BIN_DIR"]) if "NPM_BIN_DIR" in explicit_keys else node_modules_dir / ".bin"
-
-    derived: dict[str, str] = {}
-
-    if "LIB_BIN_DIR" not in explicit_keys:
-        derived["LIB_BIN_DIR"] = str(lib_bin_dir)
-    if "PIP_HOME" not in explicit_keys:
-        derived["PIP_HOME"] = str(pip_home)
-    if "PIP_BIN_DIR" not in explicit_keys:
-        derived["PIP_BIN_DIR"] = str(pip_bin_dir)
-    if "NPM_HOME" not in explicit_keys:
-        derived["NPM_HOME"] = str(npm_home)
-    if "NODE_MODULES_DIR" not in explicit_keys:
-        derived["NODE_MODULES_DIR"] = str(node_modules_dir)
-    if "NODE_PATH" not in explicit_keys:
-        derived["NODE_PATH"] = str(node_path)
-    if "NPM_BIN_DIR" not in explicit_keys:
-        derived["NPM_BIN_DIR"] = str(npm_bin_dir)
-    if "PUPPETEER_CACHE_DIR" not in explicit_keys:
-        derived["PUPPETEER_CACHE_DIR"] = str(lib_dir / "puppeteer")
-
-    if run_output_dir is not None:
-        run_dir = str(run_output_dir.expanduser().resolve())
-        if "CRAWL_DIR" not in explicit_keys:
-            derived["CRAWL_DIR"] = run_dir
-        if "SNAP_DIR" not in explicit_keys:
-            derived["SNAP_DIR"] = run_dir
-
-    path_dirs: list[str] = []
-    current_path = env.get("PATH", "")
-    if current_path:
-        path_dirs = [part for part in current_path.split(os.pathsep) if part]
-
-    derived_path = current_path
-    runtime_bin_dirs: list[str] = []
-
-    # If a hook relies on a shebang like `#!/usr/bin/env node`, PATH still
-    # needs to surface any configured path-like *_BINARY values.
-    for key, raw_value in env.items():
-        if not key.endswith("_BINARY"):
-            continue
-        value = str(raw_value or "").strip()
-        if not value:
-            continue
-        path_value = Path(value).expanduser()
-        if not (path_value.is_absolute() or "/" in value or "\\" in value):
-            continue
-        binary_dir = str(path_value.resolve(strict=False).parent)
-        if binary_dir and binary_dir not in runtime_bin_dirs:
-            runtime_bin_dirs.append(binary_dir)
-
-    for extra_dir in (
-        str(lib_bin_dir),
-        str(Path(sys.executable).parent),
-    ):
-        if extra_dir and extra_dir not in runtime_bin_dirs:
-            runtime_bin_dirs.append(extra_dir)
-    resolved_uv = str(env.get("UV") or "").strip()
-    if resolved_uv:
-        uv_bin_dir = str(Path(resolved_uv).expanduser().resolve(strict=False).parent)
-        if uv_bin_dir not in runtime_bin_dirs:
-            runtime_bin_dirs.append(uv_bin_dir)
-
-    for extra_dir in reversed([*runtime_bin_dirs, str(pip_bin_dir), str(npm_bin_dir)]):
-        if extra_dir and extra_dir not in path_dirs:
-            derived_path = f"{extra_dir}{os.pathsep}{derived_path}" if derived_path else extra_dir
-            path_dirs.insert(0, extra_dir)
-    if derived_path:
-        derived["PATH"] = derived_path
-
-    return derived
-
-
-def _runtime_override_is_explicit(key: str, value: Any, overrides: dict[str, Any]) -> bool:
-    """Treat default SNAP/CRAWL paths from shared config as non-explicit.
-
-    ``MachineService.shared_config`` is seeded from ``get_config()``, which always
-    includes default ``SNAP_DIR``/``CRAWL_DIR`` values pointing at ``DATA_DIR``.
-    Those defaults should not block per-run ``run_output_dir`` from taking over.
-    Only preserve these runtime-path overrides when the caller supplied a
-    non-default value.
-    """
-    if key not in {"SNAP_DIR", "CRAWL_DIR"}:
-        return True
-
-    serialized = _serialize_value(value)
-    default_runtime = _serialize_value(GLOBAL_DEFAULTS.get(key, ""))
-    default_data_dir = _serialize_value(overrides.get("DATA_DIR", GLOBAL_DEFAULTS.get("DATA_DIR", "")))
-    return serialized not in {"", default_runtime, default_data_dir}
-
-
-def build_env_for_plugin(
-    plugin_name: str,
-    schema: dict[str, Any],
-    overrides: dict[str, Any] | None = None,
-    *,
-    config_path: Path | None = None,
-    run_output_dir: Path | None = None,
-) -> dict[str, str]:
-    """
-    Build environment variables dict for running a plugin.
-    Exports all config as environment variables.
-    """
-    env = os.environ.copy()
-    # Hook scripts commonly use `#!/usr/bin/env -S uv run --script`.
-    # Do not leak uv's internal recursion state into child hook processes,
-    # whether it came from the parent environment or caller-provided overrides.
-    blocked_env_keys = {"UV_RUN_RECURSION_DEPTH"}
-    for key in blocked_env_keys:
-        env.pop(key, None)
-    explicit_keys = set(env.keys())
-    if overrides:
-        explicit_keys.update(
-            key
-            for key, value in overrides.items()
-            if key not in blocked_env_keys and value is not None and _runtime_override_is_explicit(key, value, overrides)
-        )
-
-    # Fix NO_PROXY to allow proxied downloads from googleapis.com/google.com.
-    # In some sandboxed environments (e.g. Claude Code), NO_PROXY includes
-    # *.googleapis.com and *.google.com, which causes tools like @puppeteer/browsers
-    # to bypass the egress proxy and fail DNS resolution for storage.googleapis.com.
-    _no_proxy_strip = {"googleapis.com", "google.com", "*.googleapis.com", "*.google.com", ".googleapis.com", ".google.com"}
-    for _key in ("NO_PROXY", "no_proxy"):
-        if _key in env:
-            _entries = [e.strip() for e in env[_key].split(",") if e.strip() not in _no_proxy_strip]
-            env[_key] = ",".join(_entries)
-
-    # Add global defaults
-    for key, value in get_config().items():
-        if key not in env:
-            env[key] = _serialize_value(value)
-
-    # Add plugin config values from schema defaults
-    plugin_config = get_plugin_config(
-        plugin_name,
-        schema,
-        config_path=config_path,
-    )
-    for key, value in plugin_config.items():
-        if key not in env:
-            if value is not None:
-                env[key] = _serialize_value(value)
-
-    # Apply overrides
-    if overrides:
-        for key, value in overrides.items():
-            if key in blocked_env_keys:
-                continue
-            if value is None:
-                env.pop(key, None)
-                continue
-            env[key] = _serialize_value(value)
-
-    # Keep path values coherent with the effective LIB_DIR and current run dir.
-    env.update(_derive_runtime_paths(env, explicit_keys=explicit_keys, run_output_dir=run_output_dir))
-
-    return env
-
-
-def _binary_request_signature(record: dict[str, Any]) -> str:
-    return json.dumps(record, sort_keys=True, default=str)
+    schema = PluginConfig.model_validate_json(config_file.read_text())
+    return schema.properties
 
 
 def get_required_binary_requests(
-    plugin_name: str,
-    schema: dict[str, Any],
-    binaries: list[dict[str, Any]],
+    plugin: Plugin,
+    binaries: list[RequiredBinary],
     *,
-    overrides: dict[str, Any] | None = None,
-    config_path: Path | None = None,
+    overrides: GlobalConfig | Mapping[str, Any] | None = None,
+    derived_overrides: GlobalConfig | Mapping[str, Any] | None = None,
     run_output_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
-    env = build_env_for_plugin(
-        plugin_name,
-        schema,
-        overrides,
-        config_path=config_path,
-        run_output_dir=run_output_dir,
+    """Hydrate one plugin's ``required_binaries`` into BinaryRequest payloads."""
+    plugin_config = _load_plugin_config_model(
+        plugin,
+        user_env=overrides,
+        derived_env=derived_overrides,
     )
+    env = PluginEnv.from_config(
+        plugin_config,
+        run_output_dir=run_output_dir or Path.cwd(),
+    ).to_env()
     requests: list[dict[str, Any]] = []
     seen: set[str] = set()
     for spec in binaries:
-        record = dict(spec)
-        name = str(record.get("name") or "").strip()
-        if not name:
-            continue
-        record["name"] = name.format(**env)
-        signature = _binary_request_signature(record)
+        record = spec.model_dump(mode="json")
+        record["name"] = spec.name.format(**env)
+        signature = json.dumps(record, sort_keys=True, default=str)
         if signature in seen:
             continue
         seen.add(signature)
@@ -605,43 +527,12 @@ def get_required_binary_requests(
     return requests
 
 
-def apply_runtime_path_defaults(
-    config: dict[str, Any] | None = None,
-    *,
-    run_output_dir: Path | None = None,
-) -> dict[str, Any]:
-    """Return config with LIB_DIR-derived runtime paths filled in coherently."""
-    merged: dict[str, Any] = dict(config or {})
-    env_like = {key: _serialize_value(value) for key, value in merged.items() if value is not None}
-    base_path = env_like.get("PATH") or os.environ.get("PATH", "")
-    if base_path:
-        env_like["PATH"] = base_path
-    runtime_path_keys = {
-        "LIB_BIN_DIR",
-        "PIP_HOME",
-        "PIP_BIN_DIR",
-        "NPM_HOME",
-        "NODE_MODULES_DIR",
-        "NODE_PATH",
-        "NPM_BIN_DIR",
-        "PUPPETEER_CACHE_DIR",
-    }
-    explicit_keys = {
-        key
-        for key, value in env_like.items()
-        if (key == "PATH" and "PATH" in merged)
-        or (key not in {"PATH", *runtime_path_keys} or value != _serialize_value(GLOBAL_DEFAULTS.get(key)))
-    }
-    merged.update(_derive_runtime_paths(env_like, explicit_keys=explicit_keys, run_output_dir=run_output_dir))
-    return merged
-
-
-def _serialize_value(value: Any) -> str:
+def dump_to_dotenv_format(value: Any) -> str:
     """Serialize value to string for environment variable."""
     if value is None:
         return ""
     if isinstance(value, bool):
         return "True" if value else "False"
-    elif isinstance(value, list):
+    elif isinstance(value, (list, dict)):
         return json.dumps(value)
     return str(value)

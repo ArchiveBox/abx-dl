@@ -42,17 +42,11 @@ abx-dl --plugins=wget,title,screenshot,pdf,readability,git 'https://example.com'
 `abx-dl` uses the **[ABX Plugin Library](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement)** (shared with [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox)) to run a collection of downloading and scraping tools.
 
 Plugins are loaded from the installed `abx-plugins` package (or from `ABX_PLUGINS_DIR` if you override it) and execute in distinct phases:
-1. **Install phase** reads each enabled plugin's `config.json > required_binaries`
-2. **BinaryRequest hooks** (`on_BinaryRequest__*`) resolve or install those binaries and emit resolved `Binary` records
-3. **CrawlSetup hooks** (`on_CrawlSetup__*`) launch/configure crawl-scoped daemons and shared runtime state
-4. **Snapshot hooks** (`on_Snapshot__*`) run per URL to extract content and emit archive results
+1. **Install phase** reads each enabled plugin's `config.json > required_binaries` and emits `BinaryRequestEvent`s
+2. **BinaryRequest hooks** (`on_BinaryRequest__*`) from provider plugins resolve or install those binaries and emit `Binary` records only
+3. **CrawlSetup hooks** (`on_CrawlSetup__*`) launch/configure crawl-scoped daemons and shared runtime state and emit no stdout JSONL records
+4. **Snapshot hooks** (`on_Snapshot__*`) run per URL to extract content and emit only `ArchiveResult`, `Snapshot`, and `Tag` records
 
-Hooks can emit:
-- Files to its output directory
-- JSONL records for status reporting and event routing
-- `Machine` config updates that propagate to later hooks in the same run
-- `BinaryRequest` records to ask provider hooks for dependencies
-- resolved `Binary` records with `abspath`/`version` metadata
 
 <br/>
 
@@ -86,17 +80,30 @@ CHROME_BINARY="chromium"
 Common options:
 - `TIMEOUT=60` - default timeout for hooks
 - `USER_AGENT` - default user agent string
-- `{PLUGIN}_BINARY` - path to plugin's binary (e.g. `WGET_BINARY`, `CHROME_BINARY`)
-- `{PLUGIN}_ENABLED=true/false` - enable/disable specific plugins
+- `{PLUGIN}_BINARY` - path or name of the binary to use (e.g. `WGET_BINARY=wget` or `CHROME_BINARY=/usr/bin/chromium`)
+- `{PLUGIN}_ENABLED=True/False` - enable/disable specific plugins
 - `{PLUGIN}_TIMEOUT=120` - per-plugin timeout overrides
 
 Aliases are automatically resolved (e.g. `--set USE_WGET=false` saves as `WGET_ENABLED=false`).
+
+The config split matters:
+- `config.env` stores only user-provided values, typically written by `abx-dl config --set ...`
+- `derived.env` stores runtime-derived cache entries such as resolved `*_BINARY` paths and the `ABX_INSTALL_CACHE` install timestamp map
+- `MachineService` keeps user config and derived cache separate for the whole run
+- plugin config hydration uses user/default config only; `derived.env` is consulted separately by the binary-resolution layer and is never blindly merged into user config
+
+Binary resolution uses those layers differently:
+- a user-provided path-like `*_BINARY` in `config.env` is authoritative and will hard-fail if broken
+- a bare binary name in user/default config can reuse a cached abspath from `derived.env`
+- if that derived abspath is stale, `abx-dl` ignores it and runs the normal `BinaryRequest` provider flow for the same binary name
+
+When embedded in ArchiveBox, the equivalent derived cache comes from persisted `machine_binary` rows in the DB.
 
 One-off tuning is often easiest via env vars or CLI args:
 
 ```bash
 TIMEOUT=120 USER_AGENT='Mozilla/5.0 (abx-dl smoke test)' abx-dl 'https://example.com'
-CHROME_BINARY=/usr/bin/chromium LIB_DIR=./.abx/lib abx-dl --plugins=screenshot,pdf 'https://example.com'
+CHROME_BINARY=/usr/bin/chromium --plugins=screenshot,pdf 'https://example.com'
 abx-dl --output=./runs/example --plugins=wget,title --timeout=90 'https://example.com'
 ```
 
@@ -116,7 +123,7 @@ abx-dl 'https://example.com'
 uvx abx-dl 'https://example.com'
 
 # Pre-install dependencies to avoid having to wait for them to install on first-run
-uvx abx-dl install
+uvx abx-dl@latest install
 ```
 
 <br/>
@@ -157,7 +164,7 @@ abx-dl config --set TIMEOUT=120           # Set a config value persistently
 Many plugins require external binaries (e.g., `wget`, `chrome`, `yt-dlp`, `single-file`).
 
 By default, `abx-dl` lazily installs missing dependencies as needed when you download a URL.
-Use `--no-install` to skip plugins with missing dependencies instead. `install` runs only the pre-run install pipeline (`InstallEvent` → `BinaryRequestEvent` → `BinaryEvent`) without starting crawl setup or snapshot extraction:
+Use `--no-install` to skip plugins with missing dependencies instead. `install` runs only the pre-run dependency pipeline (`required_binaries` → `BinaryRequestEvent` → `BinaryEvent`) without starting crawl setup or snapshot extraction:
 
 ```bash
 # Auto-installs missing deps on-the-fly (default behavior)
@@ -172,6 +179,21 @@ abx-dl install wget singlefile ytdlp
 # Check which dependencies are available/missing
 abx-dl plugins
 ```
+
+Successful preflight installs are cached for 24 hours in `derived.env` under `ABX_INSTALL_CACHE`, keyed by binary name. If a binary was installed successfully recently, `abx-dl` skips re-running the install preflight for that binary. Cached abspaths are still validated at use time, and stale cache entries fall back to the normal provider resolution path.
+
+The normal runtime flow after dependency preflight is:
+- `CrawlEvent` (internal lifecycle root)
+- `CrawlSetupEvent` → plugin `on_CrawlSetup__*` hooks
+- `CrawlStartEvent` → `SnapshotEvent`
+- `SnapshotEvent` → plugin `on_Snapshot__*` hooks
+- `SnapshotCleanupEvent` / `CrawlCleanupEvent`
+
+Hook output contract:
+- `on_BinaryRequest__*` hooks emit only `Binary`
+- `on_CrawlSetup__*` hooks emit no stdout JSONL records
+- `on_Snapshot__*` hooks emit only `ArchiveResult`, `Snapshot`, and `Tag`
+- the TUI and services consume structured events derived from those hook records
 
 Dependencies are installed to `~/.config/abx/lib/{arch}/` using the appropriate package manager:
 - **pip packages** → `~/.config/abx/lib/{arch}/pip/venv/`
@@ -234,7 +256,7 @@ uvx --from abx-dl abx-dl --plugins=title,wget 'https://example.com'
 
 ### Available Plugins
 
-Generated from the `abx-plugins` marketplace docs. Each line lists the plugin and the kinds of outputs it can produce.
+See the [`abx-plugins` marketplace](https://github.com/ArchiveBox/abx-plugins).
 
 #### Snapshot / Extraction Plugins
 
@@ -280,23 +302,7 @@ Generated from the `abx-plugins` marketplace docs. Each line lists the plugin an
 - `search_backend_sonic` - pushes content into Sonic search; no local archive files declared.
 - `claudecodecleanup` - writes cleanup/deduplication results as plain text.
 - `hashes` - writes file hash manifests as JSON.
-
-#### Setup / Binary / Utility Plugins
-
-- `npm` - installs npm-provided binaries and exposes Node module paths; no direct archive files.
-- `claudecode` - runs Claude Code over snapshots and emits JSON results.
-- `search_backend_ripgrep` - search helper for archived files; no direct archive files.
-- `puppeteer` - installs/manages Chromium via Puppeteer; no direct archive files.
-- `ublock` - installs uBlock Origin for cleaner browser captures; no direct archive files.
-- `istilldontcareaboutcookies` - installs cookie-banner suppression helpers; no direct archive files.
-- `twocaptcha` - installs/configures CAPTCHA-solving browser helpers; no direct archive files.
-- `pip` - installs Python-based binaries into a managed virtualenv; no direct archive files.
-- `brew` - installs binaries with Homebrew; no direct archive files.
-- `apt` - installs binaries with APT; no direct archive files.
-- `custom` - installs binaries via a custom shell command; no direct archive files.
-- `env` - discovers binaries already on `PATH`; no direct archive files.
-- `base` - shared utilities/test support for other plugins; no direct archive files.
-- `media` - shared namespace/helpers for media-related plugins; no direct archive files.
+- and more via the [`abx-plugins` marketplace](https://github.com/ArchiveBox/abx-plugins)...
 
 ---
 

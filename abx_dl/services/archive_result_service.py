@@ -2,18 +2,16 @@
 
 import json
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from abxbus import BaseEvent, EventBus
+from pydantic import ValidationError
 
-from ..events import ArchiveResultEvent, ProcessCompletedEvent, ProcessKillEvent, ProcessStdoutEvent
+from ..events import ArchiveResultEvent, ProcessCompletedEvent, ProcessStartedEvent, ProcessStdoutEvent, SnapshotEvent
 from ..limits import CrawlLimitState
 from ..models import ArchiveResult, write_jsonl
-from ..output_files import OutputFile
+from ..output_files import OutputFile, scan_output_files
 from .base import BaseService
-
-# File extensions that are process metadata, not real hook output
-_METADATA_SUFFIXES = {".log", ".pid", ".sh"}
 
 
 class ArchiveResultService(BaseService):
@@ -42,31 +40,47 @@ class ArchiveResultService(BaseService):
         ProcessStdoutEvent,
         ProcessCompletedEvent,
     ]
-    EMITS: ClassVar[list[type[BaseEvent]]] = [ArchiveResultEvent, ProcessKillEvent]
+    EMITS: ClassVar[list[type[BaseEvent]]] = [ArchiveResultEvent]
 
     def __init__(self, bus: EventBus, *, emit_jsonl: bool):
         self.emit_jsonl = emit_jsonl
         super().__init__(bus)
+        self.bus.on(ProcessStdoutEvent, self.on_ProcessStdoutEvent)
+        self.bus.on(ProcessCompletedEvent, self.on_ProcessCompletedEvent)
 
     async def on_ProcessStdoutEvent(self, event: ProcessStdoutEvent) -> None:
-        """Handle inline ArchiveResult records from hook stdout."""
+        """Handle inline ArchiveResult records from hook stdout.
+
+        The owning snapshot is resolved from ancestor SnapshotEvents on the bus.
+        """
         try:
             record = json.loads(event.line)
         except (json.JSONDecodeError, ValueError):
             return
-        if not isinstance(record, dict) or record.get("type") != "ArchiveResult":
+        if not isinstance(record, dict):
             return
-
-        ar = ArchiveResult(
-            snapshot_id=record.get("snapshot_id", event.snapshot_id),
-            plugin=record.get("plugin", event.plugin_name),
-            hook_name=record.get("hook_name", event.hook_name),
-            status=record.get("status", ""),
-            output_str=record.get("output_str", ""),
-            output_json=record.get("output_json") if isinstance(record.get("output_json"), dict) else None,
-            output_files=event.output_files,
-            error=record.get("error") or None,
+        archive_result_payload: dict[str, Any] = {str(key): value for key, value in record.items()}
+        if "type" not in archive_result_payload or archive_result_payload["type"] != "ArchiveResult":
+            return
+        started_process = self.bus.event_history.get(event.event_parent_id or "")
+        assert isinstance(started_process, ProcessStartedEvent)
+        snapshot_event = await self.bus.find(
+            SnapshotEvent,
+            past=True,
+            future=False,
+            where=lambda candidate: self.bus.event_is_child_of(started_process, candidate),
         )
+        assert snapshot_event is not None
+
+        output_files = scan_output_files(Path(event.output_dir))
+        archive_result_payload["snapshot_id"] = snapshot_event.snapshot_id
+        archive_result_payload["plugin"] = event.plugin_name
+        archive_result_payload["hook_name"] = event.hook_name
+        archive_result_payload["output_files"] = output_files
+        try:
+            ar = ArchiveResult(**archive_result_payload)
+        except ValidationError:
+            return
 
         index_path = Path(event.output_dir).parent / "index.jsonl"
         write_jsonl(index_path, ar, also_print=self.emit_jsonl)
@@ -78,8 +92,7 @@ class ArchiveResultService(BaseService):
                 id=ar.id,
                 hook_name=ar.hook_name,
                 status=ar.status,
-                process_id=event.process_id,
-                output_files=event.output_files,
+                output_files=output_files,
                 start_ts=event.start_ts,
                 end_ts=event.end_ts,
                 output_str=ar.output_str,
@@ -94,28 +107,34 @@ class ArchiveResultService(BaseService):
             return
 
         limit_state = CrawlLimitState.from_env(event.env)
-        stop_reason = limit_state.record_process_output(
-            event.process_id,
+        started_process = self.bus.event_history.get(event.event_parent_id or "")
+        assert isinstance(started_process, ProcessStartedEvent)
+        limit_state.record_process_output(
+            started_process.event_id,
             Path(event.output_dir),
             [output_file.path for output_file in event.output_files],
         )
-        if stop_reason == "max_size":
-            await self._kill_running_snapshot_processes(limit_state.crawl_dir)
 
         existing = await self.bus.find(
             ArchiveResultEvent,
-            snapshot_id=event.snapshot_id,
-            plugin=event.plugin_name,
-            hook_name=event.hook_name,
-            process_id=event.process_id,
+            child_of=started_process,
+            past=True,
+            future=False,
         )
         if existing is not None:
             return
+        snapshot_event = await self.bus.find(
+            SnapshotEvent,
+            past=True,
+            future=False,
+            where=lambda candidate: self.bus.event_is_child_of(started_process, candidate),
+        )
+        assert snapshot_event is not None
 
         if event.exit_code != 0:
             # Failed process with no inline result → synthetic failure
             ar = ArchiveResult(
-                snapshot_id=event.snapshot_id,
+                snapshot_id=snapshot_event.snapshot_id,
                 plugin=event.plugin_name,
                 hook_name=event.hook_name,
                 status="failed",
@@ -125,7 +144,7 @@ class ArchiveResultService(BaseService):
         elif _has_content_files(event.output_files):
             # Succeeded with real output files but no inline result → synthetic success
             ar = ArchiveResult(
-                snapshot_id=event.snapshot_id,
+                snapshot_id=snapshot_event.snapshot_id,
                 plugin=event.plugin_name,
                 hook_name=event.hook_name,
                 status="succeeded",
@@ -134,7 +153,7 @@ class ArchiveResultService(BaseService):
         else:
             # Succeeded but no content files → noresult
             ar = ArchiveResult(
-                snapshot_id=event.snapshot_id,
+                snapshot_id=snapshot_event.snapshot_id,
                 plugin=event.plugin_name,
                 hook_name=event.hook_name,
                 status="noresult",
@@ -151,7 +170,6 @@ class ArchiveResultService(BaseService):
                 id=ar.id,
                 hook_name=ar.hook_name,
                 status=ar.status,
-                process_id=event.process_id,
                 output_files=event.output_files,
                 start_ts=event.start_ts,
                 end_ts=event.end_ts,
@@ -160,22 +178,10 @@ class ArchiveResultService(BaseService):
             ),
         )
 
-    async def _kill_running_snapshot_processes(self, crawl_dir: Path) -> None:
-        for pid_file in sorted(crawl_dir.glob("**/*.pid")):
-            await self.bus.emit(
-                ProcessKillEvent(
-                    plugin_name=pid_file.parent.name,
-                    hook_name=pid_file.stem,
-                    output_dir=str(pid_file.parent),
-                    grace_period=1.0,
-                    event_timeout=15.0,
-                ),
-            )
-
 
 # ── Pure helpers ────────────────────────────────────────────────────────────
 
 
 def _has_content_files(output_files: list[OutputFile]) -> bool:
-    """Return True if any output file is not process metadata (.log, .pid, .sh)."""
-    return any(Path(output_file.path).suffix not in _METADATA_SUFFIXES for output_file in output_files)
+    """Return True if the hook produced any real output files."""
+    return bool(output_files)

@@ -8,7 +8,7 @@ import pytest
 
 # Keys that test hooks may mirror into runtime envs.
 # Clean these from os.environ before each test so a previous test's side effects
-# don't leak into subprocess env dicts built by build_env_for_plugin().
+# don't leak into subprocess env dicts built by PluginEnv.to_env().
 _TEST_CONFIG_KEYS = frozenset(
     {
         "CONFIG_DIR",

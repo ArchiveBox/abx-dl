@@ -1,9 +1,16 @@
 from pathlib import Path
+from typing import Any
 
-from abx_dl.config import build_env_for_plugin
+from abx_dl.config import GlobalConfig
+from abx_dl.models import PluginEnv
 
 
-def test_build_env_for_plugin_sets_run_dirs_and_node_path(monkeypatch, tmp_path: Path) -> None:
+def assemble_env(*, overrides: dict[str, Any] | None = None, run_output_dir: Path) -> dict[str, str]:
+    config = GlobalConfig(**(overrides or {})).model_dump(mode="json")
+    return PluginEnv.from_config(config, run_output_dir=run_output_dir).to_env()
+
+
+def test_plugin_env_sets_run_dirs_and_node_path(monkeypatch, tmp_path: Path) -> None:
     for key in (
         "CRAWL_DIR",
         "SNAP_DIR",
@@ -18,7 +25,7 @@ def test_build_env_for_plugin_sets_run_dirs_and_node_path(monkeypatch, tmp_path:
     ):
         monkeypatch.delenv(key, raising=False)
 
-    env = build_env_for_plugin("demo", {}, run_output_dir=tmp_path)
+    env = assemble_env(run_output_dir=tmp_path)
 
     assert env["CRAWL_DIR"] == str(tmp_path)
     assert env["SNAP_DIR"] == str(tmp_path)
@@ -28,40 +35,33 @@ def test_build_env_for_plugin_sets_run_dirs_and_node_path(monkeypatch, tmp_path:
     assert env["NPM_BIN_DIR"] in env["PATH"].split(":")
 
 
-def test_build_env_for_plugin_derives_puppeteer_cache_from_effective_lib_dir(monkeypatch, tmp_path: Path) -> None:
+def test_plugin_env_derives_puppeteer_cache_from_effective_lib_dir(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("PUPPETEER_CACHE_DIR", raising=False)
 
-    env = build_env_for_plugin("demo", {}, overrides={"LIB_DIR": str(tmp_path / "lib")}, run_output_dir=tmp_path)
+    env = assemble_env(overrides={"LIB_DIR": str(tmp_path / "lib")}, run_output_dir=tmp_path)
 
     assert env["PUPPETEER_CACHE_DIR"] == str(tmp_path / "lib" / "puppeteer")
     assert env["LIB_BIN_DIR"] == str(tmp_path / "lib" / "bin")
 
 
-def test_build_env_for_plugin_keeps_chrome_sandbox_enabled_by_default(monkeypatch, tmp_path: Path) -> None:
+def test_plugin_env_keeps_chrome_sandbox_enabled_by_default(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("CHROME_SANDBOX", raising=False)
 
-    env = build_env_for_plugin("demo", {}, run_output_dir=tmp_path)
+    env = assemble_env(run_output_dir=tmp_path)
 
     assert env["CHROME_SANDBOX"] == "true"
 
 
-def test_build_env_for_plugin_strips_uv_recursion_depth_from_env_and_overrides(monkeypatch, tmp_path: Path) -> None:
+def test_plugin_env_strips_uv_recursion_depth_from_env_and_overrides(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("UV_RUN_RECURSION_DEPTH", "1")
 
-    env = build_env_for_plugin(
-        "demo",
-        {},
-        overrides={"UV_RUN_RECURSION_DEPTH": True},
-        run_output_dir=tmp_path,
-    )
+    env = assemble_env(overrides={"UV_RUN_RECURSION_DEPTH": True}, run_output_dir=tmp_path)
 
     assert "UV_RUN_RECURSION_DEPTH" not in env
 
 
-def test_build_env_for_plugin_run_output_dir_overrides_default_shared_snap_dirs(tmp_path: Path) -> None:
-    env = build_env_for_plugin(
-        "demo",
-        {},
+def test_plugin_env_run_output_dir_overrides_default_shared_snap_dirs(tmp_path: Path) -> None:
+    env = assemble_env(
         overrides={
             "DATA_DIR": str(tmp_path / "data"),
             "CRAWL_DIR": str(tmp_path / "data"),
@@ -74,11 +74,9 @@ def test_build_env_for_plugin_run_output_dir_overrides_default_shared_snap_dirs(
     assert env["SNAP_DIR"] == str(tmp_path / "run")
 
 
-def test_build_env_for_plugin_preserves_explicit_shared_snap_dir_override(tmp_path: Path) -> None:
+def test_plugin_env_preserves_explicit_shared_snap_dir_override(tmp_path: Path) -> None:
     explicit_snap_dir = tmp_path / "explicit-snap"
-    env = build_env_for_plugin(
-        "demo",
-        {},
+    env = assemble_env(
         overrides={
             "DATA_DIR": str(tmp_path / "data"),
             "CRAWL_DIR": str(explicit_snap_dir),
@@ -91,10 +89,8 @@ def test_build_env_for_plugin_preserves_explicit_shared_snap_dir_override(tmp_pa
     assert env["SNAP_DIR"] == str(explicit_snap_dir)
 
 
-def test_build_env_for_plugin_omits_none_runtime_overrides(tmp_path: Path) -> None:
-    env = build_env_for_plugin(
-        "demo",
-        {},
+def test_plugin_env_omits_none_runtime_overrides(tmp_path: Path) -> None:
+    env = assemble_env(
         overrides={
             "SNAPSHOT_DEPTH": None,
             "PARENT_SNAPSHOT_ID": None,

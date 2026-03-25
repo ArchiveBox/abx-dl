@@ -1,35 +1,38 @@
 """Event schemas for the abx-dl abxbus event bus.
 
-Events form a hierarchy during execution::
+Events form this phase order during execution::
 
-    InstallEvent                                    # orchestrator.download()
-    ├── BinaryRequestEvent                          # from plugin config required_binaries
-    │   └── BinaryRequestProcessEvent (provider hook) → BinaryEvent
-    ├── CrawlEvent                                  # emitted after install phase
-    │   ├── CrawlSetupEvent                         # crawl setup hooks run here
-    │   │   ├── ProcessEvent (on_CrawlSetup hooks)
-    │   │   └── ...
-    │   ├── CrawlStartEvent                         # triggers snapshot phase
-    │   │   └── SnapshotEvent (depth=0)
-    │   │       ├── ProcessEvent (on_Snapshot hooks)
-    │   │       │   ├── ProcessStdoutEvent
-    │   │       │   │   ├── SnapshotEvent (depth>0, ignored by abx-dl)
-    │   │       │   │   └── ArchiveResultEvent (inline)
-    │   │       │   └── ProcessCompletedEvent
-    │   │       │       └── ArchiveResultEvent (synthetic, on_Snapshot only)
-    │   │       ├── SnapshotCleanupEvent
-    │   │       │   └── ProcessKillEvent × N
-    │   │       └── SnapshotCompletedEvent
-    │   ├── CrawlCleanupEvent
-    │   │   └── ProcessKillEvent × N
-    │   └── CrawlCompletedEvent
+    InstallEvent                                    # orchestrator preflight only
+    └── BinaryRequestEvent × N                      # from config.json required_binaries
+        └── ProcessEvent (provider hook) → BinaryEvent
+
+    CrawlEvent                                      # internal lifecycle root
+    ├── CrawlSetupEvent                             # plugin on_CrawlSetup hooks run here
+    │   ├── ProcessEvent (on_CrawlSetup hooks)
+    │   └── ProcessCompletedEvent
+    ├── CrawlStartEvent                             # triggers snapshot phase
+    │   └── SnapshotEvent (depth=0)
+    │       ├── ProcessEvent (on_Snapshot hooks)
+    │       │   ├── ProcessStdoutEvent
+    │       │   │   ├── SnapshotEvent (depth>0, ignored by abx-dl)
+    │       │   │   ├── TagEvent
+    │       │   │   └── ArchiveResultEvent (inline)
+    │       │   └── ProcessCompletedEvent
+    │       │       └── ArchiveResultEvent (synthetic, on_Snapshot only)
+    │       ├── SnapshotCleanupEvent
+    │       │   └── ProcessKillEvent × N
+    │       └── SnapshotCompletedEvent
+    ├── CrawlCleanupEvent
+    │   └── ProcessKillEvent × N
+    └── CrawlCompletedEvent
 
 Event types:
 - **Lifecycle events** drive phases: InstallEvent, CrawlEvent, CrawlSetupEvent,
   CrawlStartEvent, SnapshotEvent, SnapshotCleanupEvent,
   SnapshotCompletedEvent, CrawlCleanupEvent, CrawlCompletedEvent
 - **Routing events** decouple services: ProcessStdoutEvent
-  carries each stdout line; each service parses and handles its own type
+  carries each stdout line; routing services translate hook JSONL into the
+  typed events used by the rest of the runtime
 - **Command events** trigger actions: ProcessEvent, ProcessKillEvent,
   BinaryRequestEvent, MachineEvent
 - **Completion events** notify results: ProcessCompletedEvent,
@@ -44,12 +47,17 @@ abxbus behavior:
   (how long ProcessService.on_ProcessEvent can run for a single hook).
 """
 
-from typing import Any
+import asyncio
+from pathlib import Path
+from typing import Any, Literal
 
-from abxbus import BaseEvent, EventConcurrencyMode
+from abxbus import BaseEvent, EventConcurrencyMode, EventHandlerConcurrencyMode
 from pydantic import ConfigDict, Field
 
 from .output_files import OutputFile
+
+
+PROCESS_EXIT_SKIPPED = 10
 
 
 def slow_warning_timeout(timeout: float | int | None) -> float | None:
@@ -63,7 +71,12 @@ def slow_warning_timeout(timeout: float | int | None) -> float | None:
 
 
 class InstallEvent(BaseEvent):
-    """Root pre-run phase: emits BinaryRequest records before crawl setup."""
+    """Root pre-run phase for required binary resolution.
+
+    Emitted by the orchestrator before CrawlEvent. BinaryService handles it by
+    reading each enabled plugin's ``config.json > required_binaries`` and
+    emitting BinaryRequestEvent records for provider plugins to satisfy.
+    """
 
     url: str
     snapshot_id: str
@@ -74,9 +87,9 @@ class InstallEvent(BaseEvent):
 class CrawlEvent(BaseEvent):
     """Root event: kicks off the full crawl → snapshot → cleanup lifecycle.
 
-    Emitted once by orchestrator.download(). CrawlService.on_CrawlEvent
-    handles this by emitting the lifecycle chain:
-    CrawlSetupEvent → CrawlStartEvent → CrawlCleanupEvent → CrawlCompletedEvent
+    Emitted once by orchestrator.download() after InstallEvent completes.
+    CrawlService.on_CrawlEvent handles this by emitting the lifecycle chain:
+    CrawlSetupEvent → CrawlStartEvent → CrawlCleanupEvent → CrawlCompletedEvent.
     """
 
     url: str
@@ -86,11 +99,11 @@ class CrawlEvent(BaseEvent):
 
 
 class CrawlSetupEvent(BaseEvent):
-    """Phase: run all on_CrawlSetup hooks (daemons, config propagation).
+    """Phase: run all on_CrawlSetup hooks (daemons and shared runtime setup).
 
     Emitted by CrawlService.on_CrawlEvent. Per-hook handlers are registered
     on this event, so they run serially in hook sort order. Crawl setup hooks
-    may emit Machine and Process records, but not ArchiveResult records.
+    are expected to prepare shared state and emit no stdout JSONL records.
     """
 
     url: str
@@ -103,7 +116,8 @@ class CrawlStartEvent(BaseEvent):
     """Phase: crawl setup finished, start the actual crawl (snapshot extraction).
 
     Emitted by CrawlService.on_CrawlEvent after CrawlSetupEvent completes.
-    CrawlService.on_CrawlStartEvent emits SnapshotEvent (unless crawl_only).
+    CrawlService.on_CrawlStartEvent emits SnapshotEvent when snapshot
+    execution is enabled for the current run.
     """
 
     url: str
@@ -137,22 +151,23 @@ class CrawlCompletedEvent(BaseEvent):
 
 
 class SnapshotEvent(BaseEvent):
-    """Phase: run all on_Snapshot hooks (extraction + indexing).
+    """Phase: run all on_Snapshot hooks (extraction + discovery).
 
     Emitted by CrawlService.on_CrawlStartEvent as a child of
     CrawlStartEvent. Per-hook handlers are registered on this event.
 
     Also emitted by SnapshotService.on_ProcessStdoutEvent when a hook
-    outputs ``{"type": "Snapshot", ...}`` JSONL (discovered URLs during crawling).
-    In abx-dl, SnapshotService ignores events with ``depth > 0``.
-    ArchiveBox handles recursive crawling by processing all depths.
+    outputs ``{"type": "Snapshot", ...}`` JSONL. Snapshot hooks emit
+    ``ArchiveResult`` records for their own result and may also emit
+    ``Snapshot`` and ``Tag`` discovery records. In abx-dl, SnapshotService
+    ignores events with ``depth > 0``. ArchiveBox handles recursive crawling
+    by processing all depths.
     """
 
     url: str
     snapshot_id: str
     output_dir: str
     depth: int = 0
-    parent_snapshot_id: str = ""
     event_timeout: float | None = 300.0
 
 
@@ -206,35 +221,28 @@ class ProcessEvent(BaseEvent):
     is_background: bool
     output_dir: str
     env: dict[str, str]
-    snapshot_id: str = ""
     timeout: int = 60
-    daemon: bool = False
     url: str = ""
     process_type: str = ""
     worker_type: str = ""
     event_timeout: float | None = 360.0
 
 
-class BinaryRequestProcessEvent(ProcessEvent):
-    """Command: run a binary provider hook subprocess.
-
-    Uses a separate event type from ProcessEvent so nested provider installs do
-    not trip abxbus' same-handler recursion guard for ProcessService.
-    """
-
-
 class ProcessKillEvent(BaseEvent):
-    """Command: SIGTERM a background daemon hook via its PID file.
+    """Command: SIGTERM a background hook via its process identity.
 
-    Emitted by cleanup event handlers. ProcessService reads the PID file
-    and sends SIGTERM, waits ``grace_period`` seconds for clean exit, then
-    escalates to SIGKILL. The grace period should be the plugin's timeout
-    (PLUGINNAME_TIMEOUT) so daemons get their configured time to flush.
+    Emitted by cleanup event handlers as a direct child of the cleanup event
+    that owns the shutdown sequence. ProcessService resolves the single matching
+    ProcessStartedEvent within that crawl/snapshot ancestry using
+    ``plugin_name``, ``hook_name``, and ``pid``, sends SIGTERM, waits
+    ``grace_period`` seconds for clean exit, then escalates to SIGKILL. The
+    grace period should be the plugin's timeout (PLUGINNAME_TIMEOUT) so daemons
+    get their configured time to flush.
     """
 
     plugin_name: str
     hook_name: str
-    output_dir: str
+    pid: int
     grace_period: float = 15.0
     event_timeout: float | None = 60.0
 
@@ -242,6 +250,7 @@ class ProcessKillEvent(BaseEvent):
 class ProcessStartedEvent(BaseEvent):
     """Notification: a hook subprocess started successfully."""
 
+    event_handler_concurrency: EventHandlerConcurrencyMode | None = EventHandlerConcurrencyMode.PARALLEL
     plugin_name: str
     hook_name: str
     hook_path: str
@@ -250,13 +259,17 @@ class ProcessStartedEvent(BaseEvent):
     env: dict[str, str]
     timeout: int
     pid: int = 0
-    process_id: str = ""
-    snapshot_id: str = ""
     is_background: bool = False
     url: str = ""
     process_type: str = ""
     worker_type: str = ""
     start_ts: str = ""
+    subprocess: asyncio.subprocess.Process = Field(exclude=True, repr=False)
+    stdout_file: Path = Field(exclude=True, repr=False)
+    stderr_file: Path = Field(exclude=True, repr=False)
+    pid_file: Path = Field(exclude=True, repr=False)
+    cmd_file: Path = Field(exclude=True, repr=False)
+    files_before: set[Path] = Field(exclude=True, repr=False)
     event_timeout: float | None = 60.0
 
 
@@ -264,9 +277,9 @@ class ProcessCompletedEvent(BaseEvent):
     """Notification: a hook subprocess finished.
 
     Emitted by ProcessService after the subprocess exits (or times out).
-    Carries raw process-level data only — no interpretation of status or
-    output. ArchiveResultService listens for this to build ArchiveResult
-    records enriched with process metadata.
+    Carries raw process-level data plus the resolved process status.
+    ArchiveResultService listens for this to build ArchiveResult records
+    enriched with process metadata.
     """
 
     plugin_name: str
@@ -274,14 +287,14 @@ class ProcessCompletedEvent(BaseEvent):
     hook_path: str = ""
     hook_args: list[str] = []
     env: dict[str, str] = {}
+    timeout: int = 60
     stdout: str
     stderr: str
     exit_code: int
+    status: Literal["succeeded", "failed", "skipped"]
     output_dir: str
     output_files: list[OutputFile] = Field(default_factory=list)
     is_background: bool = False
-    process_id: str = ""
-    snapshot_id: str = ""
     pid: int = 0
     url: str = ""
     process_type: str = ""
@@ -295,13 +308,13 @@ class ProcessStdoutEvent(BaseEvent):
     """A hook subprocess outputted a line to stdout.
 
     Emitted by ProcessService for every stdout line. Each consuming service
-    parses the line and checks for the JSON shape it cares about:
+    parses the line and checks for the JSON shape it cares about. In the
+    current hook contract:
 
-    - BinaryService: ``{"type": "BinaryRequest", ...}`` → emits BinaryRequestEvent
-    - BinaryService: ``{"type": "Binary", ...}`` → emits BinaryEvent
-    - SnapshotService: ``{"type": "Snapshot", ...}`` → emits SnapshotEvent
-    - ArchiveResultService: ``{"type": "ArchiveResult", ...}`` → emits ArchiveResultEvent
-    - ArchiveBox-only services may also consume additional record types
+    - provider hooks emit ``{"type": "Binary", ...}`` → BinaryEvent
+    - snapshot hooks emit ``{"type": "Snapshot", ...}`` → SnapshotEvent
+    - snapshot hooks emit ``{"type": "Tag", ...}`` → TagEvent
+    - snapshot hooks emit ``{"type": "ArchiveResult", ...}`` → ArchiveResultEvent
 
     Context fields from the parent ProcessEvent are passed through for
     services that need them.
@@ -314,8 +327,6 @@ class ProcessStdoutEvent(BaseEvent):
     plugin_name: str = ""
     hook_name: str = ""
     output_dir: str = ""
-    snapshot_id: str = ""
-    process_id: str = ""
     start_ts: str = ""
     end_ts: str = ""
     output_files: list[OutputFile] = Field(default_factory=list)
@@ -326,19 +337,22 @@ class ProcessStdoutEvent(BaseEvent):
 
 
 class BinaryRequestEvent(BaseEvent):
-    """A hook needs a binary resolved or installed.
+    """A required binary needs to be resolved or installed.
 
-    Emitted by BinaryService.on_ProcessStdoutEvent when a hook outputs
-    ``{"type": "BinaryRequest", ...}`` JSONL. Handled by BinaryService's provider hooks
-    and on_BinaryRequestEvent, which either emits a cached BinaryEvent
-    or broadcasts to provider hooks to resolve/install it.
+    Emitted during InstallEvent, when CrawlService turns
+    ``config.json > required_binaries`` declarations into BinaryRequestEvent
+    records.
+
+    Handled by BinaryService and by provider plugins' ``on_BinaryRequest__*``
+    hooks, which either emit a cached BinaryEvent or resolve/install the
+    binary and then emit BinaryEvent records.
 
     The ``binproviders`` field controls which providers are tried (e.g.
     "puppeteer" means only the puppeteer provider hook should attempt
     resolution). Provider hooks self-select based on this field.
     """
 
-    name: str
+    name: str = Field(min_length=1)
     plugin_name: str = ""
     hook_name: str = ""
     output_dir: str = ""
@@ -347,7 +361,6 @@ class BinaryRequestEvent(BaseEvent):
     machine_id: str = ""
     binproviders: str = ""
     overrides: dict[str, Any] | None = None
-    custom_cmd: str = ""
     event_timeout: float | None = 300.0
 
 
@@ -361,10 +374,12 @@ class BinaryEvent(BaseEvent):
     detected ``version``, ``sha256`` when available, and the winning provider.
     """
 
-    name: str
+    model_config = ConfigDict(extra="ignore")
+
+    name: str = Field(min_length=1)
     plugin_name: str = ""
     hook_name: str = ""
-    abspath: str = ""
+    abspath: str = Field(min_length=1)
     version: str = ""
     sha256: str = ""
     binproviders: str = ""
@@ -382,20 +397,24 @@ class MachineEvent(BaseEvent):
     """Update runtime machine config.
 
     Emitted internally by services like ``BinaryService``. Handled by
-    ``MachineService.on_MachineEvent``, which updates runtime ``shared_config``
-    and persists derived values to ``derived.env`` for future runs.
+    ``MachineService.on_MachineEvent``, which updates either runtime
+    ``user_config`` or ``derived_config`` and persists derived values to
+    ``derived.env`` for future runs.
     """
 
     model_config = ConfigDict(populate_by_name=True)
-    method: str = Field("", validation_alias="_method")
+    method: str = Field(default="", validation_alias="_method")
     key: str = ""
-    value: str = ""
+    value: Any = None
     config: dict[str, Any] | None = None
+    config_type: Literal["user", "derived"] = "derived"
     event_timeout: float | None = 10.0
 
 
 class TagEvent(BaseEvent):
     """A hook emitted a tag to attach to the current snapshot."""
+
+    model_config = ConfigDict(extra="ignore")
 
     name: str
     snapshot_id: str = ""
@@ -411,16 +430,15 @@ class ArchiveResultEvent(BaseEvent):
     Emitted by ArchiveResultService in two cases:
 
     1. **Inline from stdout**: when a hook outputs ``{"type": "ArchiveResult", ...}``
-       JSONL during execution (via ProcessStdoutEvent routing). Process
-       metadata fields (process_id, output_files, start_ts, end_ts) reflect
-       the current process context at the moment the line was emitted.
+       JSONL during execution (via ProcessStdoutEvent routing). Output metadata
+       fields (output_files, start_ts, end_ts) reflect the current process
+       context at the moment the line was emitted.
 
     2. **Synthetic fallback**: on ProcessCompletedEvent, only if the hook didn't
        already report an ArchiveResult — e.g. failed (nonzero exit) or succeeded
        with output files but no explicit JSONL output.
 
-    Both cases carry process_id, output_files, start_ts, end_ts copied from
-    the process context.
+    Both cases carry output_files, start_ts, end_ts copied from the process context.
     """
 
     snapshot_id: str = ""
@@ -428,7 +446,6 @@ class ArchiveResultEvent(BaseEvent):
     id: str = ""
     hook_name: str = ""
     status: str = ""
-    process_id: str = ""
     output_str: str = ""
     output_json: dict[str, Any] | None = None
     output_files: list[OutputFile] = Field(default_factory=list)

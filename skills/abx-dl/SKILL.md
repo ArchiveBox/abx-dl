@@ -14,7 +14,7 @@ For per-plugin hook details, binary providers, and config schemas, inspect the `
 - https://github.com/ArchiveBox/abx-plugins
 - https://github.com/ArchiveBox/abx-plugins/tree/main/abx_plugins/plugins
 
-When `abx-dl plugins <name>` is not enough, look in that repo for the plugin's `config.json` and `on_*.py` / `on_*.js` / `on_*.sh` hooks.
+When `abx-dl plugins <name>` is not enough, inspect the plugin's `config.json`, `on_BinaryRequest__*`, `on_CrawlSetup__*`, and `on_Snapshot__*` hooks.
 
 ## Quick Start
 
@@ -46,6 +46,8 @@ abx-dl install wget ytdlp chrome
 ```
 
 - If you skip pre-install, `abx-dl <url>` will auto-install missing dependencies by default. Use `--no-install` to disable that behavior.
+- Dependency preflight is driven entirely by each plugin's `config.json > required_binaries`.
+- `on_BinaryRequest__*` hooks emit only `Binary` records.
 
 ## Running Against URLs
 
@@ -72,6 +74,8 @@ abx-dl --output=./runs/example 'https://example.com'
 - By default, output is written into the current working directory.
 - Expect an `index.jsonl` file plus plugin-specific subdirectories such as `./title/`, `./wget/`, `./screenshot/`, and `./pdf/`.
 - For clean automation, create a throwaway working directory first or always pass `--output=...`.
+- `on_CrawlSetup__*` hooks do not emit stdout JSONL records.
+- `on_Snapshot__*` hooks emit `ArchiveResult` and may also emit `Snapshot` and `Tag`.
 
 Example:
 
@@ -101,6 +105,9 @@ LIB_DIR=./.abx/lib PERSONAS_DIR=./.abx/personas abx-dl 'https://example.com'
 ```
 
 - User config is stored in `~/.config/abx/config.env`; runtime-derived cache entries are stored in `~/.config/abx/derived.env`.
+- `config.env` is user-owned only.
+- `derived.env` stores derived binary cache entries such as resolved `*_BINARY` paths and `ABX_INSTALL_CACHE`.
+- `MachineService` keeps those layers separate during a run instead of merging them together.
 - Use `abx-dl config` to inspect or save defaults:
 
 ```bash
