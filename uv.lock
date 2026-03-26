@@ -4,7 +4,7 @@ requires-python = ">=3.11"
 
 [[package]]
 name = "abx-dl"
-version = "1.10.19"
+version = "1.10.20"
 source = { editable = "." }
 dependencies = [
     { name = "abx-pkg" },
@@ -42,8 +42,8 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "abx-pkg", specifier = ">=1.9.19" },
-    { name = "abx-plugins", specifier = ">=1.10.19" },
+    { name = "abx-pkg", editable = "../abx-pkg" },
+    { name = "abx-plugins", editable = "../abx-plugins" },
     { name = "abxbus", specifier = ">=2.4.9" },
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=7.1.1" },
     { name = "flask", marker = "extra == 'dev'", specifier = ">=3.0" },
@@ -75,31 +75,75 @@ dev = [
 [[package]]
 name = "abx-pkg"
 version = "1.9.19"
-source = { registry = "https://pypi.org/simple" }
+source = { editable = "../abx-pkg" }
 dependencies = [
     { name = "pip" },
     { name = "platformdirs" },
     { name = "pydantic" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/d0/54/a195241e80c9d814bf8a2895c10c661554264d45c92deec26c6b6f30785e/abx_pkg-1.9.19.tar.gz", hash = "sha256:7e32173953e5194fb8dbaf038167a69d0347869eb9118a00b5d6711b8f4e78c1", size = 152588, upload-time = "2026-03-23T19:35:43.469Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/67/68/2362eccb3515f88e507494ee7d50a43531effeeba73041618d67f44927ce/abx_pkg-1.9.19-py3-none-any.whl", hash = "sha256:dc9ea2639369fca32626205c2519febaf8517058ad57ad62b38700368ffd43ac", size = 64769, upload-time = "2026-03-23T19:35:44.449Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "abx-pkg", extras = ["rich", "pyinfra", "ansible"], marker = "extra == 'all'" },
+    { name = "ansible", marker = "extra == 'ansible'", specifier = ">=12.3.0" },
+    { name = "ansible-core", marker = "extra == 'ansible'", specifier = ">=2.0.0" },
+    { name = "ansible-runner", marker = "extra == 'ansible'", specifier = ">=2.4.2" },
+    { name = "pip", specifier = ">=26.0.1" },
+    { name = "platformdirs", specifier = ">=4.9.2" },
+    { name = "pydantic", specifier = ">=2.12.5" },
+    { name = "pyinfra", marker = "extra == 'pyinfra'", specifier = ">=3.6.1" },
+    { name = "rich", marker = "extra == 'rich'", specifier = ">=14.0.0" },
+    { name = "typing-extensions", specifier = ">=4.15.0" },
+]
+provides-extras = ["rich", "pyinfra", "ansible", "all"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "django", specifier = ">=4.0" },
+    { name = "django-admin-data-views", specifier = ">=0.3.1" },
+    { name = "django-jsonform", specifier = ">=2.22.0" },
+    { name = "django-pydantic-field", specifier = ">=0.3.9" },
+    { name = "django-stubs", specifier = ">=5.0.0" },
+    { name = "mypy", specifier = ">=1.19.1" },
+    { name = "prek", specifier = ">=0.3.6" },
+    { name = "pyright" },
+    { name = "pytest", specifier = ">=9.0.2" },
+    { name = "rich", specifier = ">=14.0.0" },
+    { name = "ruff", specifier = ">=0.15.7" },
+    { name = "ty", specifier = ">=0.0.24" },
 ]
 
 [[package]]
 name = "abx-plugins"
-version = "1.10.19"
-source = { registry = "https://pypi.org/simple" }
+version = "1.10.20"
+source = { editable = "../abx-plugins" }
 dependencies = [
     { name = "abx-pkg" },
-    { name = "pydantic-settings" },
+    { name = "abxbus" },
+    { name = "jambo" },
     { name = "rich-click" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/80/87/32386ec18b046e5f746ab50d80e3c032f5b42b394fee7db02929f650baf5/abx_plugins-1.10.19.tar.gz", hash = "sha256:fc78c172a68e71b05345346b4de7f808ada2e146e0364805a68ab071d777d2a3", size = 539024, upload-time = "2026-03-23T19:40:44.526Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/cc/22/13a830f446161c24389d49fd91ba23beb864ddc02c1c40bcaa28ffe41d79/abx_plugins-1.10.19-py3-none-any.whl", hash = "sha256:0f6d0853292bcce819d04b621f640d893dcaed5a19bf6aa87ac059e7d40d469b", size = 751506, upload-time = "2026-03-23T19:40:45.797Z" },
+
+[package.metadata]
+requires-dist = [
+    { name = "abx-pkg", specifier = ">=1.9.19" },
+    { name = "abxbus", specifier = ">=2.4.9" },
+    { name = "feedparser", marker = "extra == 'dev'", specifier = ">=6.0.0" },
+    { name = "jambo", specifier = ">=0.1.7" },
+    { name = "jinja2", marker = "extra == 'dev'", specifier = ">=3.1.0" },
+    { name = "pyright", marker = "extra == 'dev'", specifier = ">=1.1.408" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.2" },
+    { name = "pytest-httpserver", marker = "extra == 'dev'", specifier = ">=1.1.0" },
+    { name = "requests", marker = "extra == 'dev'", specifier = ">=2.28.0" },
+    { name = "rich-click", specifier = ">=1.9.7" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.2" },
+    { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.18" },
 ]
+provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "prek", specifier = ">=0.3.6" }]
 
 [[package]]
 name = "abxbus"
@@ -1019,7 +1063,7 @@ wheels = [
 
 [[package]]
 name = "requests"
-version = "2.32.5"
+version = "2.33.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "certifi" },
@@ -1027,9 +1071,9 @@ dependencies = [
     { name = "idna" },
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c9/74/b3ff8e6c8446842c3f5c837e9c3dfcfe2018ea6ecef224c710c85ef728f4/requests-2.32.5.tar.gz", hash = "sha256:dbba0bac56e100853db0ea71b82b4dfd5fe2bf6d3754a8893c3af500cec7d7cf", size = 134517, upload-time = "2025-08-18T20:46:02.573Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/34/64/8860370b167a9721e8956ae116825caff829224fbca0ca6e7bf8ddef8430/requests-2.33.0.tar.gz", hash = "sha256:c7ebc5e8b0f21837386ad0e1c8fe8b829fa5f544d8df3b2253bff14ef29d7652", size = 134232, upload-time = "2026-03-25T15:10:41.586Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1e/db/4254e3eabe8020b458f1a747140d32277ec7a271daf1d235b70dc0b4e6e3/requests-2.32.5-py3-none-any.whl", hash = "sha256:2462f94637a34fd532264295e186976db0f5d453d1cdd31473c85a6a161affb6", size = 64738, upload-time = "2025-08-18T20:46:00.542Z" },
+    { url = "https://files.pythonhosted.org/packages/56/5d/c814546c2333ceea4ba42262d8c4d55763003e767fa169adc693bd524478/requests-2.33.0-py3-none-any.whl", hash = "sha256:3324635456fa185245e24865e810cecec7b4caf933d7eb133dcde67d48cee69b", size = 65017, upload-time = "2026-03-25T15:10:40.382Z" },
 ]
 
 [[package]]
