@@ -151,11 +151,11 @@ class ProcessService(BaseService):
             return "abort"
 
     async def on_CrawlPauseEvent(self, event: CrawlPauseEvent) -> None:
-        """Request interruption of the current foreground hook."""
+        """Wake the current foreground hook so it can interrupt itself cleanly."""
         self.pause_requested.set()
 
     async def on_CrawlAbortEvent(self, event: CrawlAbortEvent) -> None:
-        """Remember that the crawl should stop after the interrupted hook finishes."""
+        """Remember that the current interrupted hook should abort the crawl."""
         self.abort_requested = True
 
     async def on_ProcessEvent(self, event: ProcessEvent) -> None:
@@ -305,8 +305,8 @@ class ProcessService(BaseService):
             try:
                 deadline = asyncio.get_running_loop().time() + event.timeout if event.timeout else None
                 while True:
-                    interrupt_task: asyncio.Task[bool] | None = None
                     pending = {wait_task}
+                    interrupt_task: asyncio.Task[bool] | None = None
                     if interactive_interrupts:
                         interrupt_task = asyncio.create_task(self.pause_requested.wait())
                         pending.add(interrupt_task)

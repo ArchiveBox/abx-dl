@@ -95,6 +95,7 @@ from .events import (
     MachineEvent,
     slow_warning_timeout,
 )
+from .heartbeat import CrawlHeartbeat
 from .models import Snapshot, write_jsonl
 from .models import Hook, Plugin, discover_plugins, filter_plugins
 from .services import ArchiveResultService, BinaryService, CrawlService, MachineService, ProcessService, SnapshotService, TagService
@@ -489,6 +490,8 @@ async def download(
             snapshot_payload["id"] = str(extra_context["snapshot_id"])
         if "snapshot_depth" in extra_context:
             snapshot_payload["depth"] = int(extra_context["snapshot_depth"])
+        if "crawl_id" in extra_context:
+            snapshot_payload["crawl_id"] = str(extra_context["crawl_id"])
     snapshot = Snapshot(**snapshot_payload)
     write_jsonl(index_path, snapshot, also_print=emit_jsonl)
 
@@ -565,6 +568,15 @@ async def download(
             ),
         )
 
+    heartbeat = None
+    if crawl_setup_enabled or crawl_start_enabled or crawl_cleanup_enabled:
+        heartbeat = CrawlHeartbeat(
+            output_dir,
+            runtime=str(initial_user_config.get("ABX_RUNTIME", "abx-dl")),
+            crawl_id=snapshot.crawl_id or snapshot.id,
+        )
+        await heartbeat.start()
+
     try:
         if install_enabled:
             await bus.emit(
@@ -591,5 +603,7 @@ async def download(
             )
             await bus.emit(crawl_event)
     finally:
+        if heartbeat is not None:
+            await heartbeat.stop()
         if owns_bus:
             await bus.stop()

@@ -4,7 +4,7 @@ requires-python = ">=3.11"
 
 [[package]]
 name = "abx-dl"
-version = "1.10.20"
+version = "1.10.21"
 source = { editable = "." }
 dependencies = [
     { name = "abx-pkg" },
@@ -116,7 +116,7 @@ dev = [
 
 [[package]]
 name = "abx-plugins"
-version = "1.10.20"
+version = "1.10.21"
 source = { editable = "../abx-plugins" }
 dependencies = [
     { name = "abx-pkg" },
