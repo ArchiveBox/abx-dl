@@ -455,6 +455,23 @@ def discover_plugins(plugins_dir: Path = PLUGINS_DIR) -> dict[str, Plugin]:
     return plugins
 
 
+def plugins_matching_output(plugins: dict[str, Plugin], output_prefixes: list[str]) -> list[str]:
+    """Return plugin names whose output_mimetypes match any of the given prefixes.
+
+    A prefix like 'video/' matches 'video/mp4', 'video/webm', etc.
+    A prefix like 'text/html' matches exactly 'text/html'.
+    Matching is bidirectional: prefix 'video/' matches mimetype 'video/mp4',
+    and mimetype 'video/' (wildcard) matches prefix 'video/mp4'.
+    """
+    matched: list[str] = []
+    for name, plugin in plugins.items():
+        for mimetype in plugin.config.output_mimetypes:
+            if any(mimetype.startswith(p) or p.startswith(mimetype) for p in output_prefixes):
+                matched.append(name)
+                break
+    return matched
+
+
 def filter_plugins(plugins: dict[str, Plugin], names: list[str] | None, *, include_providers: bool = True) -> dict[str, Plugin]:
     """Filter plugins to only include specified names, plus transitive dependencies.
 
