@@ -66,14 +66,14 @@ abx-dl --plugins=title,wget,screenshot 'https://example.com'
 - Write into an explicit output directory:
 
 ```bash
-abx-dl --output=./runs/example 'https://example.com'
+abx-dl --dir=./runs/example 'https://example.com'
 ```
 
 ## Output Behavior
 
 - By default, output is written into the current working directory.
 - Expect an `index.jsonl` file plus plugin-specific subdirectories such as `./title/`, `./wget/`, `./screenshot/`, and `./pdf/`.
-- For clean automation, create a throwaway working directory first or always pass `--output=...`.
+- For clean automation, create a throwaway working directory first or always pass `--dir=...`.
 - `on_CrawlSetup__*` hooks do not emit stdout JSONL records.
 - `on_Snapshot__*` hooks emit `ArchiveResult` and may also emit `Snapshot` and `Tag`.
 
@@ -88,7 +88,7 @@ find . -maxdepth 2 -type f | sort
 ## Tuning Behavior
 
 - Useful CLI flags:
-  - `--plugins=title,wget,...`, `--output=DIR`, `--timeout=120`, `--no-install`
+  - `--plugins=title,wget,...`, `--output=video,text/html`, `--dir=DIR`, `--timeout=120`, `--no-install`
 
 - Useful env vars:
   - `TIMEOUT`, `USER_AGENT`, `CHECK_SSL_VALIDITY`
@@ -119,7 +119,7 @@ abx-dl config --set WGET_ENABLED=false
 
 ## Recommended Agent Workflow
 
-1. Run in a clean directory or pass `--output=...`.
+1. Run in a clean directory or pass `--dir=...`.
 2. Install the CLI with `uv run` or `uvx`.
 3. Run `abx-dl plugins` or `abx-dl install ...` if dependency state matters.
 4. Run `abx-dl '<url>'` with any needed `--plugins`, `--timeout`, or env vars.

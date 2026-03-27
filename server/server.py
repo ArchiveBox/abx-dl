@@ -166,7 +166,7 @@ def create_session(url: str, plugins: list[str], timeout: int = DEFAULT_TIMEOUT)
 
 def _run_download(sid: str, url: str, plugins: list[str], timeout: int) -> None:
     sdir = session_dir(sid)
-    cmd = ["abx-dl", "dl", "--output", str(sdir)]
+    cmd = ["abx-dl", "dl", "--dir", str(sdir)]
     if plugins:
         cmd += ["--plugins", ",".join(plugins)]
     cmd += ["--timeout", str(timeout)]

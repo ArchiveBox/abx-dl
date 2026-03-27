@@ -104,7 +104,7 @@ One-off tuning is often easiest via env vars or CLI args:
 ```bash
 TIMEOUT=120 USER_AGENT='Mozilla/5.0 (abx-dl smoke test)' abx-dl 'https://example.com'
 CHROME_BINARY=/usr/bin/chromium --plugins=screenshot,pdf 'https://example.com'
-abx-dl --output=./runs/example --plugins=wget,title --timeout=90 'https://example.com'
+abx-dl --dir=./runs/example --plugins=wget,title --timeout=90 'https://example.com'
 ```
 
 <br/>
@@ -141,7 +141,7 @@ abx-dl --plugins=wget,title,screenshot,pdf 'https://example.com'
 abx-dl --no-install 'https://example.com'
 
 # Specify output directory:
-abx-dl --output=./downloads 'https://example.com'
+abx-dl --dir=./downloads 'https://example.com'
 
 # Set timeout:
 abx-dl --timeout=120 'https://example.com'
@@ -210,7 +210,7 @@ You can override the install location with `LIB_DIR=/path/to/lib abx-dl install 
 
 ### Output Structure
 
-By default, `abx-dl` writes results into the current working directory. Each run creates an `index.jsonl` manifest plus one subdirectory per plugin that produced output. If you want to keep runs isolated, `cd` into a scratch directory first or pass `--output=/path/to/run`.
+By default, `abx-dl` writes results into the current working directory. Each run creates an `index.jsonl` manifest plus one subdirectory per plugin that produced output. If you want to keep runs isolated, `cd` into a scratch directory first or pass `--dir=/path/to/run`.
 
 ```bash
 mkdir -p /tmp/abx-run && cd /tmp/abx-run
