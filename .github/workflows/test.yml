@@ -294,7 +294,7 @@ jobs:
 
       - name: Test all plugins
         run: |
-          uv run --no-sync --no-sources abx-dl dl 'https://example.com' --output=./test-output --timeout=120
+          uv run --no-sync --no-sources abx-dl dl 'https://example.com' --dir=./test-output --timeout=120
 
           echo "=== Output structure ==="
           find ./test-output -type f | head -50

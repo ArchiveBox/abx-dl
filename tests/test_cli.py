@@ -758,7 +758,7 @@ def test_readme_dl_command_downloads_example_dot_com_with_real_output(tmp_path: 
         tmp_path,
         "dl",
         "--plugins=wget",
-        f"--output={output_dir}",
+        f"--dir={output_dir}",
         "https://example.com",
     )
     assert result.returncode == 0

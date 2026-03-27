@@ -55,7 +55,7 @@ from .events import (
 from .limits import parse_filesize_to_bytes
 from .orchestrator import compute_install_phase_timeout, compute_phase_timeout, create_bus, download, get_install_plugins, install_plugins
 from .models import ArchiveResult, PluginEnv, Process, now_iso
-from .models import Hook, Plugin, discover_plugins, filter_plugins
+from .models import Hook, Plugin, discover_plugins, filter_plugins, plugins_matching_output
 from .output_files import OutputFile
 
 console = Console()
@@ -1133,7 +1133,14 @@ def cli(ctx):
 @cli.command()
 @click.argument("url")
 @click.option("--plugins", "-p", "plugin_list", help="Comma-separated list of plugins to use")
-@click.option("--output", "-o", "output_dir", type=click.Path(), help="Output directory")
+@click.option(
+    "--output",
+    "-o",
+    "output_types",
+    multiple=True,
+    help="Output MIME type prefixes to select plugins by (e.g. 'video,text/html'); repeatable",
+)
+@click.option("--dir", "-d", "output_dir", type=click.Path(), help="Output directory")
 @click.option("--timeout", "-t", type=int, help="Timeout in seconds")
 @click.option("--max-urls", type=int, default=0, help="Maximum number of URLs to snapshot for this crawl (0 = unlimited)")
 @click.option("--max-size", default="0", help="Maximum total crawl size in bytes or units like 45mb / 1gb (0 = unlimited)")
@@ -1145,6 +1152,7 @@ def dl(
     ctx,
     url: str,
     plugin_list: str | None,
+    output_types: tuple[str, ...],
     output_dir: str | None,
     timeout: int | None,
     dry_run: bool = False,
@@ -1164,16 +1172,28 @@ def dl(
 
         abx-dl --plugins=wget,ytdlp,git 'https://example.com'
 
+        abx-dl --output=video,text/html 'https://example.com'
+
+        abx-dl -o image -o video -o text/ 'https://example.com'
+
         abx-dl --no-install 'https://example.com'
 
         abx-dl dl 'https://example.com'
 
         abx-dl dl --plugins=wget,ytdlp,git 'https://example.com'
 
+        abx-dl dl --output=video,text/html 'https://example.com'
+
         abx-dl dl --no-install 'https://example.com'
     """
     plugins = ctx.obj["plugins"]
     selected = [p.strip() for p in plugin_list.split(",")] if plugin_list else None
+    if output_types:
+        prefixes = [t.strip() for entry in output_types for t in entry.split(",") if t.strip()]
+        output_matched = plugins_matching_output(plugins, prefixes)
+        if not output_matched:
+            raise click.UsageError(f"No plugins found matching output types: {', '.join(prefixes)}")
+        selected = list(set(selected or []) | set(output_matched))
     out_path = Path(output_dir) if output_dir else Path.cwd()
     config_overrides: dict[str, object] = {"TIMEOUT": timeout} if timeout else {}
     if max_urls < 0:
