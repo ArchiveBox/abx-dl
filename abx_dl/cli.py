@@ -1133,8 +1133,8 @@ def cli(ctx):
 @cli.command()
 @click.argument("url")
 @click.option("--plugins", "-p", "plugin_list", help="Comma-separated list of plugins to use")
-@click.option("--output", "output_types", help="Comma-separated output MIME type prefixes to select plugins by (e.g. 'video,text/html')")
-@click.option("--output-dir", "-o", "output_dir", type=click.Path(), help="Output directory")
+@click.option("--output", "-o", "output_types", multiple=True, help="Output MIME type prefixes to select plugins by (e.g. 'video,text/html'); repeatable")
+@click.option("--dir", "-d", "output_dir", type=click.Path(), help="Output directory")
 @click.option("--timeout", "-t", type=int, help="Timeout in seconds")
 @click.option("--max-urls", type=int, default=0, help="Maximum number of URLs to snapshot for this crawl (0 = unlimited)")
 @click.option("--max-size", default="0", help="Maximum total crawl size in bytes or units like 45mb / 1gb (0 = unlimited)")
@@ -1146,7 +1146,7 @@ def dl(
     ctx,
     url: str,
     plugin_list: str | None,
-    output_types: str | None,
+    output_types: tuple[str, ...],
     output_dir: str | None,
     timeout: int | None,
     dry_run: bool = False,
@@ -1168,6 +1168,8 @@ def dl(
 
         abx-dl --output=video,text/html 'https://example.com'
 
+        abx-dl -o image -o video -o text/ 'https://example.com'
+
         abx-dl --no-install 'https://example.com'
 
         abx-dl dl 'https://example.com'
@@ -1181,7 +1183,7 @@ def dl(
     plugins = ctx.obj["plugins"]
     selected = [p.strip() for p in plugin_list.split(",")] if plugin_list else None
     if output_types:
-        prefixes = [t.strip() for t in output_types.split(",") if t.strip()]
+        prefixes = [t.strip() for entry in output_types for t in entry.split(",") if t.strip()]
         output_matched = plugins_matching_output(plugins, prefixes)
         if not output_matched:
             raise click.UsageError(f"No plugins found matching output types: {', '.join(prefixes)}")
