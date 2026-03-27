@@ -1133,8 +1133,8 @@ def cli(ctx):
 @cli.command()
 @click.argument("url")
 @click.option("--plugins", "-p", "plugin_list", help="Comma-separated list of plugins to use")
-@click.option("--output-types", "output_types", help="Comma-separated output MIME type prefixes to select plugins by (e.g. 'video/,text/html')")
-@click.option("--output", "-o", "output_dir", type=click.Path(), help="Output directory")
+@click.option("--output", "output_types", help="Comma-separated output MIME type prefixes to select plugins by (e.g. 'video,text/html')")
+@click.option("--output-dir", "-o", "output_dir", type=click.Path(), help="Output directory")
 @click.option("--timeout", "-t", type=int, help="Timeout in seconds")
 @click.option("--max-urls", type=int, default=0, help="Maximum number of URLs to snapshot for this crawl (0 = unlimited)")
 @click.option("--max-size", default="0", help="Maximum total crawl size in bytes or units like 45mb / 1gb (0 = unlimited)")
@@ -1166,7 +1166,7 @@ def dl(
 
         abx-dl --plugins=wget,ytdlp,git 'https://example.com'
 
-        abx-dl --output-types=video/,text/html 'https://example.com'
+        abx-dl --output=video,text/html 'https://example.com'
 
         abx-dl --no-install 'https://example.com'
 
@@ -1174,7 +1174,7 @@ def dl(
 
         abx-dl dl --plugins=wget,ytdlp,git 'https://example.com'
 
-        abx-dl dl --output-types=video/,text/html 'https://example.com'
+        abx-dl dl --output=video,text/html 'https://example.com'
 
         abx-dl dl --no-install 'https://example.com'
     """
