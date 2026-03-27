@@ -1133,7 +1133,13 @@ def cli(ctx):
 @cli.command()
 @click.argument("url")
 @click.option("--plugins", "-p", "plugin_list", help="Comma-separated list of plugins to use")
-@click.option("--output", "-o", "output_types", multiple=True, help="Output MIME type prefixes to select plugins by (e.g. 'video,text/html'); repeatable")
+@click.option(
+    "--output",
+    "-o",
+    "output_types",
+    multiple=True,
+    help="Output MIME type prefixes to select plugins by (e.g. 'video,text/html'); repeatable",
+)
 @click.option("--dir", "-d", "output_dir", type=click.Path(), help="Output directory")
 @click.option("--timeout", "-t", type=int, help="Timeout in seconds")
 @click.option("--max-urls", type=int, default=0, help="Maximum number of URLs to snapshot for this crawl (0 = unlimited)")

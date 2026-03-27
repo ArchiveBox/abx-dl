@@ -463,7 +463,7 @@ def plugins_matching_output(plugins: dict[str, Plugin], output_prefixes: list[st
     declaring 'video/' matches a query for 'video/mp4'.
     """
     # normalize: 'video' -> 'video/', 'text/html' stays as-is
-    prefixes = [p if '/' in p else p + '/' for p in output_prefixes]
+    prefixes = [p if "/" in p else p + "/" for p in output_prefixes]
     matched: list[str] = []
     for name, plugin in plugins.items():
         for mimetype in plugin.config.output_mimetypes:
