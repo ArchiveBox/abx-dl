@@ -27,7 +27,7 @@ It's useful for scraping, downloading, OSINT, digital preservation, and more.
 abx-dl --plugins=wget,title,screenshot,pdf,readability,git 'https://example.com'
 ```
 
-`abx-dl` runs all plugins by default, or you can specify `--plugins=...` for specific methods:
+`abx-dl` runs all plugins by default (and auto installs dependencies). You can specify `--plugins=wget,favicon,title` or filters like `--output=html,pdf,ico,text/` to limit plugin selection.
 - HTML, JS, CSS, images, etc. rendered with a headless browser
 - title, favicon, headers, outlinks, and other metadata
 - audio, video, subtitles, playlists, comments
@@ -39,12 +39,11 @@ abx-dl --plugins=wget,title,screenshot,pdf,readability,git 'https://example.com'
 
 #### 🧩 How does it work?
 
-`abx-dl` uses the **[ABX Plugin Library](https://docs.sweeting.me/s/archivebox-plugin-ecosystem-announcement)** (shared with [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox)) to run a collection of downloading and scraping tools.
+`abx-dl` uses the **[Plugin Library](https://archivebox.github.io/abx-plugins/)** (shared with [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox)) to run a collection of downloading and scraping tools.
 
-Plugins are loaded from the installed `abx-plugins` package (or from `ABX_PLUGINS_DIR` if you override it) and execute in distinct phases:
-1. **Install phase** reads each enabled plugin's `config.json > required_binaries` and emits `BinaryRequestEvent`s
-2. **BinaryRequest hooks** (`on_BinaryRequest__*`) from provider plugins resolve or install those binaries and emit `Binary` records only
-3. **CrawlSetup hooks** (`on_CrawlSetup__*`) launch/configure crawl-scoped daemons and shared runtime state and emit no stdout JSONL records
+Plugins are loaded from the installed [`abx-plugins`](https://pypi.org/project/abx-plugins/) package (or from `ABX_PLUGINS_DIR` if you override it) and execute in distinct phases:
+1. **Install phase** runner reads plugins `config.json`: `required_binaries` and emits `BinaryRequestEvent`s ➡️ which go to **BinaryRequest hooks** (`on_BinaryRequest__*`) that answer requests using apt/brew/env/etc.
+2. **CrawlSetup hooks** (`on_CrawlSetup__*`) launch/configure expensive crawl-scoped processes like chrome, ot trigger side effects. they emit no stdout JSONL records.
 4. **Snapshot hooks** (`on_Snapshot__*`) run per URL to extract content and emit only `ArchiveResult`, `Snapshot`, and `Tag` records
 
 
