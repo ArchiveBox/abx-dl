@@ -134,7 +134,11 @@ uvx abx-dl@latest install
 # Default command - a bare URL archives with all enabled plugins:
 abx-dl 'https://example.com'
 
-# Limit work to a subset of plugins:
+# Select plugins by output type (mimetypes, categories, or file extensions):
+abx-dl --output=html,pdf,video/ 'https://example.com'
+abx-dl -o text -o image -o mp4 'https://example.com'
+
+# Limit work to a subset of plugins by name:
 abx-dl --plugins=wget,title,screenshot,pdf 'https://example.com'
 
 # Skip auto-installing missing dependencies (emit warnings instead):
