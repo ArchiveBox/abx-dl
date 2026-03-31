@@ -43,7 +43,7 @@ abx-dl --plugins=wget,title,screenshot,pdf,readability,git 'https://example.com'
 
 Plugins are loaded from the installed [`abx-plugins`](https://pypi.org/project/abx-plugins/) package (or from `ABX_PLUGINS_DIR` if you override it) and execute in distinct phases:
 1. **Install phase** runner reads plugins `config.json`: `required_binaries` and emits `BinaryRequestEvent`s ➡️ which go to **BinaryRequest hooks** (`on_BinaryRequest__*`) that answer requests using apt/brew/env/etc.
-2. **CrawlSetup hooks** (`on_CrawlSetup__*`) launch/configure expensive crawl-scoped processes like chrome, ot trigger side effects. they emit no stdout JSONL records.
+2. **CrawlSetup hooks** (`on_CrawlSetup__*`) launch/configure expensive crawl-scoped processes like chrome, or trigger side effects. they emit no stdout JSONL records.
 4. **Snapshot hooks** (`on_Snapshot__*`) run per URL to extract content and emit only `ArchiveResult`, `Snapshot`, and `Tag` records
 
 

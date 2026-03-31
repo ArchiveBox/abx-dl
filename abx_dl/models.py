@@ -462,6 +462,7 @@ def _expand_extension_to_mimetypes(token: str) -> list[str]:
     it as a MIME-type category prefix like 'video' -> 'video/').
     """
     import mimetypes
+
     mimetypes.init()
 
     ext = token if token.startswith(".") else f".{token}"
