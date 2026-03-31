@@ -489,30 +489,21 @@ def plugins_matching_output(plugins: dict[str, Plugin], output_prefixes: list[st
     'json') are expanded to their MIME types first, so
     ``--output=html,pdf,video`` works alongside ``--output=text/html,video/``.
     """
-    # Well-known top-level MIME type categories. These take priority over
-    # extension lookup (e.g. 'text' means 'text/*', not '.text' -> 'text/plain').
-    _MIME_CATEGORIES = frozenset({
-        "application", "audio", "chemical", "font", "image",
-        "message", "model", "multipart", "text", "video",
-        "x-conference",
-    })
-
     # Expand each user-supplied token into one or more MIME-type prefixes.
+    # Bare tokens are treated as *both* a category prefix ('video' -> 'video/')
+    # and a file extension ('mp4' -> 'video/mp4').  The category prefix is
+    # always added so that e.g. 'text' matches 'text/*' even though '.text'
+    # also resolves to 'text/plain'.  Spurious prefixes like 'html/' are
+    # harmless — they just won't match any plugin.
     prefixes: list[str] = []
     for p in output_prefixes:
         if "/" in p:
-            # Already a mimetype or category prefix like 'text/' or 'text/html'
             prefixes.append(p)
-        elif p in _MIME_CATEGORIES:
-            # Known MIME category: 'video' -> 'video/'
-            prefixes.append(p + "/")
         else:
-            expanded = _expand_extension_to_mimetypes(p)
-            if expanded:
-                prefixes.extend(expanded)
-            else:
-                # Unknown token without '/' — treat as category prefix as fallback
-                prefixes.append(p + "/")
+            # Always treat as a potential category prefix
+            prefixes.append(p + "/")
+            # Also expand as a file extension if possible
+            prefixes.extend(_expand_extension_to_mimetypes(p))
 
     matched: list[str] = []
     for name, plugin in plugins.items():
