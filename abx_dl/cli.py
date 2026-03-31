@@ -1298,7 +1298,7 @@ def dl(
             download_task = loop.create_task(
                 download(
                     url,
-                    plugins,
+                    selected_plugins,
                     out_path,
                     selected,
                     config_overrides or None,
