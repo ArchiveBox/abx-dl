@@ -1138,7 +1138,7 @@ def cli(ctx):
     "-o",
     "output_types",
     multiple=True,
-    help="Output MIME type prefixes to select plugins by (e.g. 'video,text/html'); repeatable",
+    help="Output MIME types, categories, or file extensions to select plugins by (e.g. 'video,text/html,pdf,json'); repeatable",
 )
 @click.option("--dir", "-d", "output_dir", type=click.Path(), help="Output directory")
 @click.option("--timeout", "-t", type=int, help="Timeout in seconds")
@@ -1173,6 +1173,8 @@ def dl(
         abx-dl --plugins=wget,ytdlp,git 'https://example.com'
 
         abx-dl --output=video,text/html 'https://example.com'
+
+        abx-dl --output=html,json,txt,pdf,video 'https://example.com'
 
         abx-dl -o image -o video -o text/ 'https://example.com'
 
