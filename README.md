@@ -102,9 +102,14 @@ When embedded in ArchiveBox, the equivalent derived cache comes from persisted `
 One-off tuning is often easiest via env vars or CLI args:
 
 ```bash
-TIMEOUT=120 USER_AGENT='Mozilla/5.0 (abx-dl smoke test)' abx-dl 'https://example.com'
-CHROME_BINARY=/usr/bin/chromium --plugins=screenshot,pdf 'https://example.com'
-abx-dl --dir=./runs/example --plugins=wget,title --timeout=90 'https://example.com'
+env \
+  CHROME_BINARY=/usr/bin/chromium \
+  TIMEOUT=120 \
+  USER_AGENT='Mozilla/5.0 (abx-dl smoke test)' \
+  abx-dl 'https://example.com'  'https://example.com'
+
+# CLI args
+abx-dl --dir=/tmp/test --plugins=wget,title,favicon --output=html,txt,css,js,ico,png,pdf --timeout=90 'https://example.com'
 ```
 
 <br/>
