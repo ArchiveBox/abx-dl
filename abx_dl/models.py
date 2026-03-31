@@ -455,15 +455,57 @@ def discover_plugins(plugins_dir: Path = PLUGINS_DIR) -> dict[str, Plugin]:
     return plugins
 
 
+def _expand_extension_to_mimetypes(token: str) -> list[str]:
+    """If *token* looks like a file extension (e.g. 'html', 'pdf'), return
+    all MIME types that map to that extension.  Returns an empty list when the
+    token is not a recognised extension (so the caller can fall back to treating
+    it as a MIME-type category prefix like 'video' -> 'video/').
+    """
+    import mimetypes
+
+    mimetypes.init()
+
+    ext = token if token.startswith(".") else f".{token}"
+    # types_map gives the canonical mapping; check both built-in maps
+    results: list[str] = []
+    for type_map in (mimetypes.types_map, mimetypes.common_types):
+        mt = type_map.get(ext)
+        if mt and mt not in results:
+            results.append(mt)
+    # Also try guess_type which consults user-installed MIME databases
+    guessed, _ = mimetypes.guess_type(f"file{ext}")
+    if guessed and guessed not in results:
+        results.append(guessed)
+    return results
+
+
 def plugins_matching_output(plugins: dict[str, Plugin], output_prefixes: list[str]) -> list[str]:
     """Return plugin names whose output_mimetypes match any of the given prefixes.
 
     Prefixes without a '/' get one appended so 'video' matches 'video/*'.
     Matching is bidirectional: 'video/' matches 'video/mp4', and a plugin
     declaring 'video/' matches a query for 'video/mp4'.
+
+    Bare tokens that correspond to a known file extension (e.g. 'html', 'pdf',
+    'json') are expanded to their MIME types first, so
+    ``--output=html,pdf,video`` works alongside ``--output=text/html,video/``.
     """
-    # normalize: 'video' -> 'video/', 'text/html' stays as-is
-    prefixes = [p if "/" in p else p + "/" for p in output_prefixes]
+    # Expand each user-supplied token into one or more MIME-type prefixes.
+    # Bare tokens are treated as *both* a category prefix ('video' -> 'video/')
+    # and a file extension ('mp4' -> 'video/mp4').  The category prefix is
+    # always added so that e.g. 'text' matches 'text/*' even though '.text'
+    # also resolves to 'text/plain'.  Spurious prefixes like 'html/' are
+    # harmless — they just won't match any plugin.
+    prefixes: list[str] = []
+    for p in output_prefixes:
+        if "/" in p:
+            prefixes.append(p)
+        else:
+            # Always treat as a potential category prefix
+            prefixes.append(p + "/")
+            # Also expand as a file extension if possible
+            prefixes.extend(_expand_extension_to_mimetypes(p))
+
     matched: list[str] = []
     for name, plugin in plugins.items():
         for mimetype in plugin.config.output_mimetypes:

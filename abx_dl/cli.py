@@ -1138,12 +1138,13 @@ def cli(ctx):
     "-o",
     "output_types",
     multiple=True,
-    help="Output MIME type prefixes to select plugins by (e.g. 'video,text/html'); repeatable",
+    help="Output MIME types, categories, or file extensions to select plugins by (e.g. 'video,text/html,pdf,json'); repeatable",
 )
 @click.option("--dir", "-d", "output_dir", type=click.Path(), help="Output directory")
 @click.option("--timeout", "-t", type=int, help="Timeout in seconds")
 @click.option("--max-urls", type=int, default=0, help="Maximum number of URLs to snapshot for this crawl (0 = unlimited)")
 @click.option("--max-size", default="0", help="Maximum total crawl size in bytes or units like 45mb / 1gb (0 = unlimited)")
+@click.option("--disable", "disable_list", help="Comma-separated list of plugins to force-disable (overrides --plugins and --output)")
 @click.option("--dry-run", is_flag=True, help="Enable abx-pkg dry-run mode and skip running snapshot hook subprocesses")
 @click.option("--no-install", "no_install", is_flag=True, help="Skip plugins with missing dependencies instead of auto-installing")
 @click.option("--debug", is_flag=True, help="Print the EventBus tree on exit or abort")
@@ -1155,6 +1156,7 @@ def dl(
     output_types: tuple[str, ...],
     output_dir: str | None,
     timeout: int | None,
+    disable_list: str | None = None,
     dry_run: bool = False,
     no_install: bool = False,
     debug: bool = False,
@@ -1174,7 +1176,11 @@ def dl(
 
         abx-dl --output=video,text/html 'https://example.com'
 
+        abx-dl --output=html,json,txt,pdf,video 'https://example.com'
+
         abx-dl -o image -o video -o text/ 'https://example.com'
+
+        abx-dl --disable=chrome,archivedotorg 'https://example.com'
 
         abx-dl --no-install 'https://example.com'
 
@@ -1216,6 +1222,11 @@ def dl(
     ui_console = stderr_console if stderr_is_tty else console
 
     selected_plugins = filter_plugins(plugins, selected) if selected else plugins
+    if disable_list:
+        disabled = {p.strip().lower() for p in disable_list.split(",") if p.strip()}
+        selected_plugins = {k: v for k, v in selected_plugins.items() if k.lower() not in disabled}
+    # Update selected to match the final plugin set so download() doesn't re-include disabled plugins
+    selected = list(selected_plugins.keys())
     install_plugins_for_phase = get_install_plugins(selected_plugins)
     crawl_setup_hooks: list[tuple[Plugin, Hook]] = []
     snapshot_hooks: list[tuple[Plugin, Hook]] = []
@@ -1287,7 +1298,7 @@ def dl(
             download_task = loop.create_task(
                 download(
                     url,
-                    plugins,
+                    selected_plugins,
                     out_path,
                     selected,
                     config_overrides or None,
