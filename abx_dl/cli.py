@@ -1223,8 +1223,10 @@ def dl(
 
     selected_plugins = filter_plugins(plugins, selected) if selected else plugins
     if disable_list:
-        disabled = {p.strip() for p in disable_list.split(",") if p.strip()}
-        selected_plugins = {k: v for k, v in selected_plugins.items() if k not in disabled}
+        disabled = {p.strip().lower() for p in disable_list.split(",") if p.strip()}
+        selected_plugins = {k: v for k, v in selected_plugins.items() if k.lower() not in disabled}
+    # Update selected to match the final plugin set so download() doesn't re-include disabled plugins
+    selected = list(selected_plugins.keys())
     install_plugins_for_phase = get_install_plugins(selected_plugins)
     crawl_setup_hooks: list[tuple[Plugin, Hook]] = []
     snapshot_hooks: list[tuple[Plugin, Hook]] = []
