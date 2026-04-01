@@ -291,7 +291,7 @@ def get_session_jsonl(sid: str) -> list[dict[str, Any]]:
     records = []
     for line in path.read_text(errors="replace").strip().splitlines():
         line = line.strip()
-        if line:
+        if line and line.startswith("{"):
             try:
                 records.append(json.loads(line))
             except json.JSONDecodeError:
