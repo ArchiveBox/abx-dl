@@ -300,7 +300,7 @@ jobs:
           find ./test-output -type f | head -50
 
           echo "=== Results ==="
-          cat ./test-output/index.json | jq '.'
+          grep '^{' ./test-output/index.jsonl | jq -s '.'
         env:
           ABX_PLUGINS_DIR: ${{ runner.temp }}/abx-plugins/abx_plugins/plugins
           CHROME_SANDBOX: "false"
