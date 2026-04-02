@@ -376,6 +376,9 @@ class BinaryRequestEvent(BaseEvent):
     resolution). Provider hooks self-select based on this field.
     """
 
+    model_config = ConfigDict(extra="allow")
+    event_handler_concurrency: EventHandlerConcurrencyMode | None = EventHandlerConcurrencyMode.SERIAL
+
     name: str = Field(min_length=1)
     plugin_name: str = ""
     hook_name: str = ""

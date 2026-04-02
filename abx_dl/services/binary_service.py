@@ -149,13 +149,18 @@ class BinaryService(BaseService):
                     return
 
                 binary_id = event.binary_id or uuid7()
-                hook_args = [f"--name={event.name}"]
+                request_payload = event.model_dump(mode="json", exclude_none=True)
                 if inherited_binproviders:
-                    hook_args.append(f"--binproviders={inherited_binproviders}")
-                if event.min_version:
-                    hook_args.append(f"--min-version={event.min_version}")
-                if event.overrides:
-                    hook_args.append(f"--overrides={json.dumps(event.overrides)}")
+                    request_payload["binproviders"] = inherited_binproviders
+                hook_args: list[str] = []
+                for key, value in request_payload.items():
+                    if value is None:
+                        continue
+                    option = f"--{key.replace('_', '-')}"
+                    if isinstance(value, str):
+                        hook_args.append(f"{option}={value}")
+                    else:
+                        hook_args.append(f"{option}={json.dumps(value)}")
 
                 run_output_dir = Path(event.output_dir).parent
                 plugin_output_dir = run_output_dir / plugin.name
