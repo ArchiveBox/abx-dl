@@ -42,7 +42,7 @@ dependencies = [
     "rich-click>=1.8.0",
     "rich>=13.0.0",
     "abxbus>=2.4.9",
-    "abx-pkg>=1.9.19",
+    "abx-pkg>=1.9.20",
     "abx-plugins>=1.10.21",
     "jambo>=0.1.7",
     "pydantic>=2.0.0",
@@ -96,9 +96,14 @@ ignore = ["E731", "E303", "E266", "E241", "E222"]
 [tool.pytest.ini_options]
 testpaths = [ "tests", "server/tests" ]
 
+[tool.uv]
+exclude-newer = "5 days"
+exclude-newer-package = { abx-dl = "1 second", abx-pkg = "1 second", abxbus = "1 second" }
+
 [tool.uv.sources]
 abx-plugins = { path = "../abx-plugins", editable = true }
 abx-pkg = { path = "../abx-pkg", editable = true }
+abxbus = { path = "../abxbus", editable = true }
 
 [tool.mypy]
 mypy_path = "abx_dl,tests,server,abx_dl/typings"
