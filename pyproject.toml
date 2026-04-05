@@ -52,22 +52,6 @@ dependencies = [
     "psutil>=7.2.1",
 ]
 
-[project.optional-dependencies]
-dev = [
-    # TESTING
-    "flask>=3.0",
-    "pytest>=8.0.0",
-    "pytest-httpserver>=1.1.0",
-    "pytest-xdist>=3.5.0",
-    # DEBUGGING
-    # "ipdb>=0.13.13",
-    # "viztracer",
-    # LINTING
-    "ruff>=0.6.6",
-    "flake8>=7.1.1",
-    "mypy>=1.11.2",
-]
-
 [build-system]
 requires = ["pdm-backend"]
 build-backend = "pdm.backend"
@@ -147,7 +131,14 @@ pythonPlatform = "Linux"
 
 [dependency-groups]
 dev = [
+    # TESTING
     "flask>=3.0",
+    "pytest>=8.0.0",
+    "pytest-httpserver>=1.1.0",
+    "pytest-xdist>=3.5.0",
+    # LINTING / TYPECHECKING
+    "flake8>=7.1.1",
+    "mypy>=1.11.2",
     "prek>=0.3.6",
     "pyright>=1.1.408",
     "ruff>=0.15.7",

@@ -1,3 +1,6 @@
+from pathlib import Path
+
+from abx_dl.config import get_initial_env, get_required_binary_requests
 from abx_dl.models import discover_plugins, filter_plugins, parse_hook_filename
 
 
@@ -53,3 +56,28 @@ def test_filter_plugins_includes_transitive_provider_dependencies() -> None:
     assert "apt" in selected
     assert "brew" in selected
     assert "npm" in selected
+
+
+def test_required_binary_requests_ignore_nonexistent_derived_binary_paths() -> None:
+    plugins = discover_plugins()
+    plugin = plugins["ytdlp"]
+
+    requests = get_required_binary_requests(
+        plugin,
+        plugin.config.required_binaries,
+        overrides=get_initial_env(),
+        derived_overrides={
+            "YTDLP_BINARY": "/does/not/exist/yt-dlp",
+            "NODE_BINARY": "/does/not/exist/node",
+            "FFMPEG_BINARY": "/does/not/exist/ffmpeg",
+        },
+        run_output_dir=Path.cwd(),
+    )
+
+    request_names = {request["name"] for request in requests}
+    assert "yt-dlp" in request_names
+    assert "node" in request_names
+    assert "ffmpeg" in request_names
+    assert "/does/not/exist/yt-dlp" not in request_names
+    assert "/does/not/exist/node" not in request_names
+    assert "/does/not/exist/ffmpeg" not in request_names

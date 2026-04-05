@@ -225,15 +225,7 @@ class BinaryService(BaseService):
                 cache_time = cache_time.replace(tzinfo=timezone.utc)
             if now - cache_time < timedelta(hours=24):
                 pruned_install_cache[str(binary_name)] = cache_time.isoformat()
-        if pruned_install_cache != install_cache:
-            await self.bus.emit(
-                MachineEvent(
-                    method="update",
-                    key="config/ABX_INSTALL_CACHE",
-                    value=pruned_install_cache,
-                    config_type="derived",
-                ),
-            )
+        install_cache_changed = pruned_install_cache != install_cache
 
         seen: set[str] = set()
         for plugin in self.install_plugins:
@@ -258,16 +250,36 @@ class BinaryService(BaseService):
                 if signature in seen:
                     continue
                 seen.add(signature)
-                if record["name"].strip() in pruned_install_cache:
-                    continue
-                await self.bus.emit(
-                    BinaryRequestEvent(
-                        plugin_name=plugin.name,
-                        output_dir=str(plugin_output_dir),
-                        binary_id=uuid7(),
-                        **record,
-                    ),
+                request_event = BinaryRequestEvent(
+                    plugin_name=plugin.name,
+                    output_dir=str(plugin_output_dir),
+                    binary_id=uuid7(),
+                    **record,
                 )
+                if request_event.name.strip() in pruned_install_cache:
+                    cached_candidates, stale_config_keys = self._iter_cached_binary_candidates(request_event)
+                    for config_key in stale_config_keys:
+                        await self.bus.emit(
+                            MachineEvent(
+                                method="unset",
+                                key=f"config/{config_key}",
+                                config_type="derived",
+                            ),
+                        )
+                    if any(Path(value).expanduser().exists() for _keys, value, _authoritative in cached_candidates):
+                        continue
+                    if pruned_install_cache.pop(request_event.name.strip(), None) is not None:
+                        install_cache_changed = True
+                await self.bus.emit(request_event)
+        if install_cache_changed:
+            await self.bus.emit(
+                MachineEvent(
+                    method="update",
+                    key="config/ABX_INSTALL_CACHE",
+                    value=pruned_install_cache,
+                    config_type="derived",
+                ),
+            )
 
     def _request_run_output_dir(self, output_dir: str, plugin_name: str) -> Path:
         """Normalize a BinaryRequest output dir back to the run root for config lookup."""
@@ -335,6 +347,9 @@ class BinaryService(BaseService):
                 stale_config_keys.add(config_key)
                 continue
             derived_path = Path(derived_value).expanduser()
+            if not derived_path.exists():
+                stale_config_keys.add(config_key)
+                continue
             if derived_path.name != request_name:
                 stale_config_keys.add(config_key)
                 continue
@@ -363,14 +378,6 @@ class BinaryService(BaseService):
         for config_keys, registered_value, authoritative_override in candidates:
             registered_path = Path(registered_value).expanduser()
             if not registered_path.exists():
-                for config_key in config_keys:
-                    await self.bus.emit(
-                        MachineEvent(
-                            method="unset",
-                            key=f"config/{config_key}",
-                            config_type="derived",
-                        ),
-                    )
                 if authoritative_override:
                     return True, f"{event.name} not available at {registered_value}"
                 continue
@@ -467,15 +474,22 @@ class BinaryService(BaseService):
             ),
         )
         self._link_installed_binary(event.name, event.abspath)
-        request_event = await self.bus.find(
-            BinaryRequestEvent,
-            past=True,
-            future=False,
-            where=lambda candidate: (
-                (event.binary_id and candidate.binary_id == event.binary_id)
-                or (candidate.name == event.name and candidate.plugin_name == event.plugin_name)
-            ),
-        )
+        request_event: BinaryRequestEvent | None = None
+        if event.binary_id:
+            request_event = await self.bus.find(
+                BinaryRequestEvent,
+                past=True,
+                future=False,
+                binary_id=event.binary_id,
+            )
+        if request_event is None:
+            request_event = await self.bus.find(
+                BinaryRequestEvent,
+                past=True,
+                future=False,
+                name=event.name,
+                plugin_name=event.plugin_name,
+            )
         if request_event is not None:
             await self._persist_binary_abspath_in_config(request_event, event.abspath)
 

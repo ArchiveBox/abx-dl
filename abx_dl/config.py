@@ -212,7 +212,10 @@ def _load_plugin_config_model(
                     continue
                 if not is_path_like_env_value(derived_value):
                     continue
-                if configured_value and Path(derived_value).expanduser().name != configured_value:
+                derived_path = Path(derived_value).expanduser()
+                if not derived_path.exists():
+                    continue
+                if configured_value and derived_path.name != configured_value:
                     continue
             global_config[key] = value
     serialized_user_config = {key: dump_to_dotenv_format(value) for key, value in global_config.items() if value is not None}

@@ -1,8 +1,10 @@
+import asyncio
 from pathlib import Path
 from typing import Any
 
-from abx_dl.config import GlobalConfig
-from abx_dl.models import PluginEnv
+from abx_dl.config import GlobalConfig, get_plugin_env
+from abx_dl.models import PluginEnv, discover_plugins
+from abx_dl.orchestrator import create_bus, install_plugins
 
 
 def assemble_env(*, overrides: dict[str, Any] | None = None, run_output_dir: Path) -> dict[str, str]:
@@ -22,6 +24,7 @@ def test_plugin_env_sets_run_dirs_and_node_path(monkeypatch, tmp_path: Path) -> 
         "NPM_BIN_DIR",
         "PIP_HOME",
         "PIP_BIN_DIR",
+        "VIRTUAL_ENV",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -33,6 +36,51 @@ def test_plugin_env_sets_run_dirs_and_node_path(monkeypatch, tmp_path: Path) -> 
     assert env["NODE_PATH"] == env["NODE_MODULES_DIR"]
     assert env["PIP_BIN_DIR"] in env["PATH"].split(":")
     assert env["NPM_BIN_DIR"] in env["PATH"].split(":")
+    assert "VIRTUAL_ENV" not in env
+
+
+def test_plugin_env_exports_shared_runtime_paths_after_real_install_phase(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    run_output_dir = tmp_path / "run"
+    plugins = discover_plugins()
+    bus = create_bus(total_timeout=300.0, name=f"test_config_shared_runtime_{tmp_path.name}")
+    try:
+        asyncio.run(
+            install_plugins(
+                plugin_names=["ytdlp", "puppeteer"],
+                plugins=plugins,
+                output_dir=run_output_dir,
+                bus=bus,
+            ),
+        )
+        ytdlp_env = get_plugin_env(
+            bus,
+            plugin=plugins["ytdlp"],
+            run_output_dir=run_output_dir,
+        ).to_env()
+    finally:
+        asyncio.run(bus.stop())
+
+    lib_dir = Path(ytdlp_env["LIB_DIR"])
+    pip_venv = lib_dir / "pip" / "venv"
+    npm_prefix = lib_dir / "npm"
+    npm_bin_dir = npm_prefix / "node_modules" / ".bin"
+
+    assert ytdlp_env["VIRTUAL_ENV"] == str(pip_venv)
+    assert ytdlp_env["PIP_BIN_DIR"] == str(pip_venv / "bin")
+    assert (Path(ytdlp_env["YTDLP_BINARY"]).expanduser()).is_file()
+    assert Path(ytdlp_env["YTDLP_BINARY"]).is_relative_to(pip_venv)
+    assert (pip_venv / "pyvenv.cfg").is_file()
+    assert ytdlp_env["NPM_HOME"] == str(npm_prefix)
+    assert ytdlp_env["NODE_MODULES_DIR"] == str(npm_prefix / "node_modules")
+    assert ytdlp_env["NODE_PATH"] == str(npm_prefix / "node_modules")
+    assert ytdlp_env["NPM_BIN_DIR"] == str(npm_bin_dir)
+    assert (npm_bin_dir / "puppeteer").is_file()
+    assert npm_bin_dir.is_dir()
+    assert ytdlp_env["NPM_BIN_DIR"] in ytdlp_env["PATH"].split(":")
 
 
 def test_plugin_env_derives_puppeteer_cache_from_effective_lib_dir(monkeypatch, tmp_path: Path) -> None:

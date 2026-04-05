@@ -3,13 +3,13 @@ revision = 3
 requires-python = ">=3.11"
 
 [options]
-exclude-newer = "2026-03-28T07:41:16.077965Z"
+exclude-newer = "2026-03-28T19:04:13.87785Z"
 exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
-abx-dl = { timestamp = "2026-04-02T07:41:15.077972Z", span = "PT1S" }
-abx-pkg = { timestamp = "2026-04-02T07:41:15.077978Z", span = "PT1S" }
-abxbus = { timestamp = "2026-04-02T07:41:15.077979Z", span = "PT1S" }
+abx-dl = { timestamp = "2026-04-02T19:04:12.877961Z", span = "PT1S" }
+abx-pkg = { timestamp = "2026-04-02T19:04:12.878421Z", span = "PT1S" }
+abxbus = { timestamp = "2026-04-02T19:04:12.878422Z", span = "PT1S" }
 
 [[package]]
 name = "abx-dl"
@@ -83,7 +83,7 @@ dev = [
 
 [[package]]
 name = "abx-pkg"
-version = "1.9.22"
+version = "1.9.23"
 source = { editable = "../abx-pkg" }
 dependencies = [
     { name = "pip" },
@@ -118,6 +118,7 @@ dev = [
     { name = "prek", specifier = ">=0.3.6" },
     { name = "pyright" },
     { name = "pytest", specifier = ">=9.0.2" },
+    { name = "pytest-asyncio", specifier = ">=1.3.0" },
     { name = "rich", specifier = ">=14.0.0" },
     { name = "ruff", specifier = ">=0.15.7" },
     { name = "ty", specifier = ">=0.0.24" },

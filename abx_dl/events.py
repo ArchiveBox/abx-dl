@@ -384,6 +384,8 @@ class BinaryRequestEvent(BaseEvent):
     hook_name: str = ""
     output_dir: str = ""
     min_version: str | None = None
+    postinstall_scripts: bool | None = None
+    min_release_age: float | None = None
     binary_id: str = ""
     machine_id: str = ""
     binproviders: str = ""

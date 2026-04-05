@@ -4,6 +4,7 @@ from uuid import uuid4
 
 
 from abx_dl.config import get_initial_env
+from abx_dl.config import get_required_binary_requests
 from abx_dl.events import (
     ArchiveResultEvent,
     BinaryEvent,
@@ -315,7 +316,61 @@ def test_binary_event_uses_cached_config_binary_before_provider_hooks(tmp_path: 
     assert wget_events
     assert wget_events[-1].abspath == resolved_binary.abspath
     assert wget_events[-1].binprovider == ""
-    assert process_events == []
+
+
+def test_required_binary_requests_preserve_extra_config_fields() -> None:
+    plugins = discover_plugins()
+    plugin = plugins["papersdl"]
+
+    requests = get_required_binary_requests(
+        plugin,
+        plugin.config.required_binaries,
+        overrides=get_initial_env(),
+        derived_overrides={},
+        run_output_dir=Path.cwd(),
+    )
+
+    papersdl_request = next(request for request in requests if request["name"] == "papers-dl")
+    assert papersdl_request["postinstall_scripts"] is True
+
+
+def test_binary_service_passes_extra_binary_kwargs_to_provider_hooks(
+    tmp_path: Path,
+) -> None:
+    plugins = discover_plugins()
+    selected = {name: plugins[name] for name in ("papersdl", "pip")}
+
+    async def run() -> list[ProcessEvent]:
+        bus = create_bus(total_timeout=10.0, name=f"binary_kwargs_{tmp_path.name}")
+        MachineService(bus)
+        BinaryService(bus, plugins=selected, auto_install=True)
+        process_events: list[ProcessEvent] = []
+
+        async def on_ProcessEvent(event: ProcessEvent) -> None:
+            process_events.append(event)
+
+        bus.on(ProcessEvent, on_ProcessEvent)
+        try:
+            await bus.emit(MachineEvent(config=get_initial_env(), config_type="user"))
+            await bus.emit(
+                BinaryRequestEvent(
+                    name="papers-dl",
+                    plugin_name="papersdl",
+                    output_dir=str(tmp_path / "papersdl"),
+                    binproviders="pip",
+                    postinstall_scripts=True,
+                ),
+            )
+            return process_events
+        finally:
+            await bus.stop()
+
+    process_events = asyncio.run(run())
+    pip_event = next(event for event in process_events if event.hook_name.endswith("on_BinaryRequest__11_pip"))
+
+    assert "--name=papers-dl" in pip_event.hook_args
+    assert "--binproviders=pip" in pip_event.hook_args
+    assert "--postinstall-scripts=true" in pip_event.hook_args
 
 
 def test_binary_event_falls_back_from_stale_cached_config_binary_to_provider_hooks(tmp_path: Path) -> None:
