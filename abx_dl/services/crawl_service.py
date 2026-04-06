@@ -80,6 +80,7 @@ class CrawlService(BaseService):
         crawl_cleanup_enabled: bool = True,
         crawl_setup_phase_timeout: float = 300.0,
         snapshot_phase_timeout: float = 300.0,
+        snapshot_cleanup_phase_timeout: float = 300.0,
         crawl_cleanup_phase_timeout: float = 300.0,
     ):
         self.url = url
@@ -95,6 +96,7 @@ class CrawlService(BaseService):
         self.crawl_cleanup_enabled = crawl_cleanup_enabled
         self.crawl_setup_phase_timeout = crawl_setup_phase_timeout
         self.snapshot_phase_timeout = snapshot_phase_timeout
+        self.snapshot_cleanup_phase_timeout = snapshot_cleanup_phase_timeout
         self.crawl_cleanup_phase_timeout = crawl_cleanup_phase_timeout
         self.abort_requested = False
         super().__init__(bus)
@@ -130,7 +132,15 @@ class CrawlService(BaseService):
             timeout = runtime[timeout_key] if timeout_key in plugin.config.properties else runtime.TIMEOUT
             plugin_output_dir = self.output_dir / plugin.name
             plugin_output_dir.mkdir(parents=True, exist_ok=True)
-            effective_timeout = int(self.crawl_setup_phase_timeout) if hook.is_background else timeout
+            handler_timeout = (
+                self.crawl_setup_phase_timeout
+                + self.snapshot_phase_timeout
+                + self.snapshot_cleanup_phase_timeout
+                + self.crawl_cleanup_phase_timeout
+                + 30.0
+                if hook.is_background
+                else timeout + 30.0
+            )
             process_event = ProcessEvent(
                 plugin_name=plugin.name,
                 hook_name=hook.name,
@@ -139,9 +149,10 @@ class CrawlService(BaseService):
                 is_background=hook.is_background,
                 output_dir=str(plugin_output_dir),
                 env=env,
-                timeout=effective_timeout,
-                event_handler_timeout=effective_timeout + 30.0,
-                event_handler_slow_timeout=slow_warning_timeout(effective_timeout),
+                timeout=timeout,
+                event_timeout=handler_timeout,
+                event_handler_timeout=handler_timeout,
+                event_handler_slow_timeout=slow_warning_timeout(handler_timeout),
             )
             if hook.is_background:
                 self.bus.emit(process_event)

@@ -197,6 +197,11 @@ def _load_plugin_config_model(
     ``*_BINARY`` cache is overlaid here before schema resolution.
     """
     global_config = user_env.model_dump(mode="json") if isinstance(user_env, BaseSettings) else dict(user_env or get_initial_env())
+    for key, value in list(global_config.items()):
+        if key in GlobalConfig.model_fields:
+            continue
+        if isinstance(value, (dict, list)):
+            global_config[key] = dump_to_dotenv_format(value)
     if derived_env:
         effective_derived_env = derived_env.model_dump(mode="json") if isinstance(derived_env, BaseSettings) else dict(derived_env)
         for key, value in effective_derived_env.items():

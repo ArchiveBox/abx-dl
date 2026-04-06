@@ -288,7 +288,9 @@ class BinaryService(BaseService):
 
     def _config_keys_for_binary_request(self, event: BinaryRequestEvent) -> list[str]:
         """Return ``*_BINARY`` config keys that correspond to one binary request."""
-        plugin = self.plugins[event.plugin_name]
+        plugin = self.plugins.get(event.plugin_name)
+        if plugin is None:
+            return []
 
         runtime_env = get_plugin_env(
             self.bus,

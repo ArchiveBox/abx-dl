@@ -303,7 +303,7 @@ class ProcessService(BaseService):
             interrupted = False
             timed_out = False
             try:
-                deadline = asyncio.get_running_loop().time() + event.timeout if event.timeout else None
+                deadline = asyncio.get_running_loop().time() + event.timeout if event.timeout and not event.is_background else None
                 while True:
                     pending = {wait_task}
                     interrupt_task: asyncio.Task[bool] | None = None

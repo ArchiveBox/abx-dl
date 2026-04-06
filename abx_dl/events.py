@@ -52,7 +52,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from abxbus import BaseEvent, EventConcurrencyMode, EventHandlerConcurrencyMode
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, model_validator
 
 from .output_files import OutputFile
 
@@ -250,6 +250,16 @@ class ProcessEvent(BaseEvent):
     process_type: str = ""
     worker_type: str = ""
     event_timeout: float | None = 360.0
+
+    @model_validator(mode="before")
+    @classmethod
+    def _set_background_parent_blocking(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        payload = dict(data)
+        if payload.get("is_background") and "event_blocks_parent_completion" not in payload:
+            payload["event_blocks_parent_completion"] = False
+        return payload
 
 
 class ProcessKillEvent(BaseEvent):

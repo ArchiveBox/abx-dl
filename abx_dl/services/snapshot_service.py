@@ -154,7 +154,9 @@ class SnapshotService(BaseService):
             timeout = plugin_config[timeout_key] if timeout_key in plugin.config.properties else plugin_config.TIMEOUT
             plugin_output_dir = self.output_dir / plugin.name
             plugin_output_dir.mkdir(parents=True, exist_ok=True)
-            effective_timeout = int(self.snapshot_phase_timeout) if hook.is_background else timeout
+            handler_timeout = (
+                self.snapshot_phase_timeout + self.snapshot_cleanup_phase_timeout + 30.0 if hook.is_background else timeout + 30.0
+            )
             process_event = ProcessEvent(
                 plugin_name=plugin.name,
                 hook_name=hook.name,
@@ -163,9 +165,10 @@ class SnapshotService(BaseService):
                 is_background=hook.is_background,
                 output_dir=str(plugin_output_dir),
                 env=env,
-                timeout=effective_timeout,
-                event_handler_timeout=effective_timeout + 30.0,
-                event_handler_slow_timeout=slow_warning_timeout(effective_timeout),
+                timeout=timeout,
+                event_timeout=handler_timeout,
+                event_handler_timeout=handler_timeout,
+                event_handler_slow_timeout=slow_warning_timeout(handler_timeout),
             )
             if hook.is_background:
                 self.bus.emit(process_event)

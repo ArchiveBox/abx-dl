@@ -1,4 +1,5 @@
 import asyncio
+import sys
 from pathlib import Path
 from uuid import uuid4
 
@@ -371,6 +372,60 @@ def test_binary_service_passes_extra_binary_kwargs_to_provider_hooks(
     assert "--name=papers-dl" in pip_event.hook_args
     assert "--binproviders=pip" in pip_event.hook_args
     assert "--postinstall-scripts=true" in pip_event.hook_args
+
+
+def test_binary_event_ignores_unknown_request_plugin_when_persisting_config(tmp_path: Path) -> None:
+    plugins = discover_plugins()
+
+    async def run() -> list[BinaryEvent]:
+        bus = create_bus(total_timeout=10.0, name=f"unknown_binary_request_plugin_{tmp_path.name}")
+        MachineService(bus)
+        BinaryService(
+            bus,
+            plugins={name: plugins[name] for name in ("env", "apt", "brew")},
+            auto_install=True,
+        )
+        installed_events: list[BinaryEvent] = []
+
+        async def on_BinaryEvent(event: BinaryEvent) -> None:
+            installed_events.append(event)
+
+        bus.on(BinaryEvent, on_BinaryEvent)
+        try:
+            await bus.emit(MachineEvent(config=get_initial_env(), config_type="user"))
+            binary_id = str(uuid4())
+            machine_id = str(uuid4())
+            await bus.emit(
+                BinaryRequestEvent(
+                    name=sys.executable,
+                    plugin_name="archivebox",
+                    hook_name="on_BinaryRequest__archivebox_run",
+                    output_dir=str(tmp_path / "run"),
+                    binproviders="env",
+                    binary_id=binary_id,
+                    machine_id=machine_id,
+                ),
+            )
+            await bus.emit(
+                BinaryEvent(
+                    name=sys.executable,
+                    plugin_name="archivebox",
+                    hook_name="on_BinaryRequest__archivebox_run",
+                    abspath=sys.executable,
+                    binproviders="env",
+                    binprovider="env",
+                    binary_id=binary_id,
+                    machine_id=machine_id,
+                ),
+            )
+            return installed_events
+        finally:
+            await bus.stop()
+
+    installed_events = asyncio.run(run())
+    assert installed_events
+    assert installed_events[-1].abspath == sys.executable
+    assert installed_events[-1].plugin_name == "archivebox"
 
 
 def test_binary_event_falls_back_from_stale_cached_config_binary_to_provider_hooks(tmp_path: Path) -> None:

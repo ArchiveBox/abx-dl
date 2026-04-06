@@ -185,6 +185,7 @@ def setup_services(
             crawl_cleanup_enabled=crawl_cleanup_enabled,
             crawl_setup_phase_timeout=crawl_setup_phase_timeout,
             snapshot_phase_timeout=snapshot_phase_timeout,
+            snapshot_cleanup_phase_timeout=snapshot_cleanup_phase_timeout,
             crawl_cleanup_phase_timeout=crawl_cleanup_phase_timeout,
         )
         if SnapshotService is not None and (crawl_start_enabled or snapshot_cleanup_enabled):

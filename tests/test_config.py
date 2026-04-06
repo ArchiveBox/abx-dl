@@ -1,8 +1,10 @@
 import asyncio
+import json
 from pathlib import Path
 from typing import Any
 
-from abx_dl.config import GlobalConfig, get_plugin_env
+from abx_dl.config import GlobalConfig, get_initial_env, get_plugin_env
+from abx_dl.events import MachineEvent
 from abx_dl.models import PluginEnv, discover_plugins
 from abx_dl.orchestrator import create_bus, install_plugins
 
@@ -148,3 +150,33 @@ def test_plugin_env_omits_none_runtime_overrides(tmp_path: Path) -> None:
 
     assert "SNAPSHOT_DEPTH" not in env
     assert "PARENT_SNAPSHOT_ID" not in env
+
+
+def test_plugin_env_accepts_structured_extra_context_from_machine_events(tmp_path: Path) -> None:
+    plugins = discover_plugins()
+    bus = create_bus(total_timeout=60.0, name=f"test_config_extra_context_{tmp_path.name}")
+
+    async def emit_runtime_config() -> None:
+        await bus.emit(MachineEvent(config=get_initial_env(), config_type="user"))
+        await bus.emit(
+            MachineEvent(
+                config={"EXTRA_CONTEXT": {"snapshot_id": "test-snapshot", "snapshot_depth": 0}},
+                config_type="user",
+            ),
+        )
+
+    try:
+        asyncio.run(emit_runtime_config())
+        env = get_plugin_env(
+            bus,
+            plugin=plugins["favicon"],
+            run_output_dir=tmp_path,
+            extra_context={"plugin": "favicon", "hook_name": "on_Snapshot__11_favicon.finite.bg"},
+        ).to_env()
+    finally:
+        asyncio.run(bus.stop())
+
+    extra_context = json.loads(env["EXTRA_CONTEXT"])
+    assert extra_context["snapshot_id"] == "test-snapshot"
+    assert extra_context["snapshot_depth"] == 0
+    assert extra_context["plugin"] == "favicon"
