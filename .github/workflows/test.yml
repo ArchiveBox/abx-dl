@@ -25,9 +25,9 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/ArchiveBox/abx-plugins.git "${{ runner.temp }}/abx-plugins"
 
-      - name: Clone abx-pkg
+      - name: Clone abxpkg
         run: |
-          git clone --depth=1 https://github.com/ArchiveBox/abx-pkg.git "${{ runner.temp }}/abx-pkg"
+          git clone --depth=1 https://github.com/ArchiveBox/abxpkg.git "${{ runner.temp }}/abxpkg"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -42,14 +42,14 @@ jobs:
 
       - name: Install Python dependencies
         env:
-          PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abx-pkg
+          PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
         run: |
           uv sync --no-sources --extra dev
-          uv pip install -e "${{ runner.temp }}/abx-pkg" -e "${{ runner.temp }}/abx-plugins[dev]"
+          uv pip install -e "${{ runner.temp }}/abxpkg" -e "${{ runner.temp }}/abx-plugins[dev]"
 
       - name: Run prek
         env:
-          PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abx-pkg
+          PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
         run: uv run --no-sync --no-sources prek run --all-files
 
   unit-tests:
@@ -65,9 +65,9 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/ArchiveBox/abx-plugins.git "${{ runner.temp }}/abx-plugins"
 
-      - name: Clone abx-pkg
+      - name: Clone abxpkg
         run: |
-          git clone --depth=1 https://github.com/ArchiveBox/abx-pkg.git "${{ runner.temp }}/abx-pkg"
+          git clone --depth=1 https://github.com/ArchiveBox/abxpkg.git "${{ runner.temp }}/abxpkg"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -88,14 +88,14 @@ jobs:
 
       - name: Install Python dependencies
         env:
-          PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abx-pkg
+          PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
         run: |
           uv sync --no-sources --extra dev
-          uv pip install -e "${{ runner.temp }}/abx-pkg" -e "${{ runner.temp }}/abx-plugins[dev]"
+          uv pip install -e "${{ runner.temp }}/abxpkg" -e "${{ runner.temp }}/abx-plugins[dev]"
 
       - name: Run repo test suite
         env:
-          PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abx-pkg
+          PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
         run: uv run --no-sync --no-sources pytest -q tests server/tests
 
   discover-plugins:
@@ -172,9 +172,9 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/ArchiveBox/abx-plugins.git "${{ runner.temp }}/abx-plugins"
 
-      - name: Clone abx-pkg
+      - name: Clone abxpkg
         run: |
-          git clone --depth=1 https://github.com/ArchiveBox/abx-pkg.git "${{ runner.temp }}/abx-pkg"
+          git clone --depth=1 https://github.com/ArchiveBox/abxpkg.git "${{ runner.temp }}/abxpkg"
 
       - name: Set up Python ${{ matrix.python }}
         uses: actions/setup-python@v5
@@ -200,10 +200,10 @@ jobs:
 
       - name: Install Python dependencies
         env:
-          PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abx-pkg
+          PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
         run: |
           uv sync --no-sources --extra dev
-          uv pip install -e "${{ runner.temp }}/abx-pkg" -e "${{ runner.temp }}/abx-plugins[dev]"
+          uv pip install -e "${{ runner.temp }}/abxpkg" -e "${{ runner.temp }}/abx-plugins[dev]"
 
       - name: Verify Chromium launch
         if: ${{ matrix.plugin.needs_chromium }}
@@ -240,7 +240,7 @@ jobs:
           done
         env:
           CHROME_SANDBOX: "false"
-          PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abx-pkg
+          PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
           TIMEOUT: "120"
 
   test-all:
@@ -256,9 +256,9 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/ArchiveBox/abx-plugins.git "${{ runner.temp }}/abx-plugins"
 
-      - name: Clone abx-pkg
+      - name: Clone abxpkg
         run: |
-          git clone --depth=1 https://github.com/ArchiveBox/abx-pkg.git "${{ runner.temp }}/abx-pkg"
+          git clone --depth=1 https://github.com/ArchiveBox/abxpkg.git "${{ runner.temp }}/abxpkg"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -284,10 +284,10 @@ jobs:
 
       - name: Install Python dependencies
         env:
-          PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abx-pkg
+          PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
         run: |
           uv sync --no-sources --extra dev
-          uv pip install -e "${{ runner.temp }}/abx-pkg" -e "${{ runner.temp }}/abx-plugins[dev]"
+          uv pip install -e "${{ runner.temp }}/abxpkg" -e "${{ runner.temp }}/abx-plugins[dev]"
 
       - name: Verify Chromium launch
         uses: ./.github/actions/verify-chromium-launch
@@ -304,7 +304,7 @@ jobs:
         env:
           ABX_PLUGINS_DIR: ${{ runner.temp }}/abx-plugins/abx_plugins/plugins
           CHROME_SANDBOX: "false"
-          PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abx-pkg
+          PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
           TIMEOUT: "120"
 
       - name: Upload test output

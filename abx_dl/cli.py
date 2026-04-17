@@ -1145,7 +1145,7 @@ def cli(ctx):
 @click.option("--max-urls", type=int, default=0, help="Maximum number of URLs to snapshot for this crawl (0 = unlimited)")
 @click.option("--max-size", default="0", help="Maximum total crawl size in bytes or units like 45mb / 1gb (0 = unlimited)")
 @click.option("--disable", "disable_list", help="Comma-separated list of plugins to force-disable (overrides --plugins and --output)")
-@click.option("--dry-run", is_flag=True, help="Enable abx-pkg dry-run mode and skip running snapshot hook subprocesses")
+@click.option("--dry-run", is_flag=True, help="Enable abxpkg dry-run mode and skip running snapshot hook subprocesses")
 @click.option("--no-install", "no_install", is_flag=True, help="Skip plugins with missing dependencies instead of auto-installing")
 @click.option("--debug", is_flag=True, help="Print the EventBus tree on exit or abort")
 @click.pass_context
@@ -1600,7 +1600,7 @@ def _run_plugin_install(
 @cli.command()
 @click.argument("plugin_names", nargs=-1)
 @click.option("--install", "-i", "do_install", is_flag=True, help="Install plugin dependencies")
-@click.option("--dry-run", is_flag=True, help="Enable abx-pkg dry-run mode during --install")
+@click.option("--dry-run", is_flag=True, help="Enable abxpkg dry-run mode during --install")
 @click.option("--debug", is_flag=True, help="Print the EventBus tree on exit or abort when used with --install")
 @click.pass_context
 def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool, debug: bool):
@@ -1736,7 +1736,7 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
 
 @cli.command()
 @click.argument("plugin_names", nargs=-1)
-@click.option("--dry-run", is_flag=True, help="Enable abx-pkg dry-run mode while resolving declared binary dependencies")
+@click.option("--dry-run", is_flag=True, help="Enable abxpkg dry-run mode while resolving declared binary dependencies")
 @click.option("--debug", is_flag=True, help="Print the EventBus tree on exit or abort")
 @click.pass_context
 def install(ctx, plugin_names: tuple[str, ...], dry_run: bool, debug: bool):

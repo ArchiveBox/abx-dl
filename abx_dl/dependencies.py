@@ -1,5 +1,5 @@
 """
-Dependency management for abx-dl using abx-pkg.
+Dependency management for abx-dl using abxpkg.
 """
 
 from typing import Any, cast

@@ -8,7 +8,7 @@ exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
 abx-dl = { timestamp = "2026-04-02T19:04:12.877961Z", span = "PT1S" }
-abx-pkg = { timestamp = "2026-04-02T19:04:12.878421Z", span = "PT1S" }
+abxpkg = { timestamp = "2026-04-02T19:04:12.878421Z", span = "PT1S" }
 abxbus = { timestamp = "2026-04-02T19:04:12.878422Z", span = "PT1S" }
 
 [[package]]
@@ -16,7 +16,7 @@ name = "abx-dl"
 version = "1.10.21"
 source = { editable = "." }
 dependencies = [
-    { name = "abx-pkg" },
+    { name = "abxpkg" },
     { name = "abx-plugins" },
     { name = "abxbus" },
     { name = "jambo" },
@@ -51,7 +51,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "abx-pkg", editable = "../abx-pkg" },
+    { name = "abxpkg", editable = "../abxpkg" },
     { name = "abx-plugins", editable = "../abx-plugins" },
     { name = "abxbus", editable = "../abxbus" },
     { name = "flake8", marker = "extra == 'dev'", specifier = ">=7.1.1" },
@@ -82,9 +82,9 @@ dev = [
 ]
 
 [[package]]
-name = "abx-pkg"
+name = "abxpkg"
 version = "1.9.23"
-source = { editable = "../abx-pkg" }
+source = { editable = "../abxpkg" }
 dependencies = [
     { name = "pip" },
     { name = "platformdirs" },
@@ -94,7 +94,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
-    { name = "abx-pkg", extras = ["rich", "pyinfra", "ansible"], marker = "extra == 'all'" },
+    { name = "abxpkg", extras = ["rich", "pyinfra", "ansible"], marker = "extra == 'all'" },
     { name = "ansible", marker = "extra == 'ansible'", specifier = ">=12.3.0" },
     { name = "ansible-core", marker = "extra == 'ansible'", specifier = ">=2.0.0" },
     { name = "ansible-runner", marker = "extra == 'ansible'", specifier = ">=2.4.2" },
@@ -129,14 +129,14 @@ name = "abx-plugins"
 version = "1.10.22"
 source = { editable = "../abx-plugins" }
 dependencies = [
-    { name = "abx-pkg" },
+    { name = "abxpkg" },
     { name = "jambo" },
     { name = "rich-click" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "abx-pkg", editable = "../abx-pkg" },
+    { name = "abxpkg", editable = "../abxpkg" },
     { name = "feedparser", marker = "extra == 'dev'", specifier = ">=6.0.0" },
     { name = "jambo", specifier = ">=0.1.7" },
     { name = "jinja2", marker = "extra == 'dev'", specifier = ">=3.1.0" },

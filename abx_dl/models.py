@@ -285,7 +285,7 @@ class Process(BaseModel):
         return json.dumps(d, default=str)
 
 
-# PROVIDED BY ABX-PKG:
+# PROVIDED BY ABXPKG:
 # class Binary:
 #     name: str
 #     id: str = Field(default_factory=uuid7)

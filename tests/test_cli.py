@@ -51,7 +51,7 @@ def _cli_env(tmp_path: Path) -> dict[str, str]:
         env.pop(key, None)
     config_dir = tmp_path / "config"
     pythonpath_entries = [str(REPO_ROOT)]
-    for sibling in ("abx-plugins", "abx-pkg"):
+    for sibling in ("abx-plugins", "abxpkg"):
         sibling_path = REPO_ROOT.parent / sibling
         if sibling_path.exists():
             pythonpath_entries.append(str(sibling_path))
