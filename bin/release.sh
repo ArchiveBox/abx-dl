@@ -109,13 +109,13 @@ PY
 }
 
 update_internal_dependencies() {
-    local abxbus_version abx_pkg_version abx_plugins_version
+    local abxbus_version abxpkg_version abx_plugins_version
 
     abxbus_version="$(read_repo_version "${WORKSPACE_DIR}/abxbus" || true)"
-    abx_pkg_version="$(read_repo_version "${WORKSPACE_DIR}/abx-pkg" || true)"
+    abxpkg_version="$(read_repo_version "${WORKSPACE_DIR}/abx-pkg" || true)"
     abx_plugins_version="$(read_repo_version "${WORKSPACE_DIR}/abx-plugins" || true)"
 
-    python3 - "${abxbus_version}" "${abx_pkg_version}" "${abx_plugins_version}" <<'PY'
+    python3 - "${abxbus_version}" "${abxpkg_version}" "${abx_plugins_version}" <<'PY'
 from pathlib import Path
 import re
 import sys

@@ -4,7 +4,7 @@ Dependency management for abx-dl using abx-pkg.
 
 from typing import Any, cast
 
-from abx_pkg import (
+from abxpkg import (
     Binary,
     BinaryOverrides,
     BinProvider,

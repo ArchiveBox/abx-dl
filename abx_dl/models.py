@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
-from abx_pkg import BinaryOverrides
+from abxpkg import BinaryOverrides
 from pydantic import BaseModel, ConfigDict, Field
 from abx_plugins import get_plugins_dir
 
