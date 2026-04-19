@@ -78,6 +78,7 @@ Key abxbus concepts used:
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import json
 from collections.abc import Sequence
@@ -108,6 +109,8 @@ def setup_services(
     url: str | None = None,
     snapshot: Snapshot | None = None,
     output_dir: Path | None = None,
+    config_overrides: dict[str, Any] | None = None,
+    derived_config_overrides: dict[str, Any] | None = None,
     install_enabled: bool = True,
     crawl_setup_enabled: bool = True,
     crawl_start_enabled: bool = True,
@@ -137,8 +140,38 @@ def setup_services(
     if interactive_tty is None:
         interactive_tty = sys.stdout.isatty() or sys.stderr.isatty()
 
+    initial_user_config = None
+    initial_derived_config = None
+    if config_overrides is not None or derived_config_overrides is not None:
+        initial_user_config = get_initial_env()
+        if config_overrides:
+            initial_user_config.update(config_overrides)
+        initial_derived_config = get_derived_config(initial_user_config)
+        if derived_config_overrides:
+            initial_derived_config.update(derived_config_overrides)
+
     if MachineService is not None:
         MachineService(bus, persist_derived=persist_derived)
+
+    if initial_user_config is not None:
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+        else:
+            bus.emit(
+                MachineEvent(
+                    config=initial_user_config,
+                    config_type="user",
+                ),
+            )
+            if initial_derived_config:
+                bus.emit(
+                    MachineEvent(
+                        config=initial_derived_config,
+                        config_type="derived",
+                    ),
+                )
 
     if BinaryService is not None:
         install_plugins = get_install_plugins(plugins)

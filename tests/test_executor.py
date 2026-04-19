@@ -335,6 +335,43 @@ def test_required_binary_requests_preserve_extra_config_fields() -> None:
     assert papersdl_request["postinstall_scripts"] is True
 
 
+def test_setup_services_accepts_runtime_config_overrides_and_seeds_machine_events() -> None:
+    async def run() -> list[MachineEvent]:
+        bus = create_bus(total_timeout=5.0, name=f"setup_services_runtime_config_{uuid4().hex[:8]}")
+        observed: list[MachineEvent] = []
+
+        async def on_MachineEvent(event: MachineEvent) -> None:
+            observed.append(event)
+
+        bus.on(MachineEvent, on_MachineEvent)
+        try:
+            setup_services(
+                bus,
+                plugins={},
+                config_overrides={"TIMEOUT": 123, "DRY_RUN": True},
+                derived_config_overrides={"WGET_BINARY": "/tmp/fake-wget"},
+                MachineService=MachineService,
+                BinaryService=None,
+                ProcessService=None,
+                ArchiveResultService=None,
+                TagService=None,
+                CrawlService=None,
+                SnapshotService=None,
+            )
+            await bus.wait_until_idle(timeout=2.0)
+            return observed
+        finally:
+            await bus.stop()
+
+    events = asyncio.run(run())
+    user_event = next(event for event in events if event.config_type == "user")
+    derived_event = next(event for event in events if event.config_type == "derived")
+    assert user_event.config is not None
+    assert user_event.config["TIMEOUT"] == 123
+    assert user_event.config["DRY_RUN"] is True
+    assert derived_event.config == {"WGET_BINARY": "/tmp/fake-wget"}
+
+
 def test_binary_service_passes_extra_binary_kwargs_to_provider_hooks(
     tmp_path: Path,
 ) -> None:
