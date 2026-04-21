@@ -98,7 +98,7 @@ testpaths = [ "tests", "server/tests" ]
 
 [tool.uv]
 exclude-newer = "5 days"
-exclude-newer-package = { abx-dl = "1 second", abxpkg = "1 second", abxbus = "1 second" }
+exclude-newer-package = { abx-dl = "1 second", abxpkg = "1 second", abxbus = "1 second", abx-plugins = "1 second" }
 
 [tool.mypy]
 mypy_path = "abx_dl,tests,server,abx_dl/typings"
