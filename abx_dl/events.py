@@ -257,8 +257,10 @@ class ProcessEvent(BaseEvent):
         if not isinstance(data, dict):
             return data
         payload = dict(data)
-        if payload.get("is_background") and "event_blocks_parent_completion" not in payload:
-            payload["event_blocks_parent_completion"] = False
+        # TODO: re-enable once abxbus BaseEvent declares the field or exposes
+        # a supported hook to opt a background child out of blocking its parent.
+        # if payload.get("is_background") and "event_blocks_parent_completion" not in payload:
+        #     payload["event_blocks_parent_completion"] = False
         return payload
 
 
