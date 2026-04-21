@@ -8,7 +8,7 @@ abx-dl is a CLI tool for downloading URLs using ArchiveBox plugins. Plugins are 
 
 ```bash
 # Install dependencies
-uv sync --extra dev
+uv sync --group dev
 
 # Activate venv (or use uv run prefix)
 source .venv/bin/activate
