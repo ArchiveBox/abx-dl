@@ -256,12 +256,11 @@ class ProcessEvent(BaseEvent):
     def _set_background_parent_blocking(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
-        payload = dict(data)
-        # TODO: re-enable once abxbus BaseEvent declares the field or exposes
-        # a supported hook to opt a background child out of blocking its parent.
-        # if payload.get("is_background") and "event_blocks_parent_completion" not in payload:
-        #     payload["event_blocks_parent_completion"] = False
-        return payload
+        # TODO: mark background ProcessEvents as non-blocking for their parents
+        # once abxbus' BaseEvent declares ``event_blocks_parent_completion``
+        # (or exposes a supported hook); today it rejects unknown ``event_*``
+        # fields, which crashed any background-hook test path when injected.
+        return dict(data)
 
 
 class ProcessKillEvent(BaseEvent):
