@@ -97,6 +97,7 @@ ignore = ["E731", "E303", "E266", "E241", "E222"]
 testpaths = [ "tests", "server/tests" ]
 
 [tool.uv]
+required-version = ">=0.10.0"
 exclude-newer = "5 days"
 exclude-newer-package = { abx-dl = "1 second", abxpkg = "1 second", abxbus = "1 second", abx-plugins = "1 second" }
 
