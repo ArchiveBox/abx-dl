@@ -94,6 +94,8 @@ def scan_output_files(output_dir: Path, file_paths: Iterable[Path] | None = None
             try:
                 file_path.chmod(stat_result.st_mode & ~EXECUTABLE_BITS)
             except OSError:
+                # Best-effort: if chmod fails (read-only FS, permission denied),
+                # leave the bit set rather than failing the whole scan.
                 pass
         relative_path = file_path.relative_to(output_dir).as_posix()
         if any(relative_path.endswith(suffix) for suffix in OUTPUT_FILE_METADATA_SUFFIXES):
@@ -131,4 +133,6 @@ def _neutralize_escaping_symlink(link_path: Path, containment_root: Path) -> Non
     try:
         record_path.write_text(str(target) + "\n", encoding="utf-8")
     except OSError:
+        # Forensic record is best-effort; the symlink itself has already been
+        # removed above, so sanitization has succeeded even if we can't write.
         pass
