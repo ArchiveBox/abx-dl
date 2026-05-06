@@ -12,7 +12,7 @@ uvx abx-dl 'https://example.com'
 `abx-dl` is an all-in-one CLI tool for downloading URLs "by any means necessary".
 
 It's useful for scraping, downloading, OSINT, digital preservation, and more.
-`abx-dl` provides a simpler one-shot CLI interface to the [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox) plugin ecosystem.
+`abx-dl` provides a simpler one-shot CLI interface to the [ArchiveBox plugin ecosystem](https://archivebox.github.io/abx-plugins/).
 
 <img width="1000" height="1082" alt="Screenshot 2026-03-11 at 6 53 03 AM" src="https://github.com/user-attachments/assets/4e19d985-1a93-4f65-9970-2565be16b718" />
 
@@ -33,7 +33,7 @@ abx-dl --plugins=wget,title,screenshot,pdf,readability,git 'https://example.com'
 - audio, video, subtitles, playlists, comments
 - snapshot of the page as a PDF, screenshot, and [Singlefile](https://github.com/gildas-lormeau/single-file-cli) HTML
 - article text, `git` source code
-- [and much more](https://github.com/ArchiveBox/abx-dl#All-Outputs)...
+- [and much more](https://archivebox.github.io/abx-plugins/)...
 
 <br/>
 
@@ -331,6 +331,16 @@ This repo includes an `abx-dl` skill for coding agents that need to run the stan
 - **`abx_dl/executor.py`** - Hook execution engine with config propagation
 - **`abx_dl/config.py`** - Environment variable configuration
 - **`abx_dl/cli.py`** - Rich CLI with live progress display
+
+### Related Projects
+
+- `abxbus` https://abxbus.archivebox.io https://github.com/archiveBox/abxbus
+- `abxpkg` https://abxpkg.archivebox.io https://github.com/archiveBox/abxpkg
+- `abx-plugins` https://abx-plugins.archivebox.io https://github.com/ArchiveBox/abx-plugins
+- `archivebox` https://archivebox.io https://github.com/ArchiveBox/ArchiveBox
+- And lots more...
+  - https://github.com/stars/pirate/lists/internet-archiving
+  - https://github.com/ArchiveBox/ArchiveBox/wiki/Web-Archiving-Community
 
 ---
 
