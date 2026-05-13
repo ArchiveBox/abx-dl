@@ -90,6 +90,31 @@ def test_plugin_env_derives_puppeteer_cache_from_effective_lib_dir(monkeypatch, 
     assert env["LIB_BIN_DIR"] == str(tmp_path / "lib" / "bin")
 
 
+def test_plugin_env_treats_empty_optional_node_paths_as_unset(tmp_path: Path) -> None:
+    lib_dir = tmp_path / "lib"
+    node_path = ":".join(
+        [
+            "/home/archivebox/.npm/lib/node_modules",
+            str(lib_dir / "npm" / "node_modules"),
+            "/usr/share/archivebox/lib/npm/node_modules",
+        ],
+    )
+    env = assemble_env(
+        overrides={
+            "LIB_DIR": str(lib_dir),
+            "NODE_MODULES_DIR": "",
+            "NPM_BIN_DIR": "",
+            "NODE_PATH": node_path,
+        },
+        run_output_dir=tmp_path / "run",
+    )
+
+    assert env["NODE_MODULES_DIR"] == str(lib_dir / "npm" / "node_modules")
+    assert env["NPM_BIN_DIR"] == str(lib_dir / "npm" / "node_modules" / ".bin")
+    assert env["NODE_PATH"] == node_path
+    assert env["NODE_MODULES_DIR"] in env["NODE_PATH"].split(":")
+
+
 def test_plugin_env_keeps_chrome_sandbox_enabled_by_default(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("CHROME_SANDBOX", raising=False)
 

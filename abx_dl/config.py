@@ -98,6 +98,29 @@ class GlobalConfig(BaseSettings):
             return "true" if value else "false"
         return value
 
+    @field_validator(
+        "LIB_DIR",
+        "LIB_BIN_DIR",
+        "PERSONAS_DIR",
+        "CRAWL_DIR",
+        "SNAP_DIR",
+        "TMP_DIR",
+        "PIP_HOME",
+        "PIP_BIN_DIR",
+        "NPM_HOME",
+        "NODE_MODULES_DIR",
+        "NODE_PATH",
+        "NPM_BIN_DIR",
+        "PUPPETEER_CACHE_DIR",
+        mode="before",
+    )
+    @classmethod
+    def empty_optional_path_to_none(cls, value: Any) -> Any:
+        """Treat empty optional runtime path settings as unset, not as cwd."""
+        if isinstance(value, str) and value.strip() == "":
+            return None
+        return value
+
     @model_validator(mode="after")
     def derive_runtime_paths(self) -> Self:
         """Fill runtime path defaults from CONFIG_DIR / DATA_DIR once, centrally."""
