@@ -101,150 +101,167 @@ class BinaryService(BaseService):
             [(plugin, hook) for plugin in plugins.values() for hook in plugin.filter_hooks("BinaryRequest")],
             key=lambda x: x[1].sort_key,
         )
+        self.binary_hooks_by_provider: dict[str, list[tuple[Plugin, Hook]]] = {}
+        for plugin, hook in self.binary_hooks:
+            self.binary_hooks_by_provider.setdefault(plugin.name, []).append((plugin, hook))
         super().__init__(bus)
         self.bus.on(InstallEvent, self.on_InstallEvent)
         self.bus.on(ProcessStdoutEvent, self.on_ProcessStdoutEvent)
+        self.bus.on(BinaryRequestEvent, self.on_BinaryRequestEvent)
+        self.bus.on(BinaryEvent, self.on_BinaryEvent)
 
-        # Register a handler for each on_BinaryRequest hook provided by plugins
-        for plugin, hook in self.binary_hooks:
+    async def on_BinaryRequestEvent(self, event: BinaryRequestEvent) -> str | None:
+        existing_installed = await self.bus.find(
+            BinaryEvent,
+            child_of=event,
+            past=True,
+            future=False,
+            name=event.name,
+            where=lambda candidate: bool(candidate.abspath),
+        )
+        if existing_installed is not None:
+            assert isinstance(existing_installed, BinaryEvent)
+            return existing_installed.abspath
 
-            async def on_BinaryRequest(
-                event: BinaryRequestEvent,
+        inherited_binproviders = event.binproviders
+        if not inherited_binproviders and event.binary_id:
+            ancestor_request = await self.bus.find(
+                BinaryRequestEvent,
+                past=True,
+                future=False,
+                where=lambda candidate: (
+                    candidate.event_id != event.event_id
+                    and candidate.binary_id == event.binary_id
+                    and candidate.name == event.name
+                    and bool(candidate.binproviders)
+                ),
+            )
+            if ancestor_request is not None:
+                assert isinstance(ancestor_request, BinaryRequestEvent)
+                inherited_binproviders = ancestor_request.binproviders
+
+        cached_terminal, cached_error = await self._emit_cached_binary_if_already_installed(
+            event,
+            inherited_binproviders=inherited_binproviders,
+        )
+        if cached_terminal:
+            if cached_error:
+                raise FileNotFoundError(cached_error)
+            cached_binary = await self.bus.find(
+                BinaryEvent,
+                past=True,
+                future=False,
+                name=event.name,
+                where=lambda candidate: bool(candidate.abspath) and self.bus.event_is_child_of(candidate, event),
+            )
+            if cached_binary is not None:
+                assert isinstance(cached_binary, BinaryEvent)
+                return cached_binary.abspath
+            return None
+
+        if not self.auto_install:
+            return None
+
+        ordered_providers = _ordered_binproviders(inherited_binproviders or event.binproviders or "env")
+        if not ordered_providers:
+            ordered_providers = list(self.binary_hooks_by_provider)
+
+        for provider_name, plugin, hook in self._provider_hook_sequence(ordered_providers):
+            installed_abspath = await self._run_binary_provider_hook(
+                event,
                 plugin=plugin,
                 hook=hook,
-                provider_name=plugin.name,
-            ) -> str | None:
-                existing_installed = await self.bus.find(
-                    BinaryEvent,
-                    child_of=event,
-                    past=True,
-                    future=False,
-                    name=event.name,
-                    where=lambda candidate: bool(candidate.abspath),
-                )
-                if existing_installed is not None:
-                    assert isinstance(existing_installed, BinaryEvent)
-                    return existing_installed.abspath
+                inherited_binproviders=inherited_binproviders,
+            )
+            if installed_abspath:
+                return installed_abspath
+        return None
 
-                inherited_binproviders = event.binproviders
-                if not inherited_binproviders and event.binary_id:
-                    ancestor_request = await self.bus.find(
-                        BinaryRequestEvent,
-                        past=True,
-                        future=False,
-                        where=lambda candidate: (
-                            candidate.event_id != event.event_id
-                            and candidate.binary_id == event.binary_id
-                            and candidate.name == event.name
-                            and bool(candidate.binproviders)
-                        ),
-                    )
-                    if ancestor_request is not None:
-                        assert isinstance(ancestor_request, BinaryRequestEvent)
-                        inherited_binproviders = ancestor_request.binproviders
+    def _provider_hook_sequence(self, ordered_providers: list[str]) -> list[tuple[str, Plugin, Hook]]:
+        hooks: list[tuple[str, Plugin, Hook]] = []
+        for provider_name in ordered_providers:
+            for plugin, hook in self.binary_hooks_by_provider.get(provider_name, []):
+                hooks.append((provider_name, plugin, hook))
+        return hooks
 
-                cached_terminal, cached_error = await self._emit_cached_binary_if_already_installed(
-                    event,
-                    inherited_binproviders=inherited_binproviders,
-                )
-                if cached_terminal:
-                    if cached_error:
-                        raise FileNotFoundError(cached_error)
-                    cached_binary = await self.bus.find(
-                        BinaryEvent,
-                        past=True,
-                        future=False,
-                        name=event.name,
-                        where=lambda candidate: bool(candidate.abspath) and self.bus.event_is_child_of(candidate, event),
-                    )
-                    if cached_binary is not None:
-                        assert isinstance(cached_binary, BinaryEvent)
-                        return cached_binary.abspath
-                    return None
+    async def _run_binary_provider_hook(
+        self,
+        event: BinaryRequestEvent,
+        *,
+        plugin: Plugin,
+        hook: Hook,
+        inherited_binproviders: str,
+    ) -> str | None:
+        binary_id = event.binary_id or uuid7()
+        request_payload = event.model_dump(mode="json", exclude_none=True)
+        if inherited_binproviders:
+            request_payload["binproviders"] = inherited_binproviders
+        hook_args: list[str] = []
+        for key, value in request_payload.items():
+            if value is None:
+                continue
+            option = f"--{key.replace('_', '-')}"
+            if isinstance(value, str):
+                hook_args.append(f"{option}={value}")
+            else:
+                hook_args.append(f"{option}={json.dumps(value)}")
 
-                if not self.auto_install:
-                    return None
-
-                ordered_providers = _ordered_binproviders(inherited_binproviders or event.binproviders or "env")
-                if provider_name not in ordered_providers:
-                    return None
-
-                binary_id = event.binary_id or uuid7()
-                request_payload = event.model_dump(mode="json", exclude_none=True)
-                if inherited_binproviders:
-                    request_payload["binproviders"] = inherited_binproviders
-                hook_args: list[str] = []
-                for key, value in request_payload.items():
-                    if value is None:
-                        continue
-                    option = f"--{key.replace('_', '-')}"
-                    if isinstance(value, str):
-                        hook_args.append(f"{option}={value}")
-                    else:
-                        hook_args.append(f"{option}={json.dumps(value)}")
-
-                run_output_dir = Path(event.output_dir).parent
-                plugin_output_dir = run_output_dir / plugin.name
-                plugin_output_dir.mkdir(parents=True, exist_ok=True)
-                plugin_config = get_plugin_env(
-                    self.bus,
-                    plugin=plugin,
-                    run_output_dir=run_output_dir,
-                    extra_context={
-                        "binary_id": binary_id,
-                        "binproviders": inherited_binproviders or event.binproviders,
-                        "hook_name": event.hook_name,
-                        "machine_id": event.machine_id,
-                        "plugin_name": event.plugin_name,
-                    },
-                )
-                plugin_env = plugin_config.to_env()
-                process_event = ProcessEvent(
-                    plugin_name=plugin.name,
-                    hook_name=hook.name,
-                    hook_path=str(hook.path),
-                    hook_args=hook_args,
-                    is_background=False,
-                    output_dir=str(plugin_output_dir),
-                    env=plugin_env,
-                    timeout=300,
-                    event_handler_timeout=330.0,
-                    event_handler_slow_timeout=slow_warning_timeout(300),
-                )
-                await event.emit(process_event).now()
-                completed_process = await self.bus.find(
-                    ProcessCompletedEvent,
-                    past=True,
-                    future=False,
-                    where=lambda candidate: self.bus.event_is_child_of(candidate, process_event),
-                )
-                if completed_process is not None:
-                    assert isinstance(completed_process, ProcessCompletedEvent)
-                    for line in completed_process.stdout.splitlines():
-                        try:
-                            binary_payload = EmittedBinaryRecord(**json.loads(line))
-                        except Exception:
-                            continue
-                        if binary_payload.name != event.name or not binary_payload.abspath:
-                            continue
-                        return binary_payload.abspath
-                installed_binary = await self.bus.find(
-                    BinaryEvent,
-                    past=True,
-                    future=False,
-                    name=event.name,
-                    where=lambda candidate: bool(candidate.abspath) and self.bus.event_is_child_of(candidate, event),
-                )
-                if installed_binary is not None:
-                    assert isinstance(installed_binary, BinaryEvent)
-                    return installed_binary.abspath
-                return None
-
-            handler_name = f"on_BinaryRequestEvent__{plugin.name}__{hook.name.replace('.', '_')}"
-            on_BinaryRequest.__name__ = handler_name
-            on_BinaryRequest.__qualname__ = handler_name
-            self.bus.on(BinaryRequestEvent, on_BinaryRequest)
-        self.bus.on(BinaryEvent, self.on_BinaryEvent)
+        run_output_dir = Path(event.output_dir).parent
+        plugin_output_dir = run_output_dir / plugin.name
+        plugin_output_dir.mkdir(parents=True, exist_ok=True)
+        plugin_config = get_plugin_env(
+            self.bus,
+            plugin=plugin,
+            run_output_dir=run_output_dir,
+            extra_context={
+                "binary_id": binary_id,
+                "binproviders": inherited_binproviders or event.binproviders,
+                "hook_name": event.hook_name,
+                "machine_id": event.machine_id,
+                "plugin_name": event.plugin_name,
+            },
+        )
+        plugin_env = plugin_config.to_env()
+        process_event = ProcessEvent(
+            plugin_name=plugin.name,
+            hook_name=hook.name,
+            hook_path=str(hook.path),
+            hook_args=hook_args,
+            is_background=False,
+            output_dir=str(plugin_output_dir),
+            env=plugin_env,
+            timeout=300,
+            event_handler_timeout=330.0,
+            event_handler_slow_timeout=slow_warning_timeout(300),
+        )
+        await event.emit(process_event).now()
+        completed_process = await self.bus.find(
+            ProcessCompletedEvent,
+            past=True,
+            future=False,
+            where=lambda candidate: self.bus.event_is_child_of(candidate, process_event),
+        )
+        if completed_process is not None:
+            assert isinstance(completed_process, ProcessCompletedEvent)
+            for line in completed_process.stdout.splitlines():
+                try:
+                    binary_payload = EmittedBinaryRecord(**json.loads(line))
+                except Exception:
+                    continue
+                if binary_payload.name != event.name or not binary_payload.abspath:
+                    continue
+                return binary_payload.abspath
+        installed_binary = await self.bus.find(
+            BinaryEvent,
+            past=True,
+            future=False,
+            name=event.name,
+            where=lambda candidate: bool(candidate.abspath) and self.bus.event_is_child_of(candidate, event),
+        )
+        if installed_binary is not None:
+            assert isinstance(installed_binary, BinaryEvent)
+            return installed_binary.abspath
+        return None
 
     async def on_InstallEvent(self, event: InstallEvent) -> None:
         """Emit BinaryRequestEvents for this run's enabled plugins."""

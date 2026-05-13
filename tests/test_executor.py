@@ -411,6 +411,26 @@ def test_binary_service_passes_extra_binary_kwargs_to_provider_hooks(
     assert "--postinstall-scripts=true" in pip_event.hook_args
 
 
+def test_binary_service_honors_declared_provider_order() -> None:
+    plugins = discover_plugins()
+    selected = {name: plugins[name] for name in ("env", "apt", "brew")}
+    bus = create_bus(total_timeout=10.0, name="binary_provider_order")
+    service = BinaryService(bus, plugins=selected, auto_install=True)
+
+    hook_names = [
+        hook.name
+        for _provider_name, _plugin, hook in service._provider_hook_sequence(
+            ["env", "apt", "brew"],
+        )
+    ]
+
+    assert hook_names == [
+        "on_BinaryRequest__00_env",
+        "on_BinaryRequest__13_apt",
+        "on_BinaryRequest__12_brew",
+    ]
+
+
 def test_binary_event_ignores_unknown_request_plugin_when_persisting_config(tmp_path: Path) -> None:
     plugins = discover_plugins()
 
