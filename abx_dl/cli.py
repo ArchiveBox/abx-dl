@@ -1284,7 +1284,7 @@ def dl(
             pause_requested = True
 
             async def emit_control_event() -> None:
-                await bus.emit(next_event)
+                await bus.emit(next_event).now()
 
             loop.create_task(emit_control_event())
 
@@ -1318,7 +1318,7 @@ def dl(
                 aborted = aborted or any(isinstance(event, CrawlAbortEvent) for event in bus.event_history.values())
                 if debug:
                     bus.log_tree()
-                loop.run_until_complete(bus.stop())
+                loop.run_until_complete(bus.wait_until_idle())
     finally:
         if signal_handler_installed:
             loop.remove_signal_handler(signal.SIGINT)

@@ -60,7 +60,7 @@ Key abxbus concepts used:
   at a time in registration order. This preserves hook ordering — fg hooks
   see config updates from all prior hooks.
 
-- **Queue-jump** (``await bus.emit(...)``): the emitted event and ALL its
+- **Queue-jump** (``await bus.emit(...).now()``): the emitted event and ALL its
   descendants complete synchronously before the await returns. This is how
   config propagation works: InstallEvent emits BinaryRequestEvent →
   provider hooks resolve/install it → BinaryEvent updates runtime binary state,
@@ -323,14 +323,14 @@ async def install_plugins(
                 config=initial_user_config,
                 config_type="user",
             ),
-        )
+        ).now()
         if initial_derived_config:
             await bus.emit(
                 MachineEvent(
                     config=initial_derived_config,
                     config_type="derived",
                 ),
-            )
+            ).now()
         install_phase_timeout = compute_install_phase_timeout(install_plugins_for_phase, merged_config or None)
         try:
             await bus.emit(
@@ -341,10 +341,10 @@ async def install_plugins(
                     event_timeout=install_phase_timeout,
                     event_handler_slow_timeout=slow_warning_timeout(install_phase_timeout),
                 ),
-            )
+            ).now()
         finally:
             if owns_bus:
-                await bus.stop()
+                await bus.wait_until_idle()
 
 
 def get_plugin_timeout(plugin: Plugin, config: dict[str, Any] | None = None) -> int:
@@ -593,14 +593,14 @@ async def download(
             config=initial_user_config,
             config_type="user",
         ),
-    )
+    ).now()
     if initial_derived_config:
         await bus.emit(
             MachineEvent(
                 config=initial_derived_config,
                 config_type="derived",
             ),
-        )
+        ).now()
 
     heartbeat = None
     if crawl_setup_enabled or crawl_start_enabled or crawl_cleanup_enabled:
@@ -621,7 +621,7 @@ async def download(
                     event_timeout=install_phase_timeout,
                     event_handler_slow_timeout=slow_warning_timeout(install_phase_timeout),
                 ),
-            )
+            ).now()
         if crawl_setup_enabled or crawl_start_enabled or crawl_cleanup_enabled:
             crawl_event_timeout = (
                 (crawl_setup_phase_timeout if crawl_setup_enabled else 0.0)
@@ -635,9 +635,9 @@ async def download(
                 event_timeout=crawl_event_timeout,
                 event_handler_slow_timeout=slow_warning_timeout(crawl_event_timeout),
             )
-            await bus.emit(crawl_event)
+            await bus.emit(crawl_event).now()
     finally:
         if heartbeat is not None:
             await heartbeat.stop()
         if owns_bus:
-            await bus.stop()
+            await bus.wait_until_idle()

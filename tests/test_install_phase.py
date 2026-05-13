@@ -69,7 +69,7 @@ def test_install_event_does_not_skip_stale_cached_binary_requests(tmp_path: Path
     try:
         asyncio.run(run())
     finally:
-        asyncio.run(bus.stop())
+        asyncio.run(bus.wait_until_idle())
 
     assert any(event.plugin_name == "ytdlp" and event.name == "yt-dlp" for event in request_events)
     assert any(

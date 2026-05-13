@@ -64,7 +64,7 @@ def test_plugin_env_exports_shared_runtime_paths_after_real_install_phase(
             run_output_dir=run_output_dir,
         ).to_env()
     finally:
-        asyncio.run(bus.stop())
+        asyncio.run(bus.wait_until_idle())
 
     lib_dir = Path(ytdlp_env["LIB_DIR"])
     pip_venv = lib_dir / "pip" / "venv"
@@ -139,6 +139,42 @@ def test_plugin_env_preserves_explicit_shared_snap_dir_override(tmp_path: Path) 
     assert env["SNAP_DIR"] == str(explicit_snap_dir)
 
 
+def test_plugin_env_preserves_user_runtime_dirs_when_derived_config_has_defaults(tmp_path: Path) -> None:
+    plugins = discover_plugins()
+    bus = create_bus(total_timeout=60.0, name=f"test_config_derived_runtime_dirs_{tmp_path.name}")
+    data_dir = tmp_path / "data"
+    crawl_dir = tmp_path / "crawl"
+    snap_dir = tmp_path / "snap"
+    run_dir = tmp_path / "run"
+
+    async def emit_runtime_config() -> None:
+        await bus.emit(
+            MachineEvent(
+                config={
+                    "DATA_DIR": str(data_dir),
+                    "CRAWL_DIR": str(crawl_dir),
+                    "SNAP_DIR": str(snap_dir),
+                },
+                config_type="user",
+            ),
+        ).now()
+        await bus.emit(MachineEvent(config={}, config_type="derived")).now()
+
+    try:
+        asyncio.run(emit_runtime_config())
+        env = get_plugin_env(
+            bus,
+            plugin=plugins["chrome"],
+            run_output_dir=run_dir,
+        ).to_env()
+    finally:
+        asyncio.run(bus.wait_until_idle())
+
+    assert env["DATA_DIR"] == str(data_dir)
+    assert env["CRAWL_DIR"] == str(crawl_dir)
+    assert env["SNAP_DIR"] == str(snap_dir)
+
+
 def test_plugin_env_omits_none_runtime_overrides(tmp_path: Path) -> None:
     env = assemble_env(
         overrides={
@@ -157,13 +193,13 @@ def test_plugin_env_accepts_structured_extra_context_from_machine_events(tmp_pat
     bus = create_bus(total_timeout=60.0, name=f"test_config_extra_context_{tmp_path.name}")
 
     async def emit_runtime_config() -> None:
-        await bus.emit(MachineEvent(config=get_initial_env(), config_type="user"))
+        await bus.emit(MachineEvent(config=get_initial_env(), config_type="user")).now()
         await bus.emit(
             MachineEvent(
                 config={"EXTRA_CONTEXT": {"snapshot_id": "test-snapshot", "snapshot_depth": 0}},
                 config_type="user",
             ),
-        )
+        ).now()
 
     try:
         asyncio.run(emit_runtime_config())
@@ -174,7 +210,7 @@ def test_plugin_env_accepts_structured_extra_context_from_machine_events(tmp_pat
             extra_context={"plugin": "favicon", "hook_name": "on_Snapshot__11_favicon.finite.bg"},
         ).to_env()
     finally:
-        asyncio.run(bus.stop())
+        asyncio.run(bus.wait_until_idle())
 
     extra_context = json.loads(env["EXTRA_CONTEXT"])
     assert extra_context["snapshot_id"] == "test-snapshot"

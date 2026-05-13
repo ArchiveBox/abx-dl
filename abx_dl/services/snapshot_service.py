@@ -115,11 +115,6 @@ class SnapshotService(BaseService):
         super().__init__(bus)
         self.bus.on(CrawlAbortEvent, self.on_CrawlAbortEvent)
         self.bus.on(ProcessStdoutEvent, self.on_ProcessStdoutEvent)
-        self.bus.on(SnapshotEvent, self.on_SnapshotEvent__check_crawl_limits)
-
-        for plugin, hook in self.hooks:
-            self.bus.on(SnapshotEvent, self.on_SnapshotEvent__for_hook(plugin, hook))
-
         self.bus.on(SnapshotEvent, self.on_SnapshotEvent)
         self.bus.on(SnapshotCleanupEvent, self.on_SnapshotCleanupEvent)
 
@@ -127,14 +122,14 @@ class SnapshotService(BaseService):
         """Create the concrete SnapshotEvent handler for one snapshot hook."""
 
         async def on_SnapshotEvent__hook(event: SnapshotEvent) -> None:
+            if event.output_dir != str(self.output_dir) or event.snapshot_id != self.snapshot.id:
+                return
             parent_event = self.bus.event_history.get(event.event_parent_id or "")
             if not isinstance(parent_event, CrawlStartEvent):
                 return
             if self.abort_requested:
                 return
             assert self.limit_state is not None
-            if self.limit_state.has_limits() and not self.limit_state.admit_snapshot(event.event_id).allowed:
-                return
             plugin_config = get_plugin_env(
                 self.bus,
                 plugin=plugin,
@@ -171,9 +166,28 @@ class SnapshotService(BaseService):
                 event_handler_slow_timeout=slow_warning_timeout(handler_timeout),
             )
             if hook.is_background:
-                self.bus.emit(process_event)
+                background_process = event.emit(process_event)
+                background_task = asyncio.create_task(background_process.now())
+                background_task.add_done_callback(lambda task: task.exception() if not task.cancelled() else None)
+                started_process = await self.bus.find(
+                    ProcessStartedEvent,
+                    child_of=background_process,
+                    past=True,
+                    future=min(5.0, handler_timeout),
+                )
+                if started_process is None:
+                    raise RuntimeError(f"Background hook {hook.name} did not start")
             else:
-                await self.bus.emit(process_event)
+                foreground_process = event.emit(process_event)
+                await foreground_process.now()
+                completed_process = await self.bus.find(
+                    ProcessCompletedEvent,
+                    child_of=foreground_process,
+                    past=True,
+                    future=handler_timeout,
+                )
+                if completed_process is None:
+                    raise RuntimeError(f"Foreground hook {hook.name} did not complete")
 
         handler_name = f"on_SnapshotEvent__{plugin.name}__{hook.name.replace('.', '_')}__{self.snapshot.id.replace('-', '_')[-12:]}"
         on_SnapshotEvent__hook.__name__ = handler_name
@@ -182,6 +196,8 @@ class SnapshotService(BaseService):
 
     async def on_SnapshotEvent__check_crawl_limits(self, event: SnapshotEvent) -> None:
         """Persist crawl-limit admission for the root snapshot before hook handlers run."""
+        if event.output_dir != str(self.output_dir) or event.snapshot_id != self.snapshot.id:
+            return
         if self.limit_state is None:
             self.limit_state = CrawlLimitState.from_config(get_user_env(self.bus).model_dump(mode="json"))
         parent_event = self.bus.event_history.get(event.event_parent_id or "")
@@ -196,6 +212,8 @@ class SnapshotService(BaseService):
         Discovered snapshots inherit their parent SnapshotEvent's depth and
         increment it by one.
         """
+        if Path(event.output_dir).parent != self.output_dir:
+            return
         try:
             record = json.loads(event.line)
         except (json.JSONDecodeError, ValueError):
@@ -208,7 +226,8 @@ class SnapshotService(BaseService):
             discovered_snapshot = Snapshot(**record)
         except ValidationError:
             return
-        assert self.limit_state is not None
+        if self.limit_state is None:
+            self.limit_state = CrawlLimitState.from_config(get_user_env(self.bus).model_dump(mode="json"))
         if not self.limit_state.should_emit_discovered_snapshots():
             return
         parent_snapshot = await self.bus.find(
@@ -219,32 +238,43 @@ class SnapshotService(BaseService):
         )
         if parent_snapshot is None:
             return
-        self.bus.emit(
+        assert isinstance(parent_snapshot, SnapshotEvent)
+        await event.emit(
             SnapshotEvent(
                 url=discovered_snapshot.url,
                 snapshot_id=discovered_snapshot.id,
-                output_dir=event.output_dir,
+                output_dir=str(self.output_dir),
                 depth=parent_snapshot.depth + 1,
                 event_timeout=event.event_timeout,
                 event_handler_slow_timeout=slow_warning_timeout(event.event_timeout),
             ),
-        )
+        ).now()
 
     async def on_SnapshotEvent(self, event: SnapshotEvent) -> None:
-        """Emit cleanup and completion after all snapshot hooks have run.
+        """Run snapshot hooks in sort order, then emit cleanup and completion.
 
         Only the root SnapshotEvent emitted directly by CrawlStartEvent drives
         hook execution and cleanup. Discovered SnapshotEvents emitted from hook
         stdout are left for higher-level consumers like ArchiveBox.
         """
+        if event.output_dir != str(self.output_dir) or event.snapshot_id != self.snapshot.id:
+            return
         parent_event = self.bus.event_history.get(event.event_parent_id or "")
         if not isinstance(parent_event, CrawlStartEvent):
             return
+        if self.limit_state is None:
+            self.limit_state = CrawlLimitState.from_config(get_user_env(self.bus).model_dump(mode="json"))
+        if self.limit_state.has_limits() and not self.limit_state.admit_snapshot(event.event_id).allowed:
+            return
+        for plugin, hook in self.hooks:
+            if self.abort_requested:
+                break
+            await self.on_SnapshotEvent__for_hook(plugin, hook)(event)
         url = self.url
         snapshot_id = self.snapshot.id
         output_dir = str(self.output_dir)
         if self.snapshot_cleanup_enabled:
-            await self.bus.emit(
+            await event.emit(
                 SnapshotCleanupEvent(
                     url=url,
                     snapshot_id=snapshot_id,
@@ -252,8 +282,8 @@ class SnapshotService(BaseService):
                     event_timeout=self.snapshot_cleanup_phase_timeout,
                     event_handler_slow_timeout=slow_warning_timeout(self.snapshot_cleanup_phase_timeout),
                 ),
-            )
-        await self.bus.emit(SnapshotCompletedEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir))
+            ).now()
+        await event.emit(SnapshotCompletedEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir)).now()
 
     async def on_SnapshotCleanupEvent(self, event: SnapshotCleanupEvent) -> None:
         """SIGTERM all background snapshot hooks so they can flush and exit.
@@ -262,6 +292,8 @@ class SnapshotService(BaseService):
         grace period before SIGKILL. The processes to terminate are resolved
         from the current root SnapshotEvent ancestry.
         """
+        if event.output_dir != str(self.output_dir) or event.snapshot_id != self.snapshot.id:
+            return
         root_snapshot_event = await self.bus.find(
             SnapshotEvent,
             past=True,
@@ -287,6 +319,7 @@ class SnapshotService(BaseService):
             )
             if process_event is None:
                 break
+            assert isinstance(process_event, ProcessEvent)
             seen_process_event_ids.add(process_event.event_id)
             background_process_events.append(process_event)
         grace_by_hook: dict[tuple[str, str], int] = {}
@@ -320,9 +353,10 @@ class SnapshotService(BaseService):
             )
             if started_process is None:
                 continue
+            assert isinstance(started_process, ProcessStartedEvent)
             started_processes.append(started_process)
         pending_kills = [
-            self.bus.emit(
+            event.emit(
                 ProcessKillEvent(
                     plugin_name=started_process.plugin_name,
                     hook_name=started_process.hook_name,

@@ -203,9 +203,17 @@ def _load_plugin_config_model(
         if isinstance(value, (dict, list)):
             global_config[key] = dump_to_dotenv_format(value)
     if derived_env:
-        effective_derived_env = derived_env.model_dump(mode="json") if isinstance(derived_env, BaseSettings) else dict(derived_env)
+        if isinstance(derived_env, BaseSettings):
+            derived_keys = set(derived_env.model_fields_set)
+            if derived_env.__pydantic_extra__:
+                derived_keys.update(derived_env.__pydantic_extra__)
+            effective_derived_env = {key: value for key, value in derived_env.model_dump(mode="json").items() if key in derived_keys}
+        else:
+            effective_derived_env = dict(derived_env)
         for key, value in effective_derived_env.items():
             if value is None:
+                continue
+            if key in {"DATA_DIR", "CRAWL_DIR", "SNAP_DIR"} and global_config.get(key) != value:
                 continue
             if key.endswith("_BINARY"):
                 user_value = str(global_config.get(key, "")).strip()

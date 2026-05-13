@@ -70,7 +70,7 @@ class ArchiveResultService(BaseService):
             future=False,
             where=lambda candidate: self.bus.event_is_child_of(started_process, candidate),
         )
-        assert snapshot_event is not None
+        assert isinstance(snapshot_event, SnapshotEvent)
 
         output_files = scan_output_files(Path(event.output_dir))
         archive_result_payload["snapshot_id"] = snapshot_event.snapshot_id
@@ -85,7 +85,7 @@ class ArchiveResultService(BaseService):
         index_path = Path(event.output_dir).parent / "index.jsonl"
         write_jsonl(index_path, ar, also_print=self.emit_jsonl)
 
-        await self.bus.emit(
+        await event.emit(
             ArchiveResultEvent(
                 snapshot_id=ar.snapshot_id,
                 plugin=ar.plugin,
@@ -99,7 +99,7 @@ class ArchiveResultService(BaseService):
                 output_json=ar.output_json,
                 error=ar.error or "",
             ),
-        )
+        ).now()
 
     async def on_ProcessCompletedEvent(self, event: ProcessCompletedEvent) -> None:
         """Emit a synthetic ArchiveResult only for Snapshot hooks that didn't self-report."""
@@ -129,7 +129,7 @@ class ArchiveResultService(BaseService):
             future=False,
             where=lambda candidate: self.bus.event_is_child_of(started_process, candidate),
         )
-        assert snapshot_event is not None
+        assert isinstance(snapshot_event, SnapshotEvent)
 
         if event.exit_code != 0:
             # Failed process with no inline result → synthetic failure
@@ -163,7 +163,7 @@ class ArchiveResultService(BaseService):
         index_path = Path(event.output_dir).parent / "index.jsonl"
         write_jsonl(index_path, ar, also_print=self.emit_jsonl)
 
-        await self.bus.emit(
+        await event.emit(
             ArchiveResultEvent(
                 snapshot_id=ar.snapshot_id,
                 plugin=ar.plugin,
@@ -176,7 +176,7 @@ class ArchiveResultService(BaseService):
                 output_json=ar.output_json,
                 error=ar.error or "",
             ),
-        )
+        ).now()
 
 
 # ── Pure helpers ────────────────────────────────────────────────────────────

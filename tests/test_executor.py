@@ -42,7 +42,7 @@ def _run_download(*args, **kwargs):
         asyncio.run(download(*args, **kwargs))
     finally:
         if owns_bus:
-            asyncio.run(bus.stop())
+            asyncio.run(bus.wait_until_idle())
     return results
 
 
@@ -72,7 +72,7 @@ def _resolve_real_wget_binary(tmp_path: Path) -> BinaryEvent:
     try:
         asyncio.run(run())
     finally:
-        asyncio.run(bus.stop())
+        asyncio.run(bus.wait_until_idle())
 
     return next(event for event in reversed(installed_events) if event.name == "wget")
 
@@ -103,7 +103,7 @@ def test_binary_installed_event_preserves_child_provider_metadata(tmp_path: Path
     try:
         asyncio.run(run())
     finally:
-        asyncio.run(bus.stop())
+        asyncio.run(bus.wait_until_idle())
 
     wget_events = [event for event in installed_events if event.name == "wget"]
     assert wget_events
@@ -146,7 +146,7 @@ def test_binary_installed_event_uses_machine_config_seeded_from_persistent_confi
             )
             return installed_events
         finally:
-            await bus.stop()
+            await bus.wait_until_idle()
 
     wget_events = [event for event in asyncio.run(run()) if event.name == resolved_binary.abspath]
     assert wget_events
@@ -185,7 +185,7 @@ def test_binary_installed_event_resolves_config_backed_command_name(tmp_path: Pa
             )
             return installed_events
         finally:
-            await bus.stop()
+            await bus.wait_until_idle()
 
     wget_events = [event for event in asyncio.run(run()) if event.name == "wget"]
     assert wget_events
@@ -223,7 +223,7 @@ def test_binary_installed_event_uses_user_absolute_path_for_real_plugin(tmp_path
             )
             return installed_events
         finally:
-            await bus.stop()
+            await bus.wait_until_idle()
 
     wget_events = [event for event in asyncio.run(run()) if event.name == resolved_binary.abspath]
     assert wget_events
@@ -263,7 +263,7 @@ def test_binary_installed_event_reuses_real_plugin_cached_paths_without_provider
             )
             return installed_events
         finally:
-            await bus.stop()
+            await bus.wait_until_idle()
 
     wget_events = [event for event in asyncio.run(run()) if event.name == "wget"]
     assert wget_events
@@ -311,7 +311,7 @@ def test_binary_event_uses_cached_config_binary_before_provider_hooks(tmp_path: 
     try:
         asyncio.run(run())
     finally:
-        asyncio.run(bus.stop())
+        asyncio.run(bus.wait_until_idle())
 
     wget_events = [event for event in installed_events if event.name == "wget"]
     assert wget_events
@@ -361,7 +361,7 @@ def test_setup_services_accepts_runtime_config_overrides_and_seeds_machine_event
             await bus.wait_until_idle(timeout=2.0)
             return observed
         finally:
-            await bus.stop()
+            await bus.wait_until_idle()
 
     events = asyncio.run(run())
     user_event = next(event for event in events if event.config_type == "user")
@@ -401,7 +401,7 @@ def test_binary_service_passes_extra_binary_kwargs_to_provider_hooks(
             )
             return process_events
         finally:
-            await bus.stop()
+            await bus.wait_until_idle()
 
     process_events = asyncio.run(run())
     pip_event = next(event for event in process_events if event.hook_name.endswith("on_BinaryRequest__11_pip"))
@@ -457,7 +457,7 @@ def test_binary_event_ignores_unknown_request_plugin_when_persisting_config(tmp_
             )
             return installed_events
         finally:
-            await bus.stop()
+            await bus.wait_until_idle()
 
     installed_events = asyncio.run(run())
     assert installed_events
@@ -513,7 +513,7 @@ def test_binary_event_falls_back_from_stale_cached_config_binary_to_provider_hoo
     try:
         asyncio.run(run())
     finally:
-        asyncio.run(bus.stop())
+        asyncio.run(bus.wait_until_idle())
 
     wget_events = [event for event in installed_events if event.name == "wget"]
     assert wget_events
@@ -573,7 +573,7 @@ def test_binary_event_does_not_fallback_from_user_binary_abspath_override(tmp_pa
     try:
         asyncio.run(run())
     finally:
-        asyncio.run(bus.stop())
+        asyncio.run(bus.wait_until_idle())
 
     assert installed_events == []
     assert process_events == []
@@ -620,7 +620,7 @@ def test_binary_installed_event_updates_lib_bin_symlink(tmp_path: Path) -> None:
             assert link_path.is_symlink()
             assert link_path.resolve() == second_target.resolve()
         finally:
-            await bus.stop()
+            await bus.wait_until_idle()
 
     asyncio.run(run())
 
@@ -700,7 +700,7 @@ def test_snapshot_service_emits_background_process_without_extra_wait(tmp_path: 
             await bus.emit(
                 root_event,
             )
-            return await bus.find(
+            process_event = await bus.find(
                 ProcessEvent,
                 past=True,
                 future=1.0,
@@ -708,10 +708,11 @@ def test_snapshot_service_emits_background_process_without_extra_wait(tmp_path: 
                 plugin_name=plugin.name,
                 hook_name=hook.name,
             )
+            return process_event if isinstance(process_event, ProcessEvent) else None
 
         emitted = asyncio.run(run())
     finally:
-        asyncio.run(bus.stop())
+        asyncio.run(bus.wait_until_idle())
 
     assert emitted is not None
     assert emitted.is_background is True
@@ -792,7 +793,7 @@ def test_nested_snapshot_events_are_emitted_but_ignored_by_snapshot_hooks(tmp_pa
         await bus.emit(root_event)
         await bus.emit(process_event)
         await bus.emit(stdout_event)
-        await bus.stop()
+        await bus.wait_until_idle()
 
     asyncio.run(run())
     assert seen_snapshot_events == [(0, "https://example.com"), (1, "https://example.com/child")]
@@ -856,7 +857,7 @@ def test_discovered_snapshot_depth_increments_from_parent_snapshot(tmp_path: Pat
         await bus.emit(root_event)
         await bus.emit(process_event)
         await bus.emit(stdout_event)
-        await bus.stop()
+        await bus.wait_until_idle()
 
     asyncio.run(run())
     assert seen_snapshot_events == [(2, "https://example.com/parent"), (3, "https://example.com/grandchild")]
@@ -909,7 +910,7 @@ def test_inline_archive_result_collects_current_output_files(tmp_path: Path) -> 
         await bus.emit(crawl_start_event)
         await bus.emit(snapshot_event)
         await bus.emit(process_event)
-        await bus.stop()
+        await bus.wait_until_idle()
 
     asyncio.run(run())
 

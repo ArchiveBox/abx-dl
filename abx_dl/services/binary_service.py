@@ -11,7 +11,16 @@ from abxbus import BaseEvent, EventBus
 from pydantic import BaseModel, ConfigDict
 
 from ..config import get_derived_env, get_plugin_env, get_required_binary_requests, get_user_env, is_path_like_env_value
-from ..events import BinaryEvent, BinaryRequestEvent, InstallEvent, MachineEvent, ProcessEvent, ProcessStdoutEvent, slow_warning_timeout
+from ..events import (
+    BinaryEvent,
+    BinaryRequestEvent,
+    InstallEvent,
+    MachineEvent,
+    ProcessCompletedEvent,
+    ProcessEvent,
+    ProcessStdoutEvent,
+    slow_warning_timeout,
+)
 from ..models import Hook, Plugin, Snapshot, uuid7
 from .base import BaseService
 
@@ -104,7 +113,7 @@ class BinaryService(BaseService):
                 plugin=plugin,
                 hook=hook,
                 provider_name=plugin.name,
-            ) -> None:
+            ) -> str | None:
                 existing_installed = await self.bus.find(
                     BinaryEvent,
                     child_of=event,
@@ -114,7 +123,8 @@ class BinaryService(BaseService):
                     where=lambda candidate: bool(candidate.abspath),
                 )
                 if existing_installed is not None:
-                    return
+                    assert isinstance(existing_installed, BinaryEvent)
+                    return existing_installed.abspath
 
                 inherited_binproviders = event.binproviders
                 if not inherited_binproviders and event.binary_id:
@@ -130,6 +140,7 @@ class BinaryService(BaseService):
                         ),
                     )
                     if ancestor_request is not None:
+                        assert isinstance(ancestor_request, BinaryRequestEvent)
                         inherited_binproviders = ancestor_request.binproviders
 
                 cached_terminal, cached_error = await self._emit_cached_binary_if_already_installed(
@@ -139,14 +150,24 @@ class BinaryService(BaseService):
                 if cached_terminal:
                     if cached_error:
                         raise FileNotFoundError(cached_error)
-                    return
+                    cached_binary = await self.bus.find(
+                        BinaryEvent,
+                        past=True,
+                        future=False,
+                        name=event.name,
+                        where=lambda candidate: bool(candidate.abspath) and self.bus.event_is_child_of(candidate, event),
+                    )
+                    if cached_binary is not None:
+                        assert isinstance(cached_binary, BinaryEvent)
+                        return cached_binary.abspath
+                    return None
 
                 if not self.auto_install:
-                    return
+                    return None
 
                 ordered_providers = _ordered_binproviders(inherited_binproviders or event.binproviders or "env")
                 if provider_name not in ordered_providers:
-                    return
+                    return None
 
                 binary_id = event.binary_id or uuid7()
                 request_payload = event.model_dump(mode="json", exclude_none=True)
@@ -178,20 +199,46 @@ class BinaryService(BaseService):
                     },
                 )
                 plugin_env = plugin_config.to_env()
-                await self.bus.emit(
-                    ProcessEvent(
-                        plugin_name=plugin.name,
-                        hook_name=hook.name,
-                        hook_path=str(hook.path),
-                        hook_args=hook_args,
-                        is_background=False,
-                        output_dir=str(plugin_output_dir),
-                        env=plugin_env,
-                        timeout=300,
-                        event_handler_timeout=330.0,
-                        event_handler_slow_timeout=slow_warning_timeout(300),
-                    ),
+                process_event = ProcessEvent(
+                    plugin_name=plugin.name,
+                    hook_name=hook.name,
+                    hook_path=str(hook.path),
+                    hook_args=hook_args,
+                    is_background=False,
+                    output_dir=str(plugin_output_dir),
+                    env=plugin_env,
+                    timeout=300,
+                    event_handler_timeout=330.0,
+                    event_handler_slow_timeout=slow_warning_timeout(300),
                 )
+                await event.emit(process_event).now()
+                completed_process = await self.bus.find(
+                    ProcessCompletedEvent,
+                    past=True,
+                    future=False,
+                    where=lambda candidate: self.bus.event_is_child_of(candidate, process_event),
+                )
+                if completed_process is not None:
+                    assert isinstance(completed_process, ProcessCompletedEvent)
+                    for line in completed_process.stdout.splitlines():
+                        try:
+                            binary_payload = EmittedBinaryRecord(**json.loads(line))
+                        except Exception:
+                            continue
+                        if binary_payload.name != event.name or not binary_payload.abspath:
+                            continue
+                        return binary_payload.abspath
+                installed_binary = await self.bus.find(
+                    BinaryEvent,
+                    past=True,
+                    future=False,
+                    name=event.name,
+                    where=lambda candidate: bool(candidate.abspath) and self.bus.event_is_child_of(candidate, event),
+                )
+                if installed_binary is not None:
+                    assert isinstance(installed_binary, BinaryEvent)
+                    return installed_binary.abspath
+                return None
 
             handler_name = f"on_BinaryRequestEvent__{plugin.name}__{hook.name.replace('.', '_')}"
             on_BinaryRequest.__name__ = handler_name
@@ -259,27 +306,27 @@ class BinaryService(BaseService):
                 if request_event.name.strip() in pruned_install_cache:
                     cached_candidates, stale_config_keys = self._iter_cached_binary_candidates(request_event)
                     for config_key in stale_config_keys:
-                        await self.bus.emit(
+                        await event.emit(
                             MachineEvent(
                                 method="unset",
                                 key=f"config/{config_key}",
                                 config_type="derived",
                             ),
-                        )
+                        ).now()
                     if any(Path(value).expanduser().exists() for _keys, value, _authoritative in cached_candidates):
                         continue
                     if pruned_install_cache.pop(request_event.name.strip(), None) is not None:
                         install_cache_changed = True
-                await self.bus.emit(request_event)
+                await event.emit(request_event).now(first_result=True)
         if install_cache_changed:
-            await self.bus.emit(
+            await event.emit(
                 MachineEvent(
                     method="update",
                     key="config/ABX_INSTALL_CACHE",
                     value=pruned_install_cache,
                     config_type="derived",
                 ),
-            )
+            ).now()
 
     def _request_run_output_dir(self, output_dir: str, plugin_name: str) -> Path:
         """Normalize a BinaryRequest output dir back to the run root for config lookup."""
@@ -370,13 +417,13 @@ class BinaryService(BaseService):
         """Reuse a cached binary path when it still exists, or surface a broken user path."""
         candidates, stale_config_keys = self._iter_cached_binary_candidates(event)
         for config_key in stale_config_keys:
-            await self.bus.emit(
+            await event.emit(
                 MachineEvent(
                     method="unset",
                     key=f"config/{config_key}",
                     config_type="derived",
                 ),
-            )
+            ).now()
         for config_keys, registered_value, authoritative_override in candidates:
             registered_path = Path(registered_value).expanduser()
             if not registered_path.exists():
@@ -384,7 +431,7 @@ class BinaryService(BaseService):
                     return True, f"{event.name} not available at {registered_value}"
                 continue
             binary_id = event.binary_id or uuid7()
-            await self.bus.emit(
+            await event.emit(
                 BinaryEvent(
                     name=event.name,
                     plugin_name=event.plugin_name,
@@ -398,21 +445,21 @@ class BinaryService(BaseService):
                     binary_id=binary_id,
                     machine_id=event.machine_id,
                 ),
-            )
+            ).now()
             return True, ""
         return False, ""
 
     async def _persist_binary_abspath_in_config(self, request_event: BinaryRequestEvent, abspath: str) -> None:
         """Persist derived binary paths for future runs."""
         for config_key in self._config_keys_for_binary_request(request_event):
-            await self.bus.emit(
+            await request_event.emit(
                 MachineEvent(
                     method="update",
                     key=f"config/{config_key}",
                     value=abspath,
                     config_type="derived",
                 ),
-            )
+            ).now()
 
     async def on_ProcessStdoutEvent(self, event: ProcessStdoutEvent) -> None:
         """Route provider hook stdout Binary JSONL records."""
@@ -438,7 +485,7 @@ class BinaryService(BaseService):
             future=False,
             where=lambda candidate: candidate.name == binary_payload.name and self.bus.event_is_child_of(event, candidate),
         )
-        assert request_event is not None
+        assert isinstance(request_event, BinaryRequestEvent)
         binary_id = request_event.binary_id or uuid7()
 
         binary_event = BinaryEvent(
@@ -455,7 +502,7 @@ class BinaryService(BaseService):
             machine_id=request_event.machine_id,
         )
 
-        await self.bus.emit(binary_event)
+        await event.emit(binary_event).now()
 
     async def on_BinaryEvent(self, event: BinaryEvent) -> None:
         """Persist successful binary installs into the install cache and derived config."""
@@ -467,31 +514,35 @@ class BinaryService(BaseService):
                 raise TypeError("ABX_INSTALL_CACHE must be a dict[str, str].")
             install_cache = {str(binary_name): str(cached_at) for binary_name, cached_at in install_cache_value.items()}
         install_cache[event.name] = datetime.now(timezone.utc).isoformat()
-        await self.bus.emit(
+        await event.emit(
             MachineEvent(
                 method="update",
                 key="config/ABX_INSTALL_CACHE",
                 value=install_cache,
                 config_type="derived",
             ),
-        )
+        ).now()
         self._link_installed_binary(event.name, event.abspath)
         request_event: BinaryRequestEvent | None = None
         if event.binary_id:
-            request_event = await self.bus.find(
+            found_request = await self.bus.find(
                 BinaryRequestEvent,
                 past=True,
                 future=False,
                 binary_id=event.binary_id,
             )
+            if isinstance(found_request, BinaryRequestEvent):
+                request_event = found_request
         if request_event is None:
-            request_event = await self.bus.find(
+            found_request = await self.bus.find(
                 BinaryRequestEvent,
                 past=True,
                 future=False,
                 name=event.name,
                 plugin_name=event.plugin_name,
             )
+            if isinstance(found_request, BinaryRequestEvent):
+                request_event = found_request
         if request_event is not None:
             await self._persist_binary_abspath_in_config(request_event, event.abspath)
 

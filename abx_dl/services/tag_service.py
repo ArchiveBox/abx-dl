@@ -36,4 +36,4 @@ class TagService(BaseService):
             tag = Tag(**tag_payload)
         except ValidationError:
             return
-        await self.bus.emit(TagEvent(**tag.model_dump(mode="json")))
+        await event.emit(TagEvent(**tag.model_dump(mode="json"))).now()

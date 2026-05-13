@@ -84,7 +84,7 @@ class ProcessService(BaseService):
     5. emit ``ProcessCompletedEvent``
 
     Background behavior is owned by abxbus and the dispatch site:
-    callers ``await bus.emit(ProcessEvent(...))`` for foreground hooks and use
+    callers ``await bus.emit(ProcessEvent(...)).now()`` for foreground hooks and use
     ``bus.emit(ProcessEvent(...))`` without awaiting for background hooks. The
     ``ProcessEvent`` itself still stays alive until the subprocess exits because
     ``on_ProcessEvent()`` awaits its child ``ProcessStartedEvent``.
@@ -230,7 +230,7 @@ class ProcessService(BaseService):
                 proc.ended_at = now_iso()
                 index_path = plugin_output_dir.parent / "index.jsonl"
                 write_jsonl(index_path, proc, also_print=self.emit_jsonl)
-                await self.bus.emit(
+                await event.emit(
                     ProcessCompletedEvent(
                         plugin_name=event.plugin_name,
                         hook_name=event.hook_name,
@@ -252,9 +252,9 @@ class ProcessService(BaseService):
                         start_ts=proc.started_at or "",
                         end_ts=proc.ended_at or "",
                     ),
-                )
+                ).now()
                 return
-            started_event = await self.bus.emit(
+            started_event = await event.emit(
                 ProcessStartedEvent(
                     plugin_name=event.plugin_name,
                     hook_name=event.hook_name,
@@ -281,7 +281,7 @@ class ProcessService(BaseService):
                     event_handler_timeout=event.timeout + 30.0,
                     event_handler_slow_timeout=10000.0,
                 ),
-            )
+            ).now()
             assert started_event is not None
             proc = Process(
                 cmd=[event.hook_path, *event.hook_args],
@@ -328,15 +328,14 @@ class ProcessService(BaseService):
                     if interrupt_task is not None and interrupt_task in done:
                         self.pause_requested.clear()
                         interrupted = True
-                        await self.bus.emit(
+                        await started_event.emit(
                             ProcessKillEvent(
                                 plugin_name=event.plugin_name,
                                 hook_name=event.hook_name,
                                 pid=process.pid,
                                 grace_period=float(event.timeout),
-                                event_parent_id=started_event.event_id,
                             ),
-                        )
+                        ).now()
                         await wait_task
                         break
                 await stream_task
@@ -365,13 +364,13 @@ class ProcessService(BaseService):
                     action = "abort"
                 else:
                     action = self.on_InterruptedHookPrompt(event.hook_name)
-                await self.bus.emit(
+                await event.emit(
                     {
                         "abort": CrawlAbortEvent,
                         "retry": CrawlResumeAndRetryEvent,
                         "skip": CrawlResumeAndSkipEvent,
                     }[action](),
-                )
+                ).now()
 
             proc.exit_code = returncode
             proc.status = status
@@ -394,7 +393,7 @@ class ProcessService(BaseService):
             index_path = plugin_output_dir.parent / "index.jsonl"
             write_jsonl(index_path, proc, also_print=self.emit_jsonl)
 
-            await self.bus.emit(
+            await started_event.emit(
                 ProcessCompletedEvent(
                     plugin_name=event.plugin_name,
                     hook_name=event.hook_name,
@@ -415,11 +414,10 @@ class ProcessService(BaseService):
                     worker_type=event.worker_type,
                     start_ts=proc.started_at or "",
                     end_ts=proc.ended_at or "",
-                    event_parent_id=started_event.event_id,
                 ),
-            )
+            ).now()
             if action == "retry":
-                await self.bus.emit(
+                await event.emit(
                     ProcessEvent(
                         plugin_name=event.plugin_name,
                         hook_name=event.hook_name,
@@ -436,7 +434,7 @@ class ProcessService(BaseService):
                         event_handler_timeout=event.event_handler_timeout,
                         event_handler_slow_timeout=event.event_handler_slow_timeout,
                     ),
-                )
+                ).now()
         finally:
             self.pause_requested.clear()
 
@@ -456,19 +454,21 @@ class ProcessService(BaseService):
                 raise RuntimeError(f"Missing cleanup parent for ProcessKillEvent {event.event_id}")
             root_event: SnapshotEvent | CrawlEvent | None
             if isinstance(parent_event, SnapshotCleanupEvent):
-                root_event = await self.bus.find(
+                found_root_event = await self.bus.find(
                     SnapshotEvent,
                     past=True,
                     future=False,
                     where=lambda candidate: self.bus.event_is_child_of(parent_event, candidate),
                 )
+                root_event = found_root_event if isinstance(found_root_event, SnapshotEvent) else None
             else:
-                root_event = await self.bus.find(
+                found_root_event = await self.bus.find(
                     CrawlEvent,
                     past=True,
                     future=False,
                     where=lambda candidate: self.bus.event_is_child_of(parent_event, candidate),
                 )
+                root_event = found_root_event if isinstance(found_root_event, CrawlEvent) else None
             if root_event is None:
                 raise RuntimeError(f"Missing root event for ProcessKillEvent {event.event_id}")
 
@@ -490,6 +490,7 @@ class ProcessService(BaseService):
                 )
                 if started_process is None:
                     break
+                assert isinstance(started_process, ProcessStartedEvent)
                 seen_started_event_ids.add(started_process.event_id)
                 matches.append(started_process)
             if len(matches) != 1:
@@ -528,7 +529,7 @@ class ProcessService(BaseService):
 
                     # Emit each line immediately so routing services can react
                     # while the subprocess is still running.
-                    await self.bus.emit(
+                    await event.emit(
                         ProcessStdoutEvent(
                             line=line.strip(),
                             plugin_name=event.plugin_name,
@@ -536,9 +537,8 @@ class ProcessService(BaseService):
                             output_dir=event.output_dir,
                             start_ts=proc.started_at or "",
                             end_ts=now_iso(),
-                            event_parent_id=event.event_id,
                         ),
-                    )
+                    ).now()
             except asyncio.CancelledError:
                 return stdout_lines
         return stdout_lines

@@ -51,7 +51,7 @@ import asyncio
 from pathlib import Path
 from typing import Any, Literal
 
-from abxbus import BaseEvent, EventConcurrencyMode, EventHandlerConcurrencyMode
+from abxbus import BaseEvent, EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode
 from pydantic import ConfigDict, Field, model_validator
 
 from .output_files import OutputFile
@@ -105,6 +105,8 @@ class CrawlSetupEvent(BaseEvent):
     on this event, so they run serially in hook sort order. Crawl setup hooks
     are expected to prepare shared state and emit no stdout JSONL records.
     """
+
+    event_handler_concurrency: EventHandlerConcurrencyMode | None = EventHandlerConcurrencyMode.SERIAL
 
     url: str
     snapshot_id: str
@@ -187,6 +189,8 @@ class SnapshotEvent(BaseEvent):
     ignores events with ``depth > 0``. ArchiveBox handles recursive crawling
     by processing all depths.
     """
+
+    event_handler_concurrency: EventHandlerConcurrencyMode | None = EventHandlerConcurrencyMode.SERIAL
 
     url: str
     snapshot_id: str
@@ -354,7 +358,7 @@ class ProcessStdoutEvent(BaseEvent):
     Context fields from the parent ProcessEvent are passed through for
     services that need them.
 
-    Uses ``await bus.emit()`` (queue-jump) so the emitted typed event and its
+    Uses ``await bus.emit(...).now()`` (queue-jump) so the emitted typed event and its
     entire handler chain complete before the next stdout line is read.
     """
 
@@ -389,6 +393,7 @@ class BinaryRequestEvent(BaseEvent):
 
     model_config = ConfigDict(extra="allow")
     event_handler_concurrency: EventHandlerConcurrencyMode | None = EventHandlerConcurrencyMode.SERIAL
+    event_handler_completion: EventHandlerCompletionMode | None = EventHandlerCompletionMode.FIRST
 
     name: str = Field(min_length=1)
     plugin_name: str = ""
