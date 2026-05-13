@@ -16,7 +16,6 @@ from ..events import (
     BinaryRequestEvent,
     InstallEvent,
     MachineEvent,
-    ProcessCompletedEvent,
     ProcessEvent,
     ProcessStdoutEvent,
     slow_warning_timeout,
@@ -222,27 +221,24 @@ class BinaryService(BaseService):
             },
         )
         plugin_env = plugin_config.to_env()
-        process_event = ProcessEvent(
-            plugin_name=plugin.name,
-            hook_name=hook.name,
-            hook_path=str(hook.path),
-            hook_args=hook_args,
-            is_background=False,
-            output_dir=str(plugin_output_dir),
-            env=plugin_env,
-            timeout=300,
-            event_handler_timeout=330.0,
-            event_handler_slow_timeout=slow_warning_timeout(300),
+        process_event = event.emit(
+            ProcessEvent(
+                plugin_name=plugin.name,
+                hook_name=hook.name,
+                hook_path=str(hook.path),
+                hook_args=hook_args,
+                is_background=False,
+                output_dir=str(plugin_output_dir),
+                env=plugin_env,
+                timeout=300,
+                event_handler_timeout=330.0,
+                event_handler_slow_timeout=slow_warning_timeout(300),
+            ),
         )
-        await event.emit(process_event).now()
-        completed_process = await self.bus.find(
-            ProcessCompletedEvent,
-            past=True,
-            future=False,
-            where=lambda candidate: self.bus.event_is_child_of(candidate, process_event),
-        )
+        await process_event.now()
+        await process_event.wait()
+        completed_process = await process_event.event_result(raise_if_any=False)
         if completed_process is not None:
-            assert isinstance(completed_process, ProcessCompletedEvent)
             for line in completed_process.stdout.splitlines():
                 try:
                     binary_payload = EmittedBinaryRecord(**json.loads(line))

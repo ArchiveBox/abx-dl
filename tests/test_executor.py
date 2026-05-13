@@ -431,6 +431,54 @@ def test_binary_service_honors_declared_provider_order() -> None:
     ]
 
 
+def test_binary_service_stops_after_successful_provider_result(tmp_path: Path) -> None:
+    plugins = discover_plugins()
+    selected = {name: plugins[name] for name in ("env", "apt", "brew")}
+    bus = create_bus(total_timeout=30.0, name=f"binary_provider_result_{tmp_path.name}")
+    setup_services(
+        bus,
+        plugins=selected,
+        auto_install=True,
+        emit_jsonl=False,
+        persist_derived=False,
+    )
+    process_events: list[ProcessEvent] = []
+    binary_events: list[BinaryEvent] = []
+
+    async def on_ProcessEvent(event: ProcessEvent) -> None:
+        process_events.append(event)
+
+    async def on_BinaryEvent(event: BinaryEvent) -> None:
+        binary_events.append(event)
+
+    bus.on(ProcessEvent, on_ProcessEvent)
+    bus.on(BinaryEvent, on_BinaryEvent)
+
+    async def run() -> None:
+        await bus.emit(MachineEvent(config=get_initial_env(), config_type="user")).now()
+        request = bus.emit(
+            BinaryRequestEvent(
+                name="python3",
+                plugin_name="python",
+                output_dir=str(tmp_path / "run"),
+                binproviders="env,apt,brew",
+            ),
+        )
+        await request.now(first_result=True)
+        assert await request.event_result() is not None
+
+    try:
+        asyncio.run(run())
+    finally:
+        asyncio.run(bus.wait_until_idle())
+
+    assert [event.plugin_name for event in process_events] == ["env"]
+    python_events = [event for event in binary_events if event.name == "python3"]
+    assert python_events
+    assert python_events[-1].binprovider == "env"
+    assert Path(python_events[-1].abspath).name == "python3"
+
+
 def test_binary_event_ignores_unknown_request_plugin_when_persisting_config(tmp_path: Path) -> None:
     plugins = discover_plugins()
 

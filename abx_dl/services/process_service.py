@@ -158,7 +158,7 @@ class ProcessService(BaseService):
         """Remember that the current interrupted hook should abort the crawl."""
         self.abort_requested = True
 
-    async def on_ProcessEvent(self, event: ProcessEvent) -> None:
+    async def on_ProcessEvent(self, event: ProcessEvent) -> Process | None:
         """Spawn one hook subprocess and emit ProcessStartedEvent.
 
         Foreground hooks stay inside this one handler for spawn, stdout, user
@@ -253,7 +253,7 @@ class ProcessService(BaseService):
                         end_ts=proc.ended_at or "",
                     ),
                 ).now()
-                return
+                return proc
             started_event = await event.emit(
                 ProcessStartedEvent(
                     plugin_name=event.plugin_name,
@@ -435,6 +435,7 @@ class ProcessService(BaseService):
                         event_handler_slow_timeout=event.event_handler_slow_timeout,
                     ),
                 ).now()
+            return proc
         finally:
             self.pause_requested.clear()
 
