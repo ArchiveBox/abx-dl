@@ -1,0 +1,12 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "a0748a58b8d40be8c61fb745791480e29600fa17",
+  "prompts": {},
+  "humans": {
+    "h_70788aaa4025cd": {
+      "author": "Nick Sweeting"
+    }
+  }
+}
