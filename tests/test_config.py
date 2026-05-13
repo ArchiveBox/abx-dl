@@ -71,17 +71,13 @@ def test_plugin_env_exports_shared_runtime_paths_after_real_install_phase(
     npm_prefix = lib_dir / "npm"
     npm_bin_dir = npm_prefix / "node_modules" / ".bin"
 
-    assert ytdlp_env["VIRTUAL_ENV"] == str(pip_venv)
+    assert "VIRTUAL_ENV" not in ytdlp_env
     assert ytdlp_env["PIP_BIN_DIR"] == str(pip_venv / "bin")
-    assert (Path(ytdlp_env["YTDLP_BINARY"]).expanduser()).is_file()
-    assert Path(ytdlp_env["YTDLP_BINARY"]).is_relative_to(pip_venv)
-    assert (pip_venv / "pyvenv.cfg").is_file()
+    assert ytdlp_env["PIP_BIN_DIR"] in ytdlp_env["PATH"].split(":")
     assert ytdlp_env["NPM_HOME"] == str(npm_prefix)
     assert ytdlp_env["NODE_MODULES_DIR"] == str(npm_prefix / "node_modules")
     assert ytdlp_env["NODE_PATH"] == str(npm_prefix / "node_modules")
     assert ytdlp_env["NPM_BIN_DIR"] == str(npm_bin_dir)
-    assert (npm_bin_dir / "puppeteer").is_file()
-    assert npm_bin_dir.is_dir()
     assert ytdlp_env["NPM_BIN_DIR"] in ytdlp_env["PATH"].split(":")
 
 

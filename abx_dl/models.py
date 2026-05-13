@@ -249,10 +249,6 @@ class PluginEnv(BaseModel):
                 path_dirs.insert(0, extra_dir)
         env["PATH"] = derived_path
 
-        pip_venv_dir = Path(env["PIP_HOME"]) / "venv"
-        if (pip_venv_dir / "pyvenv.cfg").exists():
-            env["VIRTUAL_ENV"] = str(pip_venv_dir)
-
         return env
 
 
