@@ -303,6 +303,9 @@ class SnapshotService(BaseService):
         if root_snapshot_event is None:
             return
         background_hook_keys = {(plugin.name, hook.name) for plugin, hook in self.hooks if hook.is_background}
+        daemon_background_hook_keys = {
+            (plugin.name, hook.name) for plugin, hook in self.hooks if hook.is_background and ".daemon.bg" in hook.name
+        }
         background_process_events: list[ProcessEvent] = []
         seen_process_event_ids: set[str] = set()
         while True:
@@ -324,7 +327,7 @@ class SnapshotService(BaseService):
             background_process_events.append(process_event)
         grace_by_hook: dict[tuple[str, str], int] = {}
         for plugin, hook in self.hooks:
-            if not hook.is_background:
+            if not hook.is_background or ".daemon.bg" not in hook.name:
                 continue
             plugin_config = get_plugin_env(
                 self.bus,
@@ -337,14 +340,6 @@ class SnapshotService(BaseService):
             )
         started_processes: list[ProcessStartedEvent] = []
         for process_event in background_process_events:
-            completed_process = await self.bus.find(
-                ProcessCompletedEvent,
-                child_of=process_event,
-                past=True,
-                future=False,
-            )
-            if completed_process is not None:
-                continue
             started_process = await self.bus.find(
                 ProcessStartedEvent,
                 child_of=process_event,
@@ -354,6 +349,22 @@ class SnapshotService(BaseService):
             if started_process is None:
                 continue
             assert isinstance(started_process, ProcessStartedEvent)
+            completed_process = await self.bus.find(
+                ProcessCompletedEvent,
+                child_of=started_process,
+                past=True,
+                future=False,
+            )
+            if completed_process is not None:
+                continue
+            if (process_event.plugin_name, process_event.hook_name) not in daemon_background_hook_keys:
+                await self.bus.find(
+                    ProcessCompletedEvent,
+                    child_of=started_process,
+                    past=True,
+                    future=event.event_timeout,
+                )
+                continue
             started_processes.append(started_process)
         pending_kills = [
             event.emit(
@@ -368,7 +379,7 @@ class SnapshotService(BaseService):
             for started_process in started_processes
         ]
         if pending_kills:
-            await asyncio.gather(*pending_kills)
+            await asyncio.gather(*(pending_kill.now() for pending_kill in pending_kills))
         if started_processes:
             await asyncio.gather(
                 *[

@@ -499,6 +499,13 @@ class ProcessService(BaseService):
                     f"Expected exactly one ProcessStartedEvent for {event.plugin_name}:{event.hook_name}, found {len(matches)}",
                 )
             started_process = matches[0]
+        if started_process.subprocess.returncode is None:
+            await graceful_kill_process(
+                started_process.subprocess,
+                grace_period=event.grace_period,
+            )
+            return
+
         await graceful_kill_by_pid_file(
             started_process.pid_file,
             started_process.cmd_file,

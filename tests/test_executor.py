@@ -1,4 +1,5 @@
 import asyncio
+import os
 import sys
 from pathlib import Path
 from uuid import uuid4
@@ -12,7 +13,10 @@ from abx_dl.events import (
     BinaryRequestEvent,
     CrawlStartEvent,
     MachineEvent,
+    ProcessCompletedEvent,
     ProcessEvent,
+    ProcessKillEvent,
+    ProcessStartedEvent,
     ProcessStdoutEvent,
     SnapshotEvent,
 )
@@ -785,6 +789,86 @@ def test_snapshot_service_emits_background_process_without_extra_wait(tmp_path: 
     assert emitted is not None
     assert emitted.is_background is True
     assert emitted.hook_name == "on_Snapshot__24_responses.daemon.bg"
+
+
+def test_process_kill_uses_live_subprocess_handle_when_pid_file_validation_fails(tmp_path: Path) -> None:
+    script = tmp_path / "background-hook.sh"
+    script.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "trap 'echo cleaned; exit 0' TERM",
+                "echo ready",
+                "while true; do sleep 1; done",
+                "",
+            ],
+        ),
+    )
+    script.chmod(0o755)
+
+    output_dir = tmp_path / "run" / "background"
+    bus = create_bus(total_timeout=10.0, name=f"process_kill_live_handle_{tmp_path.name}")
+    ProcessService(bus, emit_jsonl=False, interactive_tty=False)
+
+    async def run() -> ProcessCompletedEvent:
+        process_event = bus.emit(
+            ProcessEvent(
+                plugin_name="background",
+                hook_name="on_Snapshot__10_background.daemon.bg",
+                hook_path=str(script),
+                hook_args=[],
+                is_background=True,
+                output_dir=str(output_dir),
+                env={},
+                timeout=5,
+                event_timeout=10.0,
+                event_handler_timeout=10.0,
+            ),
+        )
+        process_task = asyncio.create_task(process_event.now())
+        started_process = await bus.find(
+            ProcessStartedEvent,
+            child_of=process_event,
+            past=True,
+            future=5.0,
+        )
+        assert isinstance(started_process, ProcessStartedEvent)
+        ready_line = await bus.find(
+            ProcessStdoutEvent,
+            child_of=started_process,
+            past=True,
+            future=5.0,
+            where=lambda candidate: candidate.line == "ready",
+        )
+        assert isinstance(ready_line, ProcessStdoutEvent)
+
+        os.utime(started_process.pid_file, (1, 1))
+        await bus.emit(
+            ProcessKillEvent(
+                plugin_name=started_process.plugin_name,
+                hook_name=started_process.hook_name,
+                pid=started_process.pid,
+                grace_period=1.0,
+                event_timeout=5.0,
+                event_parent_id=started_process.event_id,
+            ),
+        ).now()
+        completed_process = await bus.find(
+            ProcessCompletedEvent,
+            child_of=started_process,
+            past=True,
+            future=5.0,
+        )
+        assert isinstance(completed_process, ProcessCompletedEvent)
+        await process_task
+        await bus.wait_until_idle()
+        return completed_process
+
+    completed = asyncio.run(run())
+
+    assert completed.status == "succeeded"
+    assert "cleaned" in completed.stdout
+    assert not (output_dir / "on_Snapshot__10_background.daemon.bg.pid").exists()
 
 
 def test_download_can_suppress_jsonl_stdout(tmp_path: Path, capsys) -> None:
