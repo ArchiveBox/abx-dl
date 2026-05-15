@@ -117,7 +117,6 @@ class ProcessService(BaseService):
         self.interactive_tty = interactive_tty
         self.pause_requested = asyncio.Event()
         self.abort_requested = False
-        self._background_process_tasks: set[asyncio.Task[Process | None]] = set()
         super().__init__(bus)
         self.bus.on(CrawlPauseEvent, self.on_CrawlPauseEvent)
         self.bus.on(CrawlAbortEvent, self.on_CrawlAbortEvent)
@@ -292,27 +291,6 @@ class ProcessService(BaseService):
                 plugin=event.plugin_name,
                 hook_name=event.hook_name,
             )
-            if event.is_background:
-                background_task = asyncio.create_task(
-                    self._complete_process_event(
-                        event=event,
-                        started_event=started_event,
-                        proc=proc,
-                        process=process,
-                        plugin_output_dir=plugin_output_dir,
-                        stdout_file=stdout_file,
-                        stderr_file=stderr_file,
-                        pid_file=pid_file,
-                        files_before=files_before,
-                        interactive_interrupts=False,
-                    ),
-                    name=f"abx_dl.background_process({event.plugin_name}:{event.hook_name}:{process.pid})",
-                )
-                self._background_process_tasks.add(background_task)
-                background_task.add_done_callback(self._background_process_tasks.discard)
-                background_task.add_done_callback(self._consume_background_process_exception)
-                return proc
-
             return await self._complete_process_event(
                 event=event,
                 started_event=started_event,
@@ -327,14 +305,6 @@ class ProcessService(BaseService):
             )
         finally:
             self.pause_requested.clear()
-
-    def _consume_background_process_exception(self, task: asyncio.Task[Process | None]) -> None:
-        if task.cancelled():
-            return
-        try:
-            task.exception()
-        except (asyncio.CancelledError, Exception):
-            pass
 
     async def _complete_process_event(
         self,
