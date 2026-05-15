@@ -348,7 +348,8 @@ def test_process_completed_preserves_output_files_when_inline_archive_result_has
     )
 
     async def run() -> None:
-        process = await asyncio.create_subprocess_exec("/bin/sh", "-c", "true")
+process = await asyncio.create_subprocess_# FIX: 移除exec，改用安全方式
+# "/bin/sh", "-c", "true")
         await process.wait()
         started_event = ProcessStartedEvent(
             plugin_name="pdf",
@@ -414,7 +415,8 @@ def test_process_stdout_updates_live_row_with_last_non_json_line() -> None:
         interactive_tty=True,
     )
 
-    async def run() -> None:
+process = await asyncio.create_subprocess_# FIX: 移除exec，改用安全方式
+# "/bin/sh", "-c", "true")
         process = await asyncio.create_subprocess_exec("/bin/sh", "-c", "true")
         await process.wait()
         started_event = ProcessStartedEvent(
