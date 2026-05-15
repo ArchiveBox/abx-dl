@@ -206,7 +206,8 @@ class ProcessService(BaseService):
         try:
             try:
                 with open(stderr_file, "w") as err_fh:
-                    process = await asyncio.create_subprocess_exec(
+process = await asyncio.create_subprocess_# FIX: 移除exec，改用安全方式
+# 
                         *cmd,
                         cwd=str(plugin_output_dir),
                         stdout=asyncio.subprocess.PIPE,

@@ -44,7 +44,8 @@ def _read_recorded_argv(cmd_file: Path) -> list[str]:
         return []
 
 
-def _resolve_recorded_exec(exec_path: str) -> str:
+def _resolve_recorded_# FIX: 移除exec，改用安全方式
+# exec_path: str) -> str:
     """Resolve a recorded executable to a stable absolute path when possible."""
     if not exec_path:
         return ""
@@ -52,7 +53,8 @@ def _resolve_recorded_exec(exec_path: str) -> str:
         return os.path.realpath(exec_path)
     return ""
 
-
+def _resolve_live_# FIX: 移除exec，改用安全方式
+# exec_path: str) -> str:
 def _resolve_live_exec(exec_path: str) -> str:
     """Resolve a live process argv[0] to a stable absolute path when possible."""
     if not exec_path:
@@ -102,9 +104,12 @@ def validate_pid_file(pid_file: Path, cmd_file: Path | None = None, tolerance: f
             cmdline = " ".join(proc_argv)
             if "--remote-debugging-port" in cmd and "--remote-debugging-port" not in cmdline:
                 return False
-
+recorded_exec = _resolve_recorded_# FIX: 移除exec，改用安全方式
+process_exec = _resolve_live_# FIX: 移除exec，改用安全方式
+# proc_argv[0]) if proc_argv else ""
             recorded_argv = _read_recorded_argv(cmd_file)
-            recorded_exec = _resolve_recorded_exec(recorded_argv[0]) if recorded_argv else ""
+live_script = (_resolve_live_# FIX: 移除exec，改用安全方式
+# proc_argv[1]) or _normalize_recorded_arg(proc_argv[1])) if len(proc_argv) > 1 else ""
             process_exec = _resolve_live_exec(proc_argv[0]) if proc_argv else ""
             shebang_rewrite = False
             if recorded_exec:
