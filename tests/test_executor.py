@@ -10,7 +10,9 @@ from abx_dl.config import get_required_binary_requests
 from abx_dl.events import (
     ArchiveResultEvent,
     BinaryEvent,
+    CrawlCleanupEvent,
     BinaryRequestEvent,
+    CrawlEvent,
     CrawlStartEvent,
     MachineEvent,
     ProcessCompletedEvent,
@@ -24,6 +26,7 @@ from abx_dl.models import Hook, Plugin, PluginConfig, Snapshot, discover_plugins
 from abx_dl.orchestrator import create_bus, download, setup_services
 from abx_dl.services.archive_result_service import ArchiveResultService
 from abx_dl.services.binary_service import BinaryService
+from abx_dl.services.crawl_service import CrawlService
 from abx_dl.services.machine_service import MachineService
 from abx_dl.services.process_service import ProcessService
 from abx_dl.services.snapshot_service import SnapshotService
@@ -913,6 +916,262 @@ def test_snapshot_background_daemon_stays_alive_until_cleanup(tmp_path: Path) ->
     assert daemon_started is not None
     assert foreground_started is not None
     assert (output_dir / "index.jsonl").read_text().count('"output_str": "daemon alive"') == 1
+    assert daemon_completed is not None
+    assert daemon_completed.status == "succeeded"
+    assert "cleaned" in daemon_completed.stdout
+
+
+def test_crawl_setup_background_daemon_survives_until_explicit_cleanup(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "plugins" / "crawl_daemon_check"
+    plugin_dir.mkdir(parents=True)
+    daemon_hook = plugin_dir / "on_CrawlSetup__10_daemon.daemon.bg.sh"
+    daemon_hook.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'crawl_dir="${CRAWL_DIR:-$(dirname "$PWD")}"',
+                'echo $$ > "$crawl_dir/daemon.pid"',
+                'echo ready > "$crawl_dir/daemon.ready"',
+                "trap 'echo cleaned; exit 0' TERM",
+                "while true; do sleep 1; done",
+                "",
+            ],
+        ),
+    )
+    daemon_hook.chmod(0o755)
+
+    output_dir = tmp_path / "run"
+    snapshot = Snapshot(url="https://example.com", id="snap-crawl-daemon")
+    plugin = Plugin(
+        name="crawl_daemon_check",
+        path=plugin_dir,
+        config=PluginConfig(),
+        hooks=[
+            Hook(
+                name=daemon_hook.name,
+                event="CrawlSetup",
+                plugin_name="crawl_daemon_check",
+                path=daemon_hook,
+                order=10,
+                is_background=True,
+            ),
+        ],
+    )
+    bus = create_bus(total_timeout=20.0, name=f"crawl_bg_lifetime_{tmp_path.name}")
+    MachineService(bus, persist_derived=False)
+    ProcessService(bus, emit_jsonl=False, interactive_tty=False)
+    ArchiveResultService(bus, emit_jsonl=False)
+    CrawlService(
+        bus,
+        url=snapshot.url,
+        snapshot=snapshot,
+        output_dir=output_dir,
+        plugins={plugin.name: plugin},
+        crawl_start_enabled=False,
+        crawl_cleanup_enabled=False,
+        crawl_setup_phase_timeout=10.0,
+        snapshot_phase_timeout=10.0,
+        snapshot_cleanup_phase_timeout=5.0,
+        crawl_cleanup_phase_timeout=5.0,
+    )
+
+    async def run() -> ProcessCompletedEvent | None:
+        crawl_event = bus.emit(
+            CrawlEvent(
+                url=snapshot.url,
+                snapshot_id=snapshot.id,
+                output_dir=str(output_dir),
+                event_timeout=20.0,
+            ),
+        )
+        await crawl_event.now()
+        pid_file = output_dir / "daemon.pid"
+        for _ in range(50):
+            if pid_file.exists():
+                break
+            await asyncio.sleep(0.1)
+        pid = int(pid_file.read_text().strip())
+        os.kill(pid, 0)
+        await bus.emit(
+            CrawlCleanupEvent(
+                url=snapshot.url,
+                snapshot_id=snapshot.id,
+                output_dir=str(output_dir),
+                event_parent_id=crawl_event.event_id,
+                event_timeout=5.0,
+            ),
+        ).now()
+        completed = await bus.find(
+            ProcessCompletedEvent,
+            past=True,
+            future=5.0,
+            hook_name=daemon_hook.name,
+        )
+        await bus.wait_until_idle()
+        return completed if isinstance(completed, ProcessCompletedEvent) else None
+
+    daemon_completed = asyncio.run(run())
+
+    assert daemon_completed is not None
+    assert daemon_completed.status == "succeeded"
+    assert "cleaned" in daemon_completed.stdout
+
+
+def test_crawl_background_daemon_stays_alive_through_snapshot_until_cleanup(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "plugins" / "crawl_daemon_check"
+    plugin_dir.mkdir(parents=True)
+    daemon_hook = plugin_dir / "on_CrawlSetup__10_daemon.daemon.bg.sh"
+    snapshot_hook = plugin_dir / "on_Snapshot__20_check.sh"
+    daemon_hook.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'crawl_dir="${CRAWL_DIR:-$(dirname "$PWD")}"',
+                'echo $$ > "$crawl_dir/daemon.pid"',
+                'echo ready > "$crawl_dir/daemon.ready"',
+                "trap 'echo cleaned; exit 0' TERM",
+                "while true; do sleep 1; done",
+                "",
+            ],
+        ),
+    )
+    snapshot_hook.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'crawl_dir="${CRAWL_DIR:-$(dirname "$PWD")}"',
+                "for _ in $(seq 1 50); do",
+                '    test -s "$crawl_dir/daemon.pid" && break',
+                "    sleep 0.1",
+                "done",
+                'pid="$(cat "$crawl_dir/daemon.pid")"',
+                "sleep 2",
+                'kill -0 "$pid"',
+                'printf \'{"type":"ArchiveResult","status":"succeeded","output_str":"crawl daemon alive"}\\n\'',
+                "",
+            ],
+        ),
+    )
+    daemon_hook.chmod(0o755)
+    snapshot_hook.chmod(0o755)
+
+    output_dir = tmp_path / "run"
+    snapshot = Snapshot(url="https://example.com", id="snap-crawl-daemon")
+    plugin = Plugin(
+        name="crawl_daemon_check",
+        path=plugin_dir,
+        config=PluginConfig(),
+        hooks=[
+            Hook(
+                name=daemon_hook.name,
+                event="CrawlSetup",
+                plugin_name="crawl_daemon_check",
+                path=daemon_hook,
+                order=10,
+                is_background=True,
+            ),
+            Hook(
+                name=snapshot_hook.name,
+                event="Snapshot",
+                plugin_name="crawl_daemon_check",
+                path=snapshot_hook,
+                order=20,
+                is_background=False,
+            ),
+        ],
+    )
+    bus = create_bus(total_timeout=20.0, name=f"manual_crawl_bg_lifetime_{tmp_path.name}")
+    MachineService(bus, persist_derived=False)
+    ProcessService(bus, emit_jsonl=False, interactive_tty=False)
+    ArchiveResultService(bus, emit_jsonl=False)
+    CrawlService(
+        bus,
+        url=snapshot.url,
+        snapshot=snapshot,
+        output_dir=output_dir,
+        plugins={plugin.name: plugin},
+        crawl_start_enabled=False,
+        crawl_cleanup_enabled=False,
+        crawl_setup_phase_timeout=10.0,
+        snapshot_phase_timeout=10.0,
+        snapshot_cleanup_phase_timeout=5.0,
+        crawl_cleanup_phase_timeout=5.0,
+    )
+    SnapshotService(
+        bus,
+        url=snapshot.url,
+        snapshot=snapshot,
+        output_dir=output_dir,
+        plugins={plugin.name: plugin},
+        snapshot_phase_timeout=10.0,
+        snapshot_cleanup_phase_timeout=5.0,
+    )
+
+    async def run() -> tuple[ArchiveResultEvent | None, ProcessCompletedEvent | None]:
+        crawl_event = bus.emit(
+            CrawlEvent(
+                url=snapshot.url,
+                snapshot_id=snapshot.id,
+                output_dir=str(output_dir),
+                event_timeout=20.0,
+            ),
+        )
+        await crawl_event.now()
+        crawl_start_event = await bus.emit(
+            CrawlStartEvent(
+                url=snapshot.url,
+                snapshot_id=snapshot.id,
+                output_dir=str(output_dir),
+                event_parent_id=crawl_event.event_id,
+                event_timeout=10.0,
+            ),
+        ).now()
+        snapshot_event = await bus.emit(
+            SnapshotEvent(
+                url=snapshot.url,
+                snapshot_id=snapshot.id,
+                output_dir=str(output_dir),
+                event_parent_id=crawl_start_event.event_id,
+                event_timeout=10.0,
+            ),
+        ).now()
+        result = await bus.find(
+            ArchiveResultEvent,
+            child_of=snapshot_event,
+            past=True,
+            future=10.0,
+            plugin="crawl_daemon_check",
+            hook_name=snapshot_hook.name,
+        )
+        await bus.emit(
+            CrawlCleanupEvent(
+                url=snapshot.url,
+                snapshot_id=snapshot.id,
+                output_dir=str(output_dir),
+                event_parent_id=crawl_event.event_id,
+                event_timeout=5.0,
+            ),
+        ).now()
+        daemon_completed = await bus.find(
+            ProcessCompletedEvent,
+            past=True,
+            future=5.0,
+            hook_name=daemon_hook.name,
+        )
+        await bus.wait_until_idle()
+        return (
+            result if isinstance(result, ArchiveResultEvent) else None,
+            daemon_completed if isinstance(daemon_completed, ProcessCompletedEvent) else None,
+        )
+
+    result, daemon_completed = asyncio.run(run())
+
+    assert result is not None
+    assert result.status == "succeeded"
+    assert result.output_str == "crawl daemon alive"
     assert daemon_completed is not None
     assert daemon_completed.status == "succeeded"
     assert "cleaned" in daemon_completed.stdout

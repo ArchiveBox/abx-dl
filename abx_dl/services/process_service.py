@@ -117,6 +117,7 @@ class ProcessService(BaseService):
         self.interactive_tty = interactive_tty
         self.pause_requested = asyncio.Event()
         self.abort_requested = False
+        self._background_process_tasks: set[asyncio.Task[Process | None]] = set()
         super().__init__(bus)
         self.bus.on(CrawlPauseEvent, self.on_CrawlPauseEvent)
         self.bus.on(CrawlAbortEvent, self.on_CrawlAbortEvent)
@@ -291,153 +292,213 @@ class ProcessService(BaseService):
                 plugin=event.plugin_name,
                 hook_name=event.hook_name,
             )
-            stream_task = asyncio.create_task(
-                self._stream_stdout(
-                    event=started_event,
-                    proc=proc,
-                    process=process,
-                    stdout_file=stdout_file,
-                ),
+            if event.is_background:
+                background_task = asyncio.create_task(
+                    self._complete_process_event(
+                        event=event,
+                        started_event=started_event,
+                        proc=proc,
+                        process=process,
+                        plugin_output_dir=plugin_output_dir,
+                        stdout_file=stdout_file,
+                        stderr_file=stderr_file,
+                        pid_file=pid_file,
+                        files_before=files_before,
+                        interactive_interrupts=False,
+                    ),
+                    name=f"abx_dl.background_process({event.plugin_name}:{event.hook_name}:{process.pid})",
+                )
+                self._background_process_tasks.add(background_task)
+                background_task.add_done_callback(self._background_process_tasks.discard)
+                background_task.add_done_callback(self._consume_background_process_exception)
+                return proc
+
+            return await self._complete_process_event(
+                event=event,
+                started_event=started_event,
+                proc=proc,
+                process=process,
+                plugin_output_dir=plugin_output_dir,
+                stdout_file=stdout_file,
+                stderr_file=stderr_file,
+                pid_file=pid_file,
+                files_before=files_before,
+                interactive_interrupts=interactive_interrupts,
             )
-            wait_task = asyncio.create_task(process.wait())
-            interrupted = False
-            timed_out = False
-            try:
-                deadline = asyncio.get_running_loop().time() + event.timeout if event.timeout and not event.is_background else None
-                while True:
-                    pending = {wait_task}
-                    interrupt_task: asyncio.Task[bool] | None = None
-                    if interactive_interrupts:
-                        interrupt_task = asyncio.create_task(self.pause_requested.wait())
-                        pending.add(interrupt_task)
-                    remaining = None if deadline is None else max(deadline - asyncio.get_running_loop().time(), 0.0)
-                    done, pending = await asyncio.wait(
-                        pending,
-                        timeout=remaining,
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-                    if interrupt_task is not None and interrupt_task not in done:
-                        interrupt_task.cancel()
-                    if not done:
-                        timed_out = True
-                        await graceful_kill_process(process)
-                        await wait_task
-                        break
-                    if wait_task in done:
-                        break
-                    if interrupt_task is not None and interrupt_task in done:
-                        self.pause_requested.clear()
-                        interrupted = True
-                        await started_event.emit(
-                            ProcessKillEvent(
-                                plugin_name=event.plugin_name,
-                                hook_name=event.hook_name,
-                                pid=process.pid,
-                                grace_period=float(event.timeout),
-                            ),
-                        ).now()
-                        await wait_task
-                        break
-                await stream_task
-            except TimeoutError:
-                timed_out = True
+        finally:
+            self.pause_requested.clear()
+
+    def _consume_background_process_exception(self, task: asyncio.Task[Process | None]) -> None:
+        if task.cancelled():
+            return
+        try:
+            task.exception()
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    async def _complete_process_event(
+        self,
+        *,
+        event: ProcessEvent,
+        started_event: ProcessStartedEvent,
+        proc: Process,
+        process: asyncio.subprocess.Process,
+        plugin_output_dir: Path,
+        stdout_file: Path,
+        stderr_file: Path,
+        pid_file: Path,
+        files_before: set[Path],
+        interactive_interrupts: bool,
+    ) -> Process | None:
+        stream_task = asyncio.create_task(
+            self._stream_stdout(
+                event=started_event,
+                proc=proc,
+                process=process,
+                stdout_file=stdout_file,
+            ),
+        )
+        wait_task = asyncio.create_task(process.wait())
+        interrupted = False
+        timed_out = False
+        try:
+            deadline = asyncio.get_running_loop().time() + event.timeout if event.timeout and not event.is_background else None
+            while True:
+                pending = {wait_task}
+                interrupt_task: asyncio.Task[bool] | None = None
+                if interactive_interrupts:
+                    interrupt_task = asyncio.create_task(self.pause_requested.wait())
+                    pending.add(interrupt_task)
+                remaining = None if deadline is None else max(deadline - asyncio.get_running_loop().time(), 0.0)
+                done, pending = await asyncio.wait(
+                    pending,
+                    timeout=remaining,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if interrupt_task is not None and interrupt_task not in done:
+                    interrupt_task.cancel()
+                if not done:
+                    timed_out = True
+                    await graceful_kill_process(process)
+                    await wait_task
+                    break
+                if wait_task in done:
+                    break
+                if interrupt_task is not None and interrupt_task in done:
+                    self.pause_requested.clear()
+                    interrupted = True
+                    await started_event.emit(
+                        ProcessKillEvent(
+                            plugin_name=event.plugin_name,
+                            hook_name=event.hook_name,
+                            pid=process.pid,
+                            grace_period=float(event.timeout),
+                        ),
+                    ).now()
+                    await wait_task
+                    break
+            await stream_task
+        except TimeoutError:
+            timed_out = True
+            await graceful_kill_process(process)
+        except asyncio.CancelledError:
+            if not event.is_background:
                 await graceful_kill_process(process)
-            except Exception:
-                await graceful_kill_process(process)
-                raise
+            raise
+        except Exception:
+            await graceful_kill_process(process)
+            raise
 
-            returncode = process.returncode if process.returncode is not None else 0
-            stdout = stdout_file.read_text() if stdout_file.exists() else ""
-            stderr = stderr_file.read_text() if stderr_file.exists() else ""
+        returncode = process.returncode if process.returncode is not None else 0
+        stdout = stdout_file.read_text() if stdout_file.exists() else ""
+        stderr = stderr_file.read_text() if stderr_file.exists() else ""
 
-            if timed_out:
-                returncode = -1
-                stderr = f"Hook timed out after {event.timeout} seconds"
+        if timed_out:
+            returncode = -1
+            stderr = f"Hook timed out after {event.timeout} seconds"
 
-            action = "skip"
-            status = _process_status(returncode)
-            if interrupted:
-                returncode = PROCESS_EXIT_SKIPPED
-                status = "skipped"
-                stderr = "Hook interrupted by user"
-                if self.abort_requested:
-                    action = "abort"
-                else:
-                    action = self.on_InterruptedHookPrompt(event.hook_name)
-                await event.emit(
-                    {
-                        "abort": CrawlAbortEvent,
-                        "retry": CrawlResumeAndRetryEvent,
-                        "skip": CrawlResumeAndSkipEvent,
-                    }[action](),
-                ).now()
+        action = "skip"
+        status = _process_status(returncode)
+        if interrupted:
+            returncode = PROCESS_EXIT_SKIPPED
+            status = "skipped"
+            stderr = "Hook interrupted by user"
+            if self.abort_requested:
+                action = "abort"
+            else:
+                action = self.on_InterruptedHookPrompt(event.hook_name)
+            await event.emit(
+                {
+                    "abort": CrawlAbortEvent,
+                    "retry": CrawlResumeAndRetryEvent,
+                    "skip": CrawlResumeAndSkipEvent,
+                }[action](),
+            ).now()
 
-            proc.exit_code = returncode
-            proc.status = status
-            proc.stdout = stdout
-            proc.stderr = stderr
-            proc.ended_at = now_iso()
+        proc.exit_code = returncode
+        proc.status = status
+        proc.stdout = stdout
+        proc.stderr = stderr
+        proc.ended_at = now_iso()
 
-            files_after = set(plugin_output_dir.rglob("*")) if plugin_output_dir.exists() else set()
-            new_files = scan_output_files(
-                plugin_output_dir,
-                file_paths=files_after - files_before,
-            )
+        files_after = set(plugin_output_dir.rglob("*")) if plugin_output_dir.exists() else set()
+        new_files = scan_output_files(
+            plugin_output_dir,
+            file_paths=files_after - files_before,
+        )
 
-            pid_file.unlink(missing_ok=True)
+        pid_file.unlink(missing_ok=True)
 
-            if returncode == 0:
-                stdout_file.unlink(missing_ok=True)
-                stderr_file.unlink(missing_ok=True)
+        if returncode == 0:
+            stdout_file.unlink(missing_ok=True)
+            stderr_file.unlink(missing_ok=True)
 
-            index_path = plugin_output_dir.parent / "index.jsonl"
-            write_jsonl(index_path, proc, also_print=self.emit_jsonl)
+        index_path = plugin_output_dir.parent / "index.jsonl"
+        write_jsonl(index_path, proc, also_print=self.emit_jsonl)
 
-            await started_event.emit(
-                ProcessCompletedEvent(
+        await started_event.emit(
+            ProcessCompletedEvent(
+                plugin_name=event.plugin_name,
+                hook_name=event.hook_name,
+                hook_path=event.hook_path,
+                hook_args=event.hook_args,
+                env=event.env,
+                timeout=event.timeout,
+                stdout=stdout,
+                stderr=stderr,
+                exit_code=returncode,
+                status=status,
+                output_dir=event.output_dir,
+                output_files=new_files,
+                is_background=event.is_background,
+                pid=process.pid,
+                url=event.url,
+                process_type=event.process_type,
+                worker_type=event.worker_type,
+                start_ts=proc.started_at or "",
+                end_ts=proc.ended_at or "",
+            ),
+        ).now()
+        if action == "retry":
+            await event.emit(
+                ProcessEvent(
                     plugin_name=event.plugin_name,
                     hook_name=event.hook_name,
                     hook_path=event.hook_path,
                     hook_args=event.hook_args,
+                    is_background=event.is_background,
+                    output_dir=event.output_dir,
                     env=event.env,
                     timeout=event.timeout,
-                    stdout=stdout,
-                    stderr=stderr,
-                    exit_code=returncode,
-                    status=status,
-                    output_dir=event.output_dir,
-                    output_files=new_files,
-                    is_background=event.is_background,
-                    pid=process.pid,
                     url=event.url,
                     process_type=event.process_type,
                     worker_type=event.worker_type,
-                    start_ts=proc.started_at or "",
-                    end_ts=proc.ended_at or "",
+                    event_timeout=event.event_timeout,
+                    event_handler_timeout=event.event_handler_timeout,
+                    event_handler_slow_timeout=event.event_handler_slow_timeout,
                 ),
             ).now()
-            if action == "retry":
-                await event.emit(
-                    ProcessEvent(
-                        plugin_name=event.plugin_name,
-                        hook_name=event.hook_name,
-                        hook_path=event.hook_path,
-                        hook_args=event.hook_args,
-                        is_background=event.is_background,
-                        output_dir=event.output_dir,
-                        env=event.env,
-                        timeout=event.timeout,
-                        url=event.url,
-                        process_type=event.process_type,
-                        worker_type=event.worker_type,
-                        event_timeout=event.event_timeout,
-                        event_handler_timeout=event.event_handler_timeout,
-                        event_handler_slow_timeout=event.event_handler_slow_timeout,
-                    ),
-                ).now()
-            return proc
-        finally:
-            self.pause_requested.clear()
+        return proc
 
     async def on_ProcessKillEvent(self, event: ProcessKillEvent) -> None:
         """Gracefully shut down a running background hook.

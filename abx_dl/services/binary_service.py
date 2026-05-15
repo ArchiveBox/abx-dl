@@ -237,7 +237,7 @@ class BinaryService(BaseService):
             ),
         )
         await process_event.now()
-        await process_event.wait()
+        await process_event.now()
         completed_process = await self.bus.find(
             ProcessCompletedEvent,
             child_of=process_event,

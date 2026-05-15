@@ -178,7 +178,7 @@ class SnapshotService(BaseService):
                     raise RuntimeError(f"Background hook {hook.name} did not start")
             else:
                 foreground_process = event.emit(process_event)
-                await foreground_process.wait()
+                await foreground_process.now()
                 await foreground_process.event_results_list()
                 completed_process = await self.bus.find(
                     ProcessCompletedEvent,

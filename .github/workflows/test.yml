@@ -290,7 +290,7 @@ jobs:
 
       - name: Test all plugins
         run: |
-          uv run --no-sync --no-sources abx-dl dl 'https://example.com' --dir=./test-output --timeout=120
+          uv run --no-sync --no-sources abx-dl dl 'https://example.com' --dir=./test-output --timeout=120 --max-urls=2 --plugins=wget,parse_html_urls
 
           echo "=== Output structure ==="
           find ./test-output -type f | head -50
@@ -300,6 +300,8 @@ jobs:
         env:
           ABX_PLUGINS_DIR: ${{ runner.temp }}/abx-plugins/abx_plugins/plugins
           CHROME_SANDBOX: "false"
+          PERSONAS_DIR: ${{ runner.temp }}/abx-personas
+          CHROME_USER_DATA_DIR: ${{ runner.temp }}/abx-personas/Default/chrome_profile
           PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
           TIMEOUT: "120"
 

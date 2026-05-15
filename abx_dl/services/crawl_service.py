@@ -18,6 +18,7 @@ from ..events import (
     ProcessEvent,
     ProcessKillEvent,
     ProcessStartedEvent,
+    SnapshotCompletedEvent,
     SnapshotEvent,
     slow_warning_timeout,
 )
@@ -165,7 +166,7 @@ class CrawlService(BaseService):
                     raise RuntimeError(f"Background hook {hook.name} did not start")
             else:
                 foreground_process = event.emit(process_event)
-                await foreground_process.wait()
+                await foreground_process.now()
                 await foreground_process.event_results_list()
                 completed_process = await self.bus.find(
                     ProcessCompletedEvent,
@@ -256,7 +257,7 @@ class CrawlService(BaseService):
             return
         if self.abort_requested:
             return
-        await event.emit(
+        snapshot_event = event.emit(
             SnapshotEvent(
                 url=self.url,
                 snapshot_id=self.snapshot.id,
@@ -265,7 +266,16 @@ class CrawlService(BaseService):
                 event_timeout=event.event_timeout,
                 event_handler_slow_timeout=slow_warning_timeout(event.event_timeout),
             ),
-        ).now()
+        )
+        await snapshot_event.now()
+        completed_snapshot = await self.bus.find(
+            SnapshotCompletedEvent,
+            child_of=snapshot_event,
+            past=True,
+            future=event.event_timeout,
+        )
+        if completed_snapshot is None:
+            raise RuntimeError(f"Snapshot {self.snapshot.id} did not complete")
 
     async def on_CrawlCleanupEvent(self, event: CrawlCleanupEvent) -> None:
         """SIGTERM all background crawl hooks so they can flush and exit.
