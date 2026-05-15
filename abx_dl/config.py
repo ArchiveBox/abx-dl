@@ -293,8 +293,14 @@ def get_user_env(
 
 def get_derived_env(
     bus: EventBus,
-) -> GlobalConfig:
-    """Rebuild current derived config from the initial snapshot plus MachineEvents."""
+) -> dict[str, Any]:
+    """Rebuild the sparse derived runtime cache from MachineEvents.
+
+    Derived config must only contain values explicitly emitted by runtime
+    services. Returning a default-filled GlobalConfig here makes derived
+    defaults override the user/runtime layer, which can split installers and
+    hooks across different LIB_DIR/NODE_PATH roots.
+    """
     current_derived_config: dict[str, Any] = {}
     for candidate in bus.event_history.values():
         if not isinstance(candidate, MachineEvent):
@@ -312,7 +318,7 @@ def get_derived_env(
             continue
         if candidate.method == "unset":
             current_derived_config.pop(key, None)
-    return GlobalConfig(**current_derived_config)
+    return current_derived_config
 
 
 def get_plugin_env(

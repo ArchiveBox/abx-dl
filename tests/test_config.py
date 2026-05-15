@@ -160,12 +160,27 @@ def test_plugin_env_preserves_explicit_shared_snap_dir_override(tmp_path: Path) 
     assert env["SNAP_DIR"] == str(explicit_snap_dir)
 
 
-def test_plugin_env_preserves_user_runtime_dirs_when_derived_config_has_defaults(tmp_path: Path) -> None:
+def test_plugin_env_preserves_user_runtime_dirs_when_derived_config_has_defaults(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    for key in (
+        "LIB_DIR",
+        "LIB_BIN_DIR",
+        "NPM_HOME",
+        "NODE_MODULES_DIR",
+        "NODE_PATH",
+        "NPM_BIN_DIR",
+        "PUPPETEER_CACHE_DIR",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
     plugins = discover_plugins()
     bus = create_bus(total_timeout=60.0, name=f"test_config_derived_runtime_dirs_{tmp_path.name}")
     data_dir = tmp_path / "data"
     crawl_dir = tmp_path / "crawl"
     snap_dir = tmp_path / "snap"
+    lib_dir = tmp_path / "data" / "lib" / "runtime"
     run_dir = tmp_path / "run"
 
     async def emit_runtime_config() -> None:
@@ -175,6 +190,7 @@ def test_plugin_env_preserves_user_runtime_dirs_when_derived_config_has_defaults
                     "DATA_DIR": str(data_dir),
                     "CRAWL_DIR": str(crawl_dir),
                     "SNAP_DIR": str(snap_dir),
+                    "LIB_DIR": str(lib_dir),
                 },
                 config_type="user",
             ),
@@ -194,6 +210,11 @@ def test_plugin_env_preserves_user_runtime_dirs_when_derived_config_has_defaults
     assert env["DATA_DIR"] == str(data_dir)
     assert env["CRAWL_DIR"] == str(crawl_dir)
     assert env["SNAP_DIR"] == str(snap_dir)
+    assert env["LIB_DIR"] == str(lib_dir)
+    assert env["NPM_HOME"] == str(lib_dir / "npm")
+    assert env["NODE_MODULES_DIR"] == str(lib_dir / "npm" / "node_modules")
+    assert env["NODE_PATH"] == str(lib_dir / "npm" / "node_modules")
+    assert env["PUPPETEER_CACHE_DIR"] == str(lib_dir / "puppeteer")
 
 
 def test_plugin_env_omits_none_runtime_overrides(tmp_path: Path) -> None:

@@ -309,7 +309,7 @@ class BinaryService(BaseService):
                 plugin,
                 plugin.config.required_binaries,
                 overrides=current_user_config.model_dump(mode="json"),
-                derived_overrides=current_derived_config.model_dump(mode="json"),
+                derived_overrides=current_derived_config,
                 run_output_dir=self.output_dir,
             ):
                 signature = json.dumps(record, sort_keys=True, default=str)
