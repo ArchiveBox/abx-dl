@@ -46,7 +46,7 @@ def test_install_event_does_not_skip_stale_cached_binary_requests(tmp_path: Path
                 },
                 config_type="user",
             ),
-        )
+        ).now()
         await bus.emit(
             MachineEvent(
                 config={
@@ -57,19 +57,17 @@ def test_install_event_does_not_skip_stale_cached_binary_requests(tmp_path: Path
                 },
                 config_type="derived",
             ),
-        )
+        ).now()
         await bus.emit(
             InstallEvent(
                 url="",
                 snapshot_id=snapshot.id,
                 output_dir=str(run_dir),
             ),
-        )
+        ).now()
+        await bus.wait_until_idle()
 
-    try:
-        asyncio.run(run())
-    finally:
-        asyncio.run(bus.wait_until_idle())
+    asyncio.run(run())
 
     assert any(event.plugin_name == "ytdlp" and event.name == "yt-dlp" for event in request_events)
     assert any(

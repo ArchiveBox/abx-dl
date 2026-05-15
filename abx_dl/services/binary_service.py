@@ -16,6 +16,7 @@ from ..events import (
     BinaryRequestEvent,
     InstallEvent,
     MachineEvent,
+    ProcessCompletedEvent,
     ProcessEvent,
     ProcessStdoutEvent,
     slow_warning_timeout,
@@ -237,8 +238,14 @@ class BinaryService(BaseService):
         )
         await process_event.now()
         await process_event.wait()
-        completed_process = await process_event.event_result(raise_if_any=False)
+        completed_process = await self.bus.find(
+            ProcessCompletedEvent,
+            child_of=process_event,
+            past=True,
+            future=False,
+        )
         if completed_process is not None:
+            assert isinstance(completed_process, ProcessCompletedEvent)
             for line in completed_process.stdout.splitlines():
                 try:
                     binary_payload = EmittedBinaryRecord(**json.loads(line))

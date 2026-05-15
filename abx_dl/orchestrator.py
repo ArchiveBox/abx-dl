@@ -288,7 +288,6 @@ async def install_plugins(
     with temp_dir_ctx as temp_dir:
         install_output_dir = install_output_dir or Path(temp_dir)
         install_output_dir.mkdir(parents=True, exist_ok=True)
-        owns_bus = bus is None
         bus = bus or create_bus(total_timeout=60.0)
         snapshot = Snapshot(url="")
         install_plugins_for_phase = get_install_plugins(selected)
@@ -343,8 +342,7 @@ async def install_plugins(
                 ),
             ).now()
         finally:
-            if owns_bus:
-                await bus.wait_until_idle()
+            await bus.wait_until_idle()
 
 
 def get_plugin_timeout(plugin: Plugin, config: dict[str, Any] | None = None) -> int:

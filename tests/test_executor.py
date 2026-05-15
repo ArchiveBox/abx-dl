@@ -31,7 +31,6 @@ from abx_dl.services.snapshot_service import SnapshotService
 
 def _run_download(*args, **kwargs):
     bus = kwargs.get("bus")
-    owns_bus = bus is None
     if bus is None:
         bus = create_bus(total_timeout=120.0, name=f"test_executor_download_{uuid4().hex[:8]}")
         kwargs["bus"] = bus
@@ -42,11 +41,14 @@ def _run_download(*args, **kwargs):
             results.append(event)
 
     bus.on(ArchiveResultEvent, on_ArchiveResultEvent)
-    try:
-        asyncio.run(download(*args, **kwargs))
-    finally:
-        if owns_bus:
-            asyncio.run(bus.wait_until_idle())
+
+    async def run() -> None:
+        try:
+            await download(*args, **kwargs)
+        finally:
+            await bus.wait_until_idle()
+
+    asyncio.run(run())
     return results
 
 
@@ -63,7 +65,7 @@ def _resolve_real_wget_binary(tmp_path: Path) -> BinaryEvent:
     bus.on(BinaryEvent, on_BinaryEvent)
 
     async def run() -> None:
-        await bus.emit(MachineEvent(config=get_initial_env(), config_type="user"))
+        await bus.emit(MachineEvent(config=get_initial_env(), config_type="user")).now()
         await bus.emit(
             BinaryRequestEvent(
                 name="wget",
@@ -71,12 +73,10 @@ def _resolve_real_wget_binary(tmp_path: Path) -> BinaryEvent:
                 output_dir=str(tmp_path / "resolve-wget"),
                 binproviders="env,apt,brew",
             ),
-        )
+        ).now()
+        await bus.wait_until_idle()
 
-    try:
-        asyncio.run(run())
-    finally:
-        asyncio.run(bus.wait_until_idle())
+    asyncio.run(run())
 
     return next(event for event in reversed(installed_events) if event.name == "wget")
 
@@ -94,7 +94,7 @@ def test_binary_installed_event_preserves_child_provider_metadata(tmp_path: Path
     bus.on(BinaryEvent, on_BinaryEvent)
 
     async def run() -> None:
-        await bus.emit(MachineEvent(config=get_initial_env(), config_type="user"))
+        await bus.emit(MachineEvent(config=get_initial_env(), config_type="user")).now()
         await bus.emit(
             BinaryRequestEvent(
                 name="wget",
@@ -102,12 +102,10 @@ def test_binary_installed_event_preserves_child_provider_metadata(tmp_path: Path
                 output_dir=str(tmp_path / "run"),
                 binproviders="env,apt,brew",
             ),
-        )
+        ).now()
+        await bus.wait_until_idle()
 
-    try:
-        asyncio.run(run())
-    finally:
-        asyncio.run(bus.wait_until_idle())
+    asyncio.run(run())
 
     wget_events = [event for event in installed_events if event.name == "wget"]
     assert wget_events
@@ -139,7 +137,7 @@ def test_binary_installed_event_uses_machine_config_seeded_from_persistent_confi
 
         bus.on(BinaryEvent, on_BinaryEvent)
         try:
-            await bus.emit(MachineEvent(config=get_initial_env(), config_type="user"))
+            await bus.emit(MachineEvent(config=get_initial_env(), config_type="user")).now()
             await bus.emit(
                 BinaryRequestEvent(
                     name=resolved_binary.abspath,
@@ -147,7 +145,8 @@ def test_binary_installed_event_uses_machine_config_seeded_from_persistent_confi
                     output_dir=".",
                     binproviders="env,apt,brew",
                 ),
-            )
+            ).now()
+            await bus.wait_until_idle()
             return installed_events
         finally:
             await bus.wait_until_idle()
@@ -177,8 +176,8 @@ def test_binary_installed_event_resolves_config_backed_command_name(tmp_path: Pa
 
         bus.on(BinaryEvent, on_BinaryEvent)
         try:
-            await bus.emit(MachineEvent(config=get_initial_env(), config_type="user"))
-            await bus.emit(MachineEvent(config={"WGET_BINARY": resolved_binary.abspath}, config_type="derived"))
+            await bus.emit(MachineEvent(config=get_initial_env(), config_type="user")).now()
+            await bus.emit(MachineEvent(config={"WGET_BINARY": resolved_binary.abspath}, config_type="derived")).now()
             await bus.emit(
                 BinaryRequestEvent(
                     name="wget",
@@ -186,7 +185,8 @@ def test_binary_installed_event_resolves_config_backed_command_name(tmp_path: Pa
                     output_dir=".",
                     binproviders="env,apt,brew",
                 ),
-            )
+            ).now()
+            await bus.wait_until_idle()
             return installed_events
         finally:
             await bus.wait_until_idle()
@@ -216,7 +216,7 @@ def test_binary_installed_event_uses_user_absolute_path_for_real_plugin(tmp_path
 
         bus.on(BinaryEvent, on_BinaryEvent)
         try:
-            await bus.emit(MachineEvent(config={"WGET_BINARY": resolved_binary.abspath}, config_type="user"))
+            await bus.emit(MachineEvent(config={"WGET_BINARY": resolved_binary.abspath}, config_type="user")).now()
             await bus.emit(
                 BinaryRequestEvent(
                     name=resolved_binary.abspath,
@@ -224,7 +224,8 @@ def test_binary_installed_event_uses_user_absolute_path_for_real_plugin(tmp_path
                     output_dir=".",
                     binproviders="env,apt,brew",
                 ),
-            )
+            ).now()
+            await bus.wait_until_idle()
             return installed_events
         finally:
             await bus.wait_until_idle()
@@ -255,8 +256,8 @@ def test_binary_installed_event_reuses_real_plugin_cached_paths_without_provider
 
         bus.on(BinaryEvent, on_BinaryEvent)
         try:
-            await bus.emit(MachineEvent(config=get_initial_env(), config_type="user"))
-            await bus.emit(MachineEvent(config={"WGET_BINARY": resolved_binary.abspath}, config_type="derived"))
+            await bus.emit(MachineEvent(config=get_initial_env(), config_type="user")).now()
+            await bus.emit(MachineEvent(config={"WGET_BINARY": resolved_binary.abspath}, config_type="derived")).now()
             await bus.emit(
                 BinaryRequestEvent(
                     name="wget",
@@ -264,7 +265,8 @@ def test_binary_installed_event_reuses_real_plugin_cached_paths_without_provider
                     output_dir=".",
                     binproviders="env,apt,brew",
                 ),
-            )
+            ).now()
+            await bus.wait_until_idle()
             return installed_events
         finally:
             await bus.wait_until_idle()
@@ -301,8 +303,8 @@ def test_binary_event_uses_cached_config_binary_before_provider_hooks(tmp_path: 
     bus.on(ProcessEvent, on_ProcessEvent)
 
     async def run() -> None:
-        await bus.emit(MachineEvent(config=get_initial_env(), config_type="user"))
-        await bus.emit(MachineEvent(config={"WGET_BINARY": resolved_binary.abspath}, config_type="derived"))
+        await bus.emit(MachineEvent(config=get_initial_env(), config_type="user")).now()
+        await bus.emit(MachineEvent(config={"WGET_BINARY": resolved_binary.abspath}, config_type="derived")).now()
         await bus.emit(
             BinaryRequestEvent(
                 name="wget",
@@ -310,12 +312,10 @@ def test_binary_event_uses_cached_config_binary_before_provider_hooks(tmp_path: 
                 output_dir=str(tmp_path / "run"),
                 binproviders="env,apt,brew",
             ),
-        )
+        ).now()
+        await bus.wait_until_idle()
 
-    try:
-        asyncio.run(run())
-    finally:
-        asyncio.run(bus.wait_until_idle())
+    asyncio.run(run())
 
     wget_events = [event for event in installed_events if event.name == "wget"]
     assert wget_events
@@ -393,7 +393,7 @@ def test_binary_service_passes_extra_binary_kwargs_to_provider_hooks(
 
         bus.on(ProcessEvent, on_ProcessEvent)
         try:
-            await bus.emit(MachineEvent(config=get_initial_env(), config_type="user"))
+            await bus.emit(MachineEvent(config=get_initial_env(), config_type="user")).now()
             await bus.emit(
                 BinaryRequestEvent(
                     name="papers-dl",
@@ -402,7 +402,8 @@ def test_binary_service_passes_extra_binary_kwargs_to_provider_hooks(
                     binproviders="pip",
                     postinstall_scripts=True,
                 ),
-            )
+            ).now()
+            await bus.wait_until_idle()
             return process_events
         finally:
             await bus.wait_until_idle()
@@ -470,11 +471,9 @@ def test_binary_service_stops_after_successful_provider_result(tmp_path: Path) -
         )
         await request.now(first_result=True)
         assert await request.event_result() is not None
+        await bus.wait_until_idle()
 
-    try:
-        asyncio.run(run())
-    finally:
-        asyncio.run(bus.wait_until_idle())
+    asyncio.run(run())
 
     assert [event.plugin_name for event in process_events] == ["env"]
     python_events = [event for event in binary_events if event.name == "python3"]
@@ -501,7 +500,7 @@ def test_binary_event_ignores_unknown_request_plugin_when_persisting_config(tmp_
 
         bus.on(BinaryEvent, on_BinaryEvent)
         try:
-            await bus.emit(MachineEvent(config=get_initial_env(), config_type="user"))
+            await bus.emit(MachineEvent(config=get_initial_env(), config_type="user")).now()
             binary_id = str(uuid4())
             machine_id = str(uuid4())
             await bus.emit(
@@ -514,7 +513,7 @@ def test_binary_event_ignores_unknown_request_plugin_when_persisting_config(tmp_
                     binary_id=binary_id,
                     machine_id=machine_id,
                 ),
-            )
+            ).now()
             await bus.emit(
                 BinaryEvent(
                     name=sys.executable,
@@ -526,7 +525,8 @@ def test_binary_event_ignores_unknown_request_plugin_when_persisting_config(tmp_
                     binary_id=binary_id,
                     machine_id=machine_id,
                 ),
-            )
+            ).now()
+            await bus.wait_until_idle()
             return installed_events
         finally:
             await bus.wait_until_idle()
@@ -571,8 +571,8 @@ def test_binary_event_falls_back_from_stale_cached_config_binary_to_provider_hoo
                 },
                 config_type="user",
             ),
-        )
-        await bus.emit(MachineEvent(config={"WGET_BINARY": str(stale_binary)}, config_type="derived"))
+        ).now()
+        await bus.emit(MachineEvent(config={"WGET_BINARY": str(stale_binary)}, config_type="derived")).now()
         await bus.emit(
             BinaryRequestEvent(
                 name="wget",
@@ -580,12 +580,10 @@ def test_binary_event_falls_back_from_stale_cached_config_binary_to_provider_hoo
                 output_dir=str(tmp_path / "run"),
                 binproviders="env,apt,brew",
             ),
-        )
+        ).now()
+        await bus.wait_until_idle()
 
-    try:
-        asyncio.run(run())
-    finally:
-        asyncio.run(bus.wait_until_idle())
+    asyncio.run(run())
 
     wget_events = [event for event in installed_events if event.name == "wget"]
     assert wget_events
@@ -629,8 +627,8 @@ def test_binary_event_does_not_fallback_from_user_binary_abspath_override(tmp_pa
     bus.on(ProcessEvent, on_ProcessEvent)
 
     async def run() -> None:
-        await bus.emit(MachineEvent(config={"WGET_BINARY": str(broken_binary)}, config_type="user"))
-        request = await bus.emit(
+        await bus.emit(MachineEvent(config={"WGET_BINARY": str(broken_binary)}, config_type="user")).now()
+        request = bus.emit(
             BinaryRequestEvent(
                 name=str(broken_binary),
                 plugin_name="wget",
@@ -638,14 +636,13 @@ def test_binary_event_does_not_fallback_from_user_binary_abspath_override(tmp_pa
                 binproviders="env,apt,brew",
             ),
         )
+        await request.now()
         errors = [result.error for result in request.event_results.values() if result.error is not None]
         assert errors
         assert all(isinstance(error, FileNotFoundError) for error in errors)
+        await bus.wait_until_idle()
 
-    try:
-        asyncio.run(run())
-    finally:
-        asyncio.run(bus.wait_until_idle())
+    asyncio.run(run())
 
     assert installed_events == []
     assert process_events == []
@@ -668,7 +665,7 @@ def test_binary_installed_event_updates_lib_bin_symlink(tmp_path: Path) -> None:
         second_target.write_text("second")
 
         try:
-            await bus.emit(MachineEvent(config={"LIB_BIN_DIR": str(tmp_path / "lib-bin")}, config_type="user"))
+            await bus.emit(MachineEvent(config={"LIB_BIN_DIR": str(tmp_path / "lib-bin")}, config_type="user")).now()
             await bus.emit(
                 BinaryEvent(
                     name="demo",
@@ -676,7 +673,7 @@ def test_binary_installed_event_updates_lib_bin_symlink(tmp_path: Path) -> None:
                     hook_name="install",
                     abspath=str(first_target),
                 ),
-            )
+            ).now()
             link_path = tmp_path / "lib-bin" / "demo"
             assert link_path.is_symlink()
             assert link_path.resolve() == first_target.resolve()
@@ -688,7 +685,7 @@ def test_binary_installed_event_updates_lib_bin_symlink(tmp_path: Path) -> None:
                     hook_name="install",
                     abspath=str(second_target),
                 ),
-            )
+            ).now()
             assert link_path.is_symlink()
             assert link_path.resolve() == second_target.resolve()
         finally:
@@ -768,10 +765,10 @@ def test_snapshot_service_emits_background_process_without_extra_wait(tmp_path: 
                 output_dir=str(tmp_path / "run"),
                 event_parent_id=crawl_start_event.event_id,
             )
-            await bus.emit(crawl_start_event)
+            await bus.emit(crawl_start_event).now()
             await bus.emit(
                 root_event,
-            )
+            ).now()
             process_event = await bus.find(
                 ProcessEvent,
                 past=True,
@@ -940,11 +937,11 @@ def test_nested_snapshot_events_are_emitted_but_ignored_by_snapshot_hooks(tmp_pa
     )
 
     async def run() -> None:
-        await bus.emit(MachineEvent(config={"CRAWL_DIR": str(tmp_path / "run")}, config_type="user"))
-        await bus.emit(crawl_start_event)
-        await bus.emit(root_event)
-        await bus.emit(process_event)
-        await bus.emit(stdout_event)
+        await bus.emit(MachineEvent(config={"CRAWL_DIR": str(tmp_path / "run")}, config_type="user")).now()
+        await bus.emit(crawl_start_event).now()
+        await bus.emit(root_event).now()
+        await bus.emit(process_event).now()
+        await bus.emit(stdout_event).now()
         await bus.wait_until_idle()
 
     asyncio.run(run())
@@ -1004,11 +1001,11 @@ def test_discovered_snapshot_depth_increments_from_parent_snapshot(tmp_path: Pat
     )
 
     async def run() -> None:
-        await bus.emit(MachineEvent(config={"CRAWL_DIR": str(tmp_path / "run")}, config_type="user"))
-        await bus.emit(crawl_start_event)
-        await bus.emit(root_event)
-        await bus.emit(process_event)
-        await bus.emit(stdout_event)
+        await bus.emit(MachineEvent(config={"CRAWL_DIR": str(tmp_path / "run")}, config_type="user")).now()
+        await bus.emit(crawl_start_event).now()
+        await bus.emit(root_event).now()
+        await bus.emit(process_event).now()
+        await bus.emit(stdout_event).now()
         await bus.wait_until_idle()
 
     asyncio.run(run())
@@ -1059,9 +1056,9 @@ def test_inline_archive_result_collects_current_output_files(tmp_path: Path) -> 
     )
 
     async def run() -> None:
-        await bus.emit(crawl_start_event)
-        await bus.emit(snapshot_event)
-        await bus.emit(process_event)
+        await bus.emit(crawl_start_event).now()
+        await bus.emit(snapshot_event).now()
+        await bus.emit(process_event).now()
         await bus.wait_until_idle()
 
     asyncio.run(run())
