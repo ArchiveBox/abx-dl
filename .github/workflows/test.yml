@@ -43,7 +43,7 @@ jobs:
         env:
           PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
         run: |
-          uv sync --no-sources --group dev
+          uv sync --no-cache --no-sources --group dev
           uv pip install -e "${{ runner.temp }}/abxpkg" -e "${{ runner.temp }}/abx-plugins[dev]"
 
       - name: Run prek
@@ -88,7 +88,7 @@ jobs:
         env:
           PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
         run: |
-          uv sync --no-sources --group dev
+          uv sync --no-cache --no-sources --group dev
           uv pip install -e "${{ runner.temp }}/abxpkg" -e "${{ runner.temp }}/abx-plugins[dev]"
 
       - name: Run repo test suite
@@ -199,7 +199,7 @@ jobs:
         env:
           PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
         run: |
-          uv sync --no-sources --group dev
+          uv sync --no-cache --no-sources --group dev
           uv pip install -e "${{ runner.temp }}/abxpkg" -e "${{ runner.temp }}/abx-plugins[dev]"
 
       - name: Verify Chromium launch
@@ -282,7 +282,7 @@ jobs:
         env:
           PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
         run: |
-          uv sync --no-sources --group dev
+          uv sync --no-cache --no-sources --group dev
           uv pip install -e "${{ runner.temp }}/abxpkg" -e "${{ runner.temp }}/abx-plugins[dev]"
 
       - name: Verify Chromium launch
