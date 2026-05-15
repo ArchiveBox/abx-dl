@@ -20,7 +20,7 @@ from abx_dl.events import (
     ProcessStdoutEvent,
     SnapshotEvent,
 )
-from abx_dl.models import Snapshot, discover_plugins
+from abx_dl.models import Hook, Plugin, PluginConfig, Snapshot, discover_plugins
 from abx_dl.orchestrator import create_bus, download, setup_services
 from abx_dl.services.archive_result_service import ArchiveResultService
 from abx_dl.services.binary_service import BinaryService
@@ -637,9 +637,12 @@ def test_binary_event_does_not_fallback_from_user_binary_abspath_override(tmp_pa
             ),
         )
         await request.now()
-        errors = [result.error for result in request.event_results.values() if result.error is not None]
-        assert errors
-        assert all(isinstance(error, FileNotFoundError) for error in errors)
+        try:
+            await request.event_results_list()
+        except FileNotFoundError as error:
+            assert str(broken_binary) in str(error)
+        else:
+            raise AssertionError("missing user absolute path should fail without provider fallback")
         await bus.wait_until_idle()
 
     asyncio.run(run())
@@ -785,7 +788,134 @@ def test_snapshot_service_emits_background_process_without_extra_wait(tmp_path: 
 
     assert emitted is not None
     assert emitted.is_background is True
+    assert emitted.event_blocks_parent_completion is False
     assert emitted.hook_name == "on_Snapshot__24_responses.daemon.bg"
+
+
+def test_snapshot_background_daemon_stays_alive_until_cleanup(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "plugins" / "daemon_check"
+    plugin_dir.mkdir(parents=True)
+    daemon_hook = plugin_dir / "on_Snapshot__10_daemon.daemon.bg.sh"
+    foreground_hook = plugin_dir / "on_Snapshot__20_check.sh"
+    daemon_hook.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'echo $$ > "$SNAP_DIR/daemon.pid"',
+                'echo ready > "$SNAP_DIR/daemon.ready"',
+                "trap 'echo cleaned; exit 0' TERM",
+                "while true; do sleep 1; done",
+                "",
+            ],
+        ),
+    )
+    foreground_hook.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                "for _ in $(seq 1 50); do",
+                '    test -s "$SNAP_DIR/daemon.pid" && break',
+                "    sleep 0.1",
+                "done",
+                'pid=$(cat "$SNAP_DIR/daemon.pid")',
+                "sleep 2",
+                'kill -0 "$pid"',
+                'printf \'{"type":"ArchiveResult","status":"succeeded","output_str":"daemon alive"}\\n\'',
+                "",
+            ],
+        ),
+    )
+    daemon_hook.chmod(0o755)
+    foreground_hook.chmod(0o755)
+
+    output_dir = tmp_path / "run"
+    plugin = Plugin(
+        name="daemon_check",
+        path=plugin_dir,
+        config=PluginConfig(),
+        hooks=[
+            Hook(
+                name=daemon_hook.name,
+                event="Snapshot",
+                plugin_name="daemon_check",
+                path=daemon_hook,
+                order=10,
+                is_background=True,
+            ),
+            Hook(
+                name=foreground_hook.name,
+                event="Snapshot",
+                plugin_name="daemon_check",
+                path=foreground_hook,
+                order=20,
+                is_background=False,
+            ),
+        ],
+    )
+    bus = create_bus(total_timeout=20.0, name=f"snapshot_bg_lifetime_{tmp_path.name}")
+    MachineService(bus, persist_derived=False)
+    ProcessService(bus, emit_jsonl=False, interactive_tty=False)
+    ArchiveResultService(bus, emit_jsonl=False)
+    snapshot = Snapshot(url="https://example.com", id="snap-daemon")
+    SnapshotService(
+        bus,
+        url=snapshot.url,
+        snapshot=snapshot,
+        output_dir=output_dir,
+        plugins={plugin.name: plugin},
+        snapshot_phase_timeout=10.0,
+        snapshot_cleanup_phase_timeout=5.0,
+    )
+
+    async def run() -> tuple[ProcessStartedEvent | None, ProcessStartedEvent | None, ProcessCompletedEvent | None]:
+        crawl_start_event = CrawlStartEvent(
+            url=snapshot.url,
+            snapshot_id=snapshot.id,
+            output_dir=str(output_dir),
+        )
+        root_event = SnapshotEvent(
+            url=snapshot.url,
+            snapshot_id=snapshot.id,
+            output_dir=str(output_dir),
+            event_parent_id=crawl_start_event.event_id,
+        )
+        await bus.emit(crawl_start_event).now()
+        await bus.emit(root_event).now()
+        daemon_started = await bus.find(
+            ProcessStartedEvent,
+            past=True,
+            future=False,
+            hook_name=daemon_hook.name,
+        )
+        foreground_started = await bus.find(
+            ProcessStartedEvent,
+            past=True,
+            future=False,
+            hook_name=foreground_hook.name,
+        )
+        daemon_completed = await bus.find(
+            ProcessCompletedEvent,
+            past=True,
+            future=5.0,
+            hook_name=daemon_hook.name,
+        )
+        await bus.wait_until_idle()
+        return (
+            daemon_started if isinstance(daemon_started, ProcessStartedEvent) else None,
+            foreground_started if isinstance(foreground_started, ProcessStartedEvent) else None,
+            daemon_completed if isinstance(daemon_completed, ProcessCompletedEvent) else None,
+        )
+
+    daemon_started, foreground_started, daemon_completed = asyncio.run(run())
+
+    assert daemon_started is not None
+    assert foreground_started is not None
+    assert (output_dir / "index.jsonl").read_text().count('"output_str": "daemon alive"') == 1
+    assert daemon_completed is not None
+    assert daemon_completed.status == "succeeded"
+    assert "cleaned" in daemon_completed.stdout
 
 
 def test_process_kill_uses_live_subprocess_handle_when_pid_file_validation_fails(tmp_path: Path) -> None:

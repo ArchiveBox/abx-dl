@@ -148,14 +148,13 @@ class CrawlService(BaseService):
                 output_dir=str(plugin_output_dir),
                 env=env,
                 timeout=timeout,
-                event_timeout=handler_timeout,
-                event_handler_timeout=handler_timeout,
+                event_blocks_parent_completion=not hook.is_background,
+                event_timeout=0 if hook.is_background else handler_timeout,
+                event_handler_timeout=0 if hook.is_background else handler_timeout,
                 event_handler_slow_timeout=slow_warning_timeout(handler_timeout),
             )
             if hook.is_background:
                 background_process = event.emit(process_event)
-                background_task = asyncio.create_task(background_process.now())
-                background_task.add_done_callback(lambda task: task.exception() if not task.cancelled() else None)
                 started_process = await self.bus.find(
                     ProcessStartedEvent,
                     child_of=background_process,
@@ -166,7 +165,8 @@ class CrawlService(BaseService):
                     raise RuntimeError(f"Background hook {hook.name} did not start")
             else:
                 foreground_process = event.emit(process_event)
-                await foreground_process.now()
+                await foreground_process.wait()
+                await foreground_process.event_results_list()
                 completed_process = await self.bus.find(
                     ProcessCompletedEvent,
                     child_of=foreground_process,
