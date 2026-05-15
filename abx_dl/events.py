@@ -51,7 +51,7 @@ import asyncio
 from pathlib import Path
 from typing import Any, Literal
 
-from abxbus import BaseEvent, EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode
+from abxbus import BaseEvent, EventConcurrencyMode, EventHandlerConcurrencyMode
 from pydantic import ConfigDict, Field, model_validator
 
 from .output_files import OutputFile
@@ -393,8 +393,6 @@ class BinaryRequestEvent(BaseEvent):
 
     model_config = ConfigDict(extra="allow")
     event_handler_concurrency: EventHandlerConcurrencyMode | None = EventHandlerConcurrencyMode.SERIAL
-    event_handler_completion: EventHandlerCompletionMode | None = EventHandlerCompletionMode.FIRST
-
     name: str = Field(min_length=1)
     plugin_name: str = ""
     hook_name: str = ""

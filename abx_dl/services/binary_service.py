@@ -44,6 +44,10 @@ def _is_app_bundle_binary(path: Path) -> bool:
 _TEMPLATE_NAME_RE = re.compile(r"^\{([A-Z0-9_]+)\}$")
 
 
+def _completed_handler_result(_result: Any, event_result: Any) -> bool:
+    return event_result.status == "completed" and event_result.error is None and _result is not None
+
+
 class EmittedBinaryRecord(BaseModel):
     """Typed shape for provider-emitted Binary records."""
 
@@ -236,11 +240,16 @@ class BinaryService(BaseService):
                 event_handler_slow_timeout=slow_warning_timeout(300),
             ),
         )
+        await process_event.now()
         await process_event.wait()
+        await process_event.event_results_list(include=_completed_handler_result, raise_if_none=False)
+        process_completion_timeout = float(
+            process_event.event_handler_timeout or process_event.event_timeout or event.event_timeout or 330.0,
+        )
         completed_process = await self.bus.find(
             ProcessCompletedEvent,
             past=True,
-            future=False,
+            future=process_completion_timeout,
             where=lambda candidate: self.bus.event_is_child_of(candidate, process_event),
         )
         if completed_process is not None:
@@ -336,7 +345,10 @@ class BinaryService(BaseService):
                         continue
                     if pruned_install_cache.pop(request_event.name.strip(), None) is not None:
                         install_cache_changed = True
-                await event.emit(request_event).now(first_result=True)
+                emitted_request = event.emit(request_event)
+                await emitted_request.now()
+                await emitted_request.wait()
+                await emitted_request.event_results_list(include=_completed_handler_result, raise_if_none=False)
         if install_cache_changed:
             await event.emit(
                 MachineEvent(
