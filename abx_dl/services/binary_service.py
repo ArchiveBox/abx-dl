@@ -236,13 +236,12 @@ class BinaryService(BaseService):
                 event_handler_slow_timeout=slow_warning_timeout(300),
             ),
         )
-        await process_event.now()
-        await process_event.now()
+        await process_event.wait()
         completed_process = await self.bus.find(
             ProcessCompletedEvent,
-            child_of=process_event,
             past=True,
             future=False,
+            where=lambda candidate: self.bus.event_is_child_of(candidate, process_event),
         )
         if completed_process is not None:
             assert isinstance(completed_process, ProcessCompletedEvent)
