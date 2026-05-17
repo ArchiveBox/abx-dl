@@ -607,7 +607,7 @@ def _phase_label_for_event(bus, event) -> str:
         if not parent_id or parent_id in checked_ids:
             break
         checked_ids.add(parent_id)
-        current = bus.event_history.get(parent_id)
+        current = bus.find("*", event_id=parent_id, past=True)
 
     return ""
 
@@ -815,7 +815,7 @@ class LiveBusUI:
     def print_summary(self, *, output_dir: Path) -> None:
         if not self.interactive_tty:
             return
-        archive_results = [record for record in self.bus.event_history.values() if isinstance(record, ArchiveResultEvent)]
+        archive_results = self.bus.filter(ArchiveResultEvent, past=True)
         self.ui_console.print()
         self.ui_console.print(
             f"[green]{sum(1 for r in archive_results if r.status == 'succeeded')} succeeded[/green], "
@@ -855,7 +855,7 @@ class LiveBusUI:
             checked_ids.add(parent_id)
             if parent_id in self.row_key_by_event_id:
                 return self.row_key_by_event_id[parent_id]
-            parent_event = self.bus.event_history.get(parent_id)
+            parent_event = self.bus.find("*", event_id=parent_id, past=True)
             if parent_event is None:
                 break
             parent_id = parent_event.event_parent_id or ""
@@ -1315,7 +1315,7 @@ def dl(
                 aborted = True
                 loop.run_until_complete(asyncio.gather(download_task, return_exceptions=True))
             finally:
-                aborted = aborted or any(isinstance(event, CrawlAbortEvent) for event in bus.event_history.values())
+                aborted = aborted or bus.find(CrawlAbortEvent, past=True) is not None
                 if debug:
                     bus.log_tree()
                 loop.run_until_complete(bus.wait_until_idle())

@@ -52,7 +52,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from abxbus import BaseEvent, EventConcurrencyMode, EventHandlerConcurrencyMode
-from pydantic import ConfigDict, Field, model_validator
+from pydantic import ConfigDict, Field
 
 from .output_files import OutputFile
 
@@ -152,12 +152,16 @@ class CrawlCompletedEvent(BaseEvent):
 class CrawlPauseEvent(BaseEvent):
     """Request interruption of the current foreground hook and pause the crawl."""
 
+    event_concurrency: EventConcurrencyMode | None = EventConcurrencyMode.PARALLEL
+    event_handler_concurrency: EventHandlerConcurrencyMode | None = EventHandlerConcurrencyMode.PARALLEL
     event_timeout: float | None = 60.0
 
 
 class CrawlAbortEvent(BaseEvent):
     """Abort the crawl after the current interrupted hook has been handled."""
 
+    event_concurrency: EventConcurrencyMode | None = EventConcurrencyMode.PARALLEL
+    event_handler_concurrency: EventHandlerConcurrencyMode | None = EventHandlerConcurrencyMode.PARALLEL
     event_timeout: float | None = 60.0
 
 
@@ -255,20 +259,9 @@ class ProcessEvent(BaseEvent):
     worker_type: str = ""
     event_timeout: float | None = 360.0
 
-    @model_validator(mode="before")
-    @classmethod
-    def _set_background_parent_blocking(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-        # TODO: mark background ProcessEvents as non-blocking for their parents
-        # once abxbus' BaseEvent declares ``event_blocks_parent_completion``
-        # (or exposes a supported hook); today it rejects unknown ``event_*``
-        # fields, which crashed any background-hook test path when injected.
-        return dict(data)
-
 
 class ProcessKillEvent(BaseEvent):
-    """Command: SIGTERM a background hook via its process identity.
+    """Command: SIGTERM a running hook via its process identity.
 
     Emitted by cleanup event handlers as a direct child of the cleanup event
     that owns the shutdown sequence. ProcessService resolves the single matching

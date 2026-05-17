@@ -10,9 +10,12 @@ from abx_dl.config import get_required_binary_requests
 from abx_dl.events import (
     ArchiveResultEvent,
     BinaryEvent,
+    CrawlAbortEvent,
     CrawlCleanupEvent,
+    CrawlCompletedEvent,
     BinaryRequestEvent,
     CrawlEvent,
+    CrawlSetupEvent,
     CrawlStartEvent,
     MachineEvent,
     ProcessCompletedEvent,
@@ -20,6 +23,7 @@ from abx_dl.events import (
     ProcessKillEvent,
     ProcessStartedEvent,
     ProcessStdoutEvent,
+    SnapshotCompletedEvent,
     SnapshotEvent,
 )
 from abx_dl.models import Hook, Plugin, PluginConfig, Snapshot, discover_plugins
@@ -595,12 +599,8 @@ def test_binary_event_falls_back_from_stale_cached_config_binary_to_provider_hoo
     assert any(event.plugin_name == "env" for event in process_events)
     derived_update = next(
         event
-        for event in reversed(list(bus.event_history.values()))
-        if isinstance(event, MachineEvent)
-        and event.config_type == "derived"
-        and event.key == "config/WGET_BINARY"
-        and event.method == "update"
-        and event.value
+        for event in reversed(asyncio.run(bus.filter(MachineEvent, past=True)))
+        if event.config_type == "derived" and event.key == "config/WGET_BINARY" and event.method == "update" and event.value
     )
     assert Path(str(derived_update.value)).name == "wget"
 
@@ -921,6 +921,210 @@ def test_snapshot_background_daemon_stays_alive_until_cleanup(tmp_path: Path) ->
     assert "cleaned" in daemon_completed.stdout
 
 
+def test_snapshot_abort_stops_scheduling_later_hooks(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "plugins" / "snapshot_abort"
+    plugin_dir.mkdir(parents=True)
+    first_hook = plugin_dir / "on_Snapshot__10_first.sh"
+    second_hook = plugin_dir / "on_Snapshot__20_second.sh"
+    first_hook.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'echo first-started > "$SNAP_DIR/first.txt"',
+                "sleep 30",
+                "",
+            ],
+        ),
+    )
+    second_hook.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'echo second-ran > "$SNAP_DIR/second.txt"',
+                "",
+            ],
+        ),
+    )
+    first_hook.chmod(0o755)
+    second_hook.chmod(0o755)
+
+    output_dir = tmp_path / "run"
+    plugin = Plugin(
+        name="snapshot_abort",
+        path=plugin_dir,
+        config=PluginConfig(),
+        hooks=[
+            Hook(
+                name=first_hook.name,
+                event="Snapshot",
+                plugin_name="snapshot_abort",
+                path=first_hook,
+                order=10,
+                is_background=False,
+            ),
+            Hook(
+                name=second_hook.name,
+                event="Snapshot",
+                plugin_name="snapshot_abort",
+                path=second_hook,
+                order=20,
+                is_background=False,
+            ),
+        ],
+    )
+    bus = create_bus(total_timeout=20.0, name=f"snapshot_abort_{tmp_path.name}")
+    MachineService(bus, persist_derived=False)
+    ProcessService(bus, emit_jsonl=False, interactive_tty=False)
+    snapshot = Snapshot(url="https://example.com", id="snap-abort")
+    SnapshotService(
+        bus,
+        url=snapshot.url,
+        snapshot=snapshot,
+        output_dir=output_dir,
+        plugins={plugin.name: plugin},
+        snapshot_phase_timeout=10.0,
+        snapshot_cleanup_phase_timeout=5.0,
+    )
+
+    async def run() -> tuple[ProcessCompletedEvent | None, SnapshotCompletedEvent | None, ProcessStartedEvent | None]:
+        async def abort_from_first_hook_context(event: ProcessStartedEvent) -> None:
+            if event.hook_name == first_hook.name:
+                for _ in range(50):
+                    if (output_dir / "first.txt").exists():
+                        break
+                    await asyncio.sleep(0.1)
+                assert (output_dir / "first.txt").exists()
+                await event.emit(CrawlAbortEvent()).now()
+
+        bus.on(ProcessStartedEvent, abort_from_first_hook_context)
+        crawl_start_event = CrawlStartEvent(
+            url=snapshot.url,
+            snapshot_id=snapshot.id,
+            output_dir=str(output_dir),
+        )
+        root_event = SnapshotEvent(
+            url=snapshot.url,
+            snapshot_id=snapshot.id,
+            output_dir=str(output_dir),
+            event_parent_id=crawl_start_event.event_id,
+        )
+        await bus.emit(crawl_start_event).now()
+        await bus.emit(root_event).now()
+        first_completed = await bus.find(
+            ProcessCompletedEvent,
+            past=True,
+            future=5.0,
+            hook_name=first_hook.name,
+        )
+        snapshot_completed = await bus.find(
+            SnapshotCompletedEvent,
+            past=True,
+            future=5.0,
+            child_of=root_event,
+        )
+        second_started = await bus.find(ProcessStartedEvent, past=True, future=False, hook_name=second_hook.name)
+        await bus.wait_until_idle()
+        return (
+            first_completed if isinstance(first_completed, ProcessCompletedEvent) else None,
+            snapshot_completed if isinstance(snapshot_completed, SnapshotCompletedEvent) else None,
+            second_started if isinstance(second_started, ProcessStartedEvent) else None,
+        )
+
+    first_completed, snapshot_completed, second_started = asyncio.run(run())
+
+    assert (output_dir / "first.txt").read_text() == "first-started\n"
+    assert first_completed is not None
+    assert first_completed.status == "skipped"
+    assert snapshot_completed is not None
+    assert not (output_dir / "second.txt").exists()
+    assert second_started is None
+
+
+def test_snapshot_completed_waits_for_cleanup_process_listeners(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "plugins" / "snapshot_cleanup_wait"
+    plugin_dir.mkdir(parents=True)
+    daemon_hook = plugin_dir / "on_Snapshot__10_daemon.daemon.bg.sh"
+    daemon_hook.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'echo $$ > "$SNAP_DIR/daemon.pid"',
+                "trap 'echo cleaned; exit 0' TERM",
+                "while true; do sleep 1; done",
+                "",
+            ],
+        ),
+    )
+    daemon_hook.chmod(0o755)
+
+    output_dir = tmp_path / "run"
+    side_effect = output_dir / "process-completed-listener.txt"
+    plugin = Plugin(
+        name="snapshot_cleanup_wait",
+        path=plugin_dir,
+        config=PluginConfig(),
+        hooks=[
+            Hook(
+                name=daemon_hook.name,
+                event="Snapshot",
+                plugin_name="snapshot_cleanup_wait",
+                path=daemon_hook,
+                order=10,
+                is_background=True,
+            ),
+        ],
+    )
+    bus = create_bus(total_timeout=20.0, name=f"snapshot_cleanup_wait_{tmp_path.name}")
+    MachineService(bus, persist_derived=False)
+    ProcessService(bus, emit_jsonl=False, interactive_tty=False)
+    SnapshotService(
+        bus,
+        url="https://example.com",
+        snapshot=Snapshot(url="https://example.com", id="snap-cleanup-wait"),
+        output_dir=output_dir,
+        plugins={plugin.name: plugin},
+        snapshot_phase_timeout=10.0,
+        snapshot_cleanup_phase_timeout=5.0,
+    )
+    completed_saw_side_effect: list[bool] = []
+
+    async def on_ProcessCompletedEvent(event: ProcessCompletedEvent) -> None:
+        if event.hook_name == daemon_hook.name:
+            await asyncio.sleep(0.2)
+            side_effect.parent.mkdir(parents=True, exist_ok=True)
+            side_effect.write_text("done")
+
+    async def on_SnapshotCompletedEvent(event: SnapshotCompletedEvent) -> None:
+        completed_saw_side_effect.append(side_effect.exists())
+
+    bus.on(ProcessCompletedEvent, on_ProcessCompletedEvent)
+    bus.on(SnapshotCompletedEvent, on_SnapshotCompletedEvent)
+
+    async def run() -> None:
+        crawl_start_event = CrawlStartEvent(
+            url="https://example.com",
+            snapshot_id="snap-cleanup-wait",
+            output_dir=str(output_dir),
+        )
+        root_event = SnapshotEvent(
+            url="https://example.com",
+            snapshot_id="snap-cleanup-wait",
+            output_dir=str(output_dir),
+            event_parent_id=crawl_start_event.event_id,
+        )
+        await bus.emit(crawl_start_event).now()
+        await bus.emit(root_event).now()
+        await bus.wait_until_idle()
+
+    asyncio.run(run())
+
+    assert side_effect.read_text() == "done"
+    assert completed_saw_side_effect == [True]
+
+
 def test_crawl_setup_background_daemon_survives_until_explicit_cleanup(tmp_path: Path) -> None:
     plugin_dir = tmp_path / "plugins" / "crawl_daemon_check"
     plugin_dir.mkdir(parents=True)
@@ -1016,6 +1220,471 @@ def test_crawl_setup_background_daemon_survives_until_explicit_cleanup(tmp_path:
     assert daemon_completed is not None
     assert daemon_completed.status == "succeeded"
     assert "cleaned" in daemon_completed.stdout
+
+
+def test_crawl_completed_waits_for_cleanup_process_listeners(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "plugins" / "crawl_cleanup_wait"
+    plugin_dir.mkdir(parents=True)
+    daemon_hook = plugin_dir / "on_CrawlSetup__10_daemon.daemon.bg.sh"
+    daemon_hook.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'crawl_dir="${CRAWL_DIR:-$(dirname "$PWD")}"',
+                "trap 'echo cleaned; exit 0' TERM",
+                'echo $$ > "$crawl_dir/daemon.pid"',
+                'echo ready > "$crawl_dir/daemon.ready"',
+                "while true; do sleep 1; done",
+                "",
+            ],
+        ),
+    )
+    daemon_hook.chmod(0o755)
+
+    output_dir = tmp_path / "run"
+    side_effect = output_dir / "process-completed-listener.txt"
+    snapshot = Snapshot(url="https://example.com", id="crawl-cleanup-wait")
+    plugin = Plugin(
+        name="crawl_cleanup_wait",
+        path=plugin_dir,
+        config=PluginConfig(),
+        hooks=[
+            Hook(
+                name=daemon_hook.name,
+                event="CrawlSetup",
+                plugin_name="crawl_cleanup_wait",
+                path=daemon_hook,
+                order=10,
+                is_background=True,
+            ),
+        ],
+    )
+    bus = create_bus(total_timeout=20.0, name=f"crawl_cleanup_wait_{tmp_path.name}")
+    MachineService(bus, persist_derived=False)
+    ProcessService(bus, emit_jsonl=False, interactive_tty=False)
+    CrawlService(
+        bus,
+        url=snapshot.url,
+        snapshot=snapshot,
+        output_dir=output_dir,
+        plugins={plugin.name: plugin},
+        crawl_start_enabled=False,
+        crawl_cleanup_enabled=True,
+        crawl_setup_phase_timeout=10.0,
+        crawl_cleanup_phase_timeout=5.0,
+    )
+    completed_saw_side_effect: list[bool] = []
+
+    async def on_ProcessCompletedEvent(event: ProcessCompletedEvent) -> None:
+        if event.hook_name == daemon_hook.name:
+            await asyncio.sleep(0.2)
+            side_effect.parent.mkdir(parents=True, exist_ok=True)
+            side_effect.write_text("done")
+
+    async def on_CrawlCompletedEvent(event: CrawlCompletedEvent) -> None:
+        completed_saw_side_effect.append(side_effect.exists())
+
+    bus.on(ProcessCompletedEvent, on_ProcessCompletedEvent)
+    bus.on(CrawlCompletedEvent, on_CrawlCompletedEvent)
+
+    async def run() -> None:
+        await bus.emit(
+            CrawlEvent(
+                url=snapshot.url,
+                snapshot_id=snapshot.id,
+                output_dir=str(output_dir),
+                event_timeout=20.0,
+            ),
+        ).now()
+        await bus.wait_until_idle()
+
+    asyncio.run(run())
+
+    assert side_effect.read_text() == "done"
+    assert completed_saw_side_effect == [True]
+
+
+def test_crawl_abort_during_setup_cleans_background_daemon(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "plugins" / "crawl_setup_abort"
+    plugin_dir.mkdir(parents=True)
+    daemon_hook = plugin_dir / "on_CrawlSetup__10_daemon.daemon.bg.sh"
+    daemon_hook.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'crawl_dir="${CRAWL_DIR:-$(dirname "$PWD")}"',
+                "trap 'echo cleaned; exit 0' TERM",
+                'echo $$ > "$crawl_dir/daemon.pid"',
+                'echo ready > "$crawl_dir/daemon.ready"',
+                "while true; do sleep 1; done",
+                "",
+            ],
+        ),
+    )
+    daemon_hook.chmod(0o755)
+
+    output_dir = tmp_path / "run"
+    snapshot = Snapshot(url="https://example.com", id="crawl-setup-abort")
+    plugin = Plugin(
+        name="crawl_setup_abort",
+        path=plugin_dir,
+        config=PluginConfig(),
+        hooks=[
+            Hook(
+                name=daemon_hook.name,
+                event="CrawlSetup",
+                plugin_name="crawl_setup_abort",
+                path=daemon_hook,
+                order=10,
+                is_background=True,
+            ),
+        ],
+    )
+    bus = create_bus(total_timeout=20.0, name=f"crawl_setup_abort_{tmp_path.name}")
+    MachineService(bus, persist_derived=False)
+    ProcessService(bus, emit_jsonl=False, interactive_tty=False)
+    CrawlService(
+        bus,
+        url=snapshot.url,
+        snapshot=snapshot,
+        output_dir=output_dir,
+        plugins={plugin.name: plugin},
+        crawl_start_enabled=False,
+        crawl_cleanup_enabled=True,
+        crawl_setup_phase_timeout=10.0,
+        crawl_cleanup_phase_timeout=5.0,
+    )
+
+    async def run() -> ProcessCompletedEvent | None:
+        async def abort_after_daemon_starts(event: CrawlSetupEvent) -> None:
+            started = await bus.find(ProcessStartedEvent, past=True, future=5.0, hook_name=daemon_hook.name)
+            assert isinstance(started, ProcessStartedEvent)
+            ready_file = output_dir / "daemon.ready"
+            for _ in range(50):
+                if ready_file.exists():
+                    break
+                await asyncio.sleep(0.1)
+            assert ready_file.read_text().strip() == "ready"
+            await event.emit(CrawlAbortEvent()).now()
+
+        bus.on(CrawlSetupEvent, abort_after_daemon_starts)
+        await bus.emit(
+            CrawlEvent(
+                url=snapshot.url,
+                snapshot_id=snapshot.id,
+                output_dir=str(output_dir),
+                event_timeout=20.0,
+            ),
+        ).now()
+        completed = await bus.find(
+            ProcessCompletedEvent,
+            past=True,
+            future=5.0,
+            hook_name=daemon_hook.name,
+        )
+        await bus.wait_until_idle()
+        return completed if isinstance(completed, ProcessCompletedEvent) else None
+
+    daemon_completed = asyncio.run(run())
+
+    assert daemon_completed is not None
+    assert daemon_completed.status == "succeeded"
+    assert "cleaned" in daemon_completed.stdout
+
+
+def test_crawl_abort_during_foreground_setup_interrupts_hook_and_stops_later_setup(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "plugins" / "crawl_setup_abort_foreground"
+    plugin_dir.mkdir(parents=True)
+    daemon_hook = plugin_dir / "on_CrawlSetup__10_daemon.daemon.bg.sh"
+    foreground_hook = plugin_dir / "on_CrawlSetup__20_wait.sh"
+    later_hook = plugin_dir / "on_CrawlSetup__30_later.sh"
+    daemon_hook.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'crawl_dir="${CRAWL_DIR:-$(dirname "$PWD")}"',
+                'echo $$ > "$crawl_dir/daemon.pid"',
+                "trap 'echo daemon-cleaned; exit 0' TERM",
+                "while true; do sleep 1; done",
+                "",
+            ],
+        ),
+    )
+    foreground_hook.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'crawl_dir="${CRAWL_DIR:-$(dirname "$PWD")}"',
+                'echo $$ > "$crawl_dir/foreground.pid"',
+                "trap 'echo foreground-cleaned; exit 0' TERM",
+                "while true; do sleep 1; done",
+                "",
+            ],
+        ),
+    )
+    later_hook.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'crawl_dir="${CRAWL_DIR:-$(dirname "$PWD")}"',
+                'echo ran > "$crawl_dir/later.ran"',
+                "",
+            ],
+        ),
+    )
+    for hook_path in (daemon_hook, foreground_hook, later_hook):
+        hook_path.chmod(0o755)
+
+    output_dir = tmp_path / "run"
+    snapshot = Snapshot(url="https://example.com", id="crawl-setup-abort-foreground")
+    plugin = Plugin(
+        name="crawl_setup_abort_foreground",
+        path=plugin_dir,
+        config=PluginConfig(),
+        hooks=[
+            Hook(
+                name=daemon_hook.name,
+                event="CrawlSetup",
+                plugin_name="crawl_setup_abort_foreground",
+                path=daemon_hook,
+                order=10,
+                is_background=True,
+            ),
+            Hook(
+                name=foreground_hook.name,
+                event="CrawlSetup",
+                plugin_name="crawl_setup_abort_foreground",
+                path=foreground_hook,
+                order=20,
+                is_background=False,
+            ),
+            Hook(
+                name=later_hook.name,
+                event="CrawlSetup",
+                plugin_name="crawl_setup_abort_foreground",
+                path=later_hook,
+                order=30,
+                is_background=False,
+            ),
+        ],
+    )
+    bus = create_bus(total_timeout=20.0, name=f"crawl_setup_abort_foreground_{tmp_path.name}")
+    MachineService(bus, persist_derived=False)
+    ProcessService(bus, emit_jsonl=False, interactive_tty=False)
+    CrawlService(
+        bus,
+        url=snapshot.url,
+        snapshot=snapshot,
+        output_dir=output_dir,
+        plugins={plugin.name: plugin},
+        crawl_start_enabled=False,
+        crawl_cleanup_enabled=True,
+        crawl_setup_phase_timeout=10.0,
+        crawl_cleanup_phase_timeout=5.0,
+    )
+    abort_emitted = False
+
+    async def abort_after_foreground_starts(event: ProcessStartedEvent) -> None:
+        nonlocal abort_emitted
+        if event.hook_name != foreground_hook.name or abort_emitted:
+            return
+        abort_emitted = True
+        await event.emit(CrawlAbortEvent()).now()
+
+    bus.on(ProcessStartedEvent, abort_after_foreground_starts)
+
+    async def run() -> tuple[ProcessCompletedEvent | None, ProcessCompletedEvent | None, list[ProcessStartedEvent]]:
+        await bus.emit(
+            CrawlEvent(
+                url=snapshot.url,
+                snapshot_id=snapshot.id,
+                output_dir=str(output_dir),
+                event_timeout=20.0,
+            ),
+        ).now()
+        daemon_completed = await bus.find(
+            ProcessCompletedEvent,
+            past=True,
+            future=5.0,
+            hook_name=daemon_hook.name,
+        )
+        foreground_completed = await bus.find(
+            ProcessCompletedEvent,
+            past=True,
+            future=5.0,
+            hook_name=foreground_hook.name,
+        )
+        later_started = await bus.filter(
+            ProcessStartedEvent,
+            past=True,
+            hook_name=later_hook.name,
+        )
+        await bus.wait_until_idle()
+        return (
+            daemon_completed if isinstance(daemon_completed, ProcessCompletedEvent) else None,
+            foreground_completed if isinstance(foreground_completed, ProcessCompletedEvent) else None,
+            later_started,
+        )
+
+    daemon_completed, foreground_completed, later_started = asyncio.run(run())
+
+    assert abort_emitted
+    assert daemon_completed is not None
+    assert daemon_completed.status == "succeeded"
+    assert "daemon-cleaned" in daemon_completed.stdout
+    assert foreground_completed is not None
+    assert foreground_completed.status == "skipped"
+    assert "Hook interrupted by user" in foreground_completed.stderr
+    assert later_started == []
+    assert not (output_dir / "later.ran").exists()
+
+
+def test_crawl_abort_from_crawl_event_interrupts_active_setup_hook(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "plugins" / "crawl_setup_abort_from_root"
+    plugin_dir.mkdir(parents=True)
+    foreground_hook = plugin_dir / "on_CrawlSetup__20_wait.sh"
+    later_hook = plugin_dir / "on_CrawlSetup__30_later.sh"
+    foreground_hook.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'crawl_dir="${CRAWL_DIR:-$(dirname "$PWD")}"',
+                'echo $$ > "$crawl_dir/foreground.pid"',
+                "trap 'echo foreground-cleaned; exit 0' TERM",
+                "while true; do sleep 1; done",
+                "",
+            ],
+        ),
+    )
+    later_hook.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'crawl_dir="${CRAWL_DIR:-$(dirname "$PWD")}"',
+                'echo ran > "$crawl_dir/later.ran"',
+                "",
+            ],
+        ),
+    )
+    for hook_path in (foreground_hook, later_hook):
+        hook_path.chmod(0o755)
+
+    output_dir = tmp_path / "run"
+    snapshot = Snapshot(url="https://example.com", id="crawl-setup-abort-from-root")
+    plugin = Plugin(
+        name="crawl_setup_abort_from_root",
+        path=plugin_dir,
+        config=PluginConfig(),
+        hooks=[
+            Hook(
+                name=foreground_hook.name,
+                event="CrawlSetup",
+                plugin_name="crawl_setup_abort_from_root",
+                path=foreground_hook,
+                order=20,
+                is_background=False,
+            ),
+            Hook(
+                name=later_hook.name,
+                event="CrawlSetup",
+                plugin_name="crawl_setup_abort_from_root",
+                path=later_hook,
+                order=30,
+                is_background=False,
+            ),
+        ],
+    )
+    bus = create_bus(total_timeout=20.0, name=f"crawl_setup_abort_from_root_{tmp_path.name}")
+    MachineService(bus, persist_derived=False)
+    ProcessService(bus, emit_jsonl=False, interactive_tty=False)
+    CrawlService(
+        bus,
+        url=snapshot.url,
+        snapshot=snapshot,
+        output_dir=output_dir,
+        plugins={plugin.name: plugin},
+        crawl_event_enabled=False,
+        crawl_start_enabled=False,
+        crawl_cleanup_enabled=True,
+        crawl_setup_phase_timeout=10.0,
+        crawl_cleanup_phase_timeout=5.0,
+    )
+
+    async def run() -> tuple[float, ProcessCompletedEvent | None, list[ProcessStartedEvent]]:
+        abort_task_holder: list[asyncio.Task[None]] = []
+
+        async def drive_archivebox_style_crawl(event: CrawlEvent) -> None:
+            async def abort_from_crawl_event_after_foreground_starts() -> None:
+                started = await bus.find(ProcessStartedEvent, past=True, future=5.0, hook_name=foreground_hook.name)
+                assert isinstance(started, ProcessStartedEvent)
+                await event.emit(CrawlAbortEvent()).now()
+
+            abort_task = asyncio.create_task(abort_from_crawl_event_after_foreground_starts())
+            abort_task_holder.append(abort_task)
+            try:
+                await event.emit(
+                    CrawlSetupEvent(
+                        url=snapshot.url,
+                        snapshot_id=snapshot.id,
+                        output_dir=str(output_dir),
+                        event_timeout=10.0,
+                    ),
+                ).now()
+            finally:
+                await event.emit(
+                    CrawlCleanupEvent(
+                        url=snapshot.url,
+                        snapshot_id=snapshot.id,
+                        output_dir=str(output_dir),
+                        event_timeout=5.0,
+                    ),
+                ).now()
+                await abort_task
+
+        bus.on(CrawlEvent, drive_archivebox_style_crawl)
+        start = asyncio.get_running_loop().time()
+        await bus.emit(
+            CrawlEvent(
+                url=snapshot.url,
+                snapshot_id=snapshot.id,
+                output_dir=str(output_dir),
+                event_timeout=20.0,
+            ),
+        ).now()
+        elapsed = asyncio.get_running_loop().time() - start
+        foreground_completed = await bus.find(
+            ProcessCompletedEvent,
+            past=True,
+            future=5.0,
+            hook_name=foreground_hook.name,
+        )
+        later_started = await bus.filter(
+            ProcessStartedEvent,
+            past=True,
+            hook_name=later_hook.name,
+        )
+        await bus.wait_until_idle()
+        return (
+            elapsed,
+            foreground_completed if isinstance(foreground_completed, ProcessCompletedEvent) else None,
+            later_started,
+        )
+
+    elapsed, foreground_completed, later_started = asyncio.run(run())
+
+    assert elapsed < 5.0
+    assert foreground_completed is not None
+    assert foreground_completed.status == "skipped"
+    assert "Hook interrupted by user" in foreground_completed.stderr
+    assert later_started == []
+    assert not (output_dir / "later.ran").exists()
 
 
 def test_crawl_background_daemon_stays_alive_through_snapshot_until_cleanup(tmp_path: Path) -> None:
@@ -1241,7 +1910,7 @@ def test_process_kill_uses_live_subprocess_handle_when_pid_file_validation_fails
         ).now()
         completed_process = await bus.find(
             ProcessCompletedEvent,
-            child_of=started_process,
+            child_of=process_event,
             past=True,
             future=5.0,
         )
@@ -1255,6 +1924,197 @@ def test_process_kill_uses_live_subprocess_handle_when_pid_file_validation_fails
     assert completed.status == "succeeded"
     assert "cleaned" in completed.stdout
     assert not (output_dir / "on_Snapshot__10_background.daemon.bg.pid").exists()
+
+
+def test_process_event_subprocess_starts_once_when_event_is_awaited_twice(tmp_path: Path) -> None:
+    script = tmp_path / "start-once-hook.sh"
+    launch_count = tmp_path / "launch-count.txt"
+    script.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                f"printf 'launch\\n' >> {launch_count}",
+                "echo ready",
+                "sleep 0.2",
+                "",
+            ],
+        ),
+    )
+    script.chmod(0o755)
+
+    output_dir = tmp_path / "run" / "start_once"
+    bus = create_bus(total_timeout=10.0, name=f"process_event_start_once_{tmp_path.name}")
+    ProcessService(bus, emit_jsonl=False, interactive_tty=False)
+
+    async def run() -> tuple[list[ProcessStartedEvent], ProcessCompletedEvent | None]:
+        process_event = bus.emit(
+            ProcessEvent(
+                plugin_name="start_once",
+                hook_name="on_Snapshot__10_start_once.sh",
+                hook_path=str(script),
+                hook_args=[],
+                is_background=False,
+                output_dir=str(output_dir),
+                env={},
+                timeout=5,
+                event_timeout=10.0,
+                event_handler_timeout=10.0,
+            ),
+        )
+        await asyncio.gather(process_event.now(), process_event.now())
+        completed = await bus.find(
+            ProcessCompletedEvent,
+            child_of=process_event,
+            past=True,
+            future=5.0,
+        )
+        await bus.wait_until_idle()
+        started = await bus.filter(ProcessStartedEvent, child_of=process_event, past=True)
+        return started, completed if isinstance(completed, ProcessCompletedEvent) else None
+
+    started_events, completed_event = asyncio.run(run())
+
+    assert launch_count.read_text().splitlines() == ["launch"]
+    assert len(started_events) == 1
+    assert completed_event is not None
+    assert completed_event.status == "succeeded"
+
+
+def test_process_event_does_not_wait_for_stdout_inherited_by_child_process(tmp_path: Path) -> None:
+    child_pid_file = tmp_path / "child.pid"
+    script = tmp_path / "stdout-inherited-hook.py"
+    script.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env python3",
+                "import subprocess",
+                "import sys",
+                "print('parent-started', flush=True)",
+                "child = subprocess.Popen(['sleep', '30'], stdout=sys.stdout, stderr=sys.stderr)",
+                f"open({str(child_pid_file)!r}, 'w').write(str(child.pid))",
+                "print('parent-done', flush=True)",
+                "",
+            ],
+        ),
+    )
+    script.chmod(0o755)
+
+    output_dir = tmp_path / "run" / "stdout_inherited"
+    bus = create_bus(total_timeout=10.0, name=f"process_stdout_inherited_{tmp_path.name}")
+    ProcessService(bus, emit_jsonl=False, interactive_tty=False)
+
+    async def run() -> tuple[float, ProcessCompletedEvent | None]:
+        process_event = bus.emit(
+            ProcessEvent(
+                plugin_name="stdout_inherited",
+                hook_name="on_Snapshot__10_stdout_inherited.sh",
+                hook_path=str(script),
+                hook_args=[],
+                is_background=False,
+                output_dir=str(output_dir),
+                env={},
+                timeout=5,
+                event_timeout=10.0,
+                event_handler_timeout=10.0,
+            ),
+        )
+        start = asyncio.get_running_loop().time()
+        await process_event.now()
+        await process_event.wait(timeout=3.0)
+        await process_event.event_results_list()
+        elapsed = asyncio.get_running_loop().time() - start
+        completed = await bus.find(
+            ProcessCompletedEvent,
+            child_of=process_event,
+            past=True,
+            future=2.0,
+        )
+        await bus.wait_until_idle()
+        return elapsed, completed if isinstance(completed, ProcessCompletedEvent) else None
+
+    try:
+        elapsed, completed_event = asyncio.run(run())
+    finally:
+        if child_pid_file.exists():
+            try:
+                os.kill(int(child_pid_file.read_text().strip()), 9)
+            except (ProcessLookupError, ValueError):
+                pass
+
+    assert elapsed < 3.0
+    assert completed_event is not None
+    assert completed_event.status == "succeeded"
+    assert "parent-started" in completed_event.stdout
+    assert "parent-done" in completed_event.stdout
+
+
+def test_crawl_abort_interrupts_noninteractive_foreground_process(tmp_path: Path) -> None:
+    script = tmp_path / "long-running-hook.sh"
+    script.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                "echo started",
+                "sleep 30",
+                "",
+            ],
+        ),
+    )
+    script.chmod(0o755)
+
+    output_dir = tmp_path / "run" / "abort_process"
+    bus = create_bus(total_timeout=10.0, name=f"process_abort_{tmp_path.name}")
+    ProcessService(bus, emit_jsonl=False, interactive_tty=False)
+
+    async def run() -> tuple[ProcessStartedEvent, ProcessCompletedEvent | None]:
+        process_event_holder: dict[str, ProcessEvent] = {}
+
+        async def on_CrawlEvent(event: CrawlEvent) -> None:
+            process_event = event.emit(
+                ProcessEvent(
+                    plugin_name="abort_process",
+                    hook_name="on_Snapshot__10_abort_process.sh",
+                    hook_path=str(script),
+                    hook_args=[],
+                    is_background=False,
+                    output_dir=str(output_dir),
+                    env={},
+                    timeout=30,
+                    event_timeout=60.0,
+                    event_handler_timeout=60.0,
+                ),
+            )
+            process_event_holder["event"] = process_event
+            process_task = asyncio.create_task(process_event.now())
+            started = await bus.find(ProcessStartedEvent, child_of=process_event, past=False, future=5.0)
+            assert isinstance(started, ProcessStartedEvent)
+            await event.emit(CrawlAbortEvent()).now()
+            await process_task
+
+        bus.on(CrawlEvent, on_CrawlEvent)
+        crawl_event = bus.emit(
+            CrawlEvent(
+                url="https://example.com",
+                snapshot_id="snapshot-1",
+                output_dir=str(tmp_path / "run"),
+            ),
+        )
+        await crawl_event.now()
+        process_event = process_event_holder["event"]
+        started = await bus.find(ProcessStartedEvent, child_of=process_event, past=True, future=5.0)
+        assert isinstance(started, ProcessStartedEvent)
+        completed = await bus.find(ProcessCompletedEvent, child_of=process_event, past=True, future=5.0)
+        await bus.wait_until_idle()
+        return started, completed if isinstance(completed, ProcessCompletedEvent) else None
+
+    started_event, completed_event = asyncio.run(run())
+
+    assert started_event.pid > 0
+    assert completed_event is not None
+    assert completed_event.status == "skipped"
+    assert completed_event.stderr == "Hook interrupted by user"
 
 
 def test_download_can_suppress_jsonl_stdout(tmp_path: Path, capsys) -> None:

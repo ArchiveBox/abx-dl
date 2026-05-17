@@ -7,7 +7,7 @@ from typing import Any, ClassVar
 from abxbus import BaseEvent, EventBus
 from pydantic import ValidationError
 
-from ..events import ArchiveResultEvent, ProcessCompletedEvent, ProcessStartedEvent, ProcessStdoutEvent, SnapshotEvent
+from ..events import ArchiveResultEvent, ProcessCompletedEvent, ProcessEvent, ProcessStartedEvent, ProcessStdoutEvent, SnapshotEvent
 from ..limits import CrawlLimitState
 from ..models import ArchiveResult, write_jsonl
 from ..output_files import OutputFile, scan_output_files
@@ -62,13 +62,25 @@ class ArchiveResultService(BaseService):
         archive_result_payload: dict[str, Any] = {str(key): value for key, value in record.items()}
         if "type" not in archive_result_payload or archive_result_payload["type"] != "ArchiveResult":
             return
-        started_process = self.bus.event_history.get(event.event_parent_id or "")
+        started_process = await self.bus.find(
+            ProcessStartedEvent,
+            past=True,
+            future=False,
+            where=lambda candidate: self.bus.event_is_parent_of(candidate, event),
+        )
         assert isinstance(started_process, ProcessStartedEvent)
+        process_event = await self.bus.find(
+            ProcessEvent,
+            past=True,
+            future=False,
+            where=lambda candidate: self.bus.event_is_parent_of(candidate, started_process),
+        )
+        assert isinstance(process_event, ProcessEvent)
         snapshot_event = await self.bus.find(
             SnapshotEvent,
             past=True,
             future=False,
-            where=lambda candidate: self.bus.event_is_child_of(started_process, candidate),
+            where=lambda candidate: self.bus.event_is_child_of(process_event, candidate),
         )
         assert isinstance(snapshot_event, SnapshotEvent)
 
@@ -107,7 +119,19 @@ class ArchiveResultService(BaseService):
             return
 
         limit_state = CrawlLimitState.from_env(event.env)
-        started_process = self.bus.event_history.get(event.event_parent_id or "")
+        process_event = await self.bus.find(
+            ProcessEvent,
+            past=True,
+            future=False,
+            where=lambda candidate: self.bus.event_is_parent_of(candidate, event),
+        )
+        assert isinstance(process_event, ProcessEvent)
+        started_process = await self.bus.find(
+            ProcessStartedEvent,
+            child_of=process_event,
+            past=True,
+            future=False,
+        )
         assert isinstance(started_process, ProcessStartedEvent)
         limit_state.record_process_output(
             started_process.event_id,
@@ -127,7 +151,7 @@ class ArchiveResultService(BaseService):
             SnapshotEvent,
             past=True,
             future=False,
-            where=lambda candidate: self.bus.event_is_child_of(started_process, candidate),
+            where=lambda candidate: self.bus.event_is_child_of(process_event, candidate),
         )
         assert isinstance(snapshot_event, SnapshotEvent)
 

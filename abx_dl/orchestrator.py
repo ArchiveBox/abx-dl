@@ -116,6 +116,8 @@ def setup_services(
     crawl_start_enabled: bool = True,
     snapshot_cleanup_enabled: bool = True,
     crawl_cleanup_enabled: bool = True,
+    crawl_completed_enabled: bool = True,
+    crawl_event_enabled: bool = True,
     crawl_setup_phase_timeout: float = 300.0,
     snapshot_phase_timeout: float = 300.0,
     snapshot_cleanup_phase_timeout: float = 300.0,
@@ -124,6 +126,7 @@ def setup_services(
     auto_install: bool = True,
     emit_jsonl: bool = True,
     interactive_tty: bool | None = None,
+    abort_requested: Any | None = None,
     MachineService: type[MachineService] | None = MachineService,
     BinaryService: type[BinaryService] | None = BinaryService,
     ProcessService: type[ProcessService] | None = ProcessService,
@@ -182,6 +185,7 @@ def setup_services(
             install_plugins=install_plugins,
             output_dir=output_dir,
             snapshot=snapshot,
+            abort_requested=abort_requested,
         )
 
     if ProcessService is not None:
@@ -216,10 +220,13 @@ def setup_services(
             crawl_setup_enabled=crawl_setup_enabled,
             crawl_start_enabled=crawl_start_enabled,
             crawl_cleanup_enabled=crawl_cleanup_enabled,
+            crawl_completed_enabled=crawl_completed_enabled,
+            crawl_event_enabled=crawl_event_enabled,
             crawl_setup_phase_timeout=crawl_setup_phase_timeout,
             snapshot_phase_timeout=snapshot_phase_timeout,
             snapshot_cleanup_phase_timeout=snapshot_cleanup_phase_timeout,
             crawl_cleanup_phase_timeout=crawl_cleanup_phase_timeout,
+            abort_requested=abort_requested,
         )
         if SnapshotService is not None and (crawl_start_enabled or snapshot_cleanup_enabled):
             SnapshotService(
@@ -231,6 +238,7 @@ def setup_services(
                 snapshot_phase_timeout=snapshot_phase_timeout,
                 snapshot_cleanup_enabled=snapshot_cleanup_enabled,
                 snapshot_cleanup_phase_timeout=snapshot_cleanup_phase_timeout,
+                abort_requested=abort_requested,
             )
 
     return None
@@ -455,6 +463,8 @@ async def download(
     crawl_start_enabled: bool = True,
     snapshot_cleanup_enabled: bool = True,
     crawl_cleanup_enabled: bool = True,
+    crawl_completed_enabled: bool = True,
+    crawl_event_enabled: bool = True,
     dry_run: bool = False,
     MachineService: type[MachineService] | None = MachineService,
     BinaryService: type[BinaryService] | None = BinaryService,
@@ -570,6 +580,8 @@ async def download(
         crawl_start_enabled=crawl_start_enabled,
         snapshot_cleanup_enabled=snapshot_cleanup_enabled,
         crawl_cleanup_enabled=crawl_cleanup_enabled,
+        crawl_completed_enabled=crawl_completed_enabled,
+        crawl_event_enabled=crawl_event_enabled,
         crawl_setup_phase_timeout=crawl_setup_phase_timeout,
         snapshot_phase_timeout=snapshot_phase_timeout,
         snapshot_cleanup_phase_timeout=snapshot_cleanup_phase_timeout,

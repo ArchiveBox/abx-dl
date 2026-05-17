@@ -267,14 +267,12 @@ def _load_plugin_config_model(
     return resolved_config
 
 
-def get_user_env(
+async def get_user_env(
     bus: EventBus,
 ) -> GlobalConfig:
     """Rebuild current user config from the initial snapshot plus MachineEvents."""
     current_user_config: dict[str, Any] = {}
-    for candidate in bus.event_history.values():
-        if not isinstance(candidate, MachineEvent):
-            continue
+    for candidate in await bus.filter(MachineEvent, past=True):
         if candidate.config_type != "user":
             continue
         if candidate.config is not None:
@@ -291,7 +289,7 @@ def get_user_env(
     return GlobalConfig(**current_user_config)
 
 
-def get_derived_env(
+async def get_derived_env(
     bus: EventBus,
 ) -> dict[str, Any]:
     """Rebuild the sparse derived runtime cache from MachineEvents.
@@ -302,9 +300,7 @@ def get_derived_env(
     hooks across different LIB_DIR/NODE_PATH roots.
     """
     current_derived_config: dict[str, Any] = {}
-    for candidate in bus.event_history.values():
-        if not isinstance(candidate, MachineEvent):
-            continue
+    for candidate in await bus.filter(MachineEvent, past=True):
         if candidate.config_type != "derived":
             continue
         if candidate.config is not None:
@@ -321,7 +317,7 @@ def get_derived_env(
     return current_derived_config
 
 
-def get_plugin_env(
+async def get_plugin_env(
     bus: EventBus,
     *,
     plugin: Plugin,
@@ -336,8 +332,8 @@ def get_plugin_env(
     """
     plugin_config = _load_plugin_config_model(
         plugin,
-        user_env=get_user_env(bus),
-        derived_env=get_derived_env(bus) if include_derived else None,
+        user_env=await get_user_env(bus),
+        derived_env=await get_derived_env(bus) if include_derived else None,
     )
     return PluginEnv.from_config(plugin_config, run_output_dir=run_output_dir, extra_context=extra_context)
 

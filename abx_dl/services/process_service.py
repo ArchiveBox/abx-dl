@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar, Literal
 
@@ -30,6 +31,14 @@ from .base import BaseService
 
 
 ProcessStatus = Literal["succeeded", "failed", "skipped"]
+STDOUT_POLL_INTERVAL = 0.05
+
+
+@dataclass
+class _StdoutStreamState:
+    stdout_lines: list[str] = field(default_factory=list)
+    pending_line: str = ""
+    offset: int = 0
 
 
 def _process_status(exit_code: int) -> ProcessStatus:
@@ -117,6 +126,8 @@ class ProcessService(BaseService):
         self.interactive_tty = interactive_tty
         self.pause_requested = asyncio.Event()
         self.abort_requested = False
+        self._active_process_event_tasks: dict[str, asyncio.Task[Process | None]] = {}
+        self._completed_process_event_ids: set[str] = set()
         super().__init__(bus)
         self.bus.on(CrawlPauseEvent, self.on_CrawlPauseEvent)
         self.bus.on(CrawlAbortEvent, self.on_CrawlAbortEvent)
@@ -155,18 +166,37 @@ class ProcessService(BaseService):
         self.pause_requested.set()
 
     async def on_CrawlAbortEvent(self, event: CrawlAbortEvent) -> None:
-        """Remember that the current interrupted hook should abort the crawl."""
+        """Interrupt any current foreground hook and abort the crawl."""
         self.abort_requested = True
+        self.pause_requested.set()
 
     async def on_ProcessEvent(self, event: ProcessEvent) -> Process | None:
+        """Run each ProcessEvent exactly once even if the bus observes it twice."""
+        if event.event_id in self._completed_process_event_ids:
+            return None
+        active_task = self._active_process_event_tasks.get(event.event_id)
+        if active_task is not None:
+            return await asyncio.shield(active_task)
+
+        task = asyncio.create_task(self._run_process_event(event))
+        self._active_process_event_tasks[event.event_id] = task
+        try:
+            result = await task
+            self._completed_process_event_ids.add(event.event_id)
+            return result
+        finally:
+            if self._active_process_event_tasks.get(event.event_id) is task:
+                self._active_process_event_tasks.pop(event.event_id, None)
+
+    async def _run_process_event(self, event: ProcessEvent) -> Process | None:
         """Spawn one hook subprocess and emit ProcessStartedEvent.
 
         Foreground hooks stay inside this one handler for spawn, stdout, user
         interrupts, completion, retry, and abort. ProcessStartedEvent is only a
         notification record for downstream consumers like the TUI and cleanup.
         """
-        interactive_interrupts = not event.is_background and self.interactive_tty
-        if interactive_interrupts:
+        foreground_interrupts = not event.is_background
+        if foreground_interrupts:
             self.pause_requested.clear()
             self.abort_requested = False
         plugin_output_dir = Path(event.output_dir)
@@ -205,11 +235,11 @@ class ProcessService(BaseService):
         started_event: ProcessStartedEvent | None = None
         try:
             try:
-                with open(stderr_file, "w") as err_fh:
+                with open(stdout_file, "wb") as out_fh, open(stderr_file, "w") as err_fh:
                     process = await asyncio.create_subprocess_exec(
                         *cmd,
                         cwd=str(plugin_output_dir),
-                        stdout=asyncio.subprocess.PIPE,
+                        stdout=out_fh,
                         stderr=err_fh,
                         env=event.env,
                         # Give every hook its own process group so interrupts and
@@ -301,7 +331,7 @@ class ProcessService(BaseService):
                 stderr_file=stderr_file,
                 pid_file=pid_file,
                 files_before=files_before,
-                interactive_interrupts=interactive_interrupts,
+                foreground_interrupts=foreground_interrupts,
             )
         finally:
             self.pause_requested.clear()
@@ -318,14 +348,15 @@ class ProcessService(BaseService):
         stderr_file: Path,
         pid_file: Path,
         files_before: set[Path],
-        interactive_interrupts: bool,
+        foreground_interrupts: bool,
     ) -> Process | None:
+        stdout_state = _StdoutStreamState()
         stream_task = asyncio.create_task(
             self._stream_stdout(
                 event=started_event,
                 proc=proc,
-                process=process,
                 stdout_file=stdout_file,
+                state=stdout_state,
             ),
         )
         wait_task = asyncio.create_task(process.wait())
@@ -336,7 +367,7 @@ class ProcessService(BaseService):
             while True:
                 pending = {wait_task}
                 interrupt_task: asyncio.Task[bool] | None = None
-                if interactive_interrupts:
+                if foreground_interrupts:
                     interrupt_task = asyncio.create_task(self.pause_requested.wait())
                     pending.add(interrupt_task)
                 remaining = None if deadline is None else max(deadline - asyncio.get_running_loop().time(), 0.0)
@@ -367,7 +398,15 @@ class ProcessService(BaseService):
                     ).now()
                     await wait_task
                     break
-            await stream_task
+            stream_task.cancel()
+            await self._finish_stream_stdout(stream_task)
+            await self._emit_new_stdout_lines(
+                event=started_event,
+                proc=proc,
+                stdout_file=stdout_file,
+                state=stdout_state,
+                emit_partial=True,
+            )
         except TimeoutError:
             timed_out = True
             await graceful_kill_process(process)
@@ -394,6 +433,8 @@ class ProcessService(BaseService):
             status = "skipped"
             stderr = "Hook interrupted by user"
             if self.abort_requested:
+                action = "abort"
+            elif not self.interactive_tty:
                 action = "abort"
             else:
                 action = self.on_InterruptedHookPrompt(event.hook_name)
@@ -426,7 +467,7 @@ class ProcessService(BaseService):
         index_path = plugin_output_dir.parent / "index.jsonl"
         write_jsonl(index_path, proc, also_print=self.emit_jsonl)
 
-        await started_event.emit(
+        await event.emit(
             ProcessCompletedEvent(
                 plugin_name=event.plugin_name,
                 hook_name=event.hook_name,
@@ -470,18 +511,45 @@ class ProcessService(BaseService):
             ).now()
         return proc
 
+    async def _finish_stream_stdout(self, stream_task: asyncio.Task[list[str]]) -> list[str]:
+        """Finish reading hook stdout after the hook process exits."""
+        if stream_task.done():
+            return await stream_task
+        try:
+            return await stream_task
+        except asyncio.CancelledError:
+            return []
+
     async def on_ProcessKillEvent(self, event: ProcessKillEvent) -> None:
-        """Gracefully shut down a running background hook.
+        """Gracefully shut down a running hook.
 
         Cleanup emits ProcessKillEvent as a direct child of a cleanup event.
         Interactive interrupts emit it as a direct child of the current
         ProcessStartedEvent. If the process is already gone, pid-file
         validation makes this a safe no-op.
         """
-        parent_event = self.bus.event_history.get(event.event_parent_id or "")
+        parent_event = await self.bus.find(
+            ProcessStartedEvent,
+            past=True,
+            future=False,
+            where=lambda candidate: self.bus.event_is_parent_of(candidate, event),
+        )
         if isinstance(parent_event, ProcessStartedEvent):
             started_process = parent_event
         else:
+            parent_event = await self.bus.find(
+                SnapshotCleanupEvent,
+                past=True,
+                future=False,
+                where=lambda candidate: self.bus.event_is_parent_of(candidate, event),
+            )
+            if parent_event is None:
+                parent_event = await self.bus.find(
+                    CrawlCleanupEvent,
+                    past=True,
+                    future=False,
+                    where=lambda candidate: self.bus.event_is_parent_of(candidate, event),
+                )
             if not isinstance(parent_event, (SnapshotCleanupEvent, CrawlCleanupEvent)):
                 raise RuntimeError(f"Missing cleanup parent for ProcessKillEvent {event.event_id}")
             root_event: SnapshotEvent | CrawlEvent | None
@@ -513,7 +581,6 @@ class ProcessService(BaseService):
                     future=False,
                     where=lambda candidate: (
                         self.bus.event_is_child_of(candidate, root_event)
-                        and candidate.is_background
                         and candidate.plugin_name == event.plugin_name
                         and candidate.hook_name == event.hook_name
                         and candidate.pid == event.pid
@@ -548,36 +615,69 @@ class ProcessService(BaseService):
         *,
         event: ProcessStartedEvent,
         proc: Process,
-        process: asyncio.subprocess.Process,
         stdout_file: Path,
+        state: _StdoutStreamState,
     ) -> list[str]:
-        """Stream hook stdout line-by-line and emit ProcessStdoutEvent for each line.
+        """Stream hook stdout from its log file and emit ProcessStdoutEvent lines.
 
-        Stdout is routed immediately through the bus so downstream services can
-        react while the subprocess is still running.
+        Hooks write stdout directly to a regular file instead of an asyncio pipe.
+        Some browser/provider hooks spawn descendants that inherit stdout; if
+        stdout is a pipe, asyncio keeps the process transport open until every
+        descendant closes it. A file keeps live logs and decouples process
+        completion from inherited descriptors.
         """
-        stdout_lines: list[str] = []
-        assert process.stdout is not None
-        with open(stdout_file, "w") as out_fh:
-            try:
-                async for raw_line in process.stdout:
-                    line = raw_line.decode(errors="replace")
-                    out_fh.write(line)
-                    out_fh.flush()
-                    stdout_lines.append(line)
+        try:
+            while True:
+                await self._emit_new_stdout_lines(
+                    event=event,
+                    proc=proc,
+                    stdout_file=stdout_file,
+                    state=state,
+                    emit_partial=False,
+                )
+                await asyncio.sleep(STDOUT_POLL_INTERVAL)
+        except asyncio.CancelledError:
+            return state.stdout_lines
+        return state.stdout_lines
 
-                    # Emit each line immediately so routing services can react
-                    # while the subprocess is still running.
-                    await event.emit(
-                        ProcessStdoutEvent(
-                            line=line.strip(),
-                            plugin_name=event.plugin_name,
-                            hook_name=event.hook_name,
-                            output_dir=event.output_dir,
-                            start_ts=proc.started_at or "",
-                            end_ts=now_iso(),
-                        ),
-                    ).now()
-            except asyncio.CancelledError:
-                return stdout_lines
-        return stdout_lines
+    async def _emit_new_stdout_lines(
+        self,
+        *,
+        event: ProcessStartedEvent,
+        proc: Process,
+        stdout_file: Path,
+        state: _StdoutStreamState,
+        emit_partial: bool,
+    ) -> None:
+        if not stdout_file.exists():
+            return
+
+        with open(stdout_file, errors="replace") as out_fh:
+            out_fh.seek(state.offset)
+            chunk = out_fh.read()
+            state.offset = out_fh.tell()
+
+        if not chunk and not (emit_partial and state.pending_line):
+            return
+
+        state.pending_line += chunk
+        lines = state.pending_line.splitlines(keepends=True)
+        state.pending_line = ""
+        if lines and not lines[-1].endswith(("\n", "\r")):
+            state.pending_line = lines.pop()
+        if emit_partial and state.pending_line:
+            lines.append(state.pending_line)
+            state.pending_line = ""
+
+        for line in lines:
+            state.stdout_lines.append(line)
+            await event.emit(
+                ProcessStdoutEvent(
+                    line=line.strip(),
+                    plugin_name=event.plugin_name,
+                    hook_name=event.hook_name,
+                    output_dir=event.output_dir,
+                    start_ts=proc.started_at or "",
+                    end_ts=now_iso(),
+                ),
+            ).now()

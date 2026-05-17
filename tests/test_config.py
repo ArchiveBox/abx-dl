@@ -58,10 +58,12 @@ def test_plugin_env_exports_shared_runtime_paths_after_real_install_phase(
                 bus=bus,
             ),
         )
-        ytdlp_env = get_plugin_env(
-            bus,
-            plugin=plugins["ytdlp"],
-            run_output_dir=run_output_dir,
+        ytdlp_env = asyncio.run(
+            get_plugin_env(
+                bus,
+                plugin=plugins["ytdlp"],
+                run_output_dir=run_output_dir,
+            ),
         ).to_env()
     finally:
         asyncio.run(bus.wait_until_idle())
@@ -199,10 +201,12 @@ def test_plugin_env_preserves_user_runtime_dirs_when_derived_config_has_defaults
 
     try:
         asyncio.run(emit_runtime_config())
-        env = get_plugin_env(
-            bus,
-            plugin=plugins["chrome"],
-            run_output_dir=run_dir,
+        env = asyncio.run(
+            get_plugin_env(
+                bus,
+                plugin=plugins["chrome"],
+                run_output_dir=run_dir,
+            ),
         ).to_env()
     finally:
         asyncio.run(bus.wait_until_idle())
@@ -245,11 +249,13 @@ def test_plugin_env_accepts_structured_extra_context_from_machine_events(tmp_pat
 
     try:
         asyncio.run(emit_runtime_config())
-        env = get_plugin_env(
-            bus,
-            plugin=plugins["favicon"],
-            run_output_dir=tmp_path,
-            extra_context={"plugin": "favicon", "hook_name": "on_Snapshot__11_favicon.finite.bg"},
+        env = asyncio.run(
+            get_plugin_env(
+                bus,
+                plugin=plugins["favicon"],
+                run_output_dir=tmp_path,
+                extra_context={"plugin": "favicon", "hook_name": "on_Snapshot__11_favicon.finite.bg"},
+            ),
         ).to_env()
     finally:
         asyncio.run(bus.wait_until_idle())
