@@ -1923,7 +1923,7 @@ def test_process_kill_uses_live_subprocess_handle_when_pid_file_validation_fails
 
     assert completed.status == "succeeded"
     assert "cleaned" in completed.stdout
-    assert not (output_dir / "on_Snapshot__10_background.daemon.bg.pid").exists()
+    assert not list(output_dir.glob("on_Snapshot__10_background.daemon.bg.*.pid"))
 
 
 def test_process_event_subprocess_starts_once_when_event_is_awaited_twice(tmp_path: Path) -> None:
@@ -1979,6 +1979,59 @@ def test_process_event_subprocess_starts_once_when_event_is_awaited_twice(tmp_pa
     assert len(started_events) == 1
     assert completed_event is not None
     assert completed_event.status == "succeeded"
+
+
+def test_concurrent_process_events_for_same_hook_keep_distinct_artifacts(tmp_path: Path) -> None:
+    script = tmp_path / "same-hook.sh"
+    script.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                "echo ready",
+                "echo warning >&2",
+                "sleep 0.2",
+                "",
+            ],
+        ),
+    )
+    script.chmod(0o755)
+
+    output_dir = tmp_path / "run" / "same_hook"
+    bus = create_bus(total_timeout=10.0, name=f"process_event_same_hook_{tmp_path.name}")
+    ProcessService(bus, emit_jsonl=False, interactive_tty=False)
+
+    async def run() -> list[ProcessCompletedEvent]:
+        events = [
+            bus.emit(
+                ProcessEvent(
+                    plugin_name="same_hook",
+                    hook_name="on_Snapshot__10_same_hook.sh",
+                    hook_path=str(script),
+                    hook_args=[],
+                    is_background=False,
+                    output_dir=str(output_dir),
+                    env={},
+                    timeout=5,
+                    event_timeout=10.0,
+                    event_handler_timeout=10.0,
+                ),
+            )
+            for _ in range(2)
+        ]
+        await asyncio.gather(*(event.now() for event in events))
+        await bus.wait_until_idle()
+        completed = []
+        for event in events:
+            found = await bus.find(ProcessCompletedEvent, child_of=event, past=True)
+            assert isinstance(found, ProcessCompletedEvent)
+            completed.append(found)
+        return completed
+
+    completed_events = asyncio.run(run())
+
+    assert [event.status for event in completed_events] == ["succeeded", "succeeded"]
+    assert len(list(output_dir.glob("on_Snapshot__10_same_hook.sh.*.sh"))) == 2
 
 
 def test_process_event_does_not_wait_for_stdout_inherited_by_child_process(tmp_path: Path) -> None:

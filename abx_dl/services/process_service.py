@@ -211,11 +211,10 @@ class ProcessService(BaseService):
             hook_name=event.hook_name,
         )
 
-        artifact_stem = event.hook_name
-        # Provider hooks can install the same named binary more than once in a run.
-        # Include the process id so retries/install attempts keep separate logs.
-        if event.hook_name.startswith("on_BinaryRequest__"):
-            artifact_stem = f"{event.hook_name}.{proc.id}"
+        # A hook can be retried, requeued, or briefly overlap with another run
+        # for the same plugin/output dir. Keep every subprocess' artifacts
+        # distinct so one completion path cannot rotate/delete another's logs.
+        artifact_stem = f"{event.hook_name}.{proc.id}"
 
         cmd = [event.hook_path, *event.hook_args]
         stdout_file = plugin_output_dir / f"{artifact_stem}.stdout.log"
