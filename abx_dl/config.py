@@ -255,14 +255,21 @@ def _load_plugin_config_model(
                     continue
             global_config[key] = value
     serialized_user_config = {key: dump_to_dotenv_format(value) for key, value in global_config.items() if value is not None}
+    environ = os.environ
+    user_config = serialized_user_config
+    if str(global_config.get("ABX_RUNTIME", "")).lower() == "archivebox":
+        # ArchiveBox scopes runtime paths per crawl/snapshot via MachineEvent.
+        # Those values must beat container-level env like CHROME_USER_DATA_DIR.
+        user_config = {**os.environ, **serialized_user_config}
+        environ = {}
     config_path = plugin.path / "config.json"
     if not config_path.exists():
         return PluginEnv()
     resolved_config = plugin_utils.load_config(
         config_path,
         global_config=global_config,
-        user_config=serialized_user_config,
-        environ=os.environ,
+        user_config=user_config,
+        environ=environ,
     )
     return resolved_config
 
