@@ -1,0 +1,24 @@
+abx_dl/services/process_service.py
+  s_074e76a4b61abc::t_ef4355ae7c33b5 130,324,336-341
+tests/test_executor.py
+  s_074e76a4b61abc::t_925e8cbc173b91 1929-1971,1980-2004
+  s_074e76a4b61abc::t_92aacbc2f14bb5 1972-1979
+pyproject.toml
+  s_074e76a4b61abc::t_b92ffbf9e7c2b0 3,46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.8",
+  "base_commit_sha": "3d137ef3baf56bbfed43da5b1174f93e0ea4f98a",
+  "prompts": {},
+  "sessions": {
+    "s_074e76a4b61abc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e3237-ada8-7741-a7c1-098a7ec3e4c8",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
