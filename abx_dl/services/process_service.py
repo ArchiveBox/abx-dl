@@ -127,6 +127,7 @@ class ProcessService(BaseService):
         self.pause_requested = asyncio.Event()
         self.abort_requested = False
         self._active_process_event_tasks: dict[str, asyncio.Task[Process | None]] = {}
+        self._background_completion_tasks: set[asyncio.Task[Process | None]] = set()
         self._completed_process_event_ids: set[str] = set()
         super().__init__(bus)
         self.bus.on(CrawlPauseEvent, self.on_CrawlPauseEvent)
@@ -320,7 +321,7 @@ class ProcessService(BaseService):
                 plugin=event.plugin_name,
                 hook_name=event.hook_name,
             )
-            return await self._complete_process_event(
+            completion = self._complete_process_event(
                 event=event,
                 started_event=started_event,
                 proc=proc,
@@ -332,6 +333,12 @@ class ProcessService(BaseService):
                 files_before=files_before,
                 foreground_interrupts=foreground_interrupts,
             )
+            if event.is_background:
+                background_task = asyncio.create_task(completion)
+                self._background_completion_tasks.add(background_task)
+                background_task.add_done_callback(self._background_completion_tasks.discard)
+                return proc
+            return await completion
         finally:
             self.pause_requested.clear()
 
