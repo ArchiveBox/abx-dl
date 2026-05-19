@@ -3,8 +3,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from abx_dl.config import get_initial_env
-from abx_dl.events import BinaryRequestEvent, InstallEvent, MachineEvent
-from abx_dl.models import Snapshot, discover_plugins
+from abx_dl.events import BinaryEvent, BinaryRequestEvent, InstallEvent, MachineEvent
+from abx_dl.models import Plugin, PluginConfig, RequiredBinary, Snapshot, discover_plugins
 from abx_dl.orchestrator import create_bus
 from abx_dl.services.binary_service import BinaryService
 
@@ -82,3 +82,90 @@ def test_install_event_does_not_skip_stale_cached_binary_requests(tmp_path: Path
         and isinstance(event.value, dict)
     )
     assert "yt-dlp" not in cache_update.value
+
+
+def test_install_event_emits_cached_binary_requests_for_persistence(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "myplugin"
+    plugin_dir.mkdir()
+    (plugin_dir / "config.json").write_text(
+        """
+        {
+          "properties": {
+            "MYTOOL_BINARY": {"type": "string", "default": "mytool"}
+          },
+          "required_binaries": [
+            {"name": "mytool", "binproviders": "env"}
+          ]
+        }
+        """,
+    )
+    plugin = Plugin(
+        name="myplugin",
+        path=plugin_dir,
+        config=PluginConfig(
+            properties={"MYTOOL_BINARY": {"type": "string", "default": "mytool"}},
+            required_binaries=[RequiredBinary(name="mytool", binproviders="env")],
+        ),
+    )
+    snapshot = Snapshot(url="")
+    run_dir = tmp_path / "run"
+    managed_lib_dir = tmp_path / "lib"
+    cached_binary = managed_lib_dir / "env" / "bin" / "mytool"
+    cached_binary.parent.mkdir(parents=True)
+    cached_binary.write_text("#!/bin/sh\n")
+    cached_binary.chmod(0o755)
+    bus = create_bus(total_timeout=60.0, name=f"install_phase_cached_persist_{tmp_path.name}")
+    BinaryService(
+        bus,
+        plugins={"myplugin": plugin},
+        auto_install=False,
+        install_plugins=[plugin],
+        output_dir=run_dir,
+        snapshot=snapshot,
+    )
+    request_events: list[BinaryRequestEvent] = []
+    binary_events: list[BinaryEvent] = []
+
+    async def on_BinaryRequestEvent(event: BinaryRequestEvent) -> None:
+        request_events.append(event)
+
+    async def on_BinaryEvent(event: BinaryEvent) -> None:
+        binary_events.append(event)
+
+    bus.on(BinaryRequestEvent, on_BinaryRequestEvent)
+    bus.on(BinaryEvent, on_BinaryEvent)
+
+    async def run() -> None:
+        await bus.emit(
+            MachineEvent(
+                config={
+                    **get_initial_env(),
+                    "LIB_DIR": str(managed_lib_dir),
+                },
+                config_type="user",
+            ),
+        ).now()
+        await bus.emit(
+            MachineEvent(
+                config={
+                    "ABX_INSTALL_CACHE": {
+                        "mytool": datetime.now(timezone.utc).isoformat(),
+                    },
+                    "MYTOOL_BINARY": str(cached_binary),
+                },
+                config_type="derived",
+            ),
+        ).now()
+        await bus.emit(
+            InstallEvent(
+                url="",
+                snapshot_id=snapshot.id,
+                output_dir=str(run_dir),
+            ),
+        ).now()
+        await bus.wait_until_idle()
+
+    asyncio.run(run())
+
+    assert any(event.plugin_name == "myplugin" and event.name == "mytool" for event in request_events)
+    assert any(event.name == "mytool" and event.abspath == str(cached_binary) for event in binary_events)

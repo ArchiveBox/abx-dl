@@ -376,8 +376,6 @@ class BinaryService(BaseService):
                                 config_type="derived",
                             ),
                         ).now()
-                    if any(Path(value).expanduser().exists() for _keys, value, _authoritative in cached_candidates):
-                        continue
                     if pruned_install_cache.pop(request_event.name.strip(), None) is not None:
                         install_cache_changed = True
                 emitted_request = event.emit(request_event)
