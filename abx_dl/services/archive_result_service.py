@@ -167,11 +167,20 @@ class ArchiveResultService(BaseService):
             )
         elif _has_content_files(event.output_files):
             # Succeeded with real output files but no inline result → synthetic success
+            primary_output = next(
+                (
+                    output_file
+                    for output_file in event.output_files
+                    if output_file.mimetype == "text/html" or output_file.extension in {"html", "htm", "shtml"}
+                ),
+                event.output_files[0],
+            )
             ar = ArchiveResult(
                 snapshot_id=snapshot_event.snapshot_id,
                 plugin=event.plugin_name,
                 hook_name=event.hook_name,
                 status="succeeded",
+                output_str=f"{event.plugin_name}/{primary_output.path}",
                 output_files=event.output_files,
             )
         else:
