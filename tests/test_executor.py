@@ -403,6 +403,22 @@ def test_binary_service_passes_extra_binary_kwargs_to_provider_hooks(
 
         async def on_ProcessEvent(event: ProcessEvent) -> None:
             process_events.append(event)
+            await event.emit(
+                ProcessCompletedEvent(
+                    plugin_name=event.plugin_name,
+                    hook_name=event.hook_name,
+                    hook_path=event.hook_path,
+                    hook_args=event.hook_args,
+                    env=event.env,
+                    timeout=event.timeout,
+                    stdout="",
+                    stderr="",
+                    exit_code=0,
+                    status="succeeded",
+                    output_dir=event.output_dir,
+                    is_background=event.is_background,
+                ),
+            ).now()
 
         bus.on(ProcessEvent, on_ProcessEvent)
         try:
@@ -427,6 +443,69 @@ def test_binary_service_passes_extra_binary_kwargs_to_provider_hooks(
     assert "--name=papers-dl" in pip_event.hook_args
     assert "--binproviders=pip" in pip_event.hook_args
     assert "--postinstall-scripts=true" in pip_event.hook_args
+
+
+def test_binary_service_uses_provider_plugin_timeout_for_provider_hooks(
+    tmp_path: Path,
+) -> None:
+    plugins = discover_plugins()
+    selected = {name: plugins[name] for name in ("chrome", "puppeteer")}
+
+    async def run() -> list[ProcessEvent]:
+        bus = create_bus(total_timeout=10.0, name=f"binary_provider_timeout_{tmp_path.name}")
+        MachineService(bus)
+        BinaryService(bus, plugins=selected, auto_install=True)
+        process_events: list[ProcessEvent] = []
+
+        async def on_ProcessEvent(event: ProcessEvent) -> None:
+            process_events.append(event)
+            await event.emit(
+                ProcessCompletedEvent(
+                    plugin_name=event.plugin_name,
+                    hook_name=event.hook_name,
+                    hook_path=event.hook_path,
+                    hook_args=event.hook_args,
+                    env=event.env,
+                    timeout=event.timeout,
+                    stdout="",
+                    stderr="",
+                    exit_code=0,
+                    status="succeeded",
+                    output_dir=event.output_dir,
+                    is_background=event.is_background,
+                ),
+            ).now()
+
+        bus.on(ProcessEvent, on_ProcessEvent)
+        try:
+            await bus.emit(
+                MachineEvent(
+                    config={
+                        **get_initial_env(),
+                        "PUPPETEER_TIMEOUT": 777,
+                    },
+                    config_type="user",
+                ),
+            ).now()
+            await bus.emit(
+                BinaryRequestEvent(
+                    name="chrome",
+                    plugin_name="chrome",
+                    output_dir=str(tmp_path / "chrome"),
+                    binproviders="puppeteer",
+                ),
+            ).now()
+            await bus.wait_until_idle()
+            return process_events
+        finally:
+            await bus.wait_until_idle()
+
+    process_events = asyncio.run(run())
+    puppeteer_event = next(event for event in process_events if event.plugin_name == "puppeteer")
+
+    assert puppeteer_event.timeout == 777
+    assert puppeteer_event.event_timeout == 807.0
+    assert puppeteer_event.event_handler_timeout == 807.0
 
 
 def test_binary_service_honors_declared_provider_order() -> None:

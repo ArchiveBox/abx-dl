@@ -255,6 +255,13 @@ class BinaryService(BaseService):
             },
         )
         plugin_env = plugin_config.to_env()
+        timeout_key = f"{plugin.name.upper()}_TIMEOUT"
+        timeout = (
+            int(plugin_config[timeout_key])
+            if timeout_key in plugin.config.properties
+            else int(event.event_timeout or plugin_config.TIMEOUT)
+        )
+        handler_timeout = float(timeout + 30)
         process_event = event.emit(
             ProcessEvent(
                 plugin_name=plugin.name,
@@ -264,16 +271,17 @@ class BinaryService(BaseService):
                 is_background=False,
                 output_dir=str(plugin_output_dir),
                 env=plugin_env,
-                timeout=300,
-                event_handler_timeout=330.0,
-                event_handler_slow_timeout=slow_warning_timeout(300),
+                timeout=timeout,
+                event_timeout=handler_timeout,
+                event_handler_timeout=handler_timeout,
+                event_handler_slow_timeout=slow_warning_timeout(timeout),
             ),
         )
         await process_event.now()
         await process_event.wait()
         await process_event.event_results_list(include=_completed_handler_result, raise_if_none=False)
         process_completion_timeout = float(
-            process_event.event_handler_timeout or process_event.event_timeout or event.event_timeout or 330.0,
+            process_event.event_handler_timeout or process_event.event_timeout or event.event_timeout or handler_timeout,
         )
         completed_process = await self.bus.find(
             ProcessCompletedEvent,
