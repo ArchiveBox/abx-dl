@@ -85,30 +85,21 @@ Common options:
 
 Aliases are automatically resolved (e.g. `--set USE_WGET=false` saves as `WGET_ENABLED=false`).
 
-The config split matters:
-- `config.env` stores only user-provided values, typically written by `abx-dl config --set ...`
-- `derived.env` stores runtime-derived cache entries such as resolved `*_BINARY` paths and the `ABX_INSTALL_CACHE` install timestamp map
-- `MachineService` keeps user config and derived cache separate for the whole run
-- plugin config hydration uses user/default config only; `derived.env` is consulted separately by the binary-resolution layer and is never blindly merged into user config
-
-Binary resolution uses those layers differently:
-- a user-provided path-like `*_BINARY` in `config.env` is authoritative and will hard-fail if broken
-- a bare binary name in user/default config can reuse a cached abspath from `derived.env`
-- if that derived abspath is stale, `abx-dl` ignores it and runs the normal `BinaryRequest` provider flow for the same binary name
-
-When embedded in ArchiveBox, the equivalent derived cache comes from persisted `machine_binary` rows in the DB.
-
-One-off tuning is often easiest via env vars or CLI args:
+One-off config is easy via env vars or CLI args:
 
 ```bash
 env \
   CHROME_BINARY=/usr/bin/chromium \
   TIMEOUT=120 \
-  USER_AGENT='Mozilla/5.0 (abx-dl smoke test)' \
-  abx-dl 'https://example.com'  'https://example.com'
+  abx-dl 'https://example.com'
 
 # CLI args
-abx-dl --dir=/tmp/test --plugins=wget,title,favicon --output=html,txt,css,js,ico,png,pdf --timeout=90 'https://example.com'
+abx-dl \
+  --dir=/tmp/test \
+  --plugins=wget,title,favicon \
+  --output=html,txt,css,js,ico,png,pdf \
+  --timeout=90 \
+  'https://example.com'
 ```
 
 <br/>
@@ -126,8 +117,9 @@ abx-dl 'https://example.com'
 # Or run the published CLI without installing it globally
 uvx abx-dl 'https://example.com'
 
-# Pre-install dependencies to avoid having to wait for them to install on first-run
-uvx abx-dl@latest install
+# Check / Install any missing plugin dependencies
+abx-dl version
+abx-dl install
 ```
 
 <br/>
@@ -148,7 +140,7 @@ abx-dl --plugins=wget,title,screenshot,pdf 'https://example.com'
 # Skip auto-installing missing dependencies (emit warnings instead):
 abx-dl --no-install 'https://example.com'
 
-# Specify output directory:
+# Specify output directory (default is current working dir):
 abx-dl --dir=./downloads 'https://example.com'
 
 # Set timeout:
