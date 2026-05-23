@@ -20,7 +20,7 @@ from .config import PIP_HOME, NPM_HOME
 DEFAULT_PROVIDERS: list[BinProvider] = [EnvProvider()]
 
 try:
-    DEFAULT_PROVIDERS.append(PipProvider(install_root=PIP_HOME / "venv"))
+    DEFAULT_PROVIDERS.append(PipProvider(install_root=PIP_HOME))
 except Exception:
     pass
 

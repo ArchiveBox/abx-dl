@@ -566,7 +566,17 @@ def get_required_binary_requests(
     seen: set[str] = set()
     for spec in binaries:
         record = spec.model_dump(mode="json")
-        record["name"] = spec.name.format(**env)
+
+        def hydrate(value: Any) -> Any:
+            if isinstance(value, str):
+                return value.format(**env)
+            if isinstance(value, list):
+                return [hydrate(item) for item in value]
+            if isinstance(value, dict):
+                return {key: hydrate(nested_value) for key, nested_value in value.items()}
+            return value
+
+        record = hydrate(record)
         signature = json.dumps(record, sort_keys=True, default=str)
         if signature in seen:
             continue
