@@ -1665,21 +1665,17 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
             hooks = plugin.filter_hooks("CrawlSetup") + plugin.filter_hooks("Snapshot")
             hooks_count = len(hooks)
             initial_user_env = get_initial_env()
-            plugin_env = PluginEnv.from_config(
-                _load_plugin_config_model(
-                    plugin,
-                    user_env=initial_user_env,
-                    derived_env=get_derived_config(initial_user_env),
-                ),
-                run_output_dir=Path.cwd(),
-            ).to_env()
 
             # Check binary status
             if plugin.config.required_binaries:
                 binary_statuses = []
-                for spec in plugin.config.required_binaries:
-                    hydrated_spec = spec.model_dump(mode="json")
-                    hydrated_spec["name"] = spec.name.format(**plugin_env)
+                for hydrated_spec in get_required_binary_requests(
+                    plugin,
+                    plugin.config.required_binaries,
+                    overrides=initial_user_env,
+                    derived_overrides=get_derived_config(initial_user_env),
+                    run_output_dir=Path.cwd(),
+                ):
                     binary = load_binary(hydrated_spec)
                     if binary.is_valid:
                         binary_statuses.append(f"[green]{binary.name}[/green]")
