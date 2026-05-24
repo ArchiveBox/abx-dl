@@ -133,10 +133,18 @@ class ArchiveResultService(BaseService):
             future=False,
         )
         assert isinstance(started_process, ProcessStartedEvent)
+        snapshot_event = await self.bus.find(
+            SnapshotEvent,
+            past=True,
+            future=False,
+            where=lambda candidate: self.bus.event_is_child_of(process_event, candidate),
+        )
+        assert isinstance(snapshot_event, SnapshotEvent)
         limit_state.record_process_output(
             started_process.event_id,
             Path(event.output_dir),
             [output_file.path for output_file in event.output_files],
+            snapshot_id=snapshot_event.event_id,
         )
 
         existing = await self.bus.find(
@@ -147,13 +155,6 @@ class ArchiveResultService(BaseService):
         )
         if existing is not None:
             return
-        snapshot_event = await self.bus.find(
-            SnapshotEvent,
-            past=True,
-            future=False,
-            where=lambda candidate: self.bus.event_is_child_of(process_event, candidate),
-        )
-        assert isinstance(snapshot_event, SnapshotEvent)
 
         if event.exit_code != 0:
             # Failed process with no inline result → synthetic failure

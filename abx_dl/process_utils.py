@@ -157,10 +157,7 @@ def write_pid_file_with_mtime(pid_file: Path, pid: int, start_time: float):
 def write_cmd_file(cmd_file: Path, cmd: list[str]):
     """Write shell command script for debugging and PID validation."""
 
-    def escape(arg: str) -> str:
-        return f'"{arg.replace(chr(34), chr(92) + chr(34))}"' if any(c in arg for c in ' "$') else arg
-
-    script = "#!/bin/bash\n" + " ".join(escape(arg) for arg in cmd) + "\n"
+    script = "#!/bin/bash\n" + shlex.join(cmd) + "\n"
     cmd_file.write_text(script)
     try:
         cmd_file.chmod(0o755)

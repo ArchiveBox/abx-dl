@@ -1,4 +1,4 @@
-"""Helpers for crawl-wide max_urls / max_size enforcement."""
+"""Helpers for crawl-wide and snapshot-local limit enforcement."""
 
 from __future__ import annotations
 
@@ -79,10 +79,18 @@ class SnapshotAdmission:
 
 
 class CrawlLimitState:
-    def __init__(self, *, crawl_dir: Path, max_urls: int = 0, max_size: int = 0):
+    def __init__(
+        self,
+        *,
+        crawl_dir: Path,
+        crawl_max_urls: int = 0,
+        crawl_max_size: int = 0,
+        snapshot_max_size: int = 0,
+    ):
         self.crawl_dir = crawl_dir
-        self.max_urls = max(0, int(max_urls or 0))
-        self.max_size = max(0, int(max_size or 0))
+        self.crawl_max_urls = max(0, int(crawl_max_urls or 0))
+        self.crawl_max_size = max(0, int(crawl_max_size or 0))
+        self.snapshot_max_size = max(0, int(snapshot_max_size or 0))
         self.state_dir = self.crawl_dir / ".abx-dl"
         self.state_path = self.state_dir / "limits.json"
         self.lock_path = self.state_dir / "limits.lock"
@@ -90,19 +98,31 @@ class CrawlLimitState:
     @classmethod
     def from_config(cls, config: dict[str, Any]) -> CrawlLimitState:
         crawl_dir = Path(str(config.get("CRAWL_DIR") or config.get("SNAP_DIR") or "."))
-        max_urls = int(config.get("MAX_URLS") or 0)
-        max_size = parse_filesize_to_bytes(config.get("MAX_SIZE") or 0)
-        return cls(crawl_dir=crawl_dir, max_urls=max_urls, max_size=max_size)
+        crawl_max_urls = int(config.get("CRAWL_MAX_URLS") or 0)
+        crawl_max_size = parse_filesize_to_bytes(config.get("CRAWL_MAX_SIZE") or 0)
+        snapshot_max_size = parse_filesize_to_bytes(config.get("SNAPSHOT_MAX_SIZE") or 0)
+        return cls(
+            crawl_dir=crawl_dir,
+            crawl_max_urls=crawl_max_urls,
+            crawl_max_size=crawl_max_size,
+            snapshot_max_size=snapshot_max_size,
+        )
 
     @classmethod
     def from_env(cls, env: dict[str, str]) -> CrawlLimitState:
         crawl_dir = Path(str(env.get("CRAWL_DIR") or env.get("SNAP_DIR") or "."))
-        max_urls = int(env.get("MAX_URLS") or 0)
-        max_size = parse_filesize_to_bytes(env.get("MAX_SIZE") or 0)
-        return cls(crawl_dir=crawl_dir, max_urls=max_urls, max_size=max_size)
+        crawl_max_urls = int(env.get("CRAWL_MAX_URLS") or 0)
+        crawl_max_size = parse_filesize_to_bytes(env.get("CRAWL_MAX_SIZE") or 0)
+        snapshot_max_size = parse_filesize_to_bytes(env.get("SNAPSHOT_MAX_SIZE") or 0)
+        return cls(
+            crawl_dir=crawl_dir,
+            crawl_max_urls=crawl_max_urls,
+            crawl_max_size=crawl_max_size,
+            snapshot_max_size=snapshot_max_size,
+        )
 
     def has_limits(self) -> bool:
-        return self.max_urls > 0 or self.max_size > 0
+        return self.crawl_max_urls > 0 or self.crawl_max_size > 0 or self.snapshot_max_size > 0
 
     def admit_snapshot(self, snapshot_id: str) -> SnapshotAdmission:
         if not self.has_limits():
@@ -112,7 +132,7 @@ class CrawlLimitState:
             admitted = {str(item) for item in (state["admitted_snapshot_ids"] if "admitted_snapshot_ids" in state else [])}
             stop_reason = str(state["stop_reason"]) if "stop_reason" in state else ""
 
-            if stop_reason == "max_size":
+            if stop_reason == "crawl_max_size":
                 return SnapshotAdmission(allowed=False, stop_reason=stop_reason)
 
             if snapshot_id in admitted:
@@ -121,15 +141,15 @@ class CrawlLimitState:
             if stop_reason:
                 return SnapshotAdmission(allowed=False, stop_reason=stop_reason)
 
-            if self.max_urls and len(admitted) >= self.max_urls:
-                state["stop_reason"] = "max_urls"
-                return SnapshotAdmission(allowed=False, stop_reason="max_urls")
+            if self.crawl_max_urls and len(admitted) >= self.crawl_max_urls:
+                state["stop_reason"] = "crawl_max_urls"
+                return SnapshotAdmission(allowed=False, stop_reason="crawl_max_urls")
 
             admitted.add(snapshot_id)
             state["admitted_snapshot_ids"] = sorted(admitted)
 
-            if self.max_urls and len(admitted) >= self.max_urls:
-                state["stop_reason"] = "max_urls"
+            if self.crawl_max_urls and len(admitted) >= self.crawl_max_urls:
+                state["stop_reason"] = "crawl_max_urls"
 
             return SnapshotAdmission(
                 allowed=True,
@@ -148,8 +168,17 @@ class CrawlLimitState:
         with self._locked_state(readonly=True) as state:
             return str(state["stop_reason"]) if "stop_reason" in state else ""
 
-    def record_process_output(self, event_id: str, output_dir: Path, output_files: list[str]) -> str:
-        if not self.max_size:
+    def get_snapshot_stop_reason(self, snapshot_id: str) -> str:
+        if not self.snapshot_max_size:
+            return ""
+        with self._locked_state(readonly=True) as state:
+            snapshot_stop_reasons = state.get("snapshot_stop_reasons", {})
+            if not isinstance(snapshot_stop_reasons, dict):
+                return ""
+            return str(snapshot_stop_reasons.get(snapshot_id) or "")
+
+    def record_process_output(self, event_id: str, output_dir: Path, output_files: list[str], *, snapshot_id: str = "") -> str:
+        if not (self.crawl_max_size or self.snapshot_max_size):
             return ""
 
         added_size = 0
@@ -167,12 +196,23 @@ class CrawlLimitState:
 
             counted_event_ids.add(event_id)
             state["counted_event_ids"] = sorted(counted_event_ids)
-            state["total_size"] = int(state["total_size"]) + added_size if "total_size" in state else added_size
+            if self.crawl_max_size:
+                state["total_size"] = int(state["total_size"]) + added_size if "total_size" in state else added_size
+                if ("stop_reason" not in state or not state["stop_reason"]) and int(state["total_size"]) >= self.crawl_max_size:
+                    state["stop_reason"] = "crawl_max_size"
 
-            if ("stop_reason" not in state or not state["stop_reason"]) and self.max_size and int(state["total_size"]) >= self.max_size:
-                state["stop_reason"] = "max_size"
+            snapshot_stop_reason = ""
+            if self.snapshot_max_size and snapshot_id:
+                snapshot_sizes = state["snapshot_sizes"] if isinstance(state.get("snapshot_sizes"), dict) else {}
+                snapshot_sizes[snapshot_id] = int(snapshot_sizes.get(snapshot_id) or 0) + added_size
+                state["snapshot_sizes"] = snapshot_sizes
+                if snapshot_sizes[snapshot_id] >= self.snapshot_max_size:
+                    snapshot_stop_reasons = state["snapshot_stop_reasons"] if isinstance(state.get("snapshot_stop_reasons"), dict) else {}
+                    snapshot_stop_reasons[snapshot_id] = "snapshot_max_size"
+                    state["snapshot_stop_reasons"] = snapshot_stop_reasons
+                    snapshot_stop_reason = "snapshot_max_size"
 
-            return str(state["stop_reason"]) if "stop_reason" in state else ""
+            return str(state["stop_reason"]) if "stop_reason" in state and state["stop_reason"] else snapshot_stop_reason
 
     @contextmanager
     def _locked_state(self, readonly: bool = False) -> Iterator[dict[str, Any]]:
@@ -196,6 +236,8 @@ class CrawlLimitState:
             return {
                 "admitted_snapshot_ids": [],
                 "counted_event_ids": [],
+                "snapshot_sizes": {},
+                "snapshot_stop_reasons": {},
                 "total_size": 0,
                 "stop_reason": "",
             }
@@ -207,6 +249,8 @@ class CrawlLimitState:
             payload = {}
         payload.setdefault("admitted_snapshot_ids", [])
         payload.setdefault("counted_event_ids", [])
+        payload.setdefault("snapshot_sizes", {})
+        payload.setdefault("snapshot_stop_reasons", {})
         payload.setdefault("total_size", 0)
         payload.setdefault("stop_reason", "")
         return payload

@@ -459,12 +459,12 @@ def test_parse_filesize_to_bytes_accepts_human_units() -> None:
 
 
 def test_crawl_limit_state_blocks_snapshots_after_max_urls(tmp_path: Path) -> None:
-    limit_state = CrawlLimitState(crawl_dir=tmp_path, max_urls=2, max_size=0)
+    limit_state = CrawlLimitState(crawl_dir=tmp_path, crawl_max_urls=2, crawl_max_size=0)
     assert limit_state.admit_snapshot("snap-1").allowed is True
     assert limit_state.admit_snapshot("snap-2").allowed is True
     third = limit_state.admit_snapshot("snap-3")
     assert third.allowed is False
-    assert third.stop_reason == "max_urls"
+    assert third.stop_reason == "crawl_max_urls"
 
 
 def test_crawl_limit_state_stops_after_max_size(tmp_path: Path) -> None:
@@ -473,8 +473,8 @@ def test_crawl_limit_state_stops_after_max_size(tmp_path: Path) -> None:
     output_file = plugin_dir / "index.html"
     output_file.write_bytes(b"x" * 32)
 
-    limit_state = CrawlLimitState(crawl_dir=tmp_path, max_urls=0, max_size=16)
-    assert limit_state.record_process_output("proc-1", plugin_dir, ["index.html"]) == "max_size"
+    limit_state = CrawlLimitState(crawl_dir=tmp_path, crawl_max_urls=0, crawl_max_size=16)
+    assert limit_state.record_process_output("proc-1", plugin_dir, ["index.html"]) == "crawl_max_size"
 
 
 def test_normalize_archive_result_output_relativizes_absolute_path(tmp_path: Path) -> None:

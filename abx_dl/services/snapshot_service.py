@@ -345,6 +345,8 @@ class SnapshotService(BaseService):
             await self.on_SnapshotEvent__for_hook(plugin, hook)(event)
             if await self.should_abort():
                 break
+            if self.limit_state.get_snapshot_stop_reason(event.event_id) == "snapshot_max_size":
+                break
         url = self.url
         snapshot_id = self.snapshot.id
         output_dir = str(self.output_dir)
