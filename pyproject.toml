@@ -1,6 +1,6 @@
 [project]
 name = "abx-dl"
-version = "1.10.75"
+version = "1.10.76"
 requires-python = ">=3.11"
 description = "All-in-one CLI tool to download and extract content from URLs"
 authors = [{name = "Nick Sweeting"}, {name = "ArchiveBox"}]
@@ -42,8 +42,8 @@ dependencies = [
     "rich-click>=1.8.0",
     "rich>=13.0.0",
     "abxbus>=2.5.4",
-    "abxpkg>=1.10.8",
-    "abx-plugins>=1.10.75",
+    "abxpkg>=1.10.9",
+    "abx-plugins>=1.10.76",
     "jambo>=0.1.7",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
@@ -99,7 +99,7 @@ testpaths = [ "tests", "server/tests" ]
 [tool.uv]
 required-version = ">=0.10.0"
 exclude-newer = "5 days"
-exclude-newer-package = { abx-dl = "1 second", abxpkg = "1 second", abxbus = "1 second", abx-plugins = "1 second" }
+exclude-newer-package = { abx-dl = "2100-01-01T00:00:00Z", abxpkg = "2100-01-01T00:00:00Z", abxbus = "1 second", abx-plugins = "2100-01-01T00:00:00Z" }
 
 [tool.mypy]
 mypy_path = "abx_dl,tests,server,abx_dl/typings"
