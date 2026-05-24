@@ -10,7 +10,7 @@ from typing import Any, ClassVar, Literal
 from collections.abc import Awaitable, Callable
 
 from abxbus import BaseEvent, EventBus
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from ..config import get_derived_env, get_plugin_env, get_required_binary_requests, get_user_env, is_path_like_env_value
 from ..events import (
@@ -64,6 +64,7 @@ class EmittedBinaryRecord(BaseModel):
     binproviders: str = ""
     binprovider: str = ""
     overrides: dict[str, Any] | None = None
+    env: dict[str, str] = Field(default_factory=dict)
 
 
 class BinaryService(BaseService):
@@ -576,6 +577,7 @@ class BinaryService(BaseService):
             binproviders=binary_payload.binproviders or request_event.binproviders,
             binprovider=binary_payload.binprovider,
             overrides=binary_payload.overrides if binary_payload.overrides is not None else request_event.overrides,
+            env=binary_payload.env,
             binary_id=binary_id,
             machine_id=request_event.machine_id,
         )

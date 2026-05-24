@@ -421,6 +421,7 @@ class BinaryEvent(BaseEvent):
     binproviders: str = ""
     binprovider: str = ""
     overrides: dict[str, Any] | None = None
+    env: dict[str, str] = Field(default_factory=dict)
     binary_id: str = ""
     machine_id: str = ""
     event_timeout: float | None = 10.0

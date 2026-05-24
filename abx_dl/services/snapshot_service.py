@@ -8,10 +8,12 @@ from typing import ClassVar
 from collections.abc import Awaitable, Callable
 
 from abxbus import BaseEvent, EventBus
+from abxpkg import BinProvider
 from pydantic import ValidationError
 
 from ..config import get_plugin_env, get_user_env
 from ..events import (
+    BinaryEvent,
     CrawlAbortEvent,
     CrawlStartEvent,
     ProcessEvent,
@@ -183,6 +185,17 @@ class SnapshotService(BaseService):
             if plugin_config.DRY_RUN:
                 return
             env = plugin_config.to_env()
+            binary_events = await self.bus.filter(
+                BinaryEvent,
+                past=True,
+                plugin_name=plugin.name,
+            )
+            for binary_event in binary_events:
+                if binary_event.env:
+                    env = BinProvider.build_exec_env(
+                        base_env=env,
+                        extra_env=binary_event.env,
+                    )
             env["SNAP_DIR"] = str(self.output_dir)
             timeout_key = f"{plugin.name.upper()}_TIMEOUT"
             timeout = plugin_config[timeout_key] if timeout_key in plugin.config.properties else plugin_config.TIMEOUT
