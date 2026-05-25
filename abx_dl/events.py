@@ -129,7 +129,7 @@ class CrawlStartEvent(BaseEvent):
 
 
 class CrawlCleanupEvent(BaseEvent):
-    """Phase: SIGTERM all background crawl daemons.
+    """Phase: SIGTERM all background crawl hooks.
 
     Emitted by CrawlService.on_CrawlEvent after snapshot phase completes.
     """
@@ -204,7 +204,7 @@ class SnapshotEvent(BaseEvent):
 
 
 class SnapshotCleanupEvent(BaseEvent):
-    """Phase: SIGTERM all background snapshot daemons.
+    """Phase: SIGTERM all background snapshot hooks.
 
     Emitted by SnapshotService.on_SnapshotEvent after all snapshot hooks complete.
     """
@@ -268,8 +268,8 @@ class ProcessKillEvent(BaseEvent):
     ProcessStartedEvent within that crawl/snapshot ancestry using
     ``plugin_name``, ``hook_name``, and ``pid``, sends SIGTERM, waits
     ``grace_period`` seconds for clean exit, then escalates to SIGKILL. The
-    grace period should be the plugin's timeout (PLUGINNAME_TIMEOUT) so daemons
-    get their configured time to flush.
+    grace period should be the plugin's timeout (PLUGINNAME_TIMEOUT) so
+    background hooks get their configured time to flush.
     """
 
     plugin_name: str

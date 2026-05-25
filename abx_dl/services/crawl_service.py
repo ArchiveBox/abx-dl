@@ -368,19 +368,11 @@ class CrawlService(BaseService):
             raise RuntimeError(f"Snapshot {self.snapshot.id} did not complete")
 
     async def on_CrawlCleanupEvent(self, event: CrawlCleanupEvent) -> None:
-        """SIGTERM any crawl setup hooks that should still be running.
-
-        Normal cleanup only terminates daemon background hooks. Abort cleanup
-        terminates every incomplete crawl setup hook under this CrawlEvent so a
-        cancelled crawl cannot leave setup processes active.
-        """
+        """SIGTERM any crawl setup hooks that should still be running."""
         if event.output_dir != str(self.output_dir):
             return
         aborting = await self.should_abort()
         setup_hook_keys = {(plugin.name, hook.name) for plugin, hook in self.crawl_setup_hooks}
-        daemon_background_hook_keys = {
-            (plugin.name, hook.name) for plugin, hook in self.crawl_setup_hooks if hook.is_background and ".daemon.bg" in hook.name
-        }
         crawl_event = await self.bus.find(
             CrawlEvent,
             past=True,
@@ -452,8 +444,7 @@ class CrawlService(BaseService):
             if completed_process is not None:
                 await _wait_for_process_completed(completed_process, event.event_timeout)
                 continue
-            hook_key = (process_event.plugin_name, process_event.hook_name)
-            if not aborting and hook_key not in daemon_background_hook_keys:
+            if not aborting and not process_event.is_background:
                 await _wait_for_process_completed(
                     await self.bus.find(
                         ProcessCompletedEvent,
@@ -491,9 +482,9 @@ class CrawlService(BaseService):
                             ProcessCompletedEvent,
                             child_of=process_event,
                             past=True,
-                            future=event.event_timeout,
+                            future=grace_by_hook[(process_event.plugin_name, process_event.hook_name)] + 10.0,
                         ),
-                        event.event_timeout,
+                        grace_by_hook[(process_event.plugin_name, process_event.hook_name)] + 10.0,
                     )
                     for process_event, _ in started_processes
                 ],

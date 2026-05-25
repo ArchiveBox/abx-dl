@@ -352,30 +352,40 @@ class SnapshotService(BaseService):
             self.limit_state = CrawlLimitState.from_config((await get_user_env(self.bus)).model_dump(mode="json"))
         if self.limit_state.has_limits() and not self.limit_state.admit_snapshot(event.event_id).allowed:
             return
-        for plugin, hook in self.hooks:
-            if await self.should_abort():
-                break
-            await self.on_SnapshotEvent__for_hook(plugin, hook)(event)
-            if await self.should_abort():
-                break
-            if self.limit_state.get_snapshot_stop_reason(event.event_id) == "snapshot_max_size":
-                break
         url = self.url
         snapshot_id = self.snapshot.id
         output_dir = str(self.output_dir)
-        if self.snapshot_cleanup_enabled:
-            await _run_event_now(
-                event.emit(
-                    SnapshotCleanupEvent(
-                        url=url,
-                        snapshot_id=snapshot_id,
-                        output_dir=output_dir,
-                        event_timeout=self.snapshot_cleanup_phase_timeout,
-                        event_handler_slow_timeout=slow_warning_timeout(self.snapshot_cleanup_phase_timeout),
+        try:
+            for plugin, hook in self.hooks:
+                if await self.should_abort():
+                    break
+                await self.on_SnapshotEvent__for_hook(plugin, hook)(event)
+                if await self.should_abort():
+                    break
+                if self.limit_state.get_snapshot_stop_reason(event.event_id) == "snapshot_max_size":
+                    break
+        finally:
+            if self.snapshot_cleanup_enabled:
+                cleanup_task = asyncio.create_task(
+                    _run_event_now(
+                        event.emit(
+                            SnapshotCleanupEvent(
+                                url=url,
+                                snapshot_id=snapshot_id,
+                                output_dir=output_dir,
+                                event_timeout=self.snapshot_cleanup_phase_timeout,
+                                event_handler_slow_timeout=slow_warning_timeout(self.snapshot_cleanup_phase_timeout),
+                            ),
+                        ),
+                        self.snapshot_cleanup_phase_timeout,
                     ),
-                ),
-                self.snapshot_cleanup_phase_timeout,
-            )
+                )
+                try:
+                    await asyncio.shield(cleanup_task)
+                except asyncio.CancelledError:
+                    await cleanup_task
+                    raise
+        if self.snapshot_cleanup_enabled:
             return
 
         await _run_event_now(
@@ -410,9 +420,6 @@ class SnapshotService(BaseService):
         if root_snapshot_event is None:
             return
         background_hook_keys = {(plugin.name, hook.name) for plugin, hook in self.hooks if hook.is_background}
-        daemon_background_hook_keys = {
-            (plugin.name, hook.name) for plugin, hook in self.hooks if hook.is_background and ".daemon.bg" in hook.name
-        }
         background_process_events: list[ProcessEvent] = []
         seen_process_event_ids: set[str] = set()
         while True:
@@ -434,7 +441,7 @@ class SnapshotService(BaseService):
             background_process_events.append(process_event)
         grace_by_hook: dict[tuple[str, str], int] = {}
         for plugin, hook in self.hooks:
-            if not hook.is_background or ".daemon.bg" not in hook.name:
+            if not hook.is_background:
                 continue
             plugin_config = await get_plugin_env(
                 self.bus,
@@ -465,17 +472,6 @@ class SnapshotService(BaseService):
             if completed_process is not None:
                 await _wait_for_process_completed(completed_process, event.event_timeout)
                 continue
-            if (process_event.plugin_name, process_event.hook_name) not in daemon_background_hook_keys:
-                await _wait_for_process_completed(
-                    await self.bus.find(
-                        ProcessCompletedEvent,
-                        child_of=process_event,
-                        past=True,
-                        future=event.event_timeout,
-                    ),
-                    event.event_timeout,
-                )
-                continue
             started_processes.append((process_event, started_process))
         pending_kills = [
             event.emit(
@@ -499,9 +495,9 @@ class SnapshotService(BaseService):
                             ProcessCompletedEvent,
                             child_of=process_event,
                             past=True,
-                            future=event.event_timeout,
+                            future=grace_by_hook[(process_event.plugin_name, process_event.hook_name)] + 10.0,
                         ),
-                        event.event_timeout,
+                        grace_by_hook[(process_event.plugin_name, process_event.hook_name)] + 10.0,
                     )
                     for process_event, _ in started_processes
                 ],

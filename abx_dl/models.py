@@ -51,7 +51,7 @@ class Hook(BaseModel):
     - `{Event}` is the exact bus event family (Install, BinaryRequest, CrawlSetup, Snapshot)
     - `{order}` is an optional execution order prefix; omitted order defaults to 0
     - `.bg.` in the filename marks it as a background hook
-    - `.finite.` means the bg hook exits on its own (vs `.daemon.` which runs until killed)
+    - `.finite.` / `.daemon.` are human-readable hints only, not lifecycle behavior
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)

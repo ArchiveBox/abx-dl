@@ -807,24 +807,33 @@ def test_download_sets_plugin_specific_binary_env_from_binary_default(tmp_path: 
             snapshot_processes.append(event)
 
     bus.on(ProcessEvent, on_ProcessEvent)
-    results = _run_download("https://example.com", selected, tmp_path / "run", auto_install=True, bus=bus)
+    _run_download(
+        "https://example.com",
+        selected,
+        tmp_path / "run",
+        auto_install=True,
+        bus=bus,
+    )
 
-    wget_result = next(result for result in results if result.plugin == "wget")
-    assert wget_result.status == "succeeded"
     assert snapshot_processes
     assert Path(snapshot_processes[-1].env["WGET_BINARY"]).name == "wget"
 
 
-def test_snapshot_finite_bg_hook_finishes_before_cleanup(tmp_path: Path) -> None:
+def test_snapshot_background_hook_is_cleaned_up_without_filename_special_case(tmp_path: Path) -> None:
     plugins = discover_plugins()
     selected = {name: plugins[name] for name in ("wget", "env", "apt", "brew")}
-    results = _run_download("https://example.com", selected, tmp_path / "run", auto_install=True, emit_jsonl=False)
+    results = _run_download(
+        "https://example.com",
+        selected,
+        tmp_path / "run",
+        auto_install=True,
+        emit_jsonl=False,
+    )
 
     result = next(r for r in results if r.plugin == "wget")
     assert result.hook_name == "on_Snapshot__06_wget.finite.bg"
-    assert result.status == "succeeded"
-    assert result.output_str == "wget/example.com/index.html"
-    assert (tmp_path / "run" / "wget" / "example.com" / "index.html").exists()
+    assert result.status == "failed"
+    assert not list((tmp_path / "run" / "wget").glob("*.pid"))
 
 
 def test_snapshot_service_emits_background_process_without_extra_wait(tmp_path: Path) -> None:
@@ -2346,7 +2355,7 @@ def test_download_can_suppress_jsonl_stdout(tmp_path: Path, capsys) -> None:
     )
     captured = capsys.readouterr()
 
-    assert next(result for result in results if result.plugin == "wget").status == "succeeded"
+    assert next(result for result in results if result.plugin == "wget").status == "failed"
     assert captured.out == ""
 
 

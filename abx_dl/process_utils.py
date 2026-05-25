@@ -253,8 +253,8 @@ async def graceful_kill_by_pid_file(
 ) -> bool:
     """Validate a PID file, then SIGTERM → wait → SIGKILL the process.
 
-    Used for daemon cleanup when we don't have the process handle — e.g.,
-    killing a background Chrome daemon from a cleanup handler that runs in a
+    Used for background hook cleanup when we don't have the process handle — e.g.,
+    killing a background Chrome hook from a cleanup handler that runs in a
     different event than the one that spawned it. The PID file + cmd file are
     validated via ``validate_pid_file()`` to avoid killing an unrelated process
     that reused the PID.
