@@ -202,6 +202,69 @@ jobs:
           uv sync --no-cache --no-sources --group dev
           uv pip install -e "${{ runner.temp }}/abxpkg" -e "${{ runner.temp }}/abx-plugins[dev]"
 
+      - name: Select Chromium for extension-capable CDP
+        if: ${{ matrix.plugin.needs_chromium }}
+        env:
+          MIN_CHROMIUM_MAJOR: "149"
+          LIB_DIR: ${{ runner.temp }}/abx-lib
+          ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
+        run: |
+          set -euo pipefail
+          mkdir -p "$LIB_DIR"
+          echo "LIB_DIR=$LIB_DIR" >> "$GITHUB_ENV"
+          echo "ABXPKG_LIB_DIR=$ABXPKG_LIB_DIR" >> "$GITHUB_ENV"
+
+          candidate="/usr/bin/chromium"
+          version=""
+          major=0
+          if [ -x "$candidate" ]; then
+            version="$("$candidate" --version || true)"
+            major="$(printf '%s\n' "$version" | sed -E 's/.* ([0-9]+)\..*/\1/' | head -1)"
+            case "$major" in
+              ''|*[!0-9]*) major=0 ;;
+            esac
+          fi
+
+          if [ "$major" -ge "$MIN_CHROMIUM_MAJOR" ]; then
+            echo "Using runner Chromium: $candidate ($version)"
+            echo "CHROME_BINARY=$candidate" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          echo "Runner Chromium is unavailable or too old: ${version:-not found}"
+          echo "Installing Playwright Chromium into $LIB_DIR..."
+          uv run --no-sync --no-sources abxpkg install \
+            --binproviders=npm \
+            --lib="$LIB_DIR" \
+            --postinstall-scripts=false \
+            --min-release-age=0 \
+            --no-cache \
+            --overrides='{"npm":{"install_args":["playwright@next"]}}' \
+            playwright
+          uv run --no-sync --no-sources abxpkg install \
+            --binproviders=playwright \
+            --lib="$LIB_DIR" \
+            --bin-dir="$LIB_DIR/env/bin" \
+            --min-version="$MIN_CHROMIUM_MAJOR" \
+            chromium
+
+          candidate="$LIB_DIR/env/bin/chromium"
+          if [ ! -x "$candidate" ]; then
+            echo "Playwright Chromium shim was not created at $candidate" >&2
+            exit 1
+          fi
+          version="$("$candidate" --version || true)"
+          major="$(printf '%s\n' "$version" | sed -E 's/.* ([0-9]+)\..*/\1/' | head -1)"
+          case "$major" in
+            ''|*[!0-9]*) major=0 ;;
+          esac
+          if [ "$major" -lt "$MIN_CHROMIUM_MAJOR" ]; then
+            echo "Playwright Chromium is still too old: ${version:-unknown}" >&2
+            exit 1
+          fi
+          echo "Using Playwright Chromium: $candidate ($version)"
+          echo "CHROME_BINARY=$candidate" >> "$GITHUB_ENV"
+
       - name: Verify Chromium launch
         if: ${{ matrix.plugin.needs_chromium }}
         uses: ./.github/actions/verify-chromium-launch
@@ -284,6 +347,68 @@ jobs:
         run: |
           uv sync --no-cache --no-sources --group dev
           uv pip install -e "${{ runner.temp }}/abxpkg" -e "${{ runner.temp }}/abx-plugins[dev]"
+
+      - name: Select Chromium for extension-capable CDP
+        env:
+          MIN_CHROMIUM_MAJOR: "149"
+          LIB_DIR: ${{ runner.temp }}/abx-lib
+          ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
+        run: |
+          set -euo pipefail
+          mkdir -p "$LIB_DIR"
+          echo "LIB_DIR=$LIB_DIR" >> "$GITHUB_ENV"
+          echo "ABXPKG_LIB_DIR=$ABXPKG_LIB_DIR" >> "$GITHUB_ENV"
+
+          candidate="/usr/bin/chromium"
+          version=""
+          major=0
+          if [ -x "$candidate" ]; then
+            version="$("$candidate" --version || true)"
+            major="$(printf '%s\n' "$version" | sed -E 's/.* ([0-9]+)\..*/\1/' | head -1)"
+            case "$major" in
+              ''|*[!0-9]*) major=0 ;;
+            esac
+          fi
+
+          if [ "$major" -ge "$MIN_CHROMIUM_MAJOR" ]; then
+            echo "Using runner Chromium: $candidate ($version)"
+            echo "CHROME_BINARY=$candidate" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          echo "Runner Chromium is unavailable or too old: ${version:-not found}"
+          echo "Installing Playwright Chromium into $LIB_DIR..."
+          uv run --no-sync --no-sources abxpkg install \
+            --binproviders=npm \
+            --lib="$LIB_DIR" \
+            --postinstall-scripts=false \
+            --min-release-age=0 \
+            --no-cache \
+            --overrides='{"npm":{"install_args":["playwright@next"]}}' \
+            playwright
+          uv run --no-sync --no-sources abxpkg install \
+            --binproviders=playwright \
+            --lib="$LIB_DIR" \
+            --bin-dir="$LIB_DIR/env/bin" \
+            --min-version="$MIN_CHROMIUM_MAJOR" \
+            chromium
+
+          candidate="$LIB_DIR/env/bin/chromium"
+          if [ ! -x "$candidate" ]; then
+            echo "Playwright Chromium shim was not created at $candidate" >&2
+            exit 1
+          fi
+          version="$("$candidate" --version || true)"
+          major="$(printf '%s\n' "$version" | sed -E 's/.* ([0-9]+)\..*/\1/' | head -1)"
+          case "$major" in
+            ''|*[!0-9]*) major=0 ;;
+          esac
+          if [ "$major" -lt "$MIN_CHROMIUM_MAJOR" ]; then
+            echo "Playwright Chromium is still too old: ${version:-unknown}" >&2
+            exit 1
+          fi
+          echo "Using Playwright Chromium: $candidate ($version)"
+          echo "CHROME_BINARY=$candidate" >> "$GITHUB_ENV"
 
       - name: Verify Chromium launch
         uses: ./.github/actions/verify-chromium-launch

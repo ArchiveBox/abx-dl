@@ -1,10 +1,10 @@
 name: Verify Chromium launch
-description: Validate that Chromium can start, expose CDP, and evaluate JS in a page target.
+description: Validate that Chromium can start, expose CDP, and supports extension loading.
 inputs:
   chrome-path:
-    description: Path to Chromium/Chrome binary.
+    description: Path to Chromium/Chrome binary. Defaults to CHROME_BINARY, then /usr/bin/chromium.
     required: false
-    default: "/usr/bin/chromium"
+    default: ""
   max-attempts:
     description: Number of launch attempts before failing.
     required: false
@@ -13,23 +13,32 @@ inputs:
     description: Milliseconds to wait for DevTools and CDP per attempt.
     required: false
     default: "30000"
+  min-major-version:
+    description: Minimum Chromium major version required for CDP Extensions.loadUnpacked.
+    required: false
+    default: "149"
 runs:
   using: composite
   steps:
     - shell: bash
       run: |
         set -euo pipefail
+        chrome_path="${{ inputs.chrome-path }}"
+        if [ -z "$chrome_path" ]; then
+          chrome_path="${CHROME_BINARY:-/usr/bin/chromium}"
+        fi
         max_attempts="${{ inputs.max-attempts }}"
         attempt=1
         while [ "$attempt" -le "$max_attempts" ]; do
-          if [ -n "${{ inputs.chrome-path }}" ]; then
-            pkill -f "${{ inputs.chrome-path }}" >/dev/null 2>&1 || true
+          if [ -n "$chrome_path" ]; then
+            pkill -f "$chrome_path" >/dev/null 2>&1 || true
           fi
-          if node - <<'NODE'
+          if CHROME_VERIFY_PATH="$chrome_path" node - <<'NODE'
         const { spawn } = require("node:child_process");
 
-        const chrome = "${{ inputs.chrome-path }}";
+        const chrome = process.env.CHROME_VERIFY_PATH || process.env.CHROME_BINARY || "/usr/bin/chromium";
         const timeoutMs = Number("${{ inputs.timeout-ms }}");
+        const minMajorVersion = Number("${{ inputs.min-major-version }}");
         const wsPrefix = "DevTools listening on ";
         const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -95,6 +104,14 @@ runs:
 
             ws.addEventListener("open", async () => {
               try {
+                const version = await send("Browser.getVersion");
+                const product = String(version.product || "");
+                const match = product.match(/\/(\d+)\./);
+                const major = match ? Number(match[1]) : 0;
+                if (minMajorVersion && (!major || major < minMajorVersion)) {
+                  throw new Error(`Chromium ${product || "unknown"} is too old; Extensions.loadUnpacked requires Chromium >=${minMajorVersion}`);
+                }
+
                 const targets = await send("Target.getTargets");
                 const pageTarget = (targets.targetInfos || []).find(
                   (target) => target.type === "page" && target.url === "about:blank",
