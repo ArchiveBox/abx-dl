@@ -172,25 +172,24 @@ class BinaryService(BaseService):
                 assert isinstance(ancestor_request, BinaryRequestEvent)
                 inherited_binproviders = ancestor_request.binproviders
 
-        if event.install_cache_hit or not self.auto_install:
-            cached_terminal, cached_error = await self._emit_cached_binary_if_already_installed(
-                event,
-                inherited_binproviders=inherited_binproviders,
+        cached_terminal, cached_error = await self._emit_cached_binary_if_already_installed(
+            event,
+            inherited_binproviders=inherited_binproviders,
+        )
+        if cached_terminal:
+            if cached_error:
+                raise FileNotFoundError(cached_error)
+            cached_binary = await self.bus.find(
+                BinaryEvent,
+                past=True,
+                future=False,
+                name=event.name,
+                where=lambda candidate: bool(candidate.abspath) and self.bus.event_is_child_of(candidate, event),
             )
-            if cached_terminal:
-                if cached_error:
-                    raise FileNotFoundError(cached_error)
-                cached_binary = await self.bus.find(
-                    BinaryEvent,
-                    past=True,
-                    future=False,
-                    name=event.name,
-                    where=lambda candidate: bool(candidate.abspath) and self.bus.event_is_child_of(candidate, event),
-                )
-                if cached_binary is not None:
-                    assert isinstance(cached_binary, BinaryEvent)
-                    return cached_binary.abspath
-                return None
+            if cached_binary is not None:
+                assert isinstance(cached_binary, BinaryEvent)
+                return cached_binary.abspath
+            return None
 
         if not self.auto_install:
             return None

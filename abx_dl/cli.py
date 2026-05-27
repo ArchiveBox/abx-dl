@@ -1429,7 +1429,7 @@ def _build_install_table(rows: list[_InstallRow]) -> Table:
     table = Table(title="Install Results")
     table.add_column("Plugin", style="cyan")
     table.add_column("Hook")
-    table.add_column("Status")
+    table.add_column("Status", no_wrap=True, min_width=18)
     table.add_column("Output", no_wrap=True, overflow="ellipsis")
     for row in rows:
         table.add_row(
