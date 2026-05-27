@@ -1,0 +1,68 @@
+tests/test_executor.py
+  s_074e76a4b61abc::t_77d423e6faff88 1533-1547,1549-1561,1563-1646
+  s_b989805ae95d6a::t_a2d8856b291dff 862,875-877,2514
+  s_074e76a4b61abc::t_f3ee1f2586dda9 3,5,64-99
+abx_dl/services/binary_service.py
+  s_b989805ae95d6a::t_52cdd823ffff19 175-178,180-193,375-376,381-382,385,395-397
+  s_b989805ae95d6a::t_40ea22ab0d5419 618-624,628-636
+  s_b989805ae95d6a::t_419ecf256c4b66 336-337
+pyproject.toml
+  s_b989805ae95d6a::t_f42fc7cc16a5cc 44
+abx_dl/cli.py
+  s_b989805ae95d6a::t_971cf6000e36b3 762-763,832
+  s_b989805ae95d6a::t_9dbc730d0d1ede 828
+  s_b989805ae95d6a::t_9e2583b1d9dafd 885-886,914-915,1016,1019-1020
+abx_dl/models.py
+  s_b989805ae95d6a::t_a0628b401753cb 213-214
+abx_dl/services/crawl_service.py
+  s_b989805ae95d6a::t_12bd15acf1bf52 31,112,172,176
+  s_b989805ae95d6a::t_5718afd1bc53d5 397-408
+abx_dl/events.py
+  s_b989805ae95d6a::t_8207b759e3859c 400-401
+abx_dl/config.py
+  s_b989805ae95d6a::t_930618f92f3fc5 557-561,566-569,574,576,578,580,582,585-587
+  s_b989805ae95d6a::t_0ca4ed8690b3e6 328-329,338-339
+abx_dl/services/process_service.py
+  s_b989805ae95d6a::t_b67c762b862ffa 264,289,486,511
+  s_b989805ae95d6a::t_ca8d64984e5657 594-602
+  s_074e76a4b61abc::t_a050d8eed94a51 236,340,347-350,429-431
+  s_b989805ae95d6a::t_49eb514f872b6d 34
+  s_b989805ae95d6a::t_d1e8c2b6eb3315 285-287,507-509
+  s_b989805ae95d6a::t_3dec6d8184ed4e 682-684,687
+abx_dl/services/snapshot_service.py
+  s_b989805ae95d6a::t_8e7fe176c0a2fb 193-194,214
+  s_b989805ae95d6a::t_5faa3cd9380ba2 141-151
+  s_b989805ae95d6a::t_a88fb39eeef412 271-272,308-309,370-372
+  s_b989805ae95d6a::t_16301811069f22 14,135-137
+  s_b989805ae95d6a::t_aace875c4313ac 32,124,199,203
+  s_b989805ae95d6a::t_16beda365a4900 292-294
+  s_b989805ae95d6a::t_7501c50be2319f 387-393,401-412
+  s_b989805ae95d6a::t_9841daba84fec0 394-400,469-473,475
+  s_b989805ae95d6a::t_86f0a802be9e59 480
+abx_dl/services/base.py
+  s_b989805ae95d6a::t_c9adf32683e83b 7-27
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "f4997ddf69eac5f7ca0ae8a4d62c76fb96d4a5af",
+  "prompts": {},
+  "sessions": {
+    "s_074e76a4b61abc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e3237-ada8-7741-a7c1-098a7ec3e4c8",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    },
+    "s_b989805ae95d6a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e1fa8-ca6f-7ef3-af88-ea8dba9078db",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
