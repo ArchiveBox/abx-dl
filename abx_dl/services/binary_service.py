@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable
 from abxbus import BaseEvent, EventBus
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..config import get_config, get_plugin_env, get_required_binary_requests, is_path_like_env_value
+from ..config import RuntimeConfig, get_config, get_plugin_env, get_required_binary_requests, is_path_like_env_value
 from ..events import (
     BinaryEvent,
     BinaryRequestEvent,
@@ -355,6 +355,7 @@ class BinaryService(BaseService):
                     plugin=plugin,
                     run_output_dir=self.output_dir,
                     include_derived=False,
+                    config=current_config,
                 )
                 if not plugin_env[plugin.enabled_key]:
                     continue
@@ -383,7 +384,7 @@ class BinaryService(BaseService):
                     **record,
                 )
                 if install_cache_hit:
-                    cached_candidates, stale_config_keys = await self._iter_cached_binary_candidates(request_event)
+                    cached_candidates, stale_config_keys = await self._iter_cached_binary_candidates(request_event, config=current_config)
                     for config_key in stale_config_keys:
                         await event.emit(
                             MachineEvent(
@@ -419,7 +420,12 @@ class BinaryService(BaseService):
         path = Path(output_dir).expanduser()
         return path.parent if plugin_name and path.name == plugin_name else path
 
-    async def _config_keys_for_binary_request(self, event: BinaryRequestEvent) -> list[str]:
+    async def _config_keys_for_binary_request(
+        self,
+        event: BinaryRequestEvent,
+        *,
+        config: RuntimeConfig | None = None,
+    ) -> list[str]:
         """Return ``*_BINARY`` config keys that correspond to one binary request."""
         plugin = self.plugins.get(event.plugin_name)
         if plugin is None:
@@ -431,6 +437,7 @@ class BinaryService(BaseService):
                 plugin=plugin,
                 run_output_dir=self._request_run_output_dir(event.output_dir, event.plugin_name),
                 include_derived=False,
+                config=config,
             )
         ).to_env()
         matching_keys: list[str] = []
@@ -464,17 +471,20 @@ class BinaryService(BaseService):
     async def _iter_cached_binary_candidates(
         self,
         event: BinaryRequestEvent,
+        *,
+        config: RuntimeConfig | None = None,
     ) -> tuple[list[tuple[tuple[str, ...], str, bool]], set[str]]:
         """Return cached binary paths plus any stale derived keys that should be cleared."""
         request_name = event.name
-        current_derived_config = (await get_config(self.bus)).derived
+        current_config = config or await get_config(self.bus)
+        current_derived_config = current_config.derived
 
         if is_path_like_env_value(request_name):
-            return [(tuple(await self._config_keys_for_binary_request(event)), request_name, True)], set()
+            return [(tuple(await self._config_keys_for_binary_request(event, config=current_config)), request_name, True)], set()
 
         values: list[tuple[tuple[str, ...], str, bool]] = []
         stale_config_keys: set[str] = set()
-        for config_key in await self._config_keys_for_binary_request(event):
+        for config_key in await self._config_keys_for_binary_request(event, config=current_config):
             if config_key not in current_derived_config:
                 continue
             derived_value = str(current_derived_config[config_key]).strip()
@@ -503,7 +513,8 @@ class BinaryService(BaseService):
 
     async def _emit_cached_binary_if_already_installed(self, event: BinaryRequestEvent, *, inherited_binproviders: str) -> tuple[bool, str]:
         """Reuse a cached binary path when it still exists, or surface a broken user path."""
-        candidates, stale_config_keys = await self._iter_cached_binary_candidates(event)
+        current_config = await get_config(self.bus)
+        candidates, stale_config_keys = await self._iter_cached_binary_candidates(event, config=current_config)
         for config_key in stale_config_keys:
             await event.emit(
                 MachineEvent(
@@ -537,9 +548,16 @@ class BinaryService(BaseService):
             return True, ""
         return False, ""
 
-    async def _persist_binary_abspath_in_config(self, request_event: BinaryRequestEvent, abspath: str) -> None:
+    async def _persist_binary_abspath_in_config(
+        self,
+        request_event: BinaryRequestEvent,
+        abspath: str,
+        *,
+        config: RuntimeConfig | None = None,
+    ) -> None:
         """Persist derived binary paths for future runs."""
-        for config_key in await self._config_keys_for_binary_request(request_event):
+        current_config = config or await get_config(self.bus)
+        for config_key in await self._config_keys_for_binary_request(request_event, config=current_config):
             await request_event.emit(
                 MachineEvent(
                     method="update",
@@ -615,7 +633,8 @@ class BinaryService(BaseService):
             )
             if isinstance(found_request, BinaryRequestEvent):
                 request_event = found_request
-        current_derived_config = (await get_config(self.bus)).derived
+        current_config = await get_config(self.bus)
+        current_derived_config = current_config.derived
         install_cache: dict[str, str] = {}
         if "ABX_INSTALL_CACHE" in current_derived_config:
             install_cache_value = current_derived_config["ABX_INSTALL_CACHE"]
@@ -633,15 +652,21 @@ class BinaryService(BaseService):
                 config_type="derived",
             ),
         ).now()
-        await self._link_installed_binary(event.name, event.abspath)
+        await self._link_installed_binary(event.name, event.abspath, config=current_config)
         if request_event is not None:
-            await self._persist_binary_abspath_in_config(request_event, event.abspath)
+            await self._persist_binary_abspath_in_config(request_event, event.abspath, config=current_config)
 
-    async def _link_installed_binary(self, binary_name: str, binary_abspath: str) -> None:
+    async def _link_installed_binary(
+        self,
+        binary_name: str,
+        binary_abspath: str,
+        *,
+        config: RuntimeConfig | None = None,
+    ) -> None:
         """Link a resolved binary into ``LIB_BIN_DIR`` when that indirection is safe."""
         if is_path_like_env_value(binary_name):
             return
-        current_user_config = (await get_config(self.bus)).user
+        current_user_config = (config or await get_config(self.bus)).user
         lib_bin_dir = current_user_config.LIB_BIN_DIR
         if lib_bin_dir is None:
             return

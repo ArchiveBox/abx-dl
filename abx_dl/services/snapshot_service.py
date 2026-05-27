@@ -366,10 +366,9 @@ class SnapshotService(BaseService):
         )
         if completed_event is not None:
             return
-        if self.limit_state is None:
-            self._config = self._config or await get_config(self.bus)
-            self.limit_state = CrawlLimitState.from_config(self._config.user.model_dump(mode="json"))
         self._config = self._config or await get_config(self.bus)
+        if self.limit_state is None:
+            self.limit_state = CrawlLimitState.from_config(self._config.user.model_dump(mode="json"))
         if self.limit_state.has_limits() and not self.limit_state.admit_snapshot(event.event_id).allowed:
             return
         url = self.url

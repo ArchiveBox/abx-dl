@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from abxbus import BaseEvent, EventBus
 from abxpkg import BinProvider
 
-from ..config import get_plugin_env
+from ..config import get_config, get_plugin_env
 from ..events import (
     BinaryEvent,
     CrawlAbortEvent,
@@ -157,10 +157,12 @@ class CrawlService(BaseService):
                 return
             if await self.should_abort():
                 return
+            config = await get_config(self.bus)
             runtime = await get_plugin_env(
                 self.bus,
                 plugin=plugin,
                 run_output_dir=self.output_dir,
+                config=config,
                 extra_context={
                     "snapshot_id": self.snapshot.id,
                     "snapshot_depth": self.snapshot.depth,
@@ -407,11 +409,13 @@ class CrawlService(BaseService):
             ),
         )
         grace_by_hook: dict[tuple[str, str], int] = {}
+        config = await get_config(self.bus)
         for plugin, hook in self.crawl_setup_hooks:
             plugin_config = await get_plugin_env(
                 self.bus,
                 plugin=plugin,
                 run_output_dir=self.output_dir,
+                config=config,
             )
             timeout_key = f"{plugin.name.upper()}_TIMEOUT"
             grace_by_hook[(plugin.name, hook.name)] = (
