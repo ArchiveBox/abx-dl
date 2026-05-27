@@ -35,6 +35,8 @@ from .base import BaseService, plugin_with_required_plugin_names
 async def _wait_for_process_completed(event: ProcessCompletedEvent | None, timeout: float | None) -> ProcessCompletedEvent | None:
     if event is None:
         return None
+    await event.wait(timeout=timeout)
+    await event.event_results_list()
     return event
 
 
