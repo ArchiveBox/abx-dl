@@ -397,6 +397,8 @@ class BinaryRequestEvent(BaseEvent):
     machine_id: str = ""
     binproviders: str = ""
     overrides: dict[str, Any] | None = None
+    install_cache_key: str = ""
+    install_cache_hit: bool = False
     event_timeout: float | None = 300.0
 
 

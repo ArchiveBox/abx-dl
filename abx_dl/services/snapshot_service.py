@@ -11,7 +11,7 @@ from abxbus import BaseEvent, EventBus
 from abxpkg import BinProvider
 from pydantic import ValidationError
 
-from ..config import get_plugin_env, get_user_env
+from ..config import GlobalConfig, get_derived_env, get_plugin_env, get_user_env
 from ..events import (
     BinaryEvent,
     CrawlAbortEvent,
@@ -29,14 +29,12 @@ from ..events import (
 from ..limits import CrawlLimitState
 from ..models import Snapshot
 from ..models import Hook, Plugin
-from .base import BaseService
+from .base import BaseService, plugin_with_required_plugin_names
 
 
 async def _wait_for_process_completed(event: ProcessCompletedEvent | None, timeout: float | None) -> ProcessCompletedEvent | None:
     if event is None:
         return None
-    await event.wait(timeout=timeout)
-    await event.event_results_list()
     return event
 
 
@@ -123,6 +121,7 @@ class SnapshotService(BaseService):
         self.snapshot = snapshot
         self.output_dir = output_dir
         self.hooks: list[tuple[Plugin, Hook]] = []
+        self.plugins = plugins
         for plugin in plugins.values():
             for hook in plugin.filter_hooks("Snapshot"):
                 self.hooks.append((plugin, hook))
@@ -133,13 +132,23 @@ class SnapshotService(BaseService):
         self.abort_requested = False
         self.abort_requested_callback = abort_requested
         self.limit_state: CrawlLimitState | None = None
+        self._user_env: GlobalConfig | None = None
+        self._derived_env: dict | None = None
+        self._hook_timeouts: dict[tuple[str, str], int] = {}
         self._active_snapshot_event_ids: set[str] = set()
         self._completed_snapshot_event_ids: set[str] = set()
         super().__init__(bus)
-        self.bus.on(CrawlAbortEvent, self.on_CrawlAbortEvent)
-        self.bus.on(ProcessStdoutEvent, self.on_ProcessStdoutEvent)
-        self.bus.on(SnapshotEvent, self.on_SnapshotEvent)
-        self.bus.on(SnapshotCleanupEvent, self.on_SnapshotCleanupEvent)
+        self._handler_registrations = [
+            (CrawlAbortEvent, self.bus.on(CrawlAbortEvent, self.on_CrawlAbortEvent)),
+            (ProcessStdoutEvent, self.bus.on(ProcessStdoutEvent, self.on_ProcessStdoutEvent)),
+            (SnapshotEvent, self.bus.on(SnapshotEvent, self.on_SnapshotEvent)),
+            (SnapshotCleanupEvent, self.bus.on(SnapshotCleanupEvent, self.on_SnapshotCleanupEvent)),
+        ]
+
+    def close(self) -> None:
+        for event_pattern, handler in reversed(self._handler_registrations):
+            self.bus.off(event_pattern, handler)
+        self._handler_registrations.clear()
 
     async def should_abort(self) -> bool:
         if self.abort_requested:
@@ -181,14 +190,17 @@ class SnapshotService(BaseService):
                     "plugin": plugin.name,
                     "hook_name": hook.name,
                 },
+                user_env=self._user_env,
+                derived_env=self._derived_env,
             )
             if plugin_config.DRY_RUN:
                 return
             env = plugin_config.to_env()
+            env_plugin_names = set(plugin_with_required_plugin_names(plugin, self.plugins))
             binary_events = await self.bus.filter(
                 BinaryEvent,
                 past=True,
-                plugin_name=plugin.name,
+                where=lambda candidate: candidate.plugin_name in env_plugin_names,
             )
             for binary_event in binary_events:
                 if binary_event.env:
@@ -199,6 +211,7 @@ class SnapshotService(BaseService):
             env["SNAP_DIR"] = str(self.output_dir)
             timeout_key = f"{plugin.name.upper()}_TIMEOUT"
             timeout = plugin_config[timeout_key] if timeout_key in plugin.config.properties else plugin_config.TIMEOUT
+            self._hook_timeouts[(plugin.name, hook.name)] = timeout
             plugin_output_dir = self.output_dir / plugin.name
             plugin_output_dir.mkdir(parents=True, exist_ok=True)
             handler_timeout = (
@@ -255,7 +268,8 @@ class SnapshotService(BaseService):
         if event.output_dir != str(self.output_dir) or event.snapshot_id != self.snapshot.id:
             return
         if self.limit_state is None:
-            self.limit_state = CrawlLimitState.from_config((await get_user_env(self.bus)).model_dump(mode="json"))
+            self._user_env = self._user_env or await get_user_env(self.bus)
+            self.limit_state = CrawlLimitState.from_config(self._user_env.model_dump(mode="json"))
         parent_event = await self.bus.find(
             CrawlStartEvent,
             past=True,
@@ -275,6 +289,9 @@ class SnapshotService(BaseService):
         """
         if Path(event.output_dir).parent != self.output_dir:
             return
+        self._user_env = self._user_env or await get_user_env(self.bus)
+        if str(self._user_env.ABX_RUNTIME).lower() == "archivebox":
+            return
         try:
             record = json.loads(event.line)
         except (json.JSONDecodeError, ValueError):
@@ -288,7 +305,8 @@ class SnapshotService(BaseService):
         except ValidationError:
             return
         if self.limit_state is None:
-            self.limit_state = CrawlLimitState.from_config((await get_user_env(self.bus)).model_dump(mode="json"))
+            self._user_env = self._user_env or await get_user_env(self.bus)
+            self.limit_state = CrawlLimitState.from_config(self._user_env.model_dump(mode="json"))
         if not self.limit_state.should_emit_discovered_snapshots():
             return
         parent_snapshot = await self.bus.find(
@@ -349,7 +367,9 @@ class SnapshotService(BaseService):
         if completed_event is not None:
             return
         if self.limit_state is None:
-            self.limit_state = CrawlLimitState.from_config((await get_user_env(self.bus)).model_dump(mode="json"))
+            self._user_env = self._user_env or await get_user_env(self.bus)
+            self.limit_state = CrawlLimitState.from_config(self._user_env.model_dump(mode="json"))
+        self._derived_env = self._derived_env if self._derived_env is not None else await get_derived_env(self.bus)
         if self.limit_state.has_limits() and not self.limit_state.admit_snapshot(event.event_id).allowed:
             return
         url = self.url
@@ -364,6 +384,32 @@ class SnapshotService(BaseService):
                     break
                 if self.limit_state.get_snapshot_stop_reason(event.event_id) == "snapshot_max_size":
                     break
+            foreground_process = await self.bus.find(
+                ProcessEvent,
+                past=True,
+                future=False,
+                where=lambda candidate: self.bus.event_is_child_of(candidate, event) and not candidate.is_background,
+            )
+            if foreground_process is None:
+                background_process_events = await self.bus.filter(
+                    ProcessEvent,
+                    child_of=event,
+                    past=True,
+                    future=False,
+                    is_background=True,
+                )
+                if background_process_events:
+                    await asyncio.gather(
+                        *[
+                            self.bus.find(
+                                ProcessCompletedEvent,
+                                child_of=process_event,
+                                past=True,
+                                future=self.snapshot_phase_timeout,
+                            )
+                            for process_event in background_process_events
+                        ],
+                    )
         finally:
             if self.snapshot_cleanup_enabled:
                 cleanup_task = asyncio.create_task(
@@ -420,38 +466,18 @@ class SnapshotService(BaseService):
         if root_snapshot_event is None:
             return
         background_hook_keys = {(plugin.name, hook.name) for plugin, hook in self.hooks if hook.is_background}
-        background_process_events: list[ProcessEvent] = []
-        seen_process_event_ids: set[str] = set()
-        while True:
-            process_event = await self.bus.find(
-                ProcessEvent,
-                past=True,
-                future=False,
-                where=lambda candidate: (
-                    self.bus.event_is_child_of(candidate, root_snapshot_event)
-                    and candidate.is_background
-                    and (candidate.plugin_name, candidate.hook_name) in background_hook_keys
-                    and candidate.event_id not in seen_process_event_ids
-                ),
-            )
-            if process_event is None:
-                break
-            assert isinstance(process_event, ProcessEvent)
-            seen_process_event_ids.add(process_event.event_id)
-            background_process_events.append(process_event)
+        background_process_events = await self.bus.filter(
+            ProcessEvent,
+            child_of=root_snapshot_event,
+            past=True,
+            future=False,
+            where=lambda candidate: candidate.is_background and (candidate.plugin_name, candidate.hook_name) in background_hook_keys,
+        )
         grace_by_hook: dict[tuple[str, str], int] = {}
         for plugin, hook in self.hooks:
             if not hook.is_background:
                 continue
-            plugin_config = await get_plugin_env(
-                self.bus,
-                plugin=plugin,
-                run_output_dir=self.output_dir,
-            )
-            timeout_key = f"{plugin.name.upper()}_TIMEOUT"
-            grace_by_hook[(plugin.name, hook.name)] = (
-                plugin_config[timeout_key] if timeout_key in plugin.config.properties else plugin_config.TIMEOUT
-            )
+            grace_by_hook[(plugin.name, hook.name)] = self._hook_timeouts.get((plugin.name, hook.name), 60)
         started_processes: list[tuple[ProcessEvent, ProcessStartedEvent]] = []
         for process_event in background_process_events:
             started_process = await self.bus.find(

@@ -163,12 +163,6 @@ class GlobalConfig(BaseSettings):
         return key in type(self).model_fields or bool(self.__pydantic_extra__ and key in self.__pydantic_extra__)
 
 
-# Ensure directories exist
-CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-LIB_DIR.mkdir(parents=True, exist_ok=True)
-PERSONAS_DIR.mkdir(parents=True, exist_ok=True)
-
-
 def ensure_default_persona_dir() -> Path:
     """Ensure the default persona directory exists and return its path."""
     default_persona_dir = PERSONAS_DIR / "Default"
@@ -331,6 +325,8 @@ async def get_plugin_env(
     run_output_dir: Path,
     include_derived: bool = True,
     extra_context: dict[str, Any] | None = None,
+    user_env: GlobalConfig | None = None,
+    derived_env: dict[str, Any] | None = None,
 ) -> PluginEnv:
     """Build the flat runtime env model for one plugin on the current bus.
 
@@ -339,8 +335,8 @@ async def get_plugin_env(
     """
     plugin_config = _load_plugin_config_model(
         plugin,
-        user_env=await get_user_env(bus),
-        derived_env=await get_derived_env(bus) if include_derived else None,
+        user_env=user_env or await get_user_env(bus),
+        derived_env=derived_env if derived_env is not None else (await get_derived_env(bus) if include_derived else None),
     )
     return PluginEnv.from_config(plugin_config, run_output_dir=run_output_dir, extra_context=extra_context)
 
@@ -558,25 +554,37 @@ def get_required_binary_requests(
         user_env=overrides,
         derived_env=derived_overrides,
     )
+    request_name_config = _load_plugin_config_model(
+        plugin,
+        user_env=overrides,
+        derived_env=None,
+    )
     env = PluginEnv.from_config(
         plugin_config,
+        run_output_dir=run_output_dir or Path.cwd(),
+    ).to_env()
+    request_name_env = PluginEnv.from_config(
+        request_name_config,
         run_output_dir=run_output_dir or Path.cwd(),
     ).to_env()
     requests: list[dict[str, Any]] = []
     seen: set[str] = set()
     for spec in binaries:
         record = spec.model_dump(mode="json")
+        name_template = record.get("name")
 
-        def hydrate(value: Any) -> Any:
+        def hydrate(value: Any, source_env: dict[str, str]) -> Any:
             if isinstance(value, str):
-                return value.format(**env)
+                return value.format(**source_env)
             if isinstance(value, list):
-                return [hydrate(item) for item in value]
+                return [hydrate(item, source_env) for item in value]
             if isinstance(value, dict):
-                return {key: hydrate(nested_value) for key, nested_value in value.items()}
+                return {key: hydrate(nested_value, source_env) for key, nested_value in value.items()}
             return value
 
-        record = hydrate(record)
+        record = hydrate(record, env)
+        if isinstance(name_template, str):
+            record["name"] = hydrate(name_template, request_name_env)
         signature = json.dumps(record, sort_keys=True, default=str)
         if signature in seen:
             continue

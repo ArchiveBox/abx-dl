@@ -172,24 +172,25 @@ class BinaryService(BaseService):
                 assert isinstance(ancestor_request, BinaryRequestEvent)
                 inherited_binproviders = ancestor_request.binproviders
 
-        cached_terminal, cached_error = await self._emit_cached_binary_if_already_installed(
-            event,
-            inherited_binproviders=inherited_binproviders,
-        )
-        if cached_terminal:
-            if cached_error:
-                raise FileNotFoundError(cached_error)
-            cached_binary = await self.bus.find(
-                BinaryEvent,
-                past=True,
-                future=False,
-                name=event.name,
-                where=lambda candidate: bool(candidate.abspath) and self.bus.event_is_child_of(candidate, event),
+        if event.install_cache_hit or not self.auto_install:
+            cached_terminal, cached_error = await self._emit_cached_binary_if_already_installed(
+                event,
+                inherited_binproviders=inherited_binproviders,
             )
-            if cached_binary is not None:
-                assert isinstance(cached_binary, BinaryEvent)
-                return cached_binary.abspath
-            return None
+            if cached_terminal:
+                if cached_error:
+                    raise FileNotFoundError(cached_error)
+                cached_binary = await self.bus.find(
+                    BinaryEvent,
+                    past=True,
+                    future=False,
+                    name=event.name,
+                    where=lambda candidate: bool(candidate.abspath) and self.bus.event_is_child_of(candidate, event),
+                )
+                if cached_binary is not None:
+                    assert isinstance(cached_binary, BinaryEvent)
+                    return cached_binary.abspath
+                return None
 
         if not self.auto_install:
             return None
@@ -332,6 +333,8 @@ class BinaryService(BaseService):
         now = datetime.now(timezone.utc)
         pruned_install_cache: dict[str, str] = {}
         for binary_name, cached_at in install_cache.items():
+            if not binary_name.startswith("binary_request/"):
+                continue
             try:
                 cache_time = datetime.fromisoformat(str(cached_at))
             except ValueError:
@@ -369,13 +372,17 @@ class BinaryService(BaseService):
                 if signature in seen:
                     continue
                 seen.add(signature)
+                install_cache_key = f"binary_request/{signature}"
+                install_cache_hit = install_cache_key in pruned_install_cache
                 request_event = BinaryRequestEvent(
                     plugin_name=plugin.name,
                     output_dir=str(plugin_output_dir),
                     binary_id=uuid7(),
+                    install_cache_key=install_cache_key,
+                    install_cache_hit=install_cache_hit,
                     **record,
                 )
-                if request_event.name.strip() in pruned_install_cache:
+                if install_cache_hit:
                     cached_candidates, stale_config_keys = await self._iter_cached_binary_candidates(request_event)
                     for config_key in stale_config_keys:
                         await event.emit(
@@ -385,7 +392,9 @@ class BinaryService(BaseService):
                                 config_type="derived",
                             ),
                         ).now()
-                    if pruned_install_cache.pop(request_event.name.strip(), None) is not None:
+                    if stale_config_keys or not cached_candidates:
+                        request_event.install_cache_hit = False
+                    if not request_event.install_cache_hit and pruned_install_cache.pop(install_cache_key, None) is not None:
                         install_cache_changed = True
                 emitted_request = event.emit(request_event)
                 await emitted_request.now()
@@ -586,23 +595,6 @@ class BinaryService(BaseService):
 
     async def on_BinaryEvent(self, event: BinaryEvent) -> None:
         """Persist successful binary installs into the install cache and derived config."""
-        current_derived_config = await get_derived_env(self.bus)
-        install_cache: dict[str, str] = {}
-        if "ABX_INSTALL_CACHE" in current_derived_config:
-            install_cache_value = current_derived_config["ABX_INSTALL_CACHE"]
-            if not isinstance(install_cache_value, dict):
-                raise TypeError("ABX_INSTALL_CACHE must be a dict[str, str].")
-            install_cache = {str(binary_name): str(cached_at) for binary_name, cached_at in install_cache_value.items()}
-        install_cache[event.name] = datetime.now(timezone.utc).isoformat()
-        await event.emit(
-            MachineEvent(
-                method="update",
-                key="config/ABX_INSTALL_CACHE",
-                value=install_cache,
-                config_type="derived",
-            ),
-        ).now()
-        await self._link_installed_binary(event.name, event.abspath)
         request_event: BinaryRequestEvent | None = None
         if event.binary_id:
             found_request = await self.bus.find(
@@ -623,6 +615,25 @@ class BinaryService(BaseService):
             )
             if isinstance(found_request, BinaryRequestEvent):
                 request_event = found_request
+        current_derived_config = await get_derived_env(self.bus)
+        install_cache: dict[str, str] = {}
+        if "ABX_INSTALL_CACHE" in current_derived_config:
+            install_cache_value = current_derived_config["ABX_INSTALL_CACHE"]
+            if not isinstance(install_cache_value, dict):
+                raise TypeError("ABX_INSTALL_CACHE must be a dict[str, str].")
+            install_cache = {str(binary_name): str(cached_at) for binary_name, cached_at in install_cache_value.items()}
+        install_cache[request_event.install_cache_key if request_event and request_event.install_cache_key else event.name] = datetime.now(
+            timezone.utc,
+        ).isoformat()
+        await event.emit(
+            MachineEvent(
+                method="update",
+                key="config/ABX_INSTALL_CACHE",
+                value=install_cache,
+                config_type="derived",
+            ),
+        ).now()
+        await self._link_installed_binary(event.name, event.abspath)
         if request_event is not None:
             await self._persist_binary_abspath_in_config(request_event, event.abspath)
 

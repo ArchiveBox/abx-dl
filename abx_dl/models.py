@@ -210,6 +210,8 @@ class PluginEnv(BaseModel):
         for key, value in payload.items():
             if value is not None:
                 env[key] = dump_to_dotenv_format(value)
+        if env.get("LIB_DIR"):
+            env["ABXPKG_LIB_DIR"] = env["LIB_DIR"]
 
         path_dirs = [part for part in env["PATH"].split(os.pathsep) if part]
         runtime_bin_dirs: list[str] = []

@@ -28,7 +28,7 @@ from ..events import (
 )
 from ..models import Snapshot
 from ..models import Hook, Plugin
-from .base import BaseService
+from .base import BaseService, plugin_with_required_plugin_names
 
 
 async def _wait_for_process_completed(event: ProcessCompletedEvent | None, timeout: float | None) -> ProcessCompletedEvent | None:
@@ -109,6 +109,7 @@ class CrawlService(BaseService):
         self.url = url
         self.snapshot = snapshot
         self.output_dir = output_dir
+        self.plugins = plugins
         self.crawl_setup_hooks: list[tuple[Plugin, Hook]] = []
         for plugin in plugins.values():
             for hook in plugin.filter_hooks("CrawlSetup"):
@@ -168,10 +169,11 @@ class CrawlService(BaseService):
                 },
             )
             env = runtime.to_env()
+            env_plugin_names = set(plugin_with_required_plugin_names(plugin, self.plugins))
             binary_events = await self.bus.filter(
                 BinaryEvent,
                 past=True,
-                plugin_name=plugin.name,
+                where=lambda candidate: candidate.plugin_name in env_plugin_names,
             )
             for binary_event in binary_events:
                 if binary_event.env:
@@ -392,27 +394,18 @@ class CrawlService(BaseService):
                 )
             ),
         )
-        setup_process_events: list[ProcessEvent] = []
-        seen_process_event_ids: set[str] = set()
-        while True:
-            process_event = await self.bus.find(
-                ProcessEvent,
-                past=True,
-                future=False,
-                where=lambda candidate: (
-                    (
-                        (crawl_event is not None and self.bus.event_is_child_of(candidate, crawl_event))
-                        or (crawl_setup_event is not None and self.bus.event_is_child_of(candidate, crawl_setup_event))
-                    )
-                    and (candidate.plugin_name, candidate.hook_name) in setup_hook_keys
-                    and candidate.event_id not in seen_process_event_ids
-                ),
-            )
-            if process_event is None:
-                break
-            assert isinstance(process_event, ProcessEvent)
-            seen_process_event_ids.add(process_event.event_id)
-            setup_process_events.append(process_event)
+        setup_process_events = await self.bus.filter(
+            ProcessEvent,
+            past=True,
+            future=False,
+            where=lambda candidate: (
+                (
+                    (crawl_event is not None and self.bus.event_is_child_of(candidate, crawl_event))
+                    or (crawl_setup_event is not None and self.bus.event_is_child_of(candidate, crawl_setup_event))
+                )
+                and (candidate.plugin_name, candidate.hook_name) in setup_hook_keys
+            ),
+        )
         grace_by_hook: dict[tuple[str, str], int] = {}
         for plugin, hook in self.crawl_setup_hooks:
             plugin_config = await get_plugin_env(

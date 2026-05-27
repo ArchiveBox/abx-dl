@@ -759,8 +759,8 @@ class LiveBusUI:
             self.live = Live(
                 self.status_view,
                 console=self.ui_console,
-                auto_refresh=True,
-                refresh_per_second=10,
+                auto_refresh=False,
+                refresh_per_second=2,
                 transient=True,
                 vertical_overflow="visible",
             )
@@ -825,11 +825,11 @@ class LiveBusUI:
         )
         self.ui_console.print(f"[dim]Output: {_abbreviate_home_paths(str(output_dir.absolute()))}[/dim]")
 
-    def _refresh_live(self, *, force: bool = False, min_interval: float = 0.1) -> None:
+    def _refresh_live(self, *, force: bool = False, min_interval: float = 1.0) -> None:
         if self.live is None or self.paused:
             return
         now = time.monotonic()
-        if not force and (now - self.last_live_refresh) < min_interval:
+        if (now - self.last_live_refresh) < min_interval:
             return
         self.last_live_refresh = now
         self.live.refresh()
@@ -882,6 +882,8 @@ class LiveBusUI:
         self.process_row_num += 1
         row_key = f"process:{self.process_row_num}"
         self.row_key_by_event_id[event.event_id] = row_key
+        if event.event_parent_id:
+            self.row_key_by_event_id[event.event_parent_id] = row_key
         self.process_event_by_row_key[row_key] = event
         self.active_row_keys.append(row_key)
         self.live_results[row_key] = _LiveProcessRecord(
@@ -909,6 +911,8 @@ class LiveBusUI:
             self.pending_binary_rows[event.name].append(row_key)
             self.active_row_keys.append(row_key)
         self.row_key_by_event_id[event.event_id] = row_key
+        if event.event_parent_id:
+            self.row_key_by_event_id[event.event_parent_id] = row_key
         existing = self.live_results.get(row_key)
         row = (
             existing
@@ -1009,9 +1013,11 @@ class LiveBusUI:
             existing.output = line
 
     async def on_ProcessCompletedEvent(self, event: ProcessCompletedEvent) -> None:
-        if _is_binary_provider_hook_name(event.hook_name) or self.progress is None or self.task_id is None:
+        if self.progress is None or self.task_id is None:
             return
         row_key = self._match_row_key(event)
+        if _is_binary_provider_hook_name(event.hook_name) and row_key is None:
+            return
         if row_key is None:
             row_key = f"process:completed:{len(self.live_results) + 1}"
         self.row_key_by_event_id[event.event_id] = row_key

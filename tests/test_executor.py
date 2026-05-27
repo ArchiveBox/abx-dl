@@ -1,6 +1,8 @@
 import asyncio
 import os
+import signal
 import sys
+import time
 from pathlib import Path
 from uuid import uuid4
 
@@ -57,6 +59,44 @@ def _run_download(*args, **kwargs):
 
     asyncio.run(run())
     return results
+
+
+def _pid_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _wait_for_pid_exit(pid: int, *, timeout: float = 5.0) -> None:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not _pid_is_alive(pid):
+            return
+        time.sleep(0.05)
+    raise AssertionError(f"PID {pid} is still alive")
+
+
+def _cleanup_test_process_group(group_pid: int | None, *child_pids: int | None) -> None:
+    if group_pid and _pid_is_alive(group_pid):
+        try:
+            os.killpg(group_pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        except OSError:
+            try:
+                os.kill(group_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    for pid in child_pids:
+        if pid and _pid_is_alive(pid):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
 
 
 def _resolve_real_wget_binary(tmp_path: Path) -> BinaryEvent:
@@ -819,7 +859,7 @@ def test_download_sets_plugin_specific_binary_env_from_binary_default(tmp_path: 
     assert Path(snapshot_processes[-1].env["WGET_BINARY"]).name == "wget"
 
 
-def test_snapshot_background_hook_is_cleaned_up_without_filename_special_case(tmp_path: Path) -> None:
+def test_snapshot_background_only_hook_finishes_before_cleanup_without_filename_special_case(tmp_path: Path) -> None:
     plugins = discover_plugins()
     selected = {name: plugins[name] for name in ("wget", "env", "apt", "brew")}
     results = _run_download(
@@ -832,7 +872,9 @@ def test_snapshot_background_hook_is_cleaned_up_without_filename_special_case(tm
 
     result = next(r for r in results if r.plugin == "wget")
     assert result.hook_name == "on_Snapshot__06_wget.finite.bg"
-    assert result.status == "failed"
+    assert result.status == "succeeded"
+    assert result.output_str == "wget/example.com/index.html"
+    assert (tmp_path / "run" / "wget" / "example.com" / "index.html").exists()
     assert not list((tmp_path / "run" / "wget").glob("*.pid"))
 
 
@@ -1486,6 +1528,120 @@ def test_crawl_abort_during_setup_cleans_background_daemon(tmp_path: Path) -> No
     assert daemon_completed is not None
     assert daemon_completed.status == "succeeded"
     assert "cleaned" in daemon_completed.stdout
+
+
+def test_download_cancellation_kills_background_setup_process_group(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "plugins" / "cancel_group"
+    plugin_dir.mkdir(parents=True)
+    daemon_hook = plugin_dir / "on_CrawlSetup__10_daemon.daemon.bg.sh"
+    foreground_hook = plugin_dir / "on_CrawlSetup__20_foreground.sh"
+    daemon_hook.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'crawl_dir="${CRAWL_DIR:-$(dirname "$PWD")}"',
+                "sleep 600 &",
+                'echo $$ > "$crawl_dir/daemon.pid"',
+                'echo $! > "$crawl_dir/daemon-child.pid"',
+                'echo ready > "$crawl_dir/daemon.ready"',
+                "trap 'echo cleaned > \"$crawl_dir/daemon.cleaned\"; exit 0' TERM INT",
+                "wait",
+                "",
+            ],
+        ),
+    )
+    foreground_hook.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'crawl_dir="${CRAWL_DIR:-$(dirname "$PWD")}"',
+                'echo $$ > "$crawl_dir/foreground.pid"',
+                'echo ready > "$crawl_dir/foreground.ready"',
+                "trap 'echo cleaned > \"$crawl_dir/foreground.cleaned\"; exit 0' TERM INT",
+                "while true; do sleep 1; done",
+                "",
+            ],
+        ),
+    )
+    daemon_hook.chmod(0o755)
+    foreground_hook.chmod(0o755)
+
+    output_dir = tmp_path / "run"
+    plugin = Plugin(
+        name="cancel_group",
+        path=plugin_dir,
+        config=PluginConfig(),
+        hooks=[
+            Hook(
+                name=daemon_hook.stem,
+                event="CrawlSetup",
+                plugin_name="cancel_group",
+                path=daemon_hook,
+                order=10,
+                is_background=True,
+            ),
+            Hook(
+                name=foreground_hook.stem,
+                event="CrawlSetup",
+                plugin_name="cancel_group",
+                path=foreground_hook,
+                order=20,
+                is_background=False,
+            ),
+        ],
+    )
+    daemon_pid: int | None = None
+    daemon_child_pid: int | None = None
+    foreground_pid: int | None = None
+
+    async def run_and_cancel() -> tuple[int, int, int]:
+        bus = create_bus(total_timeout=30.0, name=f"download_cancel_group_{tmp_path.name}")
+        download_task = asyncio.create_task(
+            download(
+                "https://example.com",
+                plugins={plugin.name: plugin},
+                output_dir=output_dir,
+                selected_plugins=[plugin.name],
+                config_overrides={"TIMEOUT": 5},
+                auto_install=False,
+                emit_jsonl=False,
+                interactive_tty=False,
+                bus=bus,
+            ),
+        )
+
+        for _ in range(100):
+            if (output_dir / "daemon.ready").exists() and (output_dir / "foreground.ready").exists():
+                break
+            await asyncio.sleep(0.05)
+        assert (output_dir / "daemon.ready").exists()
+        assert (output_dir / "foreground.ready").exists()
+
+        pids = (
+            int((output_dir / "daemon.pid").read_text().strip()),
+            int((output_dir / "daemon-child.pid").read_text().strip()),
+            int((output_dir / "foreground.pid").read_text().strip()),
+        )
+        assert all(_pid_is_alive(pid) for pid in pids)
+        download_task.cancel()
+        try:
+            await download_task
+        except asyncio.CancelledError:
+            pass
+        return pids
+
+    try:
+        daemon_pid, daemon_child_pid, foreground_pid = asyncio.run(run_and_cancel())
+        _wait_for_pid_exit(daemon_pid)
+        _wait_for_pid_exit(daemon_child_pid)
+        _wait_for_pid_exit(foreground_pid)
+        assert (output_dir / "daemon.cleaned").read_text().strip() == "cleaned"
+        assert (output_dir / "foreground.cleaned").read_text().strip() == "cleaned"
+    finally:
+        _cleanup_test_process_group(daemon_pid, daemon_child_pid)
+        _cleanup_test_process_group(foreground_pid)
 
 
 def test_crawl_abort_during_foreground_setup_interrupts_hook_and_stops_later_setup(tmp_path: Path) -> None:
@@ -2355,7 +2511,7 @@ def test_download_can_suppress_jsonl_stdout(tmp_path: Path, capsys) -> None:
     )
     captured = capsys.readouterr()
 
-    assert next(result for result in results if result.plugin == "wget").status == "failed"
+    assert next(result for result in results if result.plugin == "wget").status == "succeeded"
     assert captured.out == ""
 
 

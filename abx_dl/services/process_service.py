@@ -31,7 +31,7 @@ from .base import BaseService
 
 
 ProcessStatus = Literal["succeeded", "failed", "skipped"]
-STDOUT_POLL_INTERVAL = 0.05
+STDOUT_POLL_INTERVAL = 0.5
 
 
 @dataclass
@@ -233,6 +233,7 @@ class ProcessService(BaseService):
 
         process: asyncio.subprocess.Process | None = None
         started_event: ProcessStartedEvent | None = None
+        completion_owns_process = False
         try:
             try:
                 with open(stdout_file, "wb") as out_fh, open(stderr_file, "w") as err_fh:
@@ -260,7 +261,7 @@ class ProcessService(BaseService):
                 proc.ended_at = now_iso()
                 index_path = plugin_output_dir.parent / "index.jsonl"
                 write_jsonl(index_path, proc, also_print=self.emit_jsonl)
-                await event.emit(
+                event.emit(
                     ProcessCompletedEvent(
                         plugin_name=event.plugin_name,
                         hook_name=event.hook_name,
@@ -281,8 +282,11 @@ class ProcessService(BaseService):
                         worker_type=event.worker_type,
                         start_ts=proc.started_at or "",
                         end_ts=proc.ended_at or "",
+                        event_timeout=event.event_timeout,
+                        event_handler_timeout=event.event_handler_timeout,
+                        event_handler_slow_timeout=event.event_handler_slow_timeout,
                     ),
-                ).now()
+                )
                 return proc
             started_event = await event.emit(
                 ProcessStartedEvent(
@@ -333,12 +337,17 @@ class ProcessService(BaseService):
                 files_before=files_before,
                 foreground_interrupts=foreground_interrupts,
             )
+            completion_owns_process = True
             if event.is_background:
                 background_task = asyncio.create_task(completion)
                 self._background_completion_tasks.add(background_task)
                 background_task.add_done_callback(self._background_completion_tasks.discard)
                 return proc
             return await completion
+        except asyncio.CancelledError:
+            if process is not None and not completion_owns_process:
+                await graceful_kill_process(process)
+            raise
         finally:
             self.pause_requested.clear()
 
@@ -417,8 +426,9 @@ class ProcessService(BaseService):
             timed_out = True
             await graceful_kill_process(process)
         except asyncio.CancelledError:
-            if not event.is_background:
-                await graceful_kill_process(process)
+            stream_task.cancel()
+            await self._finish_stream_stdout(stream_task)
+            await graceful_kill_process(process)
             raise
         except Exception:
             await graceful_kill_process(process)
@@ -473,7 +483,7 @@ class ProcessService(BaseService):
         index_path = plugin_output_dir.parent / "index.jsonl"
         write_jsonl(index_path, proc, also_print=self.emit_jsonl)
 
-        await event.emit(
+        event.emit(
             ProcessCompletedEvent(
                 plugin_name=event.plugin_name,
                 hook_name=event.hook_name,
@@ -494,8 +504,11 @@ class ProcessService(BaseService):
                 worker_type=event.worker_type,
                 start_ts=proc.started_at or "",
                 end_ts=proc.ended_at or "",
+                event_timeout=event.event_timeout,
+                event_handler_timeout=event.event_handler_timeout,
+                event_handler_slow_timeout=event.event_handler_slow_timeout,
             ),
-        ).now()
+        )
         if action == "retry":
             await event.emit(
                 ProcessEvent(
@@ -578,26 +591,15 @@ class ProcessService(BaseService):
             if root_event is None:
                 raise RuntimeError(f"Missing root event for ProcessKillEvent {event.event_id}")
 
-            matches: list[ProcessStartedEvent] = []
-            seen_started_event_ids: set[str] = set()
-            while True:
-                started_process = await self.bus.find(
-                    ProcessStartedEvent,
-                    past=True,
-                    future=False,
-                    where=lambda candidate: (
-                        self.bus.event_is_child_of(candidate, root_event)
-                        and candidate.plugin_name == event.plugin_name
-                        and candidate.hook_name == event.hook_name
-                        and candidate.pid == event.pid
-                        and candidate.event_id not in seen_started_event_ids
-                    ),
-                )
-                if started_process is None:
-                    break
-                assert isinstance(started_process, ProcessStartedEvent)
-                seen_started_event_ids.add(started_process.event_id)
-                matches.append(started_process)
+            matches = await self.bus.filter(
+                ProcessStartedEvent,
+                child_of=root_event,
+                past=True,
+                future=False,
+                plugin_name=event.plugin_name,
+                hook_name=event.hook_name,
+                pid=event.pid,
+            )
             if len(matches) != 1:
                 raise RuntimeError(
                     f"Expected exactly one ProcessStartedEvent for {event.plugin_name}:{event.hook_name}, found {len(matches)}",
@@ -677,9 +679,12 @@ class ProcessService(BaseService):
 
         for line in lines:
             state.stdout_lines.append(line)
+            stripped = line.strip()
+            if event.env.get("ABX_RUNTIME", "").lower() == "archivebox" and '"type": "Snapshot"' in stripped:
+                continue
             await event.emit(
                 ProcessStdoutEvent(
-                    line=line.strip(),
+                    line=stripped,
                     plugin_name=event.plugin_name,
                     hook_name=event.hook_name,
                     output_dir=event.output_dir,
