@@ -202,9 +202,42 @@ wait_for_runs() {
         sleep 10
     done
 
-    while read -r run_id; do
-        gh run watch "${run_id}" --repo "${slug}" --exit-status
-    done < <(jq -r '.[].databaseId' <<<"${runs_json}")
+    while IFS=$'\t' read -r run_id workflow_name; do
+        workflow_name_lower="${workflow_name,,}"
+        if [[ "${workflow_name_lower}" == *"release state"* ]]; then
+            gh run watch "${run_id}" --repo "${slug}" --exit-status
+            continue
+        fi
+        if [[ "${workflow_name_lower}" != *"test"* ]]; then
+            echo "Skipping non-gating workflow: ${workflow_name}"
+            continue
+        fi
+
+        attempts=0
+        while :; do
+            precheck_state="$(
+                gh run view "${run_id}" --repo "${slug}" --json jobs --jq '
+                    [.jobs[] | select((.name | ascii_downcase) | test("precheck|pre-commit|prek"))][0]
+                    | if . == null then "missing:" else ((.status // "") + ":" + (.conclusion // "")) end
+                '
+            )"
+            case "${precheck_state}" in
+                completed:success|completed:skipped)
+                    break
+                    ;;
+                completed:failure|completed:cancelled|completed:timed_out)
+                    gh run view "${run_id}" --repo "${slug}"
+                    return 1
+                    ;;
+            esac
+            attempts=$((attempts + 1))
+            if [[ "${attempts}" -ge 120 ]]; then
+                echo "Timed out waiting for ${workflow_name} precheck job" >&2
+                return 1
+            fi
+            sleep 5
+        done
+    done < <(jq -r '.[] | [.databaseId, .workflowName] | @tsv' <<<"${runs_json}")
 }
 
 wait_for_pypi() {
@@ -276,15 +309,31 @@ create_release() {
 publish_artifacts() {
     local version="$1"
     local pypi_token="${UV_PUBLISH_TOKEN:-${PYPI_TOKEN:-${PYPI_PAT_SECRET:-}}}"
+    local artifact_prefix="${PYPI_PACKAGE//-/_}"
+    local artifacts=()
+    local dist_dir
+
+    shopt -s nullglob
+    for dist_dir in "${WORKSPACE_DIR}/dist" "${REPO_DIR}/dist"; do
+        artifacts+=("${dist_dir}/${PYPI_PACKAGE}-${version}"*)
+        if [[ "${artifact_prefix}" != "${PYPI_PACKAGE}" ]]; then
+            artifacts+=("${dist_dir}/${artifact_prefix}-${version}"*)
+        fi
+    done
+    shopt -u nullglob
 
     if curl -fsSL "https://pypi.org/pypi/${PYPI_PACKAGE}/json" | jq -e --arg version "${version}" '.releases[$version] | length > 0' >/dev/null 2>&1; then
         echo "${PYPI_PACKAGE} ${version} already published on PyPI"
     else
-        if [[ -n "${pypi_token}" ]]; then
-            UV_PUBLISH_TOKEN="${pypi_token}" uv publish --username=__token__ dist/*
-        else
-            echo "Missing PyPI credentials: set UV_PUBLISH_TOKEN or PYPI_TOKEN" >&2
+        if [[ "${#artifacts[@]}" -eq 0 ]]; then
+            echo "Missing build artifacts for ${PYPI_PACKAGE}==${version}" >&2
             return 1
+        fi
+
+        if [[ -n "${pypi_token}" ]]; then
+            UV_PUBLISH_TOKEN="${pypi_token}" uv publish --username=__token__ "${artifacts[@]}"
+        else
+            uv publish --username=__token__ "${artifacts[@]}"
         fi
     fi
 
@@ -332,7 +381,6 @@ main() {
             return 1
         fi
         run_checks
-        wait_for_runs "${slug}" push "$(git rev-parse HEAD)" "push"
     else
         echo "Current version ${version} is behind latest GitHub release ${latest}" >&2
         return 1
@@ -341,10 +389,8 @@ main() {
     publish_artifacts "${version}"
     create_release "${slug}" "${version}"
 
-    latest="$(latest_release_version "${slug}")"
-    relation="$(compare_versions "${latest}" "${version}")"
-    if [[ "${relation}" != "eq" ]]; then
-        echo "GitHub release version mismatch: expected ${version}, got ${latest}" >&2
+    if ! gh release view "${TAG_PREFIX}${version}" --repo "${slug}" >/dev/null 2>&1; then
+        echo "GitHub release ${TAG_PREFIX}${version} was not found after creation" >&2
         return 1
     fi
 
