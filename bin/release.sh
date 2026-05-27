@@ -222,6 +222,10 @@ wait_for_runs() {
                 '
             )"
             case "${precheck_state}" in
+                missing:*)
+                    echo "Skipping test workflow without precheck job: ${workflow_name}"
+                    break
+                    ;;
                 completed:success|completed:skipped)
                     break
                     ;;
