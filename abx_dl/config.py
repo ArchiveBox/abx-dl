@@ -2,8 +2,9 @@
 
 ``config.env`` stores only user-provided values.
 ``derived.env`` stores runtime-derived cache entries (e.g. resolved binary paths).
-Only user config participates in ``get_initial_env()``. Derived values are read
-separately by the binary-resolution layer and never blindly merged into config.
+Only user config participates in ``get_initial_env()``. Runtime code reads user
+and sparse derived state through ``get_config()`` and never blindly merges
+derived cache into user config.
 """
 
 import json
