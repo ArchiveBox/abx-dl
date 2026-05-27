@@ -175,7 +175,7 @@ class CrawlService(BaseService):
                 past=True,
                 where=lambda candidate: candidate.plugin_name in env_plugin_names,
             )
-            for binary_event in binary_events:
+            for binary_event in reversed(binary_events):
                 if binary_event.env:
                     env = BinProvider.build_exec_env(
                         base_env=env,

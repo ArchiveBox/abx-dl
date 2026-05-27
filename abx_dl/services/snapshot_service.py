@@ -11,7 +11,7 @@ from abxbus import BaseEvent, EventBus
 from abxpkg import BinProvider
 from pydantic import ValidationError
 
-from ..config import GlobalConfig, get_derived_env, get_plugin_env, get_user_env
+from ..config import RuntimeConfig, get_config, get_plugin_env
 from ..events import (
     BinaryEvent,
     CrawlAbortEvent,
@@ -134,8 +134,7 @@ class SnapshotService(BaseService):
         self.abort_requested = False
         self.abort_requested_callback = abort_requested
         self.limit_state: CrawlLimitState | None = None
-        self._user_env: GlobalConfig | None = None
-        self._derived_env: dict | None = None
+        self._config: RuntimeConfig | None = None
         self._hook_timeouts: dict[tuple[str, str], int] = {}
         self._active_snapshot_event_ids: set[str] = set()
         self._completed_snapshot_event_ids: set[str] = set()
@@ -192,8 +191,7 @@ class SnapshotService(BaseService):
                     "plugin": plugin.name,
                     "hook_name": hook.name,
                 },
-                user_env=self._user_env,
-                derived_env=self._derived_env,
+                config=self._config,
             )
             if plugin_config.DRY_RUN:
                 return
@@ -204,7 +202,7 @@ class SnapshotService(BaseService):
                 past=True,
                 where=lambda candidate: candidate.plugin_name in env_plugin_names,
             )
-            for binary_event in binary_events:
+            for binary_event in reversed(binary_events):
                 if binary_event.env:
                     env = BinProvider.build_exec_env(
                         base_env=env,
@@ -270,8 +268,8 @@ class SnapshotService(BaseService):
         if event.output_dir != str(self.output_dir) or event.snapshot_id != self.snapshot.id:
             return
         if self.limit_state is None:
-            self._user_env = self._user_env or await get_user_env(self.bus)
-            self.limit_state = CrawlLimitState.from_config(self._user_env.model_dump(mode="json"))
+            self._config = self._config or await get_config(self.bus)
+            self.limit_state = CrawlLimitState.from_config(self._config.user.model_dump(mode="json"))
         parent_event = await self.bus.find(
             CrawlStartEvent,
             past=True,
@@ -291,8 +289,8 @@ class SnapshotService(BaseService):
         """
         if Path(event.output_dir).parent != self.output_dir:
             return
-        self._user_env = self._user_env or await get_user_env(self.bus)
-        if str(self._user_env.ABX_RUNTIME).lower() == "archivebox":
+        self._config = self._config or await get_config(self.bus)
+        if str(self._config.user.ABX_RUNTIME).lower() == "archivebox":
             return
         try:
             record = json.loads(event.line)
@@ -307,8 +305,8 @@ class SnapshotService(BaseService):
         except ValidationError:
             return
         if self.limit_state is None:
-            self._user_env = self._user_env or await get_user_env(self.bus)
-            self.limit_state = CrawlLimitState.from_config(self._user_env.model_dump(mode="json"))
+            self._config = self._config or await get_config(self.bus)
+            self.limit_state = CrawlLimitState.from_config(self._config.user.model_dump(mode="json"))
         if not self.limit_state.should_emit_discovered_snapshots():
             return
         parent_snapshot = await self.bus.find(
@@ -369,9 +367,9 @@ class SnapshotService(BaseService):
         if completed_event is not None:
             return
         if self.limit_state is None:
-            self._user_env = self._user_env or await get_user_env(self.bus)
-            self.limit_state = CrawlLimitState.from_config(self._user_env.model_dump(mode="json"))
-        self._derived_env = self._derived_env if self._derived_env is not None else await get_derived_env(self.bus)
+            self._config = self._config or await get_config(self.bus)
+            self.limit_state = CrawlLimitState.from_config(self._config.user.model_dump(mode="json"))
+        self._config = self._config or await get_config(self.bus)
         if self.limit_state.has_limits() and not self.limit_state.admit_snapshot(event.event_id).allowed:
             return
         url = self.url

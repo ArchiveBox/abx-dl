@@ -931,6 +931,152 @@ def test_snapshot_service_emits_background_process_without_extra_wait(tmp_path: 
     assert emitted.hook_name == "on_Snapshot__24_responses.daemon.bg"
 
 
+def test_snapshot_hook_binary_event_env_replay_applies_newest_last(tmp_path: Path) -> None:
+    hook_script = tmp_path / "on_Snapshot__10_env_check.sh"
+    hook_script.write_text("#!/usr/bin/env bash\nexit 0\n")
+    hook_script.chmod(0o755)
+    plugin = Plugin(
+        name="env_check",
+        path=tmp_path,
+        config=PluginConfig(),
+        hooks=[
+            Hook(
+                name=hook_script.name,
+                event="Snapshot",
+                plugin_name="env_check",
+                path=hook_script,
+                order=10,
+                is_background=False,
+            ),
+        ],
+    )
+    snapshot = Snapshot(url="https://example.com", id="snap-env-check")
+    output_dir = tmp_path / "run"
+    bus = create_bus(total_timeout=30.0, name=f"snapshot_binary_env_order_{tmp_path.name}")
+    MachineService(bus, persist_derived=False)
+    ProcessService(bus, emit_jsonl=False, interactive_tty=False)
+    SnapshotService(
+        bus,
+        url=snapshot.url,
+        snapshot=snapshot,
+        output_dir=output_dir,
+        plugins={plugin.name: plugin},
+        snapshot_phase_timeout=10.0,
+    )
+
+    async def run() -> ProcessEvent:
+        await bus.emit(
+            BinaryEvent(
+                name="env-check-tool",
+                plugin_name=plugin.name,
+                abspath="/bin/echo",
+                env={"ABX_TEST_BINARY_MARKER": "old"},
+            ),
+        ).now()
+        await bus.emit(
+            BinaryEvent(
+                name="env-check-tool",
+                plugin_name=plugin.name,
+                abspath="/bin/echo",
+                env={"ABX_TEST_BINARY_MARKER": "new"},
+            ),
+        ).now()
+        crawl_start_event = CrawlStartEvent(url=snapshot.url, snapshot_id=snapshot.id, output_dir=str(output_dir))
+        snapshot_event = SnapshotEvent(
+            url=snapshot.url,
+            snapshot_id=snapshot.id,
+            output_dir=str(output_dir),
+            event_parent_id=crawl_start_event.event_id,
+        )
+        await bus.emit(crawl_start_event).now()
+        await bus.emit(snapshot_event).now()
+        process_event = await bus.find(ProcessEvent, child_of=snapshot_event, past=True, future=False, plugin_name=plugin.name)
+        assert isinstance(process_event, ProcessEvent)
+        return process_event
+
+    try:
+        process_event = asyncio.run(run())
+    finally:
+        asyncio.run(bus.wait_until_idle())
+
+    assert process_event.env["ABX_TEST_BINARY_MARKER"] == "new"
+
+
+def test_crawl_setup_hook_binary_event_env_replay_applies_newest_last(tmp_path: Path) -> None:
+    hook_script = tmp_path / "on_CrawlSetup__10_env_check.sh"
+    hook_script.write_text("#!/usr/bin/env bash\nexit 0\n")
+    hook_script.chmod(0o755)
+    plugin = Plugin(
+        name="setup_env_check",
+        path=tmp_path,
+        config=PluginConfig(),
+        hooks=[
+            Hook(
+                name=hook_script.name,
+                event="CrawlSetup",
+                plugin_name="setup_env_check",
+                path=hook_script,
+                order=10,
+                is_background=False,
+            ),
+        ],
+    )
+    snapshot = Snapshot(url="https://example.com", id="snap-setup-env-check")
+    output_dir = tmp_path / "run"
+    bus = create_bus(total_timeout=30.0, name=f"crawl_setup_binary_env_order_{tmp_path.name}")
+    MachineService(bus, persist_derived=False)
+    ProcessService(bus, emit_jsonl=False, interactive_tty=False)
+    CrawlService(
+        bus,
+        url=snapshot.url,
+        snapshot=snapshot,
+        output_dir=output_dir,
+        plugins={plugin.name: plugin},
+        crawl_event_enabled=False,
+        crawl_start_enabled=False,
+        crawl_cleanup_enabled=False,
+        crawl_completed_enabled=False,
+        crawl_setup_phase_timeout=10.0,
+    )
+
+    async def run() -> ProcessEvent:
+        await bus.emit(
+            BinaryEvent(
+                name="setup-env-check-tool",
+                plugin_name=plugin.name,
+                abspath="/bin/echo",
+                env={"ABX_TEST_BINARY_MARKER": "old"},
+            ),
+        ).now()
+        await bus.emit(
+            BinaryEvent(
+                name="setup-env-check-tool",
+                plugin_name=plugin.name,
+                abspath="/bin/echo",
+                env={"ABX_TEST_BINARY_MARKER": "new"},
+            ),
+        ).now()
+        crawl_event = CrawlEvent(url=snapshot.url, snapshot_id=snapshot.id, output_dir=str(output_dir))
+        setup_event = CrawlSetupEvent(
+            url=snapshot.url,
+            snapshot_id=snapshot.id,
+            output_dir=str(output_dir),
+            event_parent_id=crawl_event.event_id,
+        )
+        await bus.emit(crawl_event).now()
+        await bus.emit(setup_event).now()
+        process_event = await bus.find(ProcessEvent, child_of=setup_event, past=True, future=False, plugin_name=plugin.name)
+        assert isinstance(process_event, ProcessEvent)
+        return process_event
+
+    try:
+        process_event = asyncio.run(run())
+    finally:
+        asyncio.run(bus.wait_until_idle())
+
+    assert process_event.env["ABX_TEST_BINARY_MARKER"] == "new"
+
+
 def test_snapshot_background_daemon_stays_alive_until_cleanup(tmp_path: Path) -> None:
     plugin_dir = tmp_path / "plugins" / "daemon_check"
     plugin_dir.mkdir(parents=True)

@@ -378,11 +378,14 @@ main() {
 
         wait_for_runs "${slug}" push "$(git rev-parse HEAD)" "push"
     elif [[ "${relation}" == "gt" ]]; then
-        if [[ -n "$(git status --short)" ]]; then
-            echo "Refusing to publish existing unreleased version ${version} with a dirty worktree" >&2
-            return 1
-        fi
         run_checks
+        if [[ -n "$(git status --short)" ]]; then
+            git add -A
+            git commit -m "release: ${TAG_PREFIX}${version}"
+            git push origin "${branch}"
+
+            wait_for_runs "${slug}" push "$(git rev-parse HEAD)" "push"
+        fi
     else
         echo "Current version ${version} is behind latest GitHub release ${latest}" >&2
         return 1

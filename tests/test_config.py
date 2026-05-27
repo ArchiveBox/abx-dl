@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from abx_dl.config import GlobalConfig, get_initial_env, get_plugin_env
+from abx_dl.config import GlobalConfig, RuntimeConfig, get_config, get_initial_env, get_plugin_env
 from abx_dl.events import MachineEvent
 from abx_dl.models import PluginEnv, discover_plugins
 from abx_dl.orchestrator import create_bus, install_plugins
@@ -39,6 +39,25 @@ def test_plugin_env_sets_run_dirs_and_node_path(monkeypatch, tmp_path: Path) -> 
     assert env["PIP_BIN_DIR"] in env["PATH"].split(":")
     assert env["NPM_BIN_DIR"] in env["PATH"].split(":")
     assert "VIRTUAL_ENV" not in env
+
+
+def test_machine_event_config_rebuild_applies_events_oldest_to_newest(tmp_path: Path) -> None:
+    bus = create_bus(total_timeout=10.0, name=f"test_config_machine_event_order_{tmp_path.name}")
+
+    async def run() -> RuntimeConfig:
+        await bus.emit(MachineEvent(config={"FAVICON_PROVIDER": "first", "LIB_DIR": str(tmp_path / "lib-a")}, config_type="user")).now()
+        await bus.emit(MachineEvent(config={"FAVICON_PROVIDER": "second"}, config_type="user")).now()
+        await bus.emit(MachineEvent(config={"LIB_DIR": str(tmp_path / "lib-b")}, config_type="derived")).now()
+        await bus.emit(MachineEvent(config={"LIB_DIR": str(tmp_path / "lib-c")}, config_type="derived")).now()
+        return await get_config(bus)
+
+    try:
+        runtime_config = asyncio.run(run())
+    finally:
+        asyncio.run(bus.wait_until_idle())
+
+    assert runtime_config.user["FAVICON_PROVIDER"] == "second"
+    assert runtime_config.derived["LIB_DIR"] == str(tmp_path / "lib-c")
 
 
 def test_plugin_env_exports_shared_runtime_paths_after_real_install_phase(

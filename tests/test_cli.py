@@ -393,13 +393,13 @@ def test_process_completed_preserves_output_files_when_inline_archive_result_has
             end_ts="2026-03-25T12:00:01",
             event_parent_id=started_event.event_id,
         )
-        await live_ui.on_ProcessStartedEvent(started_event)
-        await live_ui.on_ArchiveResultEvent(archive_result_event)
-        bus.event_history[archive_result_event.event_id] = archive_result_event
-        await live_ui.on_ProcessCompletedEvent(completed_event)
+        await bus.emit(started_event).now()
+        await bus.emit(archive_result_event).now()
+        await bus.emit(completed_event).now()
 
     asyncio.run(run())
 
+    assert not live_ui.live_results
     rendered = output.getvalue()
     assert "4KB" in rendered
 
@@ -519,7 +519,11 @@ def test_phase_label_for_event_uses_ancestor_phase_event() -> None:
         env={},
         event_parent_id=phase_event.event_id,
     )
-    bus.event_history[phase_event.event_id] = phase_event
+
+    async def run() -> None:
+        await bus.emit(phase_event).now()
+
+    asyncio.run(run())
     assert cli_module._phase_label_for_event(bus, process_event) == "CrawlSetup"
 
 
@@ -536,7 +540,11 @@ def test_phase_label_for_event_walks_nested_event_ancestors() -> None:
         env={},
         event_parent_id=phase_event.event_id,
     )
-    bus.event_history[phase_event.event_id] = phase_event
+
+    async def run() -> None:
+        await bus.emit(phase_event).now()
+
+    asyncio.run(run())
     assert cli_module._phase_label_for_event(bus, provider_process) == "Snapshot"
 
 

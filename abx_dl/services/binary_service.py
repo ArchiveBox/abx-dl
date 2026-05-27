@@ -12,7 +12,7 @@ from collections.abc import Awaitable, Callable
 from abxbus import BaseEvent, EventBus
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..config import get_derived_env, get_plugin_env, get_required_binary_requests, get_user_env, is_path_like_env_value
+from ..config import get_config, get_plugin_env, get_required_binary_requests, is_path_like_env_value
 from ..events import (
     BinaryEvent,
     BinaryRequestEvent,
@@ -321,8 +321,9 @@ class BinaryService(BaseService):
         if await self.should_abort():
             return
 
-        current_user_config = await get_user_env(self.bus)
-        current_derived_config = await get_derived_env(self.bus)
+        current_config = await get_config(self.bus)
+        current_user_config = current_config.user
+        current_derived_config = current_config.derived
         install_cache: dict[str, str] = {}
         if "ABX_INSTALL_CACHE" in current_derived_config:
             install_cache_value = current_derived_config["ABX_INSTALL_CACHE"]
@@ -466,7 +467,7 @@ class BinaryService(BaseService):
     ) -> tuple[list[tuple[tuple[str, ...], str, bool]], set[str]]:
         """Return cached binary paths plus any stale derived keys that should be cleared."""
         request_name = event.name
-        current_derived_config = await get_derived_env(self.bus)
+        current_derived_config = (await get_config(self.bus)).derived
 
         if is_path_like_env_value(request_name):
             return [(tuple(await self._config_keys_for_binary_request(event)), request_name, True)], set()
@@ -614,7 +615,7 @@ class BinaryService(BaseService):
             )
             if isinstance(found_request, BinaryRequestEvent):
                 request_event = found_request
-        current_derived_config = await get_derived_env(self.bus)
+        current_derived_config = (await get_config(self.bus)).derived
         install_cache: dict[str, str] = {}
         if "ABX_INSTALL_CACHE" in current_derived_config:
             install_cache_value = current_derived_config["ABX_INSTALL_CACHE"]
@@ -640,7 +641,7 @@ class BinaryService(BaseService):
         """Link a resolved binary into ``LIB_BIN_DIR`` when that indirection is safe."""
         if is_path_like_env_value(binary_name):
             return
-        current_user_config = await get_user_env(self.bus)
+        current_user_config = (await get_config(self.bus)).user
         lib_bin_dir = current_user_config.LIB_BIN_DIR
         if lib_bin_dir is None:
             return

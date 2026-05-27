@@ -812,10 +812,9 @@ class LiveBusUI:
         self.ui_console.print(f"[dim]Plugins: {plugins_label}[/dim]")
         self.ui_console.print()
 
-    def print_summary(self, *, output_dir: Path) -> None:
+    def print_summary(self, *, output_dir: Path, archive_results: list[ArchiveResultEvent]) -> None:
         if not self.interactive_tty:
             return
-        archive_results = self.bus.filter(ArchiveResultEvent, past=True)
         self.ui_console.print()
         self.ui_console.print(
             f"[green]{sum(1 for r in archive_results if r.status == 'succeeded')} succeeded[/green], "
@@ -1275,6 +1274,7 @@ def dl(
     pause_requested = False
 
     signal_handler_installed = False
+    archive_results: list[ArchiveResultEvent] = []
     try:
 
         async def on_CrawlPauseEvent(event: CrawlPauseEvent) -> None:
@@ -1329,10 +1329,12 @@ def dl(
                 aborted = True
                 loop.run_until_complete(asyncio.gather(download_task, return_exceptions=True))
             finally:
-                aborted = aborted or any(isinstance(event, CrawlAbortEvent) for event in bus.event_history.values())
+                aborted_events = loop.run_until_complete(bus.filter(CrawlAbortEvent, past=True, future=False))
+                aborted = aborted or bool(aborted_events)
                 if debug:
                     bus.log_tree()
                 loop.run_until_complete(bus.wait_until_idle())
+                archive_results = loop.run_until_complete(bus.filter(ArchiveResultEvent, past=True, future=False))
     finally:
         if signal_handler_installed:
             loop.remove_signal_handler(signal.SIGINT)
@@ -1342,7 +1344,7 @@ def dl(
 
     if aborted:
         raise click.Abort()
-    live_ui.print_summary(output_dir=out_path)
+    live_ui.print_summary(output_dir=out_path, archive_results=archive_results)
 
 
 class _BinaryRecord:

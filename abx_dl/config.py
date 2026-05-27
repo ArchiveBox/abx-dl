@@ -11,6 +11,7 @@ import os
 import platform
 import re
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Self
 from collections.abc import Mapping
@@ -163,6 +164,12 @@ class GlobalConfig(BaseSettings):
         return key in type(self).model_fields or bool(self.__pydantic_extra__ and key in self.__pydantic_extra__)
 
 
+@dataclass(frozen=True)
+class RuntimeConfig:
+    user: GlobalConfig
+    derived: dict[str, Any]
+
+
 def ensure_default_persona_dir() -> Path:
     """Ensure the default persona directory exists and return its path."""
     default_persona_dir = PERSONAS_DIR / "Default"
@@ -268,54 +275,37 @@ def _load_plugin_config_model(
     return resolved_config
 
 
-async def get_user_env(
-    bus: EventBus,
-) -> GlobalConfig:
-    """Rebuild current user config from the initial snapshot plus MachineEvents."""
-    current_user_config: dict[str, Any] = {}
-    for candidate in await bus.filter(MachineEvent, past=True):
-        if candidate.config_type != "user":
-            continue
-        if candidate.config is not None:
-            current_user_config.update(candidate.config)
-            continue
-        key = candidate.key.removeprefix("config/")
-        if not key:
-            continue
-        if candidate.method == "update":
-            current_user_config[key] = candidate.value
-            continue
-        if candidate.method == "unset":
-            current_user_config.pop(key, None)
-    return GlobalConfig(**current_user_config)
+async def get_config(bus: EventBus | None = None, *, include_derived: bool = True) -> RuntimeConfig:
+    """Return the current runtime config state from one canonical derivation path.
 
-
-async def get_derived_env(
-    bus: EventBus,
-) -> dict[str, Any]:
-    """Rebuild the sparse derived runtime cache from MachineEvents.
-
-    Derived config must only contain values explicitly emitted by runtime
-    services. Returning a default-filled GlobalConfig here makes derived
-    defaults override the user/runtime layer, which can split installers and
-    hooks across different LIB_DIR/NODE_PATH roots.
+    ``MachineEvent`` history is returned newest-first by ``bus.filter()``, so
+    state replay must apply it oldest-to-newest. ``derived`` intentionally stays
+    sparse: it only contains runtime-emitted cache values like resolved binaries,
+    never default-filled ``GlobalConfig`` paths.
     """
-    current_derived_config: dict[str, Any] = {}
-    for candidate in await bus.filter(MachineEvent, past=True):
-        if candidate.config_type != "derived":
-            continue
-        if candidate.config is not None:
-            current_derived_config.update(candidate.config)
-            continue
-        key = candidate.key.removeprefix("config/")
-        if not key:
-            continue
-        if candidate.method == "update":
-            current_derived_config[key] = candidate.value
-            continue
-        if candidate.method == "unset":
-            current_derived_config.pop(key, None)
-    return current_derived_config
+    current_user_config: dict[str, Any] = {} if bus is not None else get_initial_env()
+    current_derived_config: dict[str, Any] = {} if bus is not None else get_derived_config(current_user_config)
+    if bus is not None:
+        for candidate in reversed(await bus.filter(MachineEvent, past=True)):
+            target_config = current_derived_config if candidate.config_type == "derived" else current_user_config
+            if candidate.config is not None:
+                if candidate.config_type == "derived" and not include_derived:
+                    continue
+                target_config.update(candidate.config)
+                continue
+            key = candidate.key.removeprefix("config/")
+            if not key:
+                continue
+            if candidate.config_type == "derived" and not include_derived:
+                continue
+            if candidate.method == "update":
+                target_config[key] = candidate.value
+                continue
+            if candidate.method == "unset":
+                target_config.pop(key, None)
+    if not include_derived:
+        current_derived_config = {}
+    return RuntimeConfig(user=GlobalConfig(**current_user_config), derived=current_derived_config)
 
 
 async def get_plugin_env(
@@ -325,18 +315,18 @@ async def get_plugin_env(
     run_output_dir: Path,
     include_derived: bool = True,
     extra_context: dict[str, Any] | None = None,
-    user_env: GlobalConfig | None = None,
-    derived_env: dict[str, Any] | None = None,
+    config: RuntimeConfig | None = None,
 ) -> PluginEnv:
     """Build the flat runtime env model for one plugin on the current bus.
 
     User config stays authoritative. Derived config is only overlaid here for
     recoverable runtime cache such as resolved ``*_BINARY`` paths.
     """
+    runtime_config = config or await get_config(bus, include_derived=include_derived)
     plugin_config = _load_plugin_config_model(
         plugin,
-        user_env=user_env or await get_user_env(bus),
-        derived_env=derived_env if derived_env is not None else (await get_derived_env(bus) if include_derived else None),
+        user_env=runtime_config.user,
+        derived_env=runtime_config.derived if include_derived else None,
     )
     return PluginEnv.from_config(plugin_config, run_output_dir=run_output_dir, extra_context=extra_context)
 
