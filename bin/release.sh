@@ -244,11 +244,9 @@ wait_for_pypi() {
     local package_name="$1"
     local expected_version="$2"
     local attempts=0
-    local published_version
 
     while :; do
-        published_version="$(curl -fsSL "https://pypi.org/pypi/${package_name}/json" | jq -r '.info.version')"
-        if [[ "${published_version}" == "${expected_version}" ]]; then
+        if curl -fsSL "https://pypi.org/pypi/${package_name}/json" | jq -e --arg version "${expected_version}" '.releases[$version] | length > 0' >/dev/null; then
             return 0
         fi
         attempts=$((attempts + 1))
