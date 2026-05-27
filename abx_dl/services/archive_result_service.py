@@ -7,7 +7,15 @@ from typing import Any, ClassVar
 from abxbus import BaseEvent, EventBus
 from pydantic import ValidationError
 
-from ..events import ArchiveResultEvent, ProcessCompletedEvent, ProcessEvent, ProcessStartedEvent, ProcessStdoutEvent, SnapshotEvent
+from ..events import (
+    PROCESS_EXIT_SKIPPED,
+    ArchiveResultEvent,
+    ProcessCompletedEvent,
+    ProcessEvent,
+    ProcessStartedEvent,
+    ProcessStdoutEvent,
+    SnapshotEvent,
+)
 from ..limits import CrawlLimitState
 from ..models import ArchiveResult, write_jsonl
 from ..output_files import OutputFile, scan_output_files
@@ -25,7 +33,8 @@ class ArchiveResultService(BaseService):
 
     2. **ProcessCompletedEvent**: only for ``on_Snapshot`` hooks, emits a
        synthetic ArchiveResultEvent when the hook didn't already report one:
-       - If exit_code != 0 → synthetic ``failed`` result (with stderr as error).
+       - If exit_code is nonzero and not the skipped sentinel → synthetic
+         ``failed`` result (with stderr as error).
        - If exit_code == 0 and non-metadata output files exist → synthetic
          ``succeeded`` result.
        - If exit_code == 0 and no content files → synthetic ``noresult`` result.
@@ -156,7 +165,16 @@ class ArchiveResultService(BaseService):
         if existing is not None:
             return
 
-        if event.exit_code != 0:
+        if event.exit_code == PROCESS_EXIT_SKIPPED:
+            # Skipped process with no inline result → synthetic skipped result
+            ar = ArchiveResult(
+                snapshot_id=snapshot_event.snapshot_id,
+                plugin=event.plugin_name,
+                hook_name=event.hook_name,
+                status="skipped",
+                output_files=event.output_files,
+            )
+        elif event.exit_code != 0:
             # Failed process with no inline result → synthetic failure
             ar = ArchiveResult(
                 snapshot_id=snapshot_event.snapshot_id,
