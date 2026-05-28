@@ -556,7 +556,7 @@ class SnapshotService(BaseService):
             event_handler_timeout=event.event_timeout,
             event_handler_slow_timeout=slow_warning_timeout(event.event_timeout),
         )
-        completed_event.event_parent_id = event.event_id
+        completed_event.event_parent_id = root_snapshot_event.event_id
         await _run_event_now(self.bus.emit(completed_event), event.event_timeout, suppress_unattached=True)
 
     async def on_CrawlAbortEvent(self, event: CrawlAbortEvent) -> None:
