@@ -139,24 +139,24 @@ class ProcessService(BaseService):
         """Ask the user what to do after interrupting one foreground hook."""
         click.echo("", err=True)
         click.echo(f"Interrupted {hook_name}. Choose what to do next:", err=True)
-        click.echo("  1. exit now and abort the whole crawl", err=True)
-        click.echo("  2. continue and retry the aborted hook", err=True)
-        click.echo("  3. continue and skip the aborted hook", err=True)
+        click.echo("  Enter: continue and skip the aborted hook", err=True)
+        click.echo("  r: continue and retry the aborted hook", err=True)
+        click.echo("  a or Ctrl+C: exit now and abort the whole crawl", err=True)
         try:
-            click.echo("Choice [1]: ", nl=False, err=True)
+            click.echo("Choice [skip]: ", nl=False, err=True)
             while True:
                 choice_char = click.getchar()
                 click.echo("", err=True)
-                if choice_char in ("\x03", "\x04", "\r", "\n"):
+                if choice_char in ("\x03", "\x04"):
                     return "abort"
-                if choice_char == "1":
-                    return "abort"
-                if choice_char == "2":
-                    return "retry"
-                if choice_char == "3":
+                if choice_char in ("\r", "\n", "3", "s", "S"):
                     return "skip"
-                click.echo("Enter 1, 2, or 3.", err=True)
-                click.echo("Choice [1]: ", nl=False, err=True)
+                if choice_char in ("1", "a", "A"):
+                    return "abort"
+                if choice_char in ("2", "r", "R"):
+                    return "retry"
+                click.echo("Press Enter to skip, r to retry, or a/Ctrl+C to abort.", err=True)
+                click.echo("Choice [skip]: ", nl=False, err=True)
         except (EOFError, KeyboardInterrupt, click.Abort):
             return "abort"
 
