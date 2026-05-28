@@ -207,7 +207,7 @@ class CrawlService(BaseService):
                 timeout=timeout,
                 event_blocks_parent_completion=not hook.is_background,
                 event_timeout=0 if hook.is_background else handler_timeout,
-                event_handler_timeout=0 if hook.is_background else handler_timeout,
+                event_handler_timeout=handler_timeout,
                 event_handler_slow_timeout=slow_warning_timeout(handler_timeout),
             )
             if hook.is_background:

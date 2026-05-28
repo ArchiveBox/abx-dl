@@ -92,11 +92,10 @@ class ProcessService(BaseService):
     4. wait for exit or kill
     5. emit ``ProcessCompletedEvent``
 
-    Background behavior is owned by abxbus and the dispatch site:
-    callers ``await bus.emit(ProcessEvent(...)).now()`` for foreground hooks and use
-    ``bus.emit(ProcessEvent(...))`` without awaiting for background hooks. The
+    Background behavior is owned by abxbus and the dispatch site. The
     ``ProcessEvent`` itself stays alive until the subprocess exits; parent events
-    can still proceed because background ProcessEvents do not block parent completion.
+    can still proceed because background ProcessEvents are parallel and do not
+    block parent completion.
     """
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [
@@ -180,19 +179,6 @@ class ProcessService(BaseService):
 
         task = asyncio.create_task(self._run_process_event(event))
         self._active_process_event_tasks[event.event_id] = task
-        if event.is_background:
-
-            def cleanup_background_task(completed_task: asyncio.Task[Process | None]) -> None:
-                self._active_process_event_tasks.pop(event.event_id, None)
-                if not completed_task.cancelled():
-                    self._completed_process_event_ids.add(event.event_id)
-                    try:
-                        completed_task.exception()
-                    except Exception:
-                        pass
-
-            task.add_done_callback(cleanup_background_task)
-            return None
         try:
             result = await task
             self._completed_process_event_ids.add(event.event_id)
