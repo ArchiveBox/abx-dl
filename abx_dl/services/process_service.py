@@ -180,6 +180,19 @@ class ProcessService(BaseService):
 
         task = asyncio.create_task(self._run_process_event(event))
         self._active_process_event_tasks[event.event_id] = task
+        if event.is_background:
+
+            def cleanup_background_task(completed_task: asyncio.Task[Process | None]) -> None:
+                self._active_process_event_tasks.pop(event.event_id, None)
+                if not completed_task.cancelled():
+                    self._completed_process_event_ids.add(event.event_id)
+                    try:
+                        completed_task.exception()
+                    except Exception:
+                        pass
+
+            task.add_done_callback(cleanup_background_task)
+            return await asyncio.shield(task)
         try:
             result = await task
             self._completed_process_event_ids.add(event.event_id)
