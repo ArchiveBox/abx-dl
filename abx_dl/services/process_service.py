@@ -192,7 +192,7 @@ class ProcessService(BaseService):
                         pass
 
             task.add_done_callback(cleanup_background_task)
-            return await asyncio.shield(task)
+            return None
         try:
             result = await task
             self._completed_process_event_ids.add(event.event_id)
