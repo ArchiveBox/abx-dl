@@ -1,0 +1,19 @@
+abx_dl/services/snapshot_service.py
+  s_acd6d49487f262::t_66018c1c14900d 559
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "62728e02d78e82a465c8b4790e2a387aab803240",
+  "prompts": {},
+  "sessions": {
+    "s_acd6d49487f262": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e6ee4-f15b-7c42-a566-4ddff41473a8",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
