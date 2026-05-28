@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import importlib
 import sys
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
@@ -85,11 +86,13 @@ class CrawlLimitState:
         crawl_dir: Path,
         crawl_max_urls: int = 0,
         crawl_max_size: int = 0,
+        crawl_timeout: int = 0,
         snapshot_max_size: int = 0,
     ):
         self.crawl_dir = crawl_dir
         self.crawl_max_urls = max(0, int(crawl_max_urls or 0))
         self.crawl_max_size = max(0, int(crawl_max_size or 0))
+        self.crawl_timeout = max(0, int(crawl_timeout or 0))
         self.snapshot_max_size = max(0, int(snapshot_max_size or 0))
         self.state_dir = self.crawl_dir / ".abx-dl"
         self.state_path = self.state_dir / "limits.json"
@@ -100,11 +103,13 @@ class CrawlLimitState:
         crawl_dir = Path(str(config.get("CRAWL_DIR") or config.get("SNAP_DIR") or "."))
         crawl_max_urls = int(config.get("CRAWL_MAX_URLS") or 0)
         crawl_max_size = parse_filesize_to_bytes(config.get("CRAWL_MAX_SIZE") or 0)
+        crawl_timeout = int(config.get("CRAWL_TIMEOUT") or 0)
         snapshot_max_size = parse_filesize_to_bytes(config.get("SNAPSHOT_MAX_SIZE") or 0)
         return cls(
             crawl_dir=crawl_dir,
             crawl_max_urls=crawl_max_urls,
             crawl_max_size=crawl_max_size,
+            crawl_timeout=crawl_timeout,
             snapshot_max_size=snapshot_max_size,
         )
 
@@ -113,16 +118,18 @@ class CrawlLimitState:
         crawl_dir = Path(str(env.get("CRAWL_DIR") or env.get("SNAP_DIR") or "."))
         crawl_max_urls = int(env.get("CRAWL_MAX_URLS") or 0)
         crawl_max_size = parse_filesize_to_bytes(env.get("CRAWL_MAX_SIZE") or 0)
+        crawl_timeout = int(env.get("CRAWL_TIMEOUT") or 0)
         snapshot_max_size = parse_filesize_to_bytes(env.get("SNAPSHOT_MAX_SIZE") or 0)
         return cls(
             crawl_dir=crawl_dir,
             crawl_max_urls=crawl_max_urls,
             crawl_max_size=crawl_max_size,
+            crawl_timeout=crawl_timeout,
             snapshot_max_size=snapshot_max_size,
         )
 
     def has_limits(self) -> bool:
-        return self.crawl_max_urls > 0 or self.crawl_max_size > 0 or self.snapshot_max_size > 0
+        return self.crawl_max_urls > 0 or self.crawl_max_size > 0 or self.crawl_timeout > 0 or self.snapshot_max_size > 0
 
     def admit_snapshot(self, snapshot_id: str) -> SnapshotAdmission:
         if not self.has_limits():
@@ -134,6 +141,9 @@ class CrawlLimitState:
 
             if stop_reason == "crawl_max_size":
                 return SnapshotAdmission(allowed=False, stop_reason=stop_reason)
+            if self._timeout_reached(state):
+                state["stop_reason"] = "crawl_timeout"
+                return SnapshotAdmission(allowed=False, stop_reason="crawl_timeout")
 
             if snapshot_id in admitted:
                 return SnapshotAdmission(allowed=True, stop_reason=stop_reason)
@@ -160,12 +170,16 @@ class CrawlLimitState:
         if not self.has_limits():
             return True
         with self._locked_state(readonly=True) as state:
+            if self._timeout_reached(state):
+                return False
             return not bool(state["stop_reason"]) if "stop_reason" in state else True
 
     def get_stop_reason(self) -> str:
         if not self.has_limits():
             return ""
         with self._locked_state(readonly=True) as state:
+            if self._timeout_reached(state):
+                return "crawl_timeout"
             return str(state["stop_reason"]) if "stop_reason" in state else ""
 
     def get_snapshot_stop_reason(self, snapshot_id: str) -> str:
@@ -178,20 +192,24 @@ class CrawlLimitState:
             return str(snapshot_stop_reasons.get(snapshot_id) or "")
 
     def record_process_output(self, event_id: str, output_dir: Path, output_files: list[str], *, snapshot_id: str = "") -> str:
-        if not (self.crawl_max_size or self.snapshot_max_size):
+        if not (self.crawl_max_size or self.crawl_timeout or self.snapshot_max_size):
             return ""
 
         added_size = 0
-        for relative_path in output_files:
-            try:
-                file_size = (output_dir / relative_path).stat().st_size
-            except OSError:
-                file_size = 0
-            added_size += file_size
+        if self.crawl_max_size or self.snapshot_max_size:
+            for relative_path in output_files:
+                try:
+                    file_size = (output_dir / relative_path).stat().st_size
+                except OSError:
+                    file_size = 0
+                added_size += file_size
 
         with self._locked_state() as state:
             counted_event_ids = {str(item) for item in (state["counted_event_ids"] if "counted_event_ids" in state else [])}
             if event_id in counted_event_ids:
+                if self._timeout_reached(state):
+                    state["stop_reason"] = "crawl_timeout"
+                    return "crawl_timeout"
                 return str(state["stop_reason"]) if "stop_reason" in state else ""
 
             counted_event_ids.add(event_id)
@@ -200,6 +218,8 @@ class CrawlLimitState:
                 state["total_size"] = int(state["total_size"]) + added_size if "total_size" in state else added_size
                 if ("stop_reason" not in state or not state["stop_reason"]) and int(state["total_size"]) >= self.crawl_max_size:
                     state["stop_reason"] = "crawl_max_size"
+            if self._timeout_reached(state) and ("stop_reason" not in state or not state["stop_reason"]):
+                state["stop_reason"] = "crawl_timeout"
 
             snapshot_stop_reason = ""
             if self.snapshot_max_size and snapshot_id:
@@ -239,6 +259,7 @@ class CrawlLimitState:
                 "counted_event_ids": [],
                 "snapshot_sizes": {},
                 "snapshot_stop_reasons": {},
+                "started_at": time.time(),
                 "total_size": 0,
                 "stop_reason": "",
             }
@@ -257,9 +278,32 @@ class CrawlLimitState:
         payload.setdefault("counted_event_ids", [])
         payload.setdefault("snapshot_sizes", {})
         payload.setdefault("snapshot_stop_reasons", {})
+        payload.setdefault("started_at", time.time())
         payload.setdefault("total_size", 0)
         payload.setdefault("stop_reason", "")
+
+        # limits.json is persisted across runs, so raising a limit must clear a
+        # previous stop_reason here. ArchiveBox can then just requeue the crawl;
+        # the next SnapshotEvent admission/size check will enforce the new cap.
+        admitted = {str(item) for item in payload["admitted_snapshot_ids"]}
+        total_size = int(payload["total_size"])
+        if payload["stop_reason"] == "crawl_max_urls" and (not self.crawl_max_urls or len(admitted) < self.crawl_max_urls):
+            payload["stop_reason"] = ""
+        if payload["stop_reason"] == "crawl_max_size" and (not self.crawl_max_size or total_size < self.crawl_max_size):
+            payload["stop_reason"] = ""
+        if payload["stop_reason"] == "crawl_timeout" and (not self.crawl_timeout or not self._timeout_reached(payload)):
+            payload["stop_reason"] = ""
+        snapshot_stop_reasons = payload["snapshot_stop_reasons"] if isinstance(payload["snapshot_stop_reasons"], dict) else {}
+        snapshot_sizes = payload["snapshot_sizes"] if isinstance(payload["snapshot_sizes"], dict) else {}
+        payload["snapshot_stop_reasons"] = {
+            str(snapshot_id): str(reason)
+            for snapshot_id, reason in snapshot_stop_reasons.items()
+            if self.snapshot_max_size and int(snapshot_sizes.get(snapshot_id) or 0) >= self.snapshot_max_size
+        }
         return payload
+
+    def _timeout_reached(self, state: dict[str, Any]) -> bool:
+        return bool(self.crawl_timeout and time.time() - float(state["started_at"]) >= self.crawl_timeout)
 
     def _save_state(self, state: dict[str, Any]) -> None:
         state["admission_key"] = "snapshot_id"

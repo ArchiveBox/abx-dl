@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -479,6 +480,59 @@ def test_crawl_limit_state_resets_legacy_event_id_admission_state(tmp_path: Path
 
     assert limit_state.admit_snapshot("snap-1").allowed is True
     assert limit_state.get_stop_reason() == "crawl_max_urls"
+
+
+def test_crawl_limit_state_resumes_when_max_urls_increases(tmp_path: Path) -> None:
+    limit_state = CrawlLimitState(crawl_dir=tmp_path, crawl_max_urls=1, crawl_max_size=0)
+    assert limit_state.admit_snapshot("snap-1").allowed is True
+    assert limit_state.admit_snapshot("snap-2").allowed is False
+    assert limit_state.get_stop_reason() == "crawl_max_urls"
+
+    resumed_limit_state = CrawlLimitState(crawl_dir=tmp_path, crawl_max_urls=2, crawl_max_size=0)
+    assert resumed_limit_state.get_stop_reason() == ""
+    assert resumed_limit_state.admit_snapshot("snap-2").allowed is True
+
+
+def test_crawl_limit_state_resumes_when_max_size_increases(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "snapshot" / "wget"
+    plugin_dir.mkdir(parents=True)
+    output_file = plugin_dir / "index.html"
+    output_file.write_bytes(b"x" * 32)
+
+    limit_state = CrawlLimitState(crawl_dir=tmp_path, crawl_max_urls=0, crawl_max_size=16)
+    assert limit_state.record_process_output("proc-1", plugin_dir, ["index.html"]) == "crawl_max_size"
+    assert limit_state.get_stop_reason() == "crawl_max_size"
+
+    resumed_limit_state = CrawlLimitState(crawl_dir=tmp_path, crawl_max_urls=0, crawl_max_size=64)
+    assert resumed_limit_state.get_stop_reason() == ""
+
+
+def test_crawl_limit_state_stops_and_resumes_when_timeout_increases(tmp_path: Path) -> None:
+    limit_state = CrawlLimitState(crawl_dir=tmp_path, crawl_timeout=1)
+    state_dir = tmp_path / ".abx-dl"
+    state_dir.mkdir(exist_ok=True)
+    (state_dir / "limits.json").write_text(
+        json.dumps(
+            {
+                "admission_key": "snapshot_id",
+                "admitted_snapshot_ids": [],
+                "counted_event_ids": [],
+                "snapshot_sizes": {},
+                "snapshot_stop_reasons": {},
+                "started_at": time.time() - 2,
+                "total_size": 0,
+                "stop_reason": "",
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    assert limit_state.admit_snapshot("snap-1").allowed is False
+    assert limit_state.get_stop_reason() == "crawl_timeout"
+
+    resumed_limit_state = CrawlLimitState(crawl_dir=tmp_path, crawl_timeout=60)
+    assert resumed_limit_state.get_stop_reason() == ""
+    assert resumed_limit_state.admit_snapshot("snap-1").allowed is True
 
 
 def test_crawl_limit_state_stops_after_max_size(tmp_path: Path) -> None:

@@ -1149,6 +1149,7 @@ def cli(ctx):
 @click.option("--timeout", "-t", type=int, help="Timeout in seconds")
 @click.option("--max-urls", type=int, default=0, help="Maximum number of URLs to snapshot for this crawl (0 = unlimited)")
 @click.option("--crawl-max-size", default="0", help="Maximum total crawl size in bytes or units like 45mb / 1gb (0 = unlimited)")
+@click.option("--crawl-timeout", type=int, default=0, help="Maximum total crawl runtime in seconds (0 = unlimited)")
 @click.option("--snapshot-max-size", default="0", help="Maximum per-snapshot size in bytes or units like 45mb / 1gb (0 = unlimited)")
 @click.option("--disable", "disable_list", help="Comma-separated list of plugins to force-disable (overrides --plugins and --output)")
 @click.option("--dry-run", is_flag=True, help="Enable abxpkg dry-run mode and skip running snapshot hook subprocesses")
@@ -1168,6 +1169,7 @@ def dl(
     debug: bool = False,
     max_urls: int = 0,
     crawl_max_size: str = "0",
+    crawl_timeout: int = 0,
     snapshot_max_size: str = "0",
 ):
     """Download a URL using all enabled plugins.
@@ -1211,6 +1213,8 @@ def dl(
     config_overrides: dict[str, object] = {"TIMEOUT": timeout} if timeout else {}
     if max_urls < 0:
         raise click.BadParameter("max_urls must be 0 or a positive integer.", param_hint="--max-urls")
+    if crawl_timeout < 0:
+        raise click.BadParameter("crawl_timeout must be 0 or a positive integer.", param_hint="--crawl-timeout")
     try:
         crawl_max_size_bytes = parse_filesize_to_bytes(crawl_max_size)
     except ValueError as err:
@@ -1223,6 +1227,8 @@ def dl(
         config_overrides["CRAWL_MAX_URLS"] = max_urls
     if crawl_max_size_bytes:
         config_overrides["CRAWL_MAX_SIZE"] = crawl_max_size_bytes
+    if crawl_timeout:
+        config_overrides["CRAWL_TIMEOUT"] = crawl_timeout
     if snapshot_max_size_bytes:
         config_overrides["SNAPSHOT_MAX_SIZE"] = snapshot_max_size_bytes
     if dry_run:
@@ -1333,8 +1339,11 @@ def dl(
                 aborted = aborted or bool(aborted_events)
                 if debug:
                     bus.log_tree()
-                loop.run_until_complete(bus.wait_until_idle())
-                archive_results = loop.run_until_complete(bus.filter(ArchiveResultEvent, past=True, future=False))
+                try:
+                    loop.run_until_complete(bus.wait_until_idle())
+                    archive_results = loop.run_until_complete(bus.filter(ArchiveResultEvent, past=True, future=False))
+                finally:
+                    loop.run_until_complete(bus.destroy(clear=False))
     finally:
         if signal_handler_installed:
             loop.remove_signal_handler(signal.SIGINT)
