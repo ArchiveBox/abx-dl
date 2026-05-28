@@ -279,7 +279,7 @@ class SnapshotService(BaseService):
         if not isinstance(parent_event, CrawlStartEvent):
             return
         if self.limit_state.has_limits():
-            self.limit_state.admit_snapshot(event.event_id)
+            self.limit_state.admit_snapshot(event.snapshot_id)
 
     async def on_ProcessStdoutEvent(self, event: ProcessStdoutEvent) -> None:
         """Route type=Snapshot records to SnapshotEvent.
@@ -369,46 +369,46 @@ class SnapshotService(BaseService):
         self._config = self._config or await get_config(self.bus)
         if self.limit_state is None:
             self.limit_state = CrawlLimitState.from_config(self._config.user.model_dump(mode="json"))
-        if self.limit_state.has_limits() and not self.limit_state.admit_snapshot(event.event_id).allowed:
-            return
+        admission = self.limit_state.admit_snapshot(event.snapshot_id) if self.limit_state.has_limits() else None
         url = self.url
         snapshot_id = self.snapshot.id
         output_dir = str(self.output_dir)
         try:
-            for plugin, hook in self.hooks:
-                if await self.should_abort():
-                    break
-                await self.on_SnapshotEvent__for_hook(plugin, hook)(event)
-                if await self.should_abort():
-                    break
-                if self.limit_state.get_snapshot_stop_reason(event.event_id) == "snapshot_max_size":
-                    break
-            foreground_process = await self.bus.find(
-                ProcessEvent,
-                past=True,
-                future=False,
-                where=lambda candidate: self.bus.event_is_child_of(candidate, event) and not candidate.is_background,
-            )
-            if foreground_process is None:
-                background_process_events = await self.bus.filter(
+            if admission is None or admission.allowed:
+                for plugin, hook in self.hooks:
+                    if await self.should_abort():
+                        break
+                    await self.on_SnapshotEvent__for_hook(plugin, hook)(event)
+                    if await self.should_abort():
+                        break
+                    if self.limit_state.get_snapshot_stop_reason(event.snapshot_id) == "snapshot_max_size":
+                        break
+                foreground_process = await self.bus.find(
                     ProcessEvent,
-                    child_of=event,
                     past=True,
                     future=False,
-                    is_background=True,
+                    where=lambda candidate: self.bus.event_is_child_of(candidate, event) and not candidate.is_background,
                 )
-                if background_process_events:
-                    await asyncio.gather(
-                        *[
-                            self.bus.find(
-                                ProcessCompletedEvent,
-                                child_of=process_event,
-                                past=True,
-                                future=self.snapshot_phase_timeout,
-                            )
-                            for process_event in background_process_events
-                        ],
+                if foreground_process is None:
+                    background_process_events = await self.bus.filter(
+                        ProcessEvent,
+                        child_of=event,
+                        past=True,
+                        future=False,
+                        is_background=True,
                     )
+                    if background_process_events:
+                        await asyncio.gather(
+                            *[
+                                self.bus.find(
+                                    ProcessCompletedEvent,
+                                    child_of=process_event,
+                                    past=True,
+                                    future=self.snapshot_phase_timeout,
+                                )
+                                for process_event in background_process_events
+                            ],
+                        )
         finally:
             if self.snapshot_cleanup_enabled:
                 cleanup_task = asyncio.create_task(

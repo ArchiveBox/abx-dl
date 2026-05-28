@@ -28,6 +28,7 @@ from abx_dl.events import (
     SnapshotCompletedEvent,
     SnapshotEvent,
 )
+from abx_dl.limits import CrawlLimitState
 from abx_dl.models import Hook, Plugin, PluginConfig, Snapshot, discover_plugins
 from abx_dl.orchestrator import create_bus, download, setup_services
 from abx_dl.services.archive_result_service import ArchiveResultService
@@ -929,6 +930,55 @@ def test_snapshot_service_emits_background_process_without_extra_wait(tmp_path: 
     assert emitted.is_background is True
     assert emitted.event_blocks_parent_completion is False
     assert emitted.hook_name == "on_Snapshot__24_responses.daemon.bg"
+
+
+def test_snapshot_limit_admission_uses_stable_snapshot_id_across_retries(tmp_path: Path) -> None:
+    output_dir = tmp_path / "run"
+    snapshot = Snapshot(url="https://example.com", id="snap-limit-retry")
+    limit_state = CrawlLimitState(crawl_dir=output_dir, crawl_max_urls=1)
+    assert limit_state.admit_snapshot(snapshot.id).allowed is True
+
+    bus = create_bus(total_timeout=10.0, name=f"snapshot_limit_stable_id_{tmp_path.name}")
+    MachineService(bus, persist_derived=False)
+    SnapshotService(
+        bus,
+        url=snapshot.url,
+        snapshot=snapshot,
+        output_dir=output_dir,
+        plugins={},
+        snapshot_phase_timeout=2.0,
+        snapshot_cleanup_phase_timeout=2.0,
+    )
+
+    async def run() -> SnapshotCompletedEvent | None:
+        await bus.emit(
+            MachineEvent(
+                config={
+                    "CRAWL_DIR": str(output_dir),
+                    "CRAWL_MAX_URLS": 1,
+                    "CRAWL_MAX_SIZE": 0,
+                    "SNAPSHOT_MAX_SIZE": 0,
+                },
+                config_type="user",
+            ),
+        ).now()
+        crawl_start_event = CrawlStartEvent(url=snapshot.url, snapshot_id=snapshot.id, output_dir=str(output_dir))
+        root_event = SnapshotEvent(
+            url=snapshot.url,
+            snapshot_id=snapshot.id,
+            output_dir=str(output_dir),
+            event_parent_id=crawl_start_event.event_id,
+        )
+        await bus.emit(crawl_start_event).now()
+        await bus.emit(root_event).now(timeout=2.0)
+        completed = await bus.find(SnapshotCompletedEvent, child_of=root_event, past=True, future=1.0)
+        await bus.wait_until_idle()
+        return completed if isinstance(completed, SnapshotCompletedEvent) else None
+
+    completed = asyncio.run(run())
+
+    assert completed is not None
+    assert CrawlLimitState(crawl_dir=output_dir, crawl_max_urls=1).admit_snapshot(snapshot.id).allowed is True
 
 
 def test_snapshot_hook_binary_event_env_replay_applies_newest_last(tmp_path: Path) -> None:

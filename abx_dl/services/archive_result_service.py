@@ -153,7 +153,7 @@ class ArchiveResultService(BaseService):
             started_process.event_id,
             Path(event.output_dir),
             [output_file.path for output_file in event.output_files],
-            snapshot_id=snapshot_event.event_id,
+            snapshot_id=snapshot_event.snapshot_id,
         )
 
         existing = await self.bus.find(
