@@ -2,9 +2,13 @@ from __future__ import annotations
 
 import importlib
 import json
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from datetime import datetime, timezone
 from pathlib import Path
 
+import psutil
 import pytest
 
 from server.server_utils import (
@@ -127,13 +131,37 @@ def _write_session(data_dir: Path, sid: str, **overrides: object) -> dict[str, o
 def server_client(tmp_path: Path):
     data_dir = tmp_path / "sessions"
     data_dir.mkdir(parents=True, exist_ok=True)
-    server_module.app.config.update(TESTING=True, DATA_DIR=str(data_dir))
+    server_module.app.config.update(TESTING=True, DATA_DIR=str(data_dir), TIMEOUT_GRACE=server_module.DEFAULT_TIMEOUT_GRACE)
     with server_module.sessions_lock:
         server_module.sessions.clear()
     with server_module.app.test_client() as client:
         yield client
     with server_module.sessions_lock:
         server_module.sessions.clear()
+
+
+@pytest.fixture()
+def slow_http_url():
+    class SlowHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            time.sleep(30)
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"<html><title>slow</title><body>slow</body></html>")
+
+        def log_message(self, format: str, *args) -> None:
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), SlowHandler)
+    server.daemon_threads = True
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}/slow"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def test_api_sessions_normalizes_restarted_runs(server_client) -> None:
@@ -181,51 +209,38 @@ def test_session_page_and_download_only_expose_safe_public_outputs(server_client
     assert traversal_download.status_code == 404
 
 
-def test_run_download_reaps_timed_out_child(server_client, monkeypatch, tmp_path: Path) -> None:
-    sid = "timeoutdemo"
-    data_dir = Path(server_module.app.config["DATA_DIR"])
-    session_root = data_dir / sid
-    session_root.mkdir(parents=True, exist_ok=True)
+def test_run_download_reaps_timed_out_child(server_client, slow_http_url: str) -> None:
+    server_module.app.config["TIMEOUT_GRACE"] = 0
+    info = server_module.create_session(slow_http_url, ["wget"], timeout=5)
+    sid = info["id"]
+    session_root = Path(server_module.app.config["DATA_DIR"]) / sid
 
-    with server_module.sessions_lock:
-        server_module.sessions[sid] = {
-            "id": sid,
-            "url": "https://example.com",
-            "plugins": ["title"],
-            "timeout": 1,
-            "status": "starting",
-            "created_at": "2026-03-15T12:00:00+00:00",
-            "finished_at": None,
-            "exit_code": None,
-            "pid": None,
-            "error": None,
-        }
+    deadline = time.monotonic() + 12
+    while time.monotonic() < deadline:
+        with server_module.sessions_lock:
+            current_status = server_module.sessions[sid]["status"]
+            pid = server_module.sessions[sid]["pid"]
+        if current_status == "timeout":
+            break
+        time.sleep(0.05)
+    else:
+        pytest.fail(f"download session did not time out: {server_module.sessions[sid]}")
 
-    class FakeProc:
-        def __init__(self) -> None:
-            self.pid = 4321
-            self.returncode = -9
-            self.kill_called = False
-            self.wait_calls = 0
-
-        def wait(self, timeout: int | float | None = None) -> int:
-            self.wait_calls += 1
-            if self.wait_calls == 1:
-                assert timeout is not None
-                raise server_module.subprocess.TimeoutExpired(cmd=["abx-dl"], timeout=timeout)
-            return self.returncode
-
-        def kill(self) -> None:
-            self.kill_called = True
-
-    fake_proc = FakeProc()
-    monkeypatch.setattr(server_module.subprocess, "Popen", lambda *args, **kwargs: fake_proc)
-
-    server_module._run_download(sid, "https://example.com", ["title"], timeout=1)
-
-    assert fake_proc.kill_called is True
-    assert fake_proc.wait_calls == 2
     with server_module.sessions_lock:
         info = dict(server_module.sessions[sid])
+
+    assert pid is not None
     assert info["status"] == "timeout"
     assert info["exit_code"] == -9
+    assert info["error"] == "Process timed out after 5s"
+    assert info["finished_at"] is not None
+
+    persisted = json.loads((session_root / "session.json").read_text())
+    assert persisted["status"] == "timeout"
+    assert persisted["exit_code"] == -9
+    assert persisted["pid"] == pid
+    assert persisted["error"] == "Process timed out after 5s"
+
+    stdout = (session_root / "abx-dl.stdout.log").read_text()
+    assert '"type": "Snapshot"' in stdout
+    assert not psutil.pid_exists(pid)

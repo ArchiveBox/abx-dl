@@ -826,15 +826,14 @@ def test_binary_installed_event_updates_lib_bin_symlink(tmp_path: Path) -> None:
     asyncio.run(run())
 
 
-def test_download_creates_default_persona_dir(monkeypatch, tmp_path: Path) -> None:
-    import abx_dl.config as config_mod
+def test_download_creates_default_persona_dir(tmp_path: Path) -> None:
+    personas_dir = Path(os.environ["PERSONAS_DIR"])
 
-    monkeypatch.setattr(config_mod, "PERSONAS_DIR", tmp_path / "personas")
-    assert not (tmp_path / "personas" / "Default").exists()
+    assert not (personas_dir / "Default").exists()
 
     _run_download("https://example.com", {}, tmp_path / "run", auto_install=True)
 
-    assert (tmp_path / "personas" / "Default").is_dir()
+    assert (personas_dir / "Default").is_dir()
 
 
 def test_download_sets_plugin_specific_binary_env_from_binary_default(tmp_path: Path) -> None:

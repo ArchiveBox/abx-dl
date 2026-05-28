@@ -76,6 +76,7 @@ DEFAULT_PORT = 8484
 DEFAULT_DATA_DIR = os.path.join(tempfile.gettempdir(), "abx-dl-sessions")
 SESSION_TTL_HOURS = 24
 DEFAULT_TIMEOUT = 120
+DEFAULT_TIMEOUT_GRACE = 30
 
 # Plugins safe to expose publicly (extraction/snapshot plugins only, not system-level ones)
 ALLOWED_PLUGINS = [
@@ -175,6 +176,7 @@ def _run_download(sid: str, url: str, plugins: list[str], timeout: int) -> None:
     stdout_path = sdir / "abx-dl.stdout.log"
     stderr_path = sdir / "abx-dl.stderr.log"
     proc: subprocess.Popen[bytes] | None = None
+    process_timeout = timeout + int(app.config.get("TIMEOUT_GRACE", DEFAULT_TIMEOUT_GRACE))
 
     try:
         with open(stdout_path, "w") as stdout_f, open(stderr_path, "w") as stderr_f:
@@ -190,7 +192,7 @@ def _run_download(sid: str, url: str, plugins: list[str], timeout: int) -> None:
                 sessions[sid]["pid"] = current_proc.pid
             _persist_session(sid)
 
-            current_proc.wait(timeout=timeout + 30)
+            current_proc.wait(timeout=process_timeout)
 
             with sessions_lock:
                 sessions[sid]["exit_code"] = current_proc.returncode
@@ -207,7 +209,7 @@ def _run_download(sid: str, url: str, plugins: list[str], timeout: int) -> None:
         with sessions_lock:
             sessions[sid]["exit_code"] = proc.returncode
             sessions[sid]["status"] = "timeout"
-            sessions[sid]["error"] = f"Process timed out after {timeout + 30}s"
+            sessions[sid]["error"] = f"Process timed out after {process_timeout}s"
             sessions[sid]["finished_at"] = datetime.now(timezone.utc).isoformat()
         _persist_session(sid)
 

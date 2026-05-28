@@ -54,8 +54,8 @@ CONFIG_FILE = CONFIG_DIR / "config.env"
 DERIVED_CONFIG_FILE = CONFIG_DIR / "derived.env"
 DATA_DIR = BOOTSTRAP_CONFIG.DATA_DIR
 LIB_DIR = Path(os.environ.get("LIB_DIR") or (CONFIG_DIR / "lib" / get_arch()))
-PERSONAS_DIR = CONFIG_DIR / "personas"
-TMP_DIR = Path(tempfile.mkdtemp(prefix="abx-dl-"))
+PERSONAS_DIR = Path(os.environ.get("PERSONAS_DIR") or (CONFIG_DIR / "personas"))
+TMP_DIR = Path(os.environ.get("TMP_DIR") or tempfile.mkdtemp(prefix="abx-dl-"))
 
 
 class GlobalConfig(BaseSettings):
