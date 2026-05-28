@@ -40,15 +40,10 @@ async def _wait_for_process_completed(event: ProcessCompletedEvent | None, timeo
     return event
 
 
-async def _run_event_now(event: BaseEvent, timeout: float | None = None, *, suppress_unattached: bool = False) -> BaseEvent:
-    try:
-        await event.now(timeout=timeout)
-        await event.wait(timeout=timeout)
-        await event.event_results_list()
-    except RuntimeError as err:
-        if suppress_unattached and str(err) == "event has no bus attached":
-            return event
-        raise
+async def _run_event_now(event: BaseEvent, timeout: float | None = None) -> BaseEvent:
+    await event.now(timeout=timeout)
+    await event.wait(timeout=timeout)
+    await event.event_results_list()
     return event
 
 
@@ -432,26 +427,7 @@ class SnapshotService(BaseService):
                     event_timeout=self.snapshot_cleanup_phase_timeout,
                     event_handler_slow_timeout=slow_warning_timeout(self.snapshot_cleanup_phase_timeout),
                 )
-                cleanup_event.event_parent_id = event.event_id
-                # During cancellation the handler context may already be stale.
-                # Emit on the owning bus directly so cleanup is always attached
-                # and Ctrl+C never leaves an "event has no bus attached" task.
-                cleanup_task = asyncio.create_task(
-                    _run_event_now(
-                        self.bus.emit(cleanup_event),
-                        self.snapshot_cleanup_phase_timeout,
-                        suppress_unattached=True,
-                    ),
-                )
-                try:
-                    await asyncio.shield(cleanup_task)
-                except asyncio.CancelledError:
-                    try:
-                        await cleanup_task
-                    except RuntimeError as err:
-                        if str(err) != "event has no bus attached":
-                            raise
-                    raise
+                event.emit(cleanup_event)
         if self.snapshot_cleanup_enabled:
             return
 
@@ -463,8 +439,7 @@ class SnapshotService(BaseService):
             event_handler_timeout=self.snapshot_phase_timeout,
             event_handler_slow_timeout=slow_warning_timeout(self.snapshot_phase_timeout),
         )
-        completed_event.event_parent_id = event.event_id
-        await _run_event_now(self.bus.emit(completed_event), self.snapshot_phase_timeout, suppress_unattached=True)
+        event.emit(completed_event)
 
     async def on_SnapshotCleanupEvent(self, event: SnapshotCleanupEvent) -> None:
         """SIGTERM all background snapshot hooks so they can flush and exit.
@@ -531,7 +506,7 @@ class SnapshotService(BaseService):
         ]
         if pending_kills:
             await asyncio.gather(
-                *(_run_event_now(pending_kill, pending_kill.event_timeout, suppress_unattached=True) for pending_kill in pending_kills),
+                *(_run_event_now(pending_kill, pending_kill.event_timeout) for pending_kill in pending_kills),
             )
         if started_processes:
             await asyncio.gather(
@@ -556,8 +531,7 @@ class SnapshotService(BaseService):
             event_handler_timeout=event.event_timeout,
             event_handler_slow_timeout=slow_warning_timeout(event.event_timeout),
         )
-        completed_event.event_parent_id = root_snapshot_event.event_id
-        await _run_event_now(self.bus.emit(completed_event), event.event_timeout, suppress_unattached=True)
+        root_snapshot_event.emit(completed_event)
 
     async def on_CrawlAbortEvent(self, event: CrawlAbortEvent) -> None:
         """Stop scheduling any further snapshot work after a user abort."""
