@@ -234,6 +234,7 @@ class CrawlLimitState:
     def _load_state(self) -> dict[str, Any]:
         if not self.state_path.exists():
             return {
+                "admission_key": "snapshot_id",
                 "admitted_snapshot_ids": [],
                 "counted_event_ids": [],
                 "snapshot_sizes": {},
@@ -247,6 +248,11 @@ class CrawlLimitState:
             payload = {}
         if not isinstance(payload, dict):
             payload = {}
+        if payload.get("admission_key") != "snapshot_id":
+            payload["admission_key"] = "snapshot_id"
+            payload["admitted_snapshot_ids"] = []
+            if payload.get("stop_reason") == "crawl_max_urls":
+                payload["stop_reason"] = ""
         payload.setdefault("admitted_snapshot_ids", [])
         payload.setdefault("counted_event_ids", [])
         payload.setdefault("snapshot_sizes", {})
@@ -256,4 +262,5 @@ class CrawlLimitState:
         return payload
 
     def _save_state(self, state: dict[str, Any]) -> None:
+        state["admission_key"] = "snapshot_id"
         self.state_path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")

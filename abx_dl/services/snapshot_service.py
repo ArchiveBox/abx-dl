@@ -370,45 +370,46 @@ class SnapshotService(BaseService):
         if self.limit_state is None:
             self.limit_state = CrawlLimitState.from_config(self._config.user.model_dump(mode="json"))
         admission = self.limit_state.admit_snapshot(event.snapshot_id) if self.limit_state.has_limits() else None
+        if admission is not None and not admission.allowed:
+            raise RuntimeError(f"Snapshot {event.snapshot_id} denied by crawl limits: {admission.stop_reason}")
         url = self.url
         snapshot_id = self.snapshot.id
         output_dir = str(self.output_dir)
         try:
-            if admission is None or admission.allowed:
-                for plugin, hook in self.hooks:
-                    if await self.should_abort():
-                        break
-                    await self.on_SnapshotEvent__for_hook(plugin, hook)(event)
-                    if await self.should_abort():
-                        break
-                    if self.limit_state.get_snapshot_stop_reason(event.snapshot_id) == "snapshot_max_size":
-                        break
-                foreground_process = await self.bus.find(
+            for plugin, hook in self.hooks:
+                if await self.should_abort():
+                    break
+                await self.on_SnapshotEvent__for_hook(plugin, hook)(event)
+                if await self.should_abort():
+                    break
+                if self.limit_state.get_snapshot_stop_reason(event.snapshot_id) == "snapshot_max_size":
+                    break
+            foreground_process = await self.bus.find(
+                ProcessEvent,
+                past=True,
+                future=False,
+                where=lambda candidate: self.bus.event_is_child_of(candidate, event) and not candidate.is_background,
+            )
+            if foreground_process is None:
+                background_process_events = await self.bus.filter(
                     ProcessEvent,
+                    child_of=event,
                     past=True,
                     future=False,
-                    where=lambda candidate: self.bus.event_is_child_of(candidate, event) and not candidate.is_background,
+                    is_background=True,
                 )
-                if foreground_process is None:
-                    background_process_events = await self.bus.filter(
-                        ProcessEvent,
-                        child_of=event,
-                        past=True,
-                        future=False,
-                        is_background=True,
+                if background_process_events:
+                    await asyncio.gather(
+                        *[
+                            self.bus.find(
+                                ProcessCompletedEvent,
+                                child_of=process_event,
+                                past=True,
+                                future=self.snapshot_phase_timeout,
+                            )
+                            for process_event in background_process_events
+                        ],
                     )
-                    if background_process_events:
-                        await asyncio.gather(
-                            *[
-                                self.bus.find(
-                                    ProcessCompletedEvent,
-                                    child_of=process_event,
-                                    past=True,
-                                    future=self.snapshot_phase_timeout,
-                                )
-                                for process_event in background_process_events
-                            ],
-                        )
         finally:
             if self.snapshot_cleanup_enabled:
                 cleanup_task = asyncio.create_task(

@@ -467,6 +467,20 @@ def test_crawl_limit_state_blocks_snapshots_after_max_urls(tmp_path: Path) -> No
     assert third.stop_reason == "crawl_max_urls"
 
 
+def test_crawl_limit_state_resets_legacy_event_id_admission_state(tmp_path: Path) -> None:
+    state_dir = tmp_path / ".abx-dl"
+    state_dir.mkdir()
+    (state_dir / "limits.json").write_text(
+        '{"admitted_snapshot_ids":["event-1"],"stop_reason":"crawl_max_urls"}',
+        encoding="utf-8",
+    )
+
+    limit_state = CrawlLimitState(crawl_dir=tmp_path, crawl_max_urls=1, crawl_max_size=0)
+
+    assert limit_state.admit_snapshot("snap-1").allowed is True
+    assert limit_state.get_stop_reason() == "crawl_max_urls"
+
+
 def test_crawl_limit_state_stops_after_max_size(tmp_path: Path) -> None:
     plugin_dir = tmp_path / "snapshot" / "wget"
     plugin_dir.mkdir(parents=True)
