@@ -95,8 +95,8 @@ class ProcessService(BaseService):
     Background behavior is owned by abxbus and the dispatch site:
     callers ``await bus.emit(ProcessEvent(...)).now()`` for foreground hooks and use
     ``bus.emit(ProcessEvent(...))`` without awaiting for background hooks. The
-    ``ProcessEvent`` itself still stays alive until the subprocess exits because
-    ``on_ProcessEvent()`` awaits its child ``ProcessStartedEvent``.
+    ``ProcessEvent`` itself stays alive until the subprocess exits; parent events
+    can still proceed because background ProcessEvents do not block parent completion.
     """
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [
@@ -127,7 +127,6 @@ class ProcessService(BaseService):
         self.pause_requested = asyncio.Event()
         self.abort_requested = False
         self._active_process_event_tasks: dict[str, asyncio.Task[Process | None]] = {}
-        self._background_completion_tasks: set[asyncio.Task[Process | None]] = set()
         self._completed_process_event_ids: set[str] = set()
         super().__init__(bus)
         self.bus.on(CrawlPauseEvent, self.on_CrawlPauseEvent)
@@ -261,7 +260,7 @@ class ProcessService(BaseService):
                 proc.ended_at = now_iso()
                 index_path = plugin_output_dir.parent / "index.jsonl"
                 write_jsonl(index_path, proc, also_print=self.emit_jsonl)
-                event.emit(
+                await event.emit(
                     ProcessCompletedEvent(
                         plugin_name=event.plugin_name,
                         hook_name=event.hook_name,
@@ -286,7 +285,7 @@ class ProcessService(BaseService):
                         event_handler_timeout=event.event_handler_timeout,
                         event_handler_slow_timeout=event.event_handler_slow_timeout,
                     ),
-                )
+                ).now()
                 return proc
             started_event = await event.emit(
                 ProcessStartedEvent(
@@ -338,11 +337,6 @@ class ProcessService(BaseService):
                 foreground_interrupts=foreground_interrupts,
             )
             completion_owns_process = True
-            if event.is_background:
-                background_task = asyncio.create_task(completion)
-                self._background_completion_tasks.add(background_task)
-                background_task.add_done_callback(self._background_completion_tasks.discard)
-                return proc
             return await completion
         except asyncio.CancelledError:
             if process is not None and not completion_owns_process:
@@ -483,7 +477,7 @@ class ProcessService(BaseService):
         index_path = plugin_output_dir.parent / "index.jsonl"
         write_jsonl(index_path, proc, also_print=self.emit_jsonl)
 
-        event.emit(
+        await started_event.emit(
             ProcessCompletedEvent(
                 plugin_name=event.plugin_name,
                 hook_name=event.hook_name,
@@ -508,7 +502,7 @@ class ProcessService(BaseService):
                 event_handler_timeout=event.event_handler_timeout,
                 event_handler_slow_timeout=event.event_handler_slow_timeout,
             ),
-        )
+        ).now()
         if action == "retry":
             await event.emit(
                 ProcessEvent(
