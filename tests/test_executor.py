@@ -928,6 +928,8 @@ def test_snapshot_service_emits_background_process_without_extra_wait(tmp_path: 
     assert emitted is not None
     assert emitted.is_background is True
     assert emitted.event_blocks_parent_completion is False
+    assert emitted.event_timeout and emitted.event_timeout > 0
+    assert emitted.event_handler_timeout and emitted.event_handler_timeout > 0
     assert emitted.hook_name == "on_Snapshot__24_responses.daemon.bg"
 
 
