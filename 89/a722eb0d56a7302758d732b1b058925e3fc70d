@@ -1,0 +1,21 @@
+abx_dl/services/process_service.py
+  s_e09843280e6970::t_70dbf4c6d6b0cb 174-183,190,192-204
+  s_e09843280e6970::t_9e8233ba674e0c 4,6
+  s_e09843280e6970::t_f05149fba69532 86-118
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "89a722eb0d56a7302758d732b1b058925e3fc70d",
+  "prompts": {},
+  "sessions": {
+    "s_e09843280e6970": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3879a2be-5acf-439c-a220-1e40a4ec795a",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
