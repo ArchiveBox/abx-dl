@@ -6,6 +6,7 @@ here as Pydantic BaseModels. Plugin discovery functions (discover_plugins,
 filter_plugins, etc.) are also here since they operate on these models.
 """
 
+import importlib.metadata
 import json
 import os
 import platform
@@ -22,6 +23,12 @@ from pydantic import BaseModel, ConfigDict, Field
 from abx_plugins import get_plugins_dir
 
 from .output_files import OutputFile
+
+
+try:
+    LIBRARY_VERSION = importlib.metadata.version("abx-dl")
+except importlib.metadata.PackageNotFoundError:
+    LIBRARY_VERSION = "0.0.1"
 
 
 # ── Utility functions ──────────────────────────────────────────────────────
@@ -198,6 +205,7 @@ class PluginEnv(BaseModel):
 
         env = os.environ.copy()
         env.pop("UV_RUN_RECURSION_DEPTH", None)
+        env["LIBRARY_VERSION"] = LIBRARY_VERSION
 
         # Let Google traffic bypass local proxies so Chrome/CDP and provider
         # installs do not inherit host NO_PROXY rules that break them.
