@@ -233,11 +233,18 @@ class SnapshotService(BaseService):
             )
             if hook.is_background:
                 background_process = event.emit(process_event)
+                # First-run PEP-723 hooks need to resolve + install their inline
+                # script deps via ``uv run --script``; on a cold cache that can
+                # take 20–30s. Cap at min(60s, handler_timeout) to absorb that
+                # cold-start latency without hanging indefinitely if the hook
+                # truly fails to launch. ``handler_timeout`` already bounds the
+                # hook's full lifetime, so this is at most an additive 60s on
+                # the start phase.
                 started_process = await self.bus.find(
                     ProcessStartedEvent,
                     child_of=background_process,
                     past=True,
-                    future=min(5.0, handler_timeout),
+                    future=min(60.0, handler_timeout),
                 )
                 if await self.should_abort():
                     return

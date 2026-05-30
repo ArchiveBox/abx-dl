@@ -545,9 +545,21 @@ def get_required_binary_requests(
         user_env=overrides,
         derived_env=derived_overrides,
     )
+    # For the cache-key signature we want the binary's *logical* name (e.g.
+    # ``chromium``) regardless of where it's installed on this machine, so the
+    # ``ABX_INSTALL_CACHE`` key matches across runs and installs. Strip
+    # ``*_BINARY`` overrides from user_env so the plugin schema's default
+    # (``"chromium"``, ``"node"``, …) wins when hydrating ``{X_BINARY}``
+    # name templates. Without this, an INI-file or env-var override that
+    # already holds the resolved abspath bleeds into the signature.
+    if isinstance(overrides, BaseSettings):
+        request_name_overrides: dict[str, Any] = overrides.model_dump(mode="json")
+    else:
+        request_name_overrides = dict(overrides or {})
+    request_name_overrides = {key: value for key, value in request_name_overrides.items() if not key.endswith("_BINARY")}
     request_name_config = _load_plugin_config_model(
         plugin,
-        user_env=overrides,
+        user_env=request_name_overrides,
         derived_env=None,
     )
     env = PluginEnv.from_config(

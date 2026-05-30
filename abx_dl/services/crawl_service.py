@@ -212,11 +212,14 @@ class CrawlService(BaseService):
             )
             if hook.is_background:
                 background_process = event.emit(process_event)
+                # See snapshot_service.py — PEP-723 hooks with cold uv caches
+                # routinely need >5s to resolve + install inline-script deps
+                # before they can emit ProcessStartedEvent. Bumped to 60s.
                 started_process = await self.bus.find(
                     ProcessStartedEvent,
                     child_of=background_process,
                     past=True,
-                    future=min(5.0, handler_timeout),
+                    future=min(60.0, handler_timeout),
                 )
                 if await self.should_abort():
                     return
