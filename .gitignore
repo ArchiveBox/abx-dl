@@ -13,3 +13,4 @@ dist/
 
 env/
 test/
+tmp/

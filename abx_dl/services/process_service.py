@@ -1,7 +1,9 @@
 """ProcessService — owns hook subprocess execution and raw process events."""
 
 import asyncio
+import signal
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar, Literal
@@ -81,6 +83,39 @@ def _rotate_existing_log(path: Path) -> Path | None:
     return archived
 
 
+@contextmanager
+def _default_sigint_during_prompt():
+    """Restore Python's default SIGINT-raises-KeyboardInterrupt behavior while a
+    synchronous user-input prompt is open.
+
+    The CLI installs an asyncio-level SIGINT handler
+    (``loop.add_signal_handler``) that emits a ``CrawlPauseEvent`` /
+    ``CrawlAbortEvent`` on Ctrl+C. That handler can only fire when the
+    asyncio loop is running, but the interrupt prompt below blocks the loop
+    on a synchronous ``click.getchar`` call — so Ctrl+C would be silently
+    absorbed by asyncio's signal-handler queue and the user would see their
+    ``^C`` keystrokes accumulate with no effect. Installing Python's default
+    SIGINT handler for the prompt's duration restores the normal "Ctrl+C
+    raises KeyboardInterrupt" path that the prompt's own ``except`` clause
+    catches and turns into an ``"abort"`` choice. The CLI's asyncio handler
+    is reinstated on exit, so the second-press-aborts behavior is preserved
+    for any subsequent prompts.
+    """
+    try:
+        previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    except (ValueError, OSError):
+        # Not on the main thread, or signals unavailable — leave handler alone.
+        yield
+        return
+    try:
+        yield
+    finally:
+        try:
+            signal.signal(signal.SIGINT, previous)
+        except (ValueError, OSError):
+            pass
+
+
 class ProcessService(BaseService):
     """Runs hook subprocesses and emits only process-level lifecycle events.
 
@@ -136,27 +171,37 @@ class ProcessService(BaseService):
     # ── Event handlers ──────────────────────────────────────────────────────
 
     def on_InterruptedHookPrompt(self, hook_name: str) -> Literal["abort", "retry", "skip"]:
-        """Ask the user what to do after interrupting one foreground hook."""
+        """Ask the user what to do after interrupting one foreground hook.
+
+        Runs synchronously inside the orchestrator's asyncio loop, so
+        ``loop.add_signal_handler(SIGINT, ...)`` installed by the CLI can't
+        fire while ``click.getchar`` blocks — the loop's pending callbacks
+        only run between awaits, and we're not yielding. Temporarily swap in
+        Python's default SIGINT handler so Ctrl+C actually raises
+        ``KeyboardInterrupt`` while the prompt is open; the ``except`` below
+        catches it and turns it into ``"abort"``.
+        """
         click.echo("", err=True)
         click.echo(f"Interrupted {hook_name}. Choose what to do next:", err=True)
         click.echo("  Enter: continue and skip the aborted hook", err=True)
         click.echo("  r: continue and retry the aborted hook", err=True)
         click.echo("  a or Ctrl+C: exit now and abort the whole crawl", err=True)
         try:
-            click.echo("Choice [skip]: ", nl=False, err=True)
-            while True:
-                choice_char = click.getchar()
-                click.echo("", err=True)
-                if choice_char in ("\x03", "\x04"):
-                    return "abort"
-                if choice_char in ("\r", "\n", "3", "s", "S"):
-                    return "skip"
-                if choice_char in ("1", "a", "A"):
-                    return "abort"
-                if choice_char in ("2", "r", "R"):
-                    return "retry"
-                click.echo("Press Enter to skip, r to retry, or a/Ctrl+C to abort.", err=True)
+            with _default_sigint_during_prompt():
                 click.echo("Choice [skip]: ", nl=False, err=True)
+                while True:
+                    choice_char = click.getchar()
+                    click.echo("", err=True)
+                    if choice_char in ("\x03", "\x04"):
+                        return "abort"
+                    if choice_char in ("\r", "\n", "3", "s", "S"):
+                        return "skip"
+                    if choice_char in ("1", "a", "A"):
+                        return "abort"
+                    if choice_char in ("2", "r", "R"):
+                        return "retry"
+                    click.echo("Press Enter to skip, r to retry, or a/Ctrl+C to abort.", err=True)
+                    click.echo("Choice [skip]: ", nl=False, err=True)
         except (EOFError, KeyboardInterrupt, click.Abort):
             return "abort"
 
