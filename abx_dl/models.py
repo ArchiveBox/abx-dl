@@ -238,7 +238,6 @@ class PluginEnv(BaseModel):
                 runtime_bin_dirs.append(binary_dir)
 
         for extra_dir in (
-            str(Path(env["LIB_BIN_DIR"])),
             str(Path(sys.executable).parent),
             str(Path(env["PIP_BIN_DIR"])),
             str(Path(env["NPM_BIN_DIR"])),
@@ -250,8 +249,8 @@ class PluginEnv(BaseModel):
             if uv_bin_dir not in runtime_bin_dirs:
                 runtime_bin_dirs.append(uv_bin_dir)
 
-        # Prepend runtime-managed bin dirs ahead of the inherited PATH so hooks
-        # see abx-managed binaries before host-global ones.
+        # Prepend provider-specific runtime dirs ahead of the inherited PATH so
+        # hooks see abx-managed binaries before host-global ones.
         derived_path = env["PATH"]
         for extra_dir in reversed(runtime_bin_dirs):
             if extra_dir and extra_dir not in path_dirs:

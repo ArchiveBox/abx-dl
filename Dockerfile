@@ -54,11 +54,9 @@ ENV ARCHIVEBOX_USER=archivebox \
 ENV CODE_DIR=/app \
     DATA_DIR=/data \
     LIB_DIR=/opt/archivebox/lib \
-    LIB_BIN_DIR=/opt/archivebox/lib/bin \
     ABXPKG_LIB_DIR=/opt/archivebox/lib \
     PLAYWRIGHT_BROWSERS_PATH=/opt/archivebox/lib/playwright/cache \
     PERSONAS_DIR=/data/personas \
-    CHROME_EXTENSIONS_DIR=/opt/archivebox/lib/chrome_extensions \
     CHROME_USER_DATA_DIR=/data/personas/Default/chrome_profile \
     CHROME_HEADLESS=true \
     CHROME_SANDBOX=false \
@@ -159,10 +157,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
     --mount=type=cache,target=/opt/archivebox/lib,sharing=locked,id=archivebox-lib-$TARGETARCH$TARGETVARIANT \
     echo "[+] Installing abx-dl plugin runtime dependencies into $LIB_DIR..." \
     && export PERSONAS_DIR="$LIB_DIR/personas" \
-    && export CHROME_EXTENSIONS_DIR="$LIB_DIR/chrome_extensions" \
     && export CHROME_USER_DATA_DIR="$LIB_DIR/chrome_profile" \
     && export PAPERS_DL_BINARY="$LIB_DIR/pip/packages/papers-dl/venv/bin/papers-dl" \
-    && mkdir -p "$LIB_DIR" "$LIB_DIR/chrome_extensions" "$LIB_DIR/pip/packages" "$LIB_BIN_DIR" \
+    && mkdir -p "$LIB_DIR" "$LIB_DIR/pip/packages" \
     && apt-get update -qq \
     && apt-get install -qq -y --no-install-recommends build-essential \
     && if ! "$PAPERS_DL_BINARY" --version >/dev/null 2>&1; then \
@@ -175,7 +172,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
             --quiet \
             papers-dl; \
     fi \
-    && ln -sf "$PAPERS_DL_BINARY" "$LIB_BIN_DIR/papers-dl" \
     && "$PAPERS_DL_BINARY" --version | tee -a /VERSION.txt \
     && if [ "$TARGETARCH" = "arm64" ]; then \
         abxpkg install --binproviders=npm --overrides='{"npm":{"install_args":["playwright@next"]}}' playwright; \
@@ -189,8 +185,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
 	    && "$CHROMIUM_PROVIDER_BINARY" --version | tee -a /VERSION.txt \
 	    && mkdir -p "$LIB_DIR/env/bin" \
 	    && ln -sf "$CHROMIUM_PROVIDER_BINARY" "$CHROME_BINARY" \
-	    && ln -sf "$CHROME_BINARY" "$LIB_BIN_DIR/chromium" \
-	    && ln -sf "$CHROME_BINARY" "$LIB_BIN_DIR/chrome" \
 	    && "$CHROME_BINARY" --version | tee -a /VERSION.txt \
 	    && find "$LIB_DIR" -type d \( \
 	            -name __pycache__ -o -name test -o -name tests -o -name doc -o -name docs -o -name example -o -name examples \
@@ -198,7 +192,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
     && find "$LIB_DIR" -type f \( \
             -name '*.pyc' -o -name '*.pyo' -o -name '*.map' -o -name '*.ts' -o -name '*.md' -o -name '*.markdown' \
         \) -delete \
-    && find "$CHROME_EXTENSIONS_DIR" -type f -name '*.crx' -delete \
+    && find "$LIB_DIR" -type f -name '*.crx' -delete \
     && if [ -d "$LIB_DIR/puppeteer/cache" ]; then \
         find "$LIB_DIR/puppeteer/cache" -type d -name WidevineCdm -prune -exec rm -rf {} +; \
         find "$LIB_DIR/puppeteer/cache" -type f -path '*/locales/*' ! -name 'en-US.pak' -delete; \
@@ -231,7 +225,7 @@ RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_PUID}..." \
     && useradd --system --create-home --gid "$ARCHIVEBOX_USER" --groups audio,video "$ARCHIVEBOX_USER" \
     && usermod -u "$DEFAULT_PUID" "$ARCHIVEBOX_USER" \
     && groupmod -g "$DEFAULT_PGID" "$ARCHIVEBOX_USER" \
-    && mkdir -p "$DATA_DIR" "$LIB_DIR" "$LIB_BIN_DIR" "$PLAYWRIGHT_BROWSERS_PATH" "$CHROME_EXTENSIONS_DIR" \
+    && mkdir -p "$DATA_DIR" "$LIB_DIR" "$PLAYWRIGHT_BROWSERS_PATH" \
     && ln -sf "$CHROME_BINARY" /usr/local/bin/chrome \
     && ln -sf "$CHROME_BINARY" /usr/local/bin/chromium \
     && chown -R "$DEFAULT_PUID:$DEFAULT_PGID" "$DATA_DIR" "$LIB_DIR" "$PLAYWRIGHT_BROWSERS_PATH" \

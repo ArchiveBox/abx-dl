@@ -704,7 +704,7 @@ class BinaryService(BaseService):
         *,
         config: RuntimeConfig | None = None,
     ) -> None:
-        """Link a resolved binary into ``LIB_BIN_DIR`` when that indirection is safe."""
+        """Maintain the optional human-facing ``LIB_BIN_DIR`` convenience symlink."""
         if is_path_like_env_value(binary_name):
             return
         current_user_config = (config or await get_config(self.bus)).user
