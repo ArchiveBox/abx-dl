@@ -35,7 +35,7 @@ jobs:
             artifact_name: digest-linux-amd64
             local_tag: archivebox/abxdl:test-amd64
           - platform: linux/arm64
-            runner: ubuntu-24.04
+            runner: ubuntu-24.04-arm
             cache_scope: docker-arm64
             artifact_name: digest-linux-arm64
             local_tag: archivebox/abxdl:test-arm64
@@ -53,11 +53,6 @@ jobs:
           git clone --depth=1 https://github.com/ArchiveBox/abxbus.git "${{ runner.temp }}/abxbus"
           git clone --depth=1 https://github.com/ArchiveBox/abxpkg.git "${{ runner.temp }}/abxpkg"
           git clone --depth=1 https://github.com/ArchiveBox/abx-plugins.git "${{ runner.temp }}/abx-plugins"
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64,amd64
 
       - name: Set up Docker Buildx
         id: buildx
