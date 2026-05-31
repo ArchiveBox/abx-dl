@@ -92,7 +92,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
     echo "[+] APT Installing abx-dl bootstrap dependencies for $TARGETPLATFORM..." \
     && apt-get update -qq \
     && apt-get install -qq -y \
-        ca-certificates curl dumb-init gosu procps openssl xz-utils zlib1g \
+        ca-certificates curl dumb-init gosu procps openssl unzip xz-utils zlib1g \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=node-runtime /usr/local /opt/node
