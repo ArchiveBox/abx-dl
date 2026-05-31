@@ -1,0 +1,19 @@
+abx_dl/orchestrator.py
+  s_d8176e713f89ac::t_13b691104d71fb 637
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "5577e92883af1648d613c5ae787c2412c5543777",
+  "prompts": {},
+  "sessions": {
+    "s_d8176e713f89ac": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e7d23-b14d-7ee0-85fe-51280fd573f2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
