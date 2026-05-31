@@ -196,12 +196,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
             -name '*.pyc' -o -name '*.pyo' -o -name '*.map' -o -name '*.ts' -o -name '*.md' -o -name '*.markdown' \
         \) -delete \
     && find "$CHROME_EXTENSIONS_DIR" -type f -name '*.crx' -delete \
-    && find "$LIB_DIR/puppeteer/cache" -type d -name WidevineCdm -prune -exec rm -rf {} + \
-    && find "$LIB_DIR/puppeteer/cache" -type f -path '*/locales/*' ! -name 'en-US.pak' -delete \
-    && find "$LIB_DIR/puppeteer/cache" -type f -name chrome_crashpad_handler -delete \
-    && find "$LIB_DIR" -type d -name __pycache__ -prune -exec rm -rf {} + \
-    && find "$LIB_DIR" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete \
-    && rm -rf "$LIB_DIR/personas" "$LIB_DIR/chrome_profile" /opt/archivebox/lib-layer \
+	    && find "$LIB_DIR/puppeteer/cache" -type d -name WidevineCdm -prune -exec rm -rf {} + \
+	    && find "$LIB_DIR/puppeteer/cache" -type f -path '*/locales/*' ! -name 'en-US.pak' -delete \
+	    && find "$LIB_DIR" -type d -name __pycache__ -prune -exec rm -rf {} + \
+	    && find "$LIB_DIR" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete \
+	    && "$CHROMIUM_REAL" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --dump-dom 'data:text/html,<title>abx-dl chromium smoke</title>' | grep -q 'abx-dl chromium smoke' \
+	    && rm -rf "$LIB_DIR/personas" "$LIB_DIR/chrome_profile" /opt/archivebox/lib-layer \
     && mkdir -p /opt/archivebox/lib-layer \
     && cp -a "$LIB_DIR"/. /opt/archivebox/lib-layer/ \
     && rm -rf /var/lib/apt/lists/*
