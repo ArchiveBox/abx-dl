@@ -56,12 +56,11 @@ ENV CODE_DIR=/app \
     LIB_DIR=/opt/archivebox/lib \
     ABXPKG_LIB_DIR=/opt/archivebox/lib \
     PLAYWRIGHT_BROWSERS_PATH=/browsers \
-    PERSONAS_DIR=/out/personas \
-    CHROME_USER_DATA_DIR=/out/personas/Default/chrome_profile \
+    PERSONAS_DIR=/data/personas \
+    CHROME_USER_DATA_DIR=/data/personas/Default/chrome_profile \
     CHROME_HEADLESS=true \
     CHROME_SANDBOX=false \
-    CHROME_ISOLATION=crawl \
-    CHROME_ARGS_EXTRA='["--disable-gpu","--disable-features=Translate,OptimizationGuideModelDownloading,MediaRouter"]'
+    CHROME_ISOLATION=crawl
 
 ENV UV_COMPILE_BYTECODE=0 \
     UV_PYTHON_PREFERENCE=managed \
@@ -228,7 +227,7 @@ RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_PUID}..." \
     && mkdir -p "$DATA_DIR" "$CHROME_USER_DATA_DIR" "$LIB_DIR" "$PLAYWRIGHT_BROWSERS_PATH" \
     && ln -sf "$CHROME_BINARY" /usr/local/bin/chrome \
     && ln -sf "$CHROME_BINARY" /usr/local/bin/chromium \
-    && chown -R "$DEFAULT_PUID:$DEFAULT_PGID" "$DATA_DIR" "$LIB_DIR" "$PLAYWRIGHT_BROWSERS_PATH" \
+    && chown -R "$DEFAULT_PUID:$DEFAULT_PGID" "$DATA_DIR" "$PERSONAS_DIR" "$LIB_DIR" "$PLAYWRIGHT_BROWSERS_PATH" \
     && echo "ARCHIVEBOX_USER=$ARCHIVEBOX_USER PUID=$(id -u "$ARCHIVEBOX_USER") PGID=$(id -g "$ARCHIVEBOX_USER")" | tee -a /VERSION.txt
 
 WORKDIR /out
@@ -252,6 +251,6 @@ RUN (echo -e "\n\n[+] abx-dl runtime versions" \
     && rm -rf /root/.cache /var/cache/apt/* /var/lib/apt/lists/*
 
 WORKDIR /out
-VOLUME /out
+VOLUME ["/out", "/data/personas"]
 ENTRYPOINT ["dumb-init", "--", "abx-dl"]
 CMD ["--help"]

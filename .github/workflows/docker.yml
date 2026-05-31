@@ -114,15 +114,16 @@ jobs:
         run: |
           set -Eeuo pipefail
           OUT_DIR="${{ runner.temp }}/abxdl-smoke-${{ matrix.artifact_name }}"
-          rm -rf "$OUT_DIR"
-          mkdir -p "$OUT_DIR"
+          PERSONAS_DIR="${{ runner.temp }}/abxdl-personas-${{ matrix.artifact_name }}"
+          rm -rf "$OUT_DIR" "$PERSONAS_DIR"
+          mkdir -p "$OUT_DIR" "$PERSONAS_DIR"
 
           script -q -e -c \
-            "docker run --rm -it --platform '${{ matrix.platform }}' --volume '$OUT_DIR:/out' '${{ matrix.local_tag }}' --no-install --timeout=180 --crawl-timeout=240 --max-urls=1 https://example.com" \
+            "docker run --rm -it --platform '${{ matrix.platform }}' --volume '$OUT_DIR:/out' --volume '$PERSONAS_DIR:/data/personas' '${{ matrix.local_tag }}' --no-install --timeout=180 --crawl-timeout=240 --max-urls=1 https://example.com" \
             /dev/null 2>&1 | tee "$OUT_DIR/crawl.log"
 
           script -q -e -c \
-            "docker run --rm -it --platform '${{ matrix.platform }}' --volume '$OUT_DIR:/out' --entrypoint bash '${{ matrix.local_tag }}' -lc 'set -Eeuo pipefail; test \"\$PWD\" = /out; ! command -v rg; ! command -v sonic; ! command -v cargo; ! command -v gcc; ! command -v g++; ! command -v make'" \
+            "docker run --rm -it --platform '${{ matrix.platform }}' --volume '$OUT_DIR:/out' --volume '$PERSONAS_DIR:/data/personas' --entrypoint bash '${{ matrix.local_tag }}' -lc 'set -Eeuo pipefail; test \"\$PWD\" = /out; test -d /data/personas; test ! -e /out/personas; ! command -v rg; ! command -v sonic; ! command -v cargo; ! command -v gcc; ! command -v g++; ! command -v make'" \
             /dev/null
 
           python3 - "$OUT_DIR/index.jsonl" <<'PY'
