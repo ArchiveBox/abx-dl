@@ -113,7 +113,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
 
 COPY --from=node-runtime /usr/local /opt/node
 
-RUN (which node && node --version && which npm && npm --version) | tee -a /VERSION.txt
+RUN (/opt/node/bin/node --version && /opt/node/bin/npm --version) | tee -a /VERSION.txt
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/bin sh
 
