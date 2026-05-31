@@ -127,7 +127,7 @@ jobs:
             --volume "$OUT_DIR:/out" \
             --entrypoint bash \
             '${{ matrix.local_tag }}' \
-            -lc 'set -Eeuo pipefail; abx-dl dl --dir=/out --timeout=180 --crawl-timeout=240 --max-urls=1 https://example.com 2>&1 | tee /out/crawl.log'
+            -lc 'set -Eeuo pipefail; abx-dl dl --no-install --dir=/out --timeout=180 --crawl-timeout=240 --max-urls=1 https://example.com 2>&1 | tee /out/crawl.log; ! command -v rg; ! command -v sonic; ! command -v cargo; ! command -v gcc; ! command -v g++; ! command -v make'
 
           python3 - "$OUT_DIR/crawl.log" <<'PY'
           import json
