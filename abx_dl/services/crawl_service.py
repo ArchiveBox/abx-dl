@@ -187,15 +187,36 @@ class CrawlService(BaseService):
             timeout = runtime[timeout_key] if timeout_key in plugin.config.properties else runtime.TIMEOUT
             plugin_output_dir = self.output_dir / plugin.name
             plugin_output_dir.mkdir(parents=True, exist_ok=True)
-            handler_timeout = (
-                self.crawl_setup_phase_timeout
-                + self.snapshot_phase_timeout
-                + self.snapshot_cleanup_phase_timeout
-                + self.crawl_cleanup_phase_timeout
-                + 30.0
-                if hook.is_background
-                else timeout + 30.0
-            )
+            # CrawlSetup background daemons (chrome_launch, etc.) are designed
+            # to live for the *entire crawl* — they own a crawl-scoped
+            # resource (browser session, captcha worker, …) that every
+            # snapshot shares, and the framework SIGTERMs them at
+            # ``CrawlCleanupEvent`` to release that resource (see
+            # ``on_CrawlCleanupEvent`` below). Previously this code summed
+            # the four phase timeouts (5min × 4 + 30s = 1230s) as the
+            # daemon's ``event_handler_timeout``, which assumes the snapshot
+            # phase only happens once. In reality the snapshot phase happens
+            # N times for N snapshots, so any crawl longer than ~20min hit
+            # the timeout, abxbus cancelled the handler, and the daemon's
+            # SIGTERM cleanup killed Chrome mid-crawl — every Chrome-dependent
+            # extractor failed afterwards (cabbage's 50-URL UI load test
+            # was the smoking gun: Chrome died at 06:35:02, exactly 1230s
+            # after launch at 06:14:32). The daemon is bounded by an
+            # explicit CrawlCleanupEvent SIGTERM, not by wall-clock. Leave
+            # the timeout unset for background hooks; finite hooks keep
+            # ``timeout + 30s``.
+            if hook.is_background:
+                handler_timeout: float | None = None
+                handler_slow_timeout: float | None = None
+                # ``ProcessStartedEvent`` should still arrive quickly even
+                # for daemons — 60s is plenty for spawn + PEP-723 dep
+                # install with a cold uv cache. ``None`` would mean "wait
+                # forever for a process that may have failed to spawn".
+                started_wait_timeout = 60.0
+            else:
+                handler_timeout = timeout + 30.0
+                handler_slow_timeout = slow_warning_timeout(handler_timeout)
+                started_wait_timeout = handler_timeout
             process_event = ProcessEvent(
                 plugin_name=plugin.name,
                 hook_name=hook.name,
@@ -208,7 +229,7 @@ class CrawlService(BaseService):
                 event_blocks_parent_completion=not hook.is_background,
                 event_timeout=handler_timeout,
                 event_handler_timeout=handler_timeout,
-                event_handler_slow_timeout=slow_warning_timeout(handler_timeout),
+                event_handler_slow_timeout=handler_slow_timeout,
             )
             if hook.is_background:
                 background_process = event.emit(process_event)
@@ -219,7 +240,7 @@ class CrawlService(BaseService):
                     ProcessStartedEvent,
                     child_of=background_process,
                     past=True,
-                    future=min(60.0, handler_timeout),
+                    future=started_wait_timeout,
                 )
                 if await self.should_abort():
                     return
