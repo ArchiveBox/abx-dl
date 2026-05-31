@@ -1,6 +1,6 @@
 [project]
 name = "abx-dl"
-version = "1.11.86"
+version = "1.11.87"
 requires-python = ">=3.12"
 description = "All-in-one CLI tool to download and extract content from URLs"
 authors = [{name = "Nick Sweeting"}, {name = "ArchiveBox"}]
@@ -21,7 +21,6 @@ classifiers = [
     "Natural Language :: English",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
@@ -43,7 +42,7 @@ dependencies = [
     "rich>=13.0.0",
     "abxbus==2.5.8",
     "abxpkg>=1.11.80",
-    "abx-plugins>=1.11.86",
+    "abx-plugins>=1.11.87",
     "jambo>=0.1.7",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
@@ -143,7 +142,7 @@ venv = ".venv"
 # defineConstant = { DEBUG = true }
 reportMissingImports = true
 reportMissingTypeStubs = false
-pythonVersion = "3.11"
+pythonVersion = "3.12"
 pythonPlatform = "Linux"
 
 [project.scripts]
