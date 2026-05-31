@@ -55,9 +55,7 @@ ENV CODE_DIR=/app \
     DATA_DIR=/out \
     LIB_DIR=/opt/archivebox/lib \
     ABXPKG_LIB_DIR=/opt/archivebox/lib \
-    PLAYWRIGHT_BROWSERS_PATH=/browsers \
     PERSONAS_DIR=/data/personas \
-    CHROME_USER_DATA_DIR=/data/personas/Default/chrome_profile \
     CHROME_HEADLESS=true \
     CHROME_SANDBOX=false \
     CHROME_ISOLATION=crawl
@@ -202,11 +200,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
     && find "$LIB_DIR" -type d -name __pycache__ -prune -exec rm -rf {} + \
     && find "$LIB_DIR" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete \
     && "$CHROME_BINARY" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --dump-dom 'data:text/html,<title>abx-dl chromium smoke</title>' | grep -q 'abx-dl chromium smoke' \
-    && if [ -d "$PLAYWRIGHT_BROWSERS_PATH" ]; then \
-        find "$PLAYWRIGHT_BROWSERS_PATH" -maxdepth 1 -type d \( -name 'chromium_headless_shell-*' -o -name 'ffmpeg-*' \) -prune -exec rm -rf {} +; \
-        find "$PLAYWRIGHT_BROWSERS_PATH" -type d -name WidevineCdm -prune -exec rm -rf {} +; \
-        find "$PLAYWRIGHT_BROWSERS_PATH" -type f -path '*/locales/*' ! -name 'en-US.pak' -delete; \
-    fi \
     && rm -rf "$LIB_DIR/personas" "$LIB_DIR/chrome_profile" /opt/archivebox/lib-layer \
     && mkdir -p /opt/archivebox/lib-layer \
     && cp -a "$LIB_DIR"/. /opt/archivebox/lib-layer/ \
@@ -228,7 +221,7 @@ RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_PUID}..." \
     && useradd --system --create-home --gid "$ARCHIVEBOX_USER" --groups audio,video "$ARCHIVEBOX_USER" \
     && usermod -u "$DEFAULT_PUID" "$ARCHIVEBOX_USER" \
     && groupmod -g "$DEFAULT_PGID" "$ARCHIVEBOX_USER" \
-    && mkdir -p "$DATA_DIR" "$CHROME_USER_DATA_DIR" "$LIB_DIR" \
+    && mkdir -p "$DATA_DIR" "$PERSONAS_DIR" "$LIB_DIR" \
     && ln -sf "$CHROME_BINARY" /usr/local/bin/chromium \
     && chown -R "$DEFAULT_PUID:$DEFAULT_PGID" "$DATA_DIR" "$PERSONAS_DIR" "$LIB_DIR" \
     && echo "ARCHIVEBOX_USER=$ARCHIVEBOX_USER PUID=$(id -u "$ARCHIVEBOX_USER") PGID=$(id -g "$ARCHIVEBOX_USER")" | tee -a /VERSION.txt
