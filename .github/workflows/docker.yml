@@ -117,14 +117,15 @@ jobs:
           rm -rf "$OUT_DIR"
           mkdir -p "$OUT_DIR"
 
-          docker run --rm \
-            --platform '${{ matrix.platform }}' \
-            --volume "$OUT_DIR:/out" \
-            --entrypoint bash \
-            '${{ matrix.local_tag }}' \
-            -lc 'set -Eeuo pipefail; abx-dl dl --no-install --dir=/out --timeout=180 --crawl-timeout=240 --max-urls=1 https://example.com 2>&1 | tee /out/crawl.log; ! command -v rg; ! command -v sonic; ! command -v cargo; ! command -v gcc; ! command -v g++; ! command -v make'
+          script -q -e -c \
+            "docker run --rm -it --platform '${{ matrix.platform }}' --volume '$OUT_DIR:/out' '${{ matrix.local_tag }}' --no-install --timeout=180 --crawl-timeout=240 --max-urls=1 https://example.com" \
+            /dev/null 2>&1 | tee "$OUT_DIR/crawl.log"
 
-          python3 - "$OUT_DIR/crawl.log" <<'PY'
+          script -q -e -c \
+            "docker run --rm -it --platform '${{ matrix.platform }}' --volume '$OUT_DIR:/out' --entrypoint bash '${{ matrix.local_tag }}' -lc 'set -Eeuo pipefail; test \"\$PWD\" = /out; ! command -v rg; ! command -v sonic; ! command -v cargo; ! command -v gcc; ! command -v g++; ! command -v make'" \
+            /dev/null
+
+          python3 - "$OUT_DIR/index.jsonl" <<'PY'
           import json
           import sys
           from pathlib import Path

@@ -52,7 +52,7 @@ ENV ARCHIVEBOX_USER=archivebox \
     IN_DOCKER=True
 
 ENV CODE_DIR=/app \
-    DATA_DIR=/data \
+    DATA_DIR=/out \
     LIB_DIR=/opt/archivebox/lib \
     ABXPKG_LIB_DIR=/opt/archivebox/lib \
     PLAYWRIGHT_BROWSERS_PATH=/browsers \
@@ -231,7 +231,7 @@ RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_PUID}..." \
     && chown -R "$DEFAULT_PUID:$DEFAULT_PGID" "$DATA_DIR" "$LIB_DIR" "$PLAYWRIGHT_BROWSERS_PATH" \
     && echo "ARCHIVEBOX_USER=$ARCHIVEBOX_USER PUID=$(id -u "$ARCHIVEBOX_USER") PGID=$(id -g "$ARCHIVEBOX_USER")" | tee -a /VERSION.txt
 
-WORKDIR "$DATA_DIR"
+WORKDIR /out
 
 RUN (echo -e "\n\n[+] abx-dl runtime versions" \
     && abx-dl --version \
@@ -251,7 +251,7 @@ RUN (echo -e "\n\n[+] abx-dl runtime versions" \
     ) | tee -a /VERSION.txt \
     && rm -rf /root/.cache /var/cache/apt/* /var/lib/apt/lists/*
 
-WORKDIR "$DATA_DIR"
-VOLUME "$DATA_DIR"
+WORKDIR /out
+VOLUME /out
 ENTRYPOINT ["dumb-init", "--", "abx-dl"]
 CMD ["--help"]

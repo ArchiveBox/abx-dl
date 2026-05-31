@@ -7,7 +7,7 @@ uvx abx-dl 'https://example.com'
 
 # OR
 
-docker run -it -v $PWD:/data archivebox/abxdl 'https://example.com'
+docker run -it -v "$PWD:/out" archivebox/abxdl 'https://example.com'
 ```
 ---
 
