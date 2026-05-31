@@ -2599,9 +2599,7 @@ def test_process_event_does_not_wait_for_stdout_inherited_by_child_process(tmp_p
             ),
         )
         start = asyncio.get_running_loop().time()
-        await process_event.now()
-        await process_event.wait(timeout=3.0)
-        await process_event.event_results_list()
+        await (await process_event.now()).event_results_list()
         elapsed = asyncio.get_running_loop().time() - start
         completed = await bus.find(
             ProcessCompletedEvent,

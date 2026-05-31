@@ -40,9 +40,7 @@ async def _wait_for_process_completed(event: ProcessCompletedEvent | None, timeo
 
 
 async def _run_event_now(event: BaseEvent, timeout: float | None = None) -> BaseEvent:
-    await event.now(timeout=timeout)
-    await event.wait(timeout=timeout)
-    await event.event_results_list()
+    await (await event.now(timeout=timeout)).event_results_list()
     return event
 
 

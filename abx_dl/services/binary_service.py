@@ -278,9 +278,7 @@ class BinaryService(BaseService):
                 event_handler_slow_timeout=slow_warning_timeout(timeout),
             ),
         )
-        await process_event.now()
-        await process_event.wait()
-        await process_event.event_results_list(include=_completed_handler_result, raise_if_none=False)
+        await (await process_event.now()).event_results_list(include=_completed_handler_result, raise_if_none=False)
         process_completion_timeout = float(
             process_event.event_handler_timeout or process_event.event_timeout or event.event_timeout or handler_timeout,
         )
@@ -410,9 +408,7 @@ class BinaryService(BaseService):
                     if pruned_install_cache.pop(install_cache_key, None) is not None:
                         install_cache_changed = True
                 emitted_request = event.emit(request_event)
-                await emitted_request.now()
-                await emitted_request.wait()
-                await emitted_request.event_results_list(include=_completed_handler_result, raise_if_none=False)
+                await (await emitted_request.now()).event_results_list(include=_completed_handler_result, raise_if_none=False)
                 if await self.should_abort():
                     break
             if await self.should_abort():

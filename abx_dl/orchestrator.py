@@ -340,7 +340,7 @@ async def install_plugins(
             ).now()
         install_phase_timeout = compute_install_phase_timeout(install_plugins_for_phase, merged_config or None)
         try:
-            await bus.emit(
+            install_event = bus.emit(
                 InstallEvent(
                     url="",
                     snapshot_id=snapshot.id,
@@ -348,7 +348,8 @@ async def install_plugins(
                     event_timeout=install_phase_timeout,
                     event_handler_slow_timeout=slow_warning_timeout(install_phase_timeout),
                 ),
-            ).now()
+            )
+            await (await install_event.now()).event_results_list()
         finally:
             await bus.wait_until_idle()
 
@@ -623,7 +624,7 @@ async def download(
 
     try:
         if install_enabled:
-            await bus.emit(
+            install_event = bus.emit(
                 InstallEvent(
                     url=url,
                     snapshot_id=snapshot.id,
@@ -631,7 +632,8 @@ async def download(
                     event_timeout=install_phase_timeout,
                     event_handler_slow_timeout=slow_warning_timeout(install_phase_timeout),
                 ),
-            ).now()
+            )
+            await (await install_event.now()).event_results_list()
         if crawl_setup_enabled or crawl_start_enabled or crawl_cleanup_enabled:
             crawl_event_timeout = (
                 (crawl_setup_phase_timeout if crawl_setup_enabled else 0.0)
