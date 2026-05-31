@@ -56,8 +56,8 @@ ENV CODE_DIR=/app \
     LIB_DIR=/opt/archivebox/lib \
     ABXPKG_LIB_DIR=/opt/archivebox/lib \
     PLAYWRIGHT_BROWSERS_PATH=/browsers \
-    PERSONAS_DIR=/data/personas \
-    CHROME_USER_DATA_DIR=/data/personas/Default/chrome_profile \
+    PERSONAS_DIR=/out/personas \
+    CHROME_USER_DATA_DIR=/out/personas/Default/chrome_profile \
     CHROME_HEADLESS=true \
     CHROME_SANDBOX=false \
     CHROME_ISOLATION=crawl \
@@ -225,7 +225,7 @@ RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_PUID}..." \
     && useradd --system --create-home --gid "$ARCHIVEBOX_USER" --groups audio,video "$ARCHIVEBOX_USER" \
     && usermod -u "$DEFAULT_PUID" "$ARCHIVEBOX_USER" \
     && groupmod -g "$DEFAULT_PGID" "$ARCHIVEBOX_USER" \
-    && mkdir -p "$DATA_DIR" "$LIB_DIR" "$PLAYWRIGHT_BROWSERS_PATH" \
+    && mkdir -p "$DATA_DIR" "$CHROME_USER_DATA_DIR" "$LIB_DIR" "$PLAYWRIGHT_BROWSERS_PATH" \
     && ln -sf "$CHROME_BINARY" /usr/local/bin/chrome \
     && ln -sf "$CHROME_BINARY" /usr/local/bin/chromium \
     && chown -R "$DEFAULT_PUID:$DEFAULT_PGID" "$DATA_DIR" "$LIB_DIR" "$PLAYWRIGHT_BROWSERS_PATH" \
