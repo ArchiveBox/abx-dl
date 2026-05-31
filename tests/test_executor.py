@@ -615,6 +615,58 @@ def test_binary_service_stops_after_successful_provider_result(tmp_path: Path) -
     assert Path(python_events[-1].abspath).name == "python3"
 
 
+def test_binary_service_serializes_provider_installs(tmp_path: Path) -> None:
+    plugins = discover_plugins()
+    selected = {name: plugins[name] for name in ("env",)}
+
+    async def run() -> int:
+        bus = create_bus(total_timeout=10.0, name=f"binary_install_lock_{tmp_path.name}")
+        MachineService(bus)
+        active_installs = 0
+        max_active_installs = 0
+
+        class LockedBinaryService(BinaryService):
+            async def _run_binary_provider_hook(
+                self,
+                event: BinaryRequestEvent,
+                *,
+                plugin: Plugin,
+                hook: Hook,
+                inherited_binproviders: str,
+            ) -> str | None:
+                nonlocal active_installs, max_active_installs
+                active_installs += 1
+                max_active_installs = max(max_active_installs, active_installs)
+                await asyncio.sleep(0.05)
+                active_installs -= 1
+                return f"/tmp/{event.name}"
+
+        LockedBinaryService(bus, plugins=selected, auto_install=True)
+        await bus.emit(MachineEvent(config=get_initial_env(), config_type="user")).now()
+        await asyncio.gather(
+            bus.emit(
+                BinaryRequestEvent(
+                    name="first-test-binary",
+                    plugin_name="env",
+                    output_dir=str(tmp_path / "first"),
+                    binproviders="env",
+                ),
+            ).now(),
+            bus.emit(
+                BinaryRequestEvent(
+                    name="second-test-binary",
+                    plugin_name="env",
+                    output_dir=str(tmp_path / "second"),
+                    binproviders="env",
+                ),
+            ).now(),
+        )
+        await bus.wait_until_idle()
+        return max_active_installs
+
+    assert asyncio.run(run()) == 1
+
+
 def test_binary_event_ignores_unknown_request_plugin_when_persisting_config(tmp_path: Path) -> None:
     plugins = discover_plugins()
 

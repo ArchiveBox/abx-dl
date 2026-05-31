@@ -1,5 +1,6 @@
 """BinaryService — resolves BinaryRequest records into resolved Binary events."""
 
+import asyncio
 import json
 import re
 import shutil
@@ -116,6 +117,7 @@ class BinaryService(BaseService):
         self.binary_hooks_by_provider: dict[str, list[tuple[Plugin, Hook]]] = {}
         for plugin, hook in self.binary_hooks:
             self.binary_hooks_by_provider.setdefault(plugin.name, []).append((plugin, hook))
+        self._install_lock = asyncio.Lock()
         super().__init__(bus)
         self.bus.on(InstallEvent, self.on_InstallEvent)
         self.bus.on(CrawlAbortEvent, self.on_CrawlAbortEvent)
@@ -194,21 +196,52 @@ class BinaryService(BaseService):
         if not self.auto_install:
             return None
 
-        ordered_providers = _ordered_binproviders(inherited_binproviders or event.binproviders or "env")
-        if not ordered_providers:
-            ordered_providers = list(self.binary_hooks_by_provider)
-
-        for provider_name, plugin, hook in self._provider_hook_sequence(ordered_providers):
-            if await self.should_abort():
-                return None
-            installed_abspath = await self._run_binary_provider_hook(
+        async with self._install_lock:
+            cached_terminal, cached_error = await self._emit_cached_binary_if_already_installed(
                 event,
-                plugin=plugin,
-                hook=hook,
                 inherited_binproviders=inherited_binproviders,
             )
-            if installed_abspath:
-                return installed_abspath
+            if cached_terminal:
+                if cached_error:
+                    raise FileNotFoundError(cached_error)
+                cached_binary = await self.bus.find(
+                    BinaryEvent,
+                    past=True,
+                    future=False,
+                    name=event.name,
+                    where=lambda candidate: bool(candidate.abspath) and self.bus.event_is_child_of(candidate, event),
+                )
+                if cached_binary is not None:
+                    assert isinstance(cached_binary, BinaryEvent)
+                    return cached_binary.abspath
+                return None
+
+            existing_installed = await self.bus.find(
+                BinaryEvent,
+                past=True,
+                future=False,
+                name=event.name,
+                where=lambda candidate: bool(candidate.abspath),
+            )
+            if existing_installed is not None:
+                assert isinstance(existing_installed, BinaryEvent)
+                return existing_installed.abspath
+
+            ordered_providers = _ordered_binproviders(inherited_binproviders or event.binproviders or "env")
+            if not ordered_providers:
+                ordered_providers = list(self.binary_hooks_by_provider)
+
+            for provider_name, plugin, hook in self._provider_hook_sequence(ordered_providers):
+                if await self.should_abort():
+                    return None
+                installed_abspath = await self._run_binary_provider_hook(
+                    event,
+                    plugin=plugin,
+                    hook=hook,
+                    inherited_binproviders=inherited_binproviders,
+                )
+                if installed_abspath:
+                    return installed_abspath
         return None
 
     def _provider_hook_sequence(self, ordered_providers: list[str]) -> list[tuple[str, Plugin, Hook]]:

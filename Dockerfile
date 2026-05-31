@@ -60,6 +60,7 @@ ENV CODE_DIR=/app \
     PERSONAS_DIR=/data/personas \
     CHROME_EXTENSIONS_DIR=/opt/archivebox/lib/chrome_extensions \
     CHROME_USER_DATA_DIR=/data/personas/Default/chrome_profile \
+    CHROME_BINARY=/opt/archivebox/lib/env/bin/chromium \
     CHROME_HEADLESS=true \
     CHROME_SANDBOX=false \
     CHROME_ISOLATION=crawl \
@@ -183,13 +184,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
     fi \
 	    && ABX_DL_RUNTIME_PLUGINS="$(python3 -c 'from abx_dl.models import discover_plugins; excluded = {"search_backend_ripgrep", "search_backend_sonic"}; print(" ".join(name for name in sorted(discover_plugins()) if name not in excluded))')" \
 	    && TIMEOUT=600 PUID=0 PGID=0 abx-dl plugins --install $ABX_DL_RUNTIME_PLUGINS \
-	    && CHROMIUM_REAL="$(find "$LIB_DIR/puppeteer/cache" -type f -path '*/chrome-linux64/chrome' -perm /111 | sort -V | tail -1)" \
-	    && test -n "$CHROMIUM_REAL" \
-	    && "$CHROMIUM_REAL" --version | tee -a /VERSION.txt \
+	    && CHROMIUM_PROVIDER_BINARY="$(python3 -c 'from abxpkg import Binary, EnvProvider, PlaywrightProvider, PuppeteerProvider; binary = Binary(name="chromium", binproviders=[PuppeteerProvider(), PlaywrightProvider(), EnvProvider()]).load(no_cache=True); assert binary.abspath, "chromium is installed but no provider reported an absolute path"; print(binary.abspath)')" \
+	    && test -n "$CHROMIUM_PROVIDER_BINARY" \
+	    && "$CHROMIUM_PROVIDER_BINARY" --version | tee -a /VERSION.txt \
 	    && mkdir -p "$LIB_DIR/env/bin" \
-	    && ln -sf "$CHROMIUM_REAL" "$LIB_DIR/env/bin/chromium" \
-	    && ln -sf "$LIB_DIR/env/bin/chromium" "$LIB_BIN_DIR/chromium" \
-	    && "$LIB_DIR/env/bin/chromium" --version | tee -a /VERSION.txt \
+	    && ln -sf "$CHROMIUM_PROVIDER_BINARY" "$CHROME_BINARY" \
+	    && ln -sf "$CHROME_BINARY" "$LIB_BIN_DIR/chromium" \
+	    && "$CHROME_BINARY" --version | tee -a /VERSION.txt \
 	    && find "$LIB_DIR" -type d \( \
 	            -name __pycache__ -o -name test -o -name tests -o -name doc -o -name docs -o -name example -o -name examples \
 	        \) -prune -exec rm -rf {} + \
@@ -197,11 +198,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
             -name '*.pyc' -o -name '*.pyo' -o -name '*.map' -o -name '*.ts' -o -name '*.md' -o -name '*.markdown' \
         \) -delete \
     && find "$CHROME_EXTENSIONS_DIR" -type f -name '*.crx' -delete \
-	    && find "$LIB_DIR/puppeteer/cache" -type d -name WidevineCdm -prune -exec rm -rf {} + \
-	    && find "$LIB_DIR/puppeteer/cache" -type f -path '*/locales/*' ! -name 'en-US.pak' -delete \
+	    && if [ -d "$LIB_DIR/puppeteer/cache" ]; then \
+	        find "$LIB_DIR/puppeteer/cache" -type d -name WidevineCdm -prune -exec rm -rf {} +; \
+	        find "$LIB_DIR/puppeteer/cache" -type f -path '*/locales/*' ! -name 'en-US.pak' -delete; \
+	    fi \
 	    && find "$LIB_DIR" -type d -name __pycache__ -prune -exec rm -rf {} + \
 	    && find "$LIB_DIR" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete \
-	    && "$CHROMIUM_REAL" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --dump-dom 'data:text/html,<title>abx-dl chromium smoke</title>' | grep -q 'abx-dl chromium smoke' \
+	    && "$CHROME_BINARY" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --dump-dom 'data:text/html,<title>abx-dl chromium smoke</title>' | grep -q 'abx-dl chromium smoke' \
 	    && rm -rf "$LIB_DIR/personas" "$LIB_DIR/chrome_profile" /opt/archivebox/lib-layer \
     && mkdir -p /opt/archivebox/lib-layer \
     && cp -a "$LIB_DIR"/. /opt/archivebox/lib-layer/ \
@@ -230,7 +233,7 @@ RUN (echo -e "\n\n[+] abx-dl runtime versions" \
     && abx-dl --version \
     && /opt/node/bin/node --version \
     && /venv/bin/python3 --version \
-    && "$LIB_DIR/env/bin/chromium" --version \
+    && "$CHROME_BINARY" --version \
     && "$LIB_DIR/pip/packages/papers-dl/venv/bin/papers-dl" --version \
     && ! command -v gcc \
     && ! command -v g++ \
