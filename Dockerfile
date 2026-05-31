@@ -12,14 +12,10 @@
 #       --build-context abx-plugins=./abx-plugins \
 #       -t archivebox/abx-dl:dev
 
-ARG TARGETPLATFORM=linux/amd64
-ARG TARGETOS=linux
-ARG TARGETARCH=amd64
-ARG TARGETVARIANT=
 ARG NODE_VERSION=22.22.3
 
 FROM --platform=$TARGETPLATFORM node:${NODE_VERSION}-bookworm-slim AS node-runtime
-FROM ubuntu:24.04 AS abx-dl-runtime-base
+FROM --platform=$TARGETPLATFORM ubuntu:24.04 AS abx-dl-runtime-base
 
 LABEL name="abx-dl" \
     maintainer="Nick Sweeting <dockerfile@archivebox.io>" \
@@ -31,9 +27,9 @@ LABEL name="abx-dl" \
     org.opencontainers.image.description="All-in-one CLI tool to download and extract content from URLs" \
     org.opencontainers.image.source="https://github.com/ArchiveBox/abx-dl"
 
-ARG TARGETPLATFORM=linux/amd64
-ARG TARGETOS=linux
-ARG TARGETARCH=amd64
+ARG TARGETPLATFORM
+ARG TARGETOS
+ARG TARGETARCH
 ARG TARGETVARIANT
 
 ENV TZ=UTC \
