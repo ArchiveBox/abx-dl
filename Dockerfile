@@ -15,7 +15,7 @@
 ARG NODE_VERSION=24
 
 FROM --platform=$TARGETPLATFORM node:${NODE_VERSION}-bookworm-slim AS node-runtime
-FROM --platform=$TARGETPLATFORM ubuntu:24.04 AS abx-dl-runtime-base
+FROM --platform=$TARGETPLATFORM debian:bookworm-slim AS abx-dl-runtime-base
 
 LABEL name="abx-dl" \
     maintainer="Nick Sweeting <dockerfile@archivebox.io>" \
@@ -152,7 +152,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
     echo "[+] Installing provider plugin dependencies..." \
     && apt-get update -qq \
     && mkdir -p "$LIB_DIR" \
-    && TIMEOUT=900 PUID=0 PGID=0 abx-dl plugins --install apt bash npm pip puppeteer chromewebstore
+    && TIMEOUT=900 PUID=0 PGID=0 abx-dl plugins --install apt bash npm pip puppeteer
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
@@ -161,7 +161,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
     --mount=type=cache,target=/root/.cache/puppeteer,sharing=locked,id=puppeteer-$TARGETARCH$TARGETVARIANT \
     echo "[+] Installing browser plugin dependencies..." \
     && TIMEOUT=900 PUID=0 PGID=0 abx-dl plugins --install \
-        chrome accessibility consolelog dns dom headers redirects responses \
+        chrome chromewebstore accessibility consolelog dns dom headers redirects responses \
         screenshot pdf chrome_mhtml chrome_screencast sslcerts \
         parse_dom_outlinks seo archivewebpage singlefile ublock \
         istilldontcareaboutcookies modalcloser infiniscroll twocaptcha claudechrome
@@ -200,7 +200,6 @@ RUN echo "[+] Cleaning plugin-managed runtime caches..." \
         find "$LIB_DIR/puppeteer/cache" -type d -name WidevineCdm -prune -exec rm -rf {} +; \
         find "$LIB_DIR/puppeteer/cache" -type f -path '*/locales/*' ! -name 'en-US.pak' -delete; \
     fi \
-    && rm -rf "$LIB_DIR/personas" "$LIB_DIR/chrome_profile" \
     && CHROMIUM_PROVIDER_BINARY="$(python3 -c 'from abxpkg import Binary, EnvProvider, PuppeteerProvider; binary = Binary(name="chromium", binproviders=[PuppeteerProvider(), EnvProvider()]).load(no_cache=True); assert binary.abspath, "chromium is installed but no provider reported an absolute path"; print(binary.abspath)')" \
     && "$CHROMIUM_PROVIDER_BINARY" --version | tee -a /VERSION.txt \
     && "$CHROMIUM_PROVIDER_BINARY" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --dump-dom 'data:text/html,<title>abx-dl chromium smoke</title>' | grep -q 'abx-dl chromium smoke' \
@@ -218,8 +217,8 @@ RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_PUID}..." \
     && useradd --system --create-home --gid "$ARCHIVEBOX_USER" --groups audio,video "$ARCHIVEBOX_USER" \
     && usermod -u "$DEFAULT_PUID" "$ARCHIVEBOX_USER" \
     && groupmod -g "$DEFAULT_PGID" "$ARCHIVEBOX_USER" \
-    && mkdir -p "$DATA_DIR" "$PERSONAS_DIR" "$LIB_DIR" \
-    && chown -R "$DEFAULT_PUID:$DEFAULT_PGID" "$DATA_DIR" "$PERSONAS_DIR" "$LIB_DIR" \
+    && mkdir -p "$DATA_DIR" "$LIB_DIR" \
+    && chown -R "$DEFAULT_PUID:$DEFAULT_PGID" "$DATA_DIR" "$LIB_DIR" \
     && echo "ARCHIVEBOX_USER=$ARCHIVEBOX_USER PUID=$(id -u "$ARCHIVEBOX_USER") PGID=$(id -g "$ARCHIVEBOX_USER")" | tee -a /VERSION.txt
 
 WORKDIR /out
