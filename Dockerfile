@@ -157,9 +157,23 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.npm,sharing=locked,id=npm-$TARGETARCH$TARGETVARIANT \
+    --mount=type=cache,target=/root/.cache/ms-playwright,sharing=locked,id=browsers-$TARGETARCH$TARGETVARIANT \
+    echo "[+] Installing Playwright-managed Chrome into $LIB_DIR..." \
+    && apt-get update -qq \
+    && abxpkg install --no-cache --install-timeout=900 --binproviders=playwright chrome \
+    && CHROME_BINARY="$(abxpkg load --binproviders=playwright chromium | awk 'NF {print $2; exit}')" \
+    && export CHROME_BINARY \
+    && test -x "$CHROME_BINARY" \
+    && "$CHROME_BINARY" --version | tee -a /VERSION.txt
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$TARGETVARIANT \
+    --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
+    --mount=type=cache,target=/root/.npm,sharing=locked,id=npm-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/pip,sharing=locked,id=pip-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/puppeteer,sharing=locked,id=puppeteer-$TARGETARCH$TARGETVARIANT \
     echo "[+] Installing browser plugin dependencies..." \
+    && CHROME_BINARY="$(abxpkg load --binproviders=playwright chromium | awk 'NF {print $2; exit}')" \
+    && export CHROME_BINARY \
     && TIMEOUT=900 PUID=0 PGID=0 abx-dl plugins --install \
         chrome chromewebstore accessibility consolelog dns dom headers redirects responses \
         screenshot pdf chrome_mhtml chrome_screencast sslcerts \
@@ -200,9 +214,9 @@ RUN echo "[+] Cleaning plugin-managed runtime caches..." \
         find "$LIB_DIR/puppeteer/cache" -type d -name WidevineCdm -prune -exec rm -rf {} +; \
         find "$LIB_DIR/puppeteer/cache" -type f -path '*/locales/*' ! -name 'en-US.pak' -delete; \
     fi \
-    && CHROMIUM_PROVIDER_BINARY="$(python3 -c 'from abxpkg import Binary, EnvProvider, PlaywrightProvider, PuppeteerProvider; binary = Binary(name="chromium", binproviders=[PuppeteerProvider(), PlaywrightProvider(), EnvProvider()]).load(no_cache=True); assert binary.abspath, "chromium is installed but no provider reported an absolute path"; print(binary.abspath)')" \
-    && "$CHROMIUM_PROVIDER_BINARY" --version | tee -a /VERSION.txt \
-    && "$CHROMIUM_PROVIDER_BINARY" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --dump-dom 'data:text/html,<title>abx-dl chromium smoke</title>' | grep -q 'abx-dl chromium smoke' \
+    && CHROME_BINARY="$(abxpkg load --binproviders=playwright chromium | awk 'NF {print $2; exit}')" \
+    && export CHROME_BINARY \
+    && abx-dl plugins chrome \
     && ! command -v gcc \
     && ! command -v g++ \
     && ! command -v make \
@@ -227,7 +241,9 @@ RUN (echo -e "\n\n[+] abx-dl runtime versions" \
     && abx-dl --version \
     && /opt/node/bin/node --version \
     && /venv/bin/python3 --version \
-    && python3 -c 'from abxpkg import Binary, EnvProvider, PlaywrightProvider, PuppeteerProvider; binary = Binary(name="chromium", binproviders=[PuppeteerProvider(), PlaywrightProvider(), EnvProvider()]).load(no_cache=True); assert binary.abspath; print(binary.abspath); print(binary.version)' \
+    && CHROME_BINARY="$(abxpkg load --binproviders=playwright chromium | awk 'NF {print $2; exit}')" \
+    && export CHROME_BINARY \
+    && abx-dl plugins chrome \
     && ! command -v gcc \
     && ! command -v g++ \
     && ! command -v make \
