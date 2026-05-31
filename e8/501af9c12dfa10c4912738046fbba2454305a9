@@ -1,0 +1,26 @@
+abx_dl/services/binary_service.py
+  s_56f8597a1153b7::t_b69ea7d175fbd3 451,453,456,460
+  s_56f8597a1153b7::t_f4b4acdc0ced68 325-327,330-331,338,341
+  s_56f8597a1153b7::t_3b833fddba0618 423-437
+  s_56f8597a1153b7::t_9a5e55e5e070c0 144-146,150,159,180,186
+  s_56f8597a1153b7::t_9263b288bb57aa 364,367,369-370,385-386,392-396
+  s_56f8597a1153b7::t_a2361a0348f58a 439,441-442,444-445,447-448,450
+abx_dl/config.py
+  s_56f8597a1153b7::t_b791854c9eff78 550-556,561-567,569
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "e8501af9c12dfa10c4912738046fbba2454305a9",
+  "prompts": {},
+  "sessions": {
+    "s_56f8597a1153b7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b4c160c0-b70e-4b8e-8cb5-94f06a3fc2e8",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
