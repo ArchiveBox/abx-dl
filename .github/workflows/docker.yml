@@ -1,0 +1,336 @@
+name: Build Docker image
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+env:
+  DOCKERHUB_IMAGE: archivebox/abxdl
+  GHCR_IMAGE: ghcr.io/archivebox/abxdl
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build and test ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+            cache_scope: docker-amd64
+            artifact_name: digest-linux-amd64
+            local_tag: archivebox/abxdl:test-amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            cache_scope: docker-arm64
+            artifact_name: digest-linux-arm64
+            local_tag: archivebox/abxdl:test-arm64
+
+    steps:
+      - name: Checkout abx-dl
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Clone build contexts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          git clone --depth=1 https://github.com/ArchiveBox/abxbus.git "${{ runner.temp }}/abxbus"
+          git clone --depth=1 https://github.com/ArchiveBox/abxpkg.git "${{ runner.temp }}/abxpkg"
+          git clone --depth=1 https://github.com/ArchiveBox/abx-plugins.git "${{ runner.temp }}/abx-plugins"
+
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: latest
+          install: true
+
+      - name: Available platforms
+        run: echo '${{ steps.buildx.outputs.platforms }}'
+
+      - name: Collect Docker metadata
+        id: docker_meta
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          VERSION="$(python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          match = re.search(r'^version = "([^"]+)"$', Path("pyproject.toml").read_text(), re.MULTILINE)
+          if not match:
+              raise SystemExit("Failed to read version from pyproject.toml")
+          print(match.group(1))
+          PY
+          )"
+
+          {
+            echo 'labels<<EOF'
+            echo "org.opencontainers.image.title=abx-dl"
+            echo "org.opencontainers.image.vendor=ArchiveBox"
+            echo "org.opencontainers.image.version=${VERSION}"
+            echo "org.opencontainers.image.revision=${GITHUB_SHA}"
+            echo "org.opencontainers.image.source=https://github.com/ArchiveBox/abx-dl"
+            echo 'EOF'
+            echo "version=${VERSION}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "[+] Building ${{ matrix.platform }} for abx-dl ${VERSION}"
+
+      - name: Build local image for smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          builder: ${{ steps.buildx.outputs.name }}
+          load: true
+          tags: ${{ matrix.local_tag }}
+          labels: ${{ steps.docker_meta.outputs.labels }}
+          build-contexts: |
+            abxbus=${{ runner.temp }}/abxbus
+            abxpkg=${{ runner.temp }}/abxpkg
+            abx-plugins=${{ runner.temp }}/abx-plugins
+          cache-from: type=gha,scope=${{ matrix.cache_scope }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.cache_scope }}
+          platforms: ${{ matrix.platform }}
+
+      - name: Validate real crawl inside Docker image
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          OUT_DIR="${{ runner.temp }}/abxdl-smoke-${{ matrix.artifact_name }}"
+          rm -rf "$OUT_DIR"
+          mkdir -p "$OUT_DIR"
+
+          docker run --rm \
+            --platform '${{ matrix.platform }}' \
+            --volume "$OUT_DIR:/out" \
+            --entrypoint bash \
+            '${{ matrix.local_tag }}' \
+            -lc 'set -Eeuo pipefail; abx-dl dl --plugins=headers,wget --dir=/out --timeout=180 --crawl-timeout=240 --max-urls=1 https://example.com 2>&1 | tee /out/crawl.log'
+
+          python3 - "$OUT_DIR/crawl.log" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          log_path = Path(sys.argv[1])
+          failed_hooks = set()
+          for line in log_path.read_text(errors="replace").splitlines():
+              try:
+                  record = json.loads(line)
+              except json.JSONDecodeError:
+                  continue
+              if record.get("status") == "failed" and record.get("hook_name"):
+                  failed_hooks.add(record["hook_name"])
+
+          print(f"failed_hooks={sorted(failed_hooks)}")
+          if len(failed_hooks) > 2:
+              raise SystemExit(f"Too many hook failures: {len(failed_hooks)}")
+          PY
+
+          test -s "$OUT_DIR/wget/example.com/index.html"
+          test -s "$OUT_DIR/headers/headers.json"
+          grep -R --fixed-strings 'Example Domain' "$OUT_DIR"
+          grep -R --fixed-strings 'This domain is for use' "$OUT_DIR"
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push digest
+        id: docker_build
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          builder: ${{ steps.buildx.outputs.name }}
+          push: true
+          tags: |
+            ${{ env.DOCKERHUB_IMAGE }}
+            ${{ env.GHCR_IMAGE }}
+          labels: ${{ steps.docker_meta.outputs.labels }}
+          build-contexts: |
+            abxbus=${{ runner.temp }}/abxbus
+            abxpkg=${{ runner.temp }}/abxpkg
+            abx-plugins=${{ runner.temp }}/abx-plugins
+          cache-from: type=gha,scope=${{ matrix.cache_scope }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.cache_scope }}
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
+
+      - name: Export digest
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p /tmp/digests
+          digest="${{ steps.docker_build.outputs.digest }}"
+          test -n "$digest"
+          touch "/tmp/digests/${digest#sha256:}"
+
+      - name: Upload digest
+        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: publish multiarch tags
+    runs-on: ubuntu-24.04
+    needs:
+      - build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout abx-dl
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          version: latest
+          install: true
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - name: Collect Docker tags
+        id: docker_meta
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          VERSION="$(python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          match = re.search(r'^version = "([^"]+)"$', Path("pyproject.toml").read_text(), re.MULTILINE)
+          if not match:
+              raise SystemExit("Failed to read version from pyproject.toml")
+          print(match.group(1))
+          PY
+          )"
+
+          {
+            echo 'dockerhub_tags<<EOF'
+            echo "${DOCKERHUB_IMAGE}:latest"
+            echo "${DOCKERHUB_IMAGE}:main"
+            echo "${DOCKERHUB_IMAGE}:sha-${GITHUB_SHA}"
+            echo "${DOCKERHUB_IMAGE}:${VERSION}"
+            echo 'EOF'
+            echo 'ghcr_tags<<EOF'
+            echo "${GHCR_IMAGE}:latest"
+            echo "${GHCR_IMAGE}:main"
+            echo "${GHCR_IMAGE}:sha-${GITHUB_SHA}"
+            echo "${GHCR_IMAGE}:${VERSION}"
+            echo 'EOF'
+            echo "version=${VERSION}"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "[+] Publishing Docker Hub tags:"
+          printf '%s\n' \
+            "${DOCKERHUB_IMAGE}:latest" \
+            "${DOCKERHUB_IMAGE}:main" \
+            "${DOCKERHUB_IMAGE}:sha-${GITHUB_SHA}" \
+            "${DOCKERHUB_IMAGE}:${VERSION}"
+          echo "[+] Publishing GHCR tags:"
+          printf '%s\n' \
+            "${GHCR_IMAGE}:latest" \
+            "${GHCR_IMAGE}:main" \
+            "${GHCR_IMAGE}:sha-${GITHUB_SHA}" \
+            "${GHCR_IMAGE}:${VERSION}"
+
+      - name: Create Docker Hub manifest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mapfile -t DIGESTS < <(find /tmp/digests -maxdepth 1 -type f -printf '%f\n' | sort)
+          [[ "${#DIGESTS[@]}" -eq 2 ]]
+
+          TAG_ARGS=()
+          while IFS= read -r tag; do
+            [[ -n "$tag" ]] && TAG_ARGS+=(--tag "$tag")
+          done <<< "${{ steps.docker_meta.outputs.dockerhub_tags }}"
+
+          REFS=()
+          for digest in "${DIGESTS[@]}"; do
+            REFS+=("${DOCKERHUB_IMAGE}@sha256:${digest}")
+          done
+
+          docker buildx imagetools create "${TAG_ARGS[@]}" "${REFS[@]}"
+
+      - name: Create GHCR manifest
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mapfile -t DIGESTS < <(find /tmp/digests -maxdepth 1 -type f -printf '%f\n' | sort)
+          [[ "${#DIGESTS[@]}" -eq 2 ]]
+
+          TAG_ARGS=()
+          while IFS= read -r tag; do
+            [[ -n "$tag" ]] && TAG_ARGS+=(--tag "$tag")
+          done <<< "${{ steps.docker_meta.outputs.ghcr_tags }}"
+
+          REFS=()
+          for digest in "${DIGESTS[@]}"; do
+            REFS+=("${GHCR_IMAGE}@sha256:${digest}")
+          done
+
+          docker buildx imagetools create "${TAG_ARGS[@]}" "${REFS[@]}"
+
+      - name: Inspect published images
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          docker buildx imagetools inspect "${DOCKERHUB_IMAGE}:sha-${GITHUB_SHA}"
+          docker buildx imagetools inspect "${GHCR_IMAGE}:sha-${GITHUB_SHA}"
