@@ -35,7 +35,7 @@ jobs:
             artifact_name: digest-linux-amd64
             local_tag: archivebox/abxdl:test-amd64
           - platform: linux/arm64
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-24.04
             cache_scope: docker-arm64
             artifact_name: digest-linux-arm64
             local_tag: archivebox/abxdl:test-arm64
