@@ -165,7 +165,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
     && mkdir -p "$LIB_DIR" "$LIB_DIR/chrome_extensions" "$LIB_DIR/pip/packages" "$LIB_BIN_DIR" \
     && apt-get update -qq \
     && apt-get install -qq -y --no-install-recommends build-essential \
-    && if [ ! -x "$PAPERS_DL_BINARY" ]; then \
+    && if ! "$PAPERS_DL_BINARY" --version >/dev/null 2>&1; then \
+        rm -rf "$LIB_DIR/pip/packages/papers-dl/venv"; \
         python3 -m venv "$LIB_DIR/pip/packages/papers-dl/venv" --upgrade-deps; \
         "$LIB_DIR/pip/packages/papers-dl/venv/bin/pip" install \
             --cache-dir=/root/.cache/pip \
