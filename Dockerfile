@@ -47,7 +47,7 @@ ENV TZ=UTC \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     npm_config_loglevel=error
 
-ENV PYTHON_VERSION=3.13 \
+ENV PYTHON_VERSION=3.12 \
     NODE_VERSION=22.22.3
 
 ENV ARCHIVEBOX_USER=archivebox \
@@ -113,7 +113,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
 
 COPY --from=node-runtime /usr/local /opt/node
 
-RUN (/opt/node/bin/node --version && /opt/node/bin/npm --version) | tee -a /VERSION.txt
+RUN export PATH="/opt/node/bin:$PATH" \
+    && (/opt/node/bin/node --version && /opt/node/bin/npm --version) | tee -a /VERSION.txt
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/bin sh
 
