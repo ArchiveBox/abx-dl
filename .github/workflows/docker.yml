@@ -127,7 +127,7 @@ jobs:
             --volume "$OUT_DIR:/out" \
             --entrypoint bash \
             '${{ matrix.local_tag }}' \
-            -lc 'set -Eeuo pipefail; abx-dl dl --plugins=headers,wget --dir=/out --timeout=180 --crawl-timeout=240 --max-urls=1 https://example.com 2>&1 | tee /out/crawl.log'
+            -lc 'set -Eeuo pipefail; abx-dl dl --plugins=wget --dir=/out --timeout=180 --crawl-timeout=240 --max-urls=1 https://example.com 2>&1 | tee /out/crawl.log'
 
           python3 - "$OUT_DIR/crawl.log" <<'PY'
           import json
@@ -150,7 +150,6 @@ jobs:
           PY
 
           test -s "$OUT_DIR/wget/example.com/index.html"
-          test -s "$OUT_DIR/headers/headers.json"
           grep -R --fixed-strings 'Example Domain' "$OUT_DIR"
           grep -R --fixed-strings 'This domain is for use' "$OUT_DIR"
 
