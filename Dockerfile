@@ -200,7 +200,7 @@ RUN echo "[+] Cleaning plugin-managed runtime caches..." \
         find "$LIB_DIR/puppeteer/cache" -type d -name WidevineCdm -prune -exec rm -rf {} +; \
         find "$LIB_DIR/puppeteer/cache" -type f -path '*/locales/*' ! -name 'en-US.pak' -delete; \
     fi \
-    && CHROMIUM_PROVIDER_BINARY="$(python3 -c 'from abxpkg import Binary, EnvProvider, PuppeteerProvider; binary = Binary(name="chromium", binproviders=[PuppeteerProvider(), EnvProvider()]).load(no_cache=True); assert binary.abspath, "chromium is installed but no provider reported an absolute path"; print(binary.abspath)')" \
+    && CHROMIUM_PROVIDER_BINARY="$(python3 -c 'from abxpkg import Binary, EnvProvider, PlaywrightProvider, PuppeteerProvider; binary = Binary(name="chromium", binproviders=[PuppeteerProvider(), PlaywrightProvider(), EnvProvider()]).load(no_cache=True); assert binary.abspath, "chromium is installed but no provider reported an absolute path"; print(binary.abspath)')" \
     && "$CHROMIUM_PROVIDER_BINARY" --version | tee -a /VERSION.txt \
     && "$CHROMIUM_PROVIDER_BINARY" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --dump-dom 'data:text/html,<title>abx-dl chromium smoke</title>' | grep -q 'abx-dl chromium smoke' \
     && ! command -v gcc \
@@ -227,7 +227,7 @@ RUN (echo -e "\n\n[+] abx-dl runtime versions" \
     && abx-dl --version \
     && /opt/node/bin/node --version \
     && /venv/bin/python3 --version \
-    && python3 -c 'from abxpkg import Binary, EnvProvider, PuppeteerProvider; binary = Binary(name="chromium", binproviders=[PuppeteerProvider(), EnvProvider()]).load(no_cache=True); assert binary.abspath; print(binary.abspath); print(binary.version)' \
+    && python3 -c 'from abxpkg import Binary, EnvProvider, PlaywrightProvider, PuppeteerProvider; binary = Binary(name="chromium", binproviders=[PuppeteerProvider(), PlaywrightProvider(), EnvProvider()]).load(no_cache=True); assert binary.abspath; print(binary.abspath); print(binary.version)' \
     && ! command -v gcc \
     && ! command -v g++ \
     && ! command -v make \
