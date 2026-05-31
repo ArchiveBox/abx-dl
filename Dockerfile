@@ -41,6 +41,7 @@ ENV TZ=UTC \
     PYTHONIOENCODING=UTF-8 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_ONLY_BINARY=aiohttp \
     npm_config_loglevel=error
 
 ENV PYTHON_VERSION=3.12 \
@@ -85,21 +86,13 @@ RUN (echo "[i] Docker build for abx-dl starting..." \
     && env \
     ) | tee -a /VERSION.txt
 
-# Runtime packages plus Chromium shared-library dependencies. The browser
-# binary itself is installed by abx-dl/abxpkg into LIB_DIR, not by apt.
+# Bootstrap packages only. Downloader/browser/media runtimes are installed by
+# their owning plugin install hooks in separate layers below.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$TARGETVARIANT \
-    echo "[+] APT Installing abx-dl base runtime dependencies for $TARGETPLATFORM..." \
+    echo "[+] APT Installing abx-dl bootstrap dependencies for $TARGETPLATFORM..." \
     && apt-get update -qq \
     && apt-get install -qq -y \
-        apt-transport-https apt-utils ca-certificates curl wget gnupg2 \
-        dumb-init gosu unzip git grep dnsutils iputils-ping procps tree nano \
-        cron openssl xz-utils zlib1g \
-        libasound2t64 libatk-bridge2.0-0 libatk1.0-0 libcairo2 libcups2 \
-        libdbus-1-3 libdrm2 libgbm1 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 \
-        libpango-1.0-0 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxdamage1 \
-        libxext6 libxfixes3 libxkbcommon0 libxrandr2 libxshmfence1 \
-        fonts-liberation fonts-noto-color-emoji xdg-utils \
-        ffmpeg imagemagick tesseract-ocr openjdk-21-jre-headless \
+        ca-certificates curl dumb-init gosu procps openssl xz-utils zlib1g \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=node-runtime /usr/local /opt/node
@@ -146,47 +139,58 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && find /venv /src "$CODE_DIR" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
 
 ########################################################################################################
-FROM abx-dl-builder AS abx-dl-runtime-builder
+FROM abx-dl-runtime-base
+
+COPY --from=abx-dl-builder /venv /venv
+COPY --from=abx-dl-builder /VERSION.txt /VERSION.txt
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.npm,sharing=locked,id=npm-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/pip,sharing=locked,id=pip-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/puppeteer,sharing=locked,id=puppeteer-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/ms-playwright,sharing=locked,id=browsers-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/opt/archivebox/lib,sharing=locked,id=archivebox-lib-$TARGETARCH$TARGETVARIANT \
-    echo "[+] Installing abx-dl plugin runtime dependencies into $LIB_DIR..." \
-    && export PAPERS_DL_BINARY="$LIB_DIR/pip/packages/papers-dl/venv/bin/papers-dl" \
-    && mkdir -p "$LIB_DIR" "$LIB_DIR/pip/packages" \
-    && apt-get update -qq \
-    && apt-get install -qq -y --no-install-recommends build-essential \
-    && if ! "$PAPERS_DL_BINARY" --version >/dev/null 2>&1; then \
-        rm -rf "$LIB_DIR/pip/packages/papers-dl/venv"; \
-        python3 -m venv "$LIB_DIR/pip/packages/papers-dl/venv" --upgrade-deps; \
-        "$LIB_DIR/pip/packages/papers-dl/venv/bin/pip" install \
-            --cache-dir=/root/.cache/pip \
-            --no-input \
-            --disable-pip-version-check \
-            --quiet \
-            papers-dl; \
-    fi \
-    && "$PAPERS_DL_BINARY" --version | tee -a /VERSION.txt \
-    && if [ "$TARGETARCH" = "arm64" ]; then \
-        abxpkg install --binproviders=npm --overrides='{"npm":{"install_args":["playwright@next"]}}' playwright; \
-        abxpkg install --no-cache --install-timeout=600 --binproviders=playwright --bin-dir="$LIB_DIR/env/bin" chromium; \
-    fi \
-	    && ABX_DL_RUNTIME_PLUGINS="$(python3 -c 'from abx_dl.models import discover_plugins; excluded = {"search_backend_ripgrep", "search_backend_sonic"}; print(" ".join(name for name in sorted(discover_plugins()) if name not in excluded))')" \
-	    && TIMEOUT=600 PUID=0 PGID=0 abx-dl plugins --install $ABX_DL_RUNTIME_PLUGINS \
-	    && export CHROME_BINARY="$LIB_DIR/env/bin/chromium" \
-	    && CHROMIUM_PROVIDER_BINARY="$(python3 -c 'from abxpkg import Binary, EnvProvider, PlaywrightProvider, PuppeteerProvider; binary = Binary(name="chromium", binproviders=[PuppeteerProvider(), PlaywrightProvider(), EnvProvider()]).load(no_cache=True); assert binary.abspath, "chromium is installed but no provider reported an absolute path"; print(binary.abspath)')" \
-	    && test -n "$CHROMIUM_PROVIDER_BINARY" \
-	    && "$CHROMIUM_PROVIDER_BINARY" --version | tee -a /VERSION.txt \
-	    && mkdir -p "$LIB_DIR/env/bin" \
-	    && ln -sf "$CHROMIUM_PROVIDER_BINARY" "$CHROME_BINARY" \
-	    && "$CHROME_BINARY" --version | tee -a /VERSION.txt \
-	    && find "$LIB_DIR" -type d \( \
-	            -name __pycache__ -o -name test -o -name tests -o -name doc -o -name docs -o -name example -o -name examples \
-	        \) -prune -exec rm -rf {} + \
+    echo "[+] Installing provider plugin dependencies..." \
+    && mkdir -p "$LIB_DIR" \
+    && TIMEOUT=900 PUID=0 PGID=0 abx-dl plugins --install apt bash npm pip puppeteer chromewebstore
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$TARGETVARIANT \
+    --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
+    --mount=type=cache,target=/root/.npm,sharing=locked,id=npm-$TARGETARCH$TARGETVARIANT \
+    --mount=type=cache,target=/root/.cache/pip,sharing=locked,id=pip-$TARGETARCH$TARGETVARIANT \
+    --mount=type=cache,target=/root/.cache/puppeteer,sharing=locked,id=puppeteer-$TARGETARCH$TARGETVARIANT \
+    echo "[+] Installing browser plugin dependencies..." \
+    && TIMEOUT=900 PUID=0 PGID=0 abx-dl plugins --install \
+        chrome accessibility consolelog dns dom headers redirects responses \
+        screenshot pdf chrome_mhtml chrome_screencast sslcerts \
+        parse_dom_outlinks seo archivewebpage singlefile ublock \
+        istilldontcareaboutcookies modalcloser infiniscroll twocaptcha claudechrome
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$TARGETVARIANT \
+    --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
+    --mount=type=cache,target=/root/.npm,sharing=locked,id=npm-$TARGETARCH$TARGETVARIANT \
+    --mount=type=cache,target=/root/.cache/pip,sharing=locked,id=pip-$TARGETARCH$TARGETVARIANT \
+    --mount=type=cache,target=/root/.cache/puppeteer,sharing=locked,id=puppeteer-$TARGETARCH$TARGETVARIANT \
+    echo "[+] Installing downloader and document plugin dependencies..." \
+    && TIMEOUT=900 PUID=0 PGID=0 abx-dl plugins --install \
+        wget git ytdlp gallerydl forumdl papersdl opendataloader archivedotorg \
+        htmltotext readability mercury defuddle trafilatura liteparse \
+        claudecode claudecodecleanup claudecodeextract
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$TARGETVARIANT \
+    --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
+    --mount=type=cache,target=/root/.npm,sharing=locked,id=npm-$TARGETARCH$TARGETVARIANT \
+    --mount=type=cache,target=/root/.cache/pip,sharing=locked,id=pip-$TARGETARCH$TARGETVARIANT \
+    --mount=type=cache,target=/root/.cache/puppeteer,sharing=locked,id=puppeteer-$TARGETARCH$TARGETVARIANT \
+    echo "[+] Installing lightweight plugin dependencies..." \
+    && TIMEOUT=900 PUID=0 PGID=0 abx-dl plugins --install \
+        archivedotorg base brew cargo favicon hashes media parse_html_urls \
+        parse_jsonl_urls parse_netscape_urls parse_rss_urls parse_txt_urls \
+        search_backend_sqlite ssl staticfile title
+
+RUN echo "[+] Cleaning plugin-managed runtime caches..." \
+    && find "$LIB_DIR" -type d \( \
+            -name __pycache__ -o -name test -o -name tests -o -name doc -o -name docs -o -name example -o -name examples \
+        \) -prune -exec rm -rf {} + \
     && find "$LIB_DIR" -type f \( \
             -name '*.pyc' -o -name '*.pyo' -o -name '*.map' -o -name '*.ts' -o -name '*.md' -o -name '*.markdown' \
         \) -delete \
@@ -195,24 +199,18 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
         find "$LIB_DIR/puppeteer/cache" -type d -name WidevineCdm -prune -exec rm -rf {} +; \
         find "$LIB_DIR/puppeteer/cache" -type f -path '*/locales/*' ! -name 'en-US.pak' -delete; \
     fi \
-    && find "$LIB_DIR" -type d -name __pycache__ -prune -exec rm -rf {} + \
-    && find "$LIB_DIR" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete \
-    && "$CHROME_BINARY" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --dump-dom 'data:text/html,<title>abx-dl chromium smoke</title>' | grep -q 'abx-dl chromium smoke' \
-    && rm -rf "$LIB_DIR/personas" "$LIB_DIR/chrome_profile" /opt/archivebox/lib-layer \
-    && mkdir -p /opt/archivebox/lib-layer \
-    && cp -a "$LIB_DIR"/. /opt/archivebox/lib-layer/ \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN chown -R "$DEFAULT_PUID:$DEFAULT_PGID" /opt/archivebox/lib-layer
-
-########################################################################################################
-FROM abx-dl-runtime-base
-
-ENV CHROME_BINARY=/opt/archivebox/lib/env/bin/chromium
-
-COPY --from=abx-dl-builder /venv /venv
-COPY --from=abx-dl-builder /VERSION.txt /VERSION.txt
-COPY --from=abx-dl-runtime-builder --chown=911:911 /opt/archivebox/lib-layer /opt/archivebox/lib
+    && rm -rf "$LIB_DIR/personas" "$LIB_DIR/chrome_profile" \
+    && CHROMIUM_PROVIDER_BINARY="$(python3 -c 'from abxpkg import Binary, EnvProvider, PuppeteerProvider; binary = Binary(name="chromium", binproviders=[PuppeteerProvider(), EnvProvider()]).load(no_cache=True); assert binary.abspath, "chromium is installed but no provider reported an absolute path"; print(binary.abspath)')" \
+    && "$CHROMIUM_PROVIDER_BINARY" --version | tee -a /VERSION.txt \
+    && "$CHROMIUM_PROVIDER_BINARY" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --dump-dom 'data:text/html,<title>abx-dl chromium smoke</title>' | grep -q 'abx-dl chromium smoke' \
+    && ! command -v gcc \
+    && ! command -v g++ \
+    && ! command -v make \
+    && ! command -v cargo \
+    && ! command -v rg \
+    && ! command -v sonic \
+    && ! command -v supervisord \
+    && rm -rf /root/.cache /var/cache/apt/* /var/lib/apt/lists/*
 
 RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_PUID}..." \
     && groupadd --system "$ARCHIVEBOX_USER" \
@@ -220,7 +218,6 @@ RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_PUID}..." \
     && usermod -u "$DEFAULT_PUID" "$ARCHIVEBOX_USER" \
     && groupmod -g "$DEFAULT_PGID" "$ARCHIVEBOX_USER" \
     && mkdir -p "$DATA_DIR" "$PERSONAS_DIR" "$LIB_DIR" \
-    && ln -sf "$CHROME_BINARY" /usr/local/bin/chromium \
     && chown -R "$DEFAULT_PUID:$DEFAULT_PGID" "$DATA_DIR" "$PERSONAS_DIR" "$LIB_DIR" \
     && echo "ARCHIVEBOX_USER=$ARCHIVEBOX_USER PUID=$(id -u "$ARCHIVEBOX_USER") PGID=$(id -g "$ARCHIVEBOX_USER")" | tee -a /VERSION.txt
 
@@ -230,12 +227,11 @@ RUN (echo -e "\n\n[+] abx-dl runtime versions" \
     && abx-dl --version \
     && /opt/node/bin/node --version \
     && /venv/bin/python3 --version \
-    && "$CHROME_BINARY" --version \
-    && chrome --version \
-    && "$LIB_DIR/pip/packages/papers-dl/venv/bin/papers-dl" --version \
+    && python3 -c 'from abxpkg import Binary, EnvProvider, PuppeteerProvider; binary = Binary(name="chromium", binproviders=[PuppeteerProvider(), EnvProvider()]).load(no_cache=True); assert binary.abspath; print(binary.abspath); print(binary.version)' \
     && ! command -v gcc \
     && ! command -v g++ \
     && ! command -v make \
+    && ! command -v cargo \
     && ! command -v rg \
     && ! command -v sonic \
     && ! command -v supervisord \
