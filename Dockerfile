@@ -16,7 +16,9 @@ ARG TARGETPLATFORM=linux/amd64
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 ARG TARGETVARIANT=
+ARG NODE_VERSION=22.22.3
 
+FROM --platform=$TARGETPLATFORM node:${NODE_VERSION}-bookworm-slim AS node-runtime
 FROM ubuntu:24.04 AS abx-dl-runtime-base
 
 LABEL name="abx-dl" \
@@ -109,21 +111,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
         ffmpeg imagemagick tesseract-ocr openjdk-21-jre-headless \
     && rm -rf /var/lib/apt/lists/*
 
-RUN --mount=type=cache,target=/root/.npm,sharing=locked,id=npm-$TARGETARCH$TARGETVARIANT \
-    case "$TARGETARCH" in \
-        amd64) NODE_DIST_ARCH="x64" ;; \
-        arm64) NODE_DIST_ARCH="arm64" ;; \
-        *) echo "Unsupported TARGETARCH=$TARGETARCH for Node binary install" >&2; exit 1 ;; \
-    esac \
-    && NODE_TARBALL="node-v${NODE_VERSION}-linux-${NODE_DIST_ARCH}.tar.gz" \
-    && echo "[+] Installing NODE $NODE_VERSION for linux/${NODE_DIST_ARCH}..." \
-    && curl -fsSLO "https://nodejs.org/dist/v${NODE_VERSION}/${NODE_TARBALL}" \
-    && curl -fsSLO "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt" \
-    && grep "  ${NODE_TARBALL}$" SHASUMS256.txt | sha256sum -c - \
-    && mkdir -p /opt/node \
-    && tar -xzf "$NODE_TARBALL" -C /opt/node --strip-components=1 --no-same-owner \
-    && rm "$NODE_TARBALL" SHASUMS256.txt \
-    && (which node && node --version && which npm && npm --version) | tee -a /VERSION.txt
+COPY --from=node-runtime /usr/local /opt/node
+
+RUN (which node && node --version && which npm && npm --version) | tee -a /VERSION.txt
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/bin sh
 
