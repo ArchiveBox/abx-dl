@@ -190,6 +190,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
 	    && mkdir -p "$LIB_DIR/env/bin" \
 	    && ln -sf "$CHROMIUM_PROVIDER_BINARY" "$CHROME_BINARY" \
 	    && ln -sf "$CHROME_BINARY" "$LIB_BIN_DIR/chromium" \
+	    && ln -sf "$CHROME_BINARY" "$LIB_BIN_DIR/chrome" \
 	    && "$CHROME_BINARY" --version | tee -a /VERSION.txt \
 	    && find "$LIB_DIR" -type d \( \
 	            -name __pycache__ -o -name test -o -name tests -o -name doc -o -name docs -o -name example -o -name examples \
@@ -226,6 +227,8 @@ RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_PUID}..." \
     && usermod -u "$DEFAULT_PUID" "$ARCHIVEBOX_USER" \
     && groupmod -g "$DEFAULT_PGID" "$ARCHIVEBOX_USER" \
     && mkdir -p "$DATA_DIR" "$LIB_DIR" "$LIB_BIN_DIR" "$PLAYWRIGHT_BROWSERS_PATH" "$CHROME_EXTENSIONS_DIR" \
+    && ln -sf "$CHROME_BINARY" /usr/local/bin/chrome \
+    && ln -sf "$CHROME_BINARY" /usr/local/bin/chromium \
     && chown -R "$DEFAULT_PUID:$DEFAULT_PGID" "$DATA_DIR" "$LIB_DIR" "$PLAYWRIGHT_BROWSERS_PATH" \
     && echo "ARCHIVEBOX_USER=$ARCHIVEBOX_USER PUID=$(id -u "$ARCHIVEBOX_USER") PGID=$(id -g "$ARCHIVEBOX_USER")" | tee -a /VERSION.txt
 
@@ -236,6 +239,7 @@ RUN (echo -e "\n\n[+] abx-dl runtime versions" \
     && /opt/node/bin/node --version \
     && /venv/bin/python3 --version \
     && "$CHROME_BINARY" --version \
+    && chrome --version \
     && "$LIB_DIR/pip/packages/papers-dl/venv/bin/papers-dl" --version \
     && ! command -v gcc \
     && ! command -v g++ \
