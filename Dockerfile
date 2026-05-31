@@ -12,7 +12,7 @@
 #       --build-context abx-plugins=./abx-plugins \
 #       -t archivebox/abx-dl:dev
 
-ARG NODE_VERSION=22.22.3
+ARG NODE_VERSION=24
 
 FROM --platform=$TARGETPLATFORM node:${NODE_VERSION}-bookworm-slim AS node-runtime
 FROM --platform=$TARGETPLATFORM ubuntu:24.04 AS abx-dl-runtime-base
@@ -44,7 +44,7 @@ ENV TZ=UTC \
     npm_config_loglevel=error
 
 ENV PYTHON_VERSION=3.12 \
-    NODE_VERSION=22.22.3
+    NODE_VERSION=24
 
 ENV ARCHIVEBOX_USER=archivebox \
     DEFAULT_PUID=911 \
@@ -156,8 +156,6 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
     --mount=type=cache,target=/root/.cache/ms-playwright,sharing=locked,id=browsers-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/opt/archivebox/lib,sharing=locked,id=archivebox-lib-$TARGETARCH$TARGETVARIANT \
     echo "[+] Installing abx-dl plugin runtime dependencies into $LIB_DIR..." \
-    && export PERSONAS_DIR="$LIB_DIR/personas" \
-    && export CHROME_USER_DATA_DIR="$LIB_DIR/chrome_profile" \
     && export PAPERS_DL_BINARY="$LIB_DIR/pip/packages/papers-dl/venv/bin/papers-dl" \
     && mkdir -p "$LIB_DIR" "$LIB_DIR/pip/packages" \
     && apt-get update -qq \
@@ -247,6 +245,6 @@ RUN (echo -e "\n\n[+] abx-dl runtime versions" \
     && rm -rf /root/.cache /var/cache/apt/* /var/lib/apt/lists/*
 
 WORKDIR /out
-VOLUME ["/out", "/data"]
+VOLUME ["/out", "/data/personas"]
 ENTRYPOINT ["dumb-init", "--", "abx-dl"]
 CMD ["--help"]
