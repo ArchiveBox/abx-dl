@@ -634,6 +634,7 @@ async def download(
                 ),
             )
             await (await install_event.now()).event_results_list()
+            await bus.wait_until_idle()
         if crawl_setup_enabled or crawl_start_enabled or crawl_cleanup_enabled:
             crawl_event_timeout = (
                 (crawl_setup_phase_timeout if crawl_setup_enabled else 0.0)
