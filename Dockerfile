@@ -60,7 +60,6 @@ ENV CODE_DIR=/app \
     PERSONAS_DIR=/data/personas \
     CHROME_EXTENSIONS_DIR=/opt/archivebox/lib/chrome_extensions \
     CHROME_USER_DATA_DIR=/data/personas/Default/chrome_profile \
-    CHROME_BINARY=/opt/archivebox/lib/env/bin/chromium \
     CHROME_HEADLESS=true \
     CHROME_SANDBOX=false \
     CHROME_ISOLATION=crawl \
@@ -184,6 +183,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
     fi \
 	    && ABX_DL_RUNTIME_PLUGINS="$(python3 -c 'from abx_dl.models import discover_plugins; excluded = {"search_backend_ripgrep", "search_backend_sonic"}; print(" ".join(name for name in sorted(discover_plugins()) if name not in excluded))')" \
 	    && TIMEOUT=600 PUID=0 PGID=0 abx-dl plugins --install $ABX_DL_RUNTIME_PLUGINS \
+	    && export CHROME_BINARY="$LIB_DIR/env/bin/chromium" \
 	    && CHROMIUM_PROVIDER_BINARY="$(python3 -c 'from abxpkg import Binary, EnvProvider, PlaywrightProvider, PuppeteerProvider; binary = Binary(name="chromium", binproviders=[PuppeteerProvider(), PlaywrightProvider(), EnvProvider()]).load(no_cache=True); assert binary.abspath, "chromium is installed but no provider reported an absolute path"; print(binary.abspath)')" \
 	    && test -n "$CHROMIUM_PROVIDER_BINARY" \
 	    && "$CHROMIUM_PROVIDER_BINARY" --version | tee -a /VERSION.txt \
@@ -213,6 +213,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
 RUN chown -R "$DEFAULT_PUID:$DEFAULT_PGID" /opt/archivebox/lib-layer
 
 FROM abx-dl-runtime-base
+
+ENV CHROME_BINARY=/opt/archivebox/lib/env/bin/chromium
 
 COPY --from=abx-dl-builder /venv /venv
 COPY --from=abx-dl-builder /VERSION.txt /VERSION.txt
