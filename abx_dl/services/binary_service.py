@@ -141,8 +141,13 @@ class BinaryService(BaseService):
         self.abort_requested = True
 
     async def on_BinaryRequestEvent(self, event: BinaryRequestEvent) -> str | None:
+        import time as _t
+
+        _hh_t0 = _t.perf_counter()
+        _hh = lambda label: print(f"[BRE_HANDLER] {event.name!r} {label} @ +{(_t.perf_counter() - _hh_t0) * 1000:.1f}ms", flush=True)
         if await self.should_abort():
             return None
+        _hh("after should_abort")
         existing_installed = await self.bus.find(
             BinaryEvent,
             child_of=event,
@@ -151,6 +156,7 @@ class BinaryService(BaseService):
             name=event.name,
             where=lambda candidate: bool(candidate.abspath),
         )
+        _hh("after bus.find(BinaryEvent child_of)")
         if existing_installed is not None:
             assert isinstance(existing_installed, BinaryEvent)
             return existing_installed.abspath
@@ -171,11 +177,13 @@ class BinaryService(BaseService):
             if ancestor_request is not None:
                 assert isinstance(ancestor_request, BinaryRequestEvent)
                 inherited_binproviders = ancestor_request.binproviders
+        _hh("after ancestor_request find")
 
         cached_terminal, cached_error = await self._emit_cached_binary_if_already_installed(
             event,
             inherited_binproviders=inherited_binproviders,
         )
+        _hh(f"after _emit_cached_binary_if_already_installed terminal={cached_terminal}")
         if cached_terminal:
             if cached_error:
                 raise FileNotFoundError(cached_error)
@@ -314,14 +322,23 @@ class BinaryService(BaseService):
 
     async def on_InstallEvent(self, event: InstallEvent) -> None:
         """Emit BinaryRequestEvents for this run's enabled plugins."""
+        import time as _t
+
+        _phase = lambda label, t0=[_t.perf_counter()]: print(
+            f"[INSTALL_PHASE] {label} @ +{(_t.perf_counter() - t0[0]) * 1000:.1f}ms",
+            flush=True,
+        )
+        _phase("enter on_InstallEvent")
         if self.snapshot is None or self.output_dir is None:
             return
         if event.output_dir != str(self.output_dir):
             return
         if await self.should_abort():
             return
+        _phase("after guards")
 
         current_config = await get_config(self.bus)
+        _phase("after get_config")
         current_user_config = current_config.user
         current_derived_config = current_config.derived
         install_cache: dict[str, str] = {}
@@ -344,9 +361,13 @@ class BinaryService(BaseService):
             if now - cache_time < timedelta(hours=24):
                 pruned_install_cache[str(binary_name)] = cache_time.isoformat()
         install_cache_changed = pruned_install_cache != install_cache
+        _phase(f"after cache prune: {len(pruned_install_cache)} entries, {len(self.install_plugins)} plugins to iterate")
 
         seen: set[str] = set()
+        _plugin_idx = 0
         for plugin in self.install_plugins:
+            _plugin_idx += 1
+            _plugin_t0 = _t.perf_counter()
             if await self.should_abort():
                 break
             if plugin.enabled_key in plugin.config.properties:
@@ -358,15 +379,21 @@ class BinaryService(BaseService):
                     config=current_config,
                 )
                 if not plugin_env[plugin.enabled_key]:
+                    _phase(f"plugin[{_plugin_idx}] {plugin.name!r} disabled (took {(_t.perf_counter() - _plugin_t0) * 1000:.1f}ms)")
                     continue
             plugin_output_dir = self.output_dir / plugin.name
-            for record in get_required_binary_requests(
+            _req_t0 = _t.perf_counter()
+            _records = get_required_binary_requests(
                 plugin,
                 plugin.config.required_binaries,
                 overrides=current_user_config.model_dump(mode="json"),
                 derived_overrides=current_derived_config,
                 run_output_dir=self.output_dir,
-            ):
+            )
+            _req_ms = (_t.perf_counter() - _req_t0) * 1000
+            if _req_ms > 50 or _plugin_idx <= 3:
+                _phase(f"plugin[{_plugin_idx}] {plugin.name!r}: get_required_binary_requests={_req_ms:.1f}ms ({len(_records)} records)")
+            for record in _records:
                 if await self.should_abort():
                     break
                 signature = json.dumps(record, sort_keys=True, default=str)
@@ -393,18 +420,44 @@ class BinaryService(BaseService):
                                 config_type="derived",
                             ),
                         ).now()
-                    if stale_config_keys or not cached_candidates:
-                        request_event.install_cache_hit = False
-                    if not request_event.install_cache_hit and pruned_install_cache.pop(install_cache_key, None) is not None:
+                    if not stale_config_keys and cached_candidates:
+                        # All cached ``*_BINARY`` paths in derived config still
+                        # exist on disk and aren't shadowed by a user override —
+                        # skip the per-binary ``BinaryRequestEvent`` emit
+                        # entirely. The cached paths are already what downstream
+                        # crawl-setup hooks read out of derived config; re-
+                        # emitting would re-run every registered listener
+                        # (including archivebox.BinaryService's sync_to_async
+                        # DB lookup/save) once per binary, serially, on every
+                        # crawl — which is the regression vs pre-2ba6b5a
+                        # behavior. We still fall through to the slow path when
+                        # cache state is stale, so providers can re-resolve.
+                        continue
+                    request_event.install_cache_hit = False
+                    if pruned_install_cache.pop(install_cache_key, None) is not None:
                         install_cache_changed = True
+                _t_emit0 = _t.perf_counter()
                 emitted_request = event.emit(request_event)
+                _t_emit = (_t.perf_counter() - _t_emit0) * 1000
+                _t_now0 = _t.perf_counter()
                 await emitted_request.now()
+                _t_now = (_t.perf_counter() - _t_now0) * 1000
+                _t_wait0 = _t.perf_counter()
                 await emitted_request.wait()
+                _t_wait = (_t.perf_counter() - _t_wait0) * 1000
+                _t_res0 = _t.perf_counter()
                 await emitted_request.event_results_list(include=_completed_handler_result, raise_if_none=False)
+                _t_res = (_t.perf_counter() - _t_res0) * 1000
+                _phase(
+                    f"plugin[{_plugin_idx}] {plugin.name!r} {record.get('name')!r} hit={install_cache_hit} emit={_t_emit:.0f} now={_t_now:.0f} wait={_t_wait:.0f} results={_t_res:.0f}ms",
+                )
                 if await self.should_abort():
                     break
+            if _plugin_idx <= 3 or (_t.perf_counter() - _plugin_t0) * 1000 > 100:
+                _phase(f"plugin[{_plugin_idx}] {plugin.name!r} DONE total={(_t.perf_counter() - _plugin_t0) * 1000:.1f}ms")
             if await self.should_abort():
                 break
+        _phase("after plugin loop complete")
         if install_cache_changed:
             await event.emit(
                 MachineEvent(

@@ -547,16 +547,26 @@ def get_required_binary_requests(
     )
     # For the cache-key signature we want the binary's *logical* name (e.g.
     # ``chromium``) regardless of where it's installed on this machine, so the
-    # ``ABX_INSTALL_CACHE`` key matches across runs and installs. Strip
-    # ``*_BINARY`` overrides from user_env so the plugin schema's default
-    # (``"chromium"``, ``"node"``, …) wins when hydrating ``{X_BINARY}``
-    # name templates. Without this, an INI-file or env-var override that
-    # already holds the resolved abspath bleeds into the signature.
+    # ``ABX_INSTALL_CACHE`` key matches across runs and installs. Replace any
+    # resolved ``*_BINARY`` overrides with their plugin-schema defaults so
+    # ``{X_BINARY}`` name templates hydrate to ``"chromium"``/``"node"``/etc.
+    # rather than the local abspath. Stripping the keys outright would let
+    # ``plugin_utils.load_config``'s chrome auto-detect re-inject Google Chrome
+    # Canary's abspath; setting an explicit default short-circuits that path
+    # (its ``has_explicit_browser`` check looks for the key, not the value).
     if isinstance(overrides, BaseSettings):
         request_name_overrides: dict[str, Any] = overrides.model_dump(mode="json")
     else:
         request_name_overrides = dict(overrides or {})
+    schema_binary_defaults: dict[str, Any] = {}
+    for prop_key, prop in plugin.config.properties.items():
+        if not prop_key.endswith("_BINARY"):
+            continue
+        default = prop.get("default") if isinstance(prop, dict) else None
+        if isinstance(default, str) and default:
+            schema_binary_defaults[prop_key] = default
     request_name_overrides = {key: value for key, value in request_name_overrides.items() if not key.endswith("_BINARY")}
+    request_name_overrides.update(schema_binary_defaults)
     request_name_config = _load_plugin_config_model(
         plugin,
         user_env=request_name_overrides,
