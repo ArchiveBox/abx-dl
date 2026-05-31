@@ -119,6 +119,8 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
 
 ENV PYTHONDONTWRITEBYTECODE=1
 
+
+########################################################################################################
 FROM abx-dl-runtime-base AS abx-dl-builder
 
 WORKDIR "$CODE_DIR"
@@ -145,6 +147,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && find /venv /src "$CODE_DIR" -type d -name __pycache__ -prune -exec rm -rf {} + \
     && find /venv /src "$CODE_DIR" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
 
+########################################################################################################
 FROM abx-dl-builder AS abx-dl-runtime-builder
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$TARGETVARIANT \
@@ -211,6 +214,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
 
 RUN chown -R "$DEFAULT_PUID:$DEFAULT_PGID" /opt/archivebox/lib-layer
 
+########################################################################################################
 FROM abx-dl-runtime-base
 
 ENV CHROME_BINARY=/opt/archivebox/lib/env/bin/chromium
