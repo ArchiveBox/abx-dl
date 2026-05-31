@@ -1,0 +1,23 @@
+Dockerfile
+  s_074e76a4b61abc::t_214783c236eae6 162,195,228
+abx_dl/services/binary_service.py
+  s_074e76a4b61abc::t_3a01a061fa75ad 707
+abx_dl/models.py
+  s_074e76a4b61abc::t_1d700ccb89724f 252-253
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "da54fcb1e81fd8d26e77b7c1d1003729ef2bde43",
+  "prompts": {},
+  "sessions": {
+    "s_074e76a4b61abc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e3237-ada8-7741-a7c1-098a7ec3e4c8",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
