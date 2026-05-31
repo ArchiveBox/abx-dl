@@ -224,10 +224,9 @@ RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_PUID}..." \
     && useradd --system --create-home --gid "$ARCHIVEBOX_USER" --groups audio,video "$ARCHIVEBOX_USER" \
     && usermod -u "$DEFAULT_PUID" "$ARCHIVEBOX_USER" \
     && groupmod -g "$DEFAULT_PGID" "$ARCHIVEBOX_USER" \
-    && mkdir -p "$DATA_DIR" "$CHROME_USER_DATA_DIR" "$LIB_DIR" "$PLAYWRIGHT_BROWSERS_PATH" \
-    && ln -sf "$CHROME_BINARY" /usr/local/bin/chrome \
+    && mkdir -p "$DATA_DIR" "$CHROME_USER_DATA_DIR" "$LIB_DIR" \
     && ln -sf "$CHROME_BINARY" /usr/local/bin/chromium \
-    && chown -R "$DEFAULT_PUID:$DEFAULT_PGID" "$DATA_DIR" "$PERSONAS_DIR" "$LIB_DIR" "$PLAYWRIGHT_BROWSERS_PATH" \
+    && chown -R "$DEFAULT_PUID:$DEFAULT_PGID" "$DATA_DIR" "$PERSONAS_DIR" "$LIB_DIR" \
     && echo "ARCHIVEBOX_USER=$ARCHIVEBOX_USER PUID=$(id -u "$ARCHIVEBOX_USER") PGID=$(id -g "$ARCHIVEBOX_USER")" | tee -a /VERSION.txt
 
 WORKDIR /out
@@ -251,6 +250,6 @@ RUN (echo -e "\n\n[+] abx-dl runtime versions" \
     && rm -rf /root/.cache /var/cache/apt/* /var/lib/apt/lists/*
 
 WORKDIR /out
-VOLUME ["/out", "/data/personas"]
+VOLUME ["/out", "/data"]
 ENTRYPOINT ["dumb-init", "--", "abx-dl"]
 CMD ["--help"]
