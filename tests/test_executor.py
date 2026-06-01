@@ -397,10 +397,13 @@ def test_required_binary_requests_preserve_extra_config_fields() -> None:
 
     papersdl_request = next(request for request in requests if request["name"] == "papers-dl")
     assert papersdl_request["postinstall_scripts"] is True
-    assert papersdl_request["overrides"]["pip"]["install_args"] == [
+    install_args = papersdl_request["overrides"]["pip"]["install_args"]
+    assert install_args[:3] == [
+        "--no-deps",
         "--only-binary=PyMuPDF,PyMuPDFb",
-        "papers-dl",
+        "papers-dl==0.0.25",
     ]
+    assert "aiohttp>=3.13.2" in install_args
     assert "/lib/" in papersdl_request["overrides"]["pip"]["install_root"]
     assert papersdl_request["overrides"]["pip"]["install_root"].endswith("/pip/packages/papers-dl")
 
