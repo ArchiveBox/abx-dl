@@ -1,6 +1,6 @@
 [project]
 name = "abx-dl"
-version = "1.11.111"
+version = "1.11.112"
 requires-python = ">=3.12"
 description = "All-in-one CLI tool to download and extract content from URLs"
 authors = [{name = "Nick Sweeting"}, {name = "ArchiveBox"}]
@@ -41,8 +41,8 @@ dependencies = [
     "rich-click>=1.8.0",
     "rich>=13.0.0",
     "abxbus==2.5.8",
-    "abxpkg>=1.11.108",
-    "abx-plugins>=1.11.111",
+    "abxpkg>=1.11.109",
+    "abx-plugins>=1.11.112",
     "jambo>=0.1.7",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
