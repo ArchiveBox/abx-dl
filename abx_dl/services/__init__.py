@@ -2,7 +2,7 @@
 
 from .archive_result_service import ArchiveResultService
 from .base import BaseService
-from .binary_service import AbxDlBinaryCacheBackend, PluginBinariesService
+from .binary_service import AbxDlEnvConfigFileBinaryCacheBackend, PluginBinariesService
 from .crawl_service import CrawlService
 from .machine_service import MachineService
 from .process_service import ProcessService
@@ -12,7 +12,7 @@ from .tag_service import TagService
 __all__ = [
     "ArchiveResultService",
     "BaseService",
-    "AbxDlBinaryCacheBackend",
+    "AbxDlEnvConfigFileBinaryCacheBackend",
     "CrawlService",
     "MachineService",
     "ProcessService",

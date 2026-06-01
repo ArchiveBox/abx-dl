@@ -215,6 +215,7 @@ def _load_plugin_config_model(
     *,
     user_env: GlobalConfig | Mapping[str, Any] | None = None,
     derived_env: GlobalConfig | Mapping[str, Any] | None = None,
+    hydrate_binaries: bool = True,
 ) -> Any:
     """Resolve one plugin's typed config model from the final effective env.
 
@@ -272,6 +273,7 @@ def _load_plugin_config_model(
         global_config=global_config,
         user_config=user_config,
         environ=environ,
+        hydrate_binaries=hydrate_binaries,
     )
     return resolved_config
 
@@ -512,7 +514,7 @@ GLOBAL_DEFAULTS = {
     "NODE_PATH": str(NODE_MODULES_DIR),
     "NPM_BIN_DIR": str(NPM_BIN_DIR),
     # Prevent puppeteer's postinstall from downloading Chrome automatically;
-    # abx-dl handles Chromium installation via on_BinaryRequest__12_puppeteer_install instead.
+    # Chromium installation is handled by abxpkg browser providers instead.
     "PUPPETEER_SKIP_DOWNLOAD": "1",
     "PUPPETEER_CACHE_DIR": str(LIB_DIR / "puppeteer"),
     # Keep Chrome's sandbox enabled by default; callers that need --no-sandbox
@@ -571,6 +573,7 @@ def get_required_binary_requests(
         plugin,
         user_env=request_name_overrides,
         derived_env=None,
+        hydrate_binaries=False,
     )
     env = PluginEnv.from_config(
         plugin_config,

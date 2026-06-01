@@ -585,10 +585,6 @@ def _record_key(record: VisibleRecord) -> str:
     return record.id
 
 
-def _is_binary_provider_hook_name(hook_name: str) -> bool:
-    return hook_name.startswith("on_BinaryRequest__")
-
-
 def _phase_label_for_event(bus, event) -> str:
     phase_names = {
         "CrawlSetupEvent": "CrawlSetup",
@@ -875,7 +871,7 @@ class LiveBusUI:
             row.status = row.final_status or row.status
 
     async def on_ProcessStartedEvent(self, event: ProcessStartedEvent) -> None:
-        if _is_binary_provider_hook_name(event.hook_name) or self.progress is None or self.task_id is None:
+        if self.progress is None or self.task_id is None:
             return
         self.process_row_num += 1
         row_key = f"process:{self.process_row_num}"
@@ -1000,8 +996,6 @@ class LiveBusUI:
             self._refresh_live()
 
     async def on_ProcessStdoutEvent(self, event: ProcessStdoutEvent) -> None:
-        if _is_binary_provider_hook_name(event.hook_name):
-            return
         row_key = self._match_row_key(event)
         if row_key is None:
             return
@@ -1016,8 +1010,6 @@ class LiveBusUI:
         if self.progress is None or self.task_id is None:
             return
         row_key = self._match_row_key(event)
-        if _is_binary_provider_hook_name(event.hook_name) and row_key is None:
-            return
         if row_key is None:
             row_key = f"process:completed:{len(self.live_results) + 1}"
         self.row_key_by_event_id[event.event_id] = row_key

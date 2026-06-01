@@ -46,7 +46,7 @@ abx-dl --plugins=wget,title,screenshot,pdf,readability,git 'https://example.com'
 `abx-dl` uses the **[Plugin Library](https://archivebox.github.io/abx-plugins/)** (shared with [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox)) to run a collection of downloading and scraping tools.
 
 Plugins are loaded from the installed [`abx-plugins`](https://pypi.org/project/abx-plugins/) package (or from `ABX_PLUGINS_DIR` if you override it) and execute in distinct phases:
-1. **Install phase** runner reads plugins `config.json`: `required_binaries` and emits `BinaryRequestEvent`s ➡️ which go to **BinaryRequest hooks** (`on_BinaryRequest__*`) that answer requests using apt/brew/env/etc.
+1. **Install phase** runner reads plugins `config.json`: `required_binaries` and emits `BinaryRequestEvent`s for `abxpkg.binary_service.BinaryService`, which resolves or installs binaries using built-in providers such as env, pip, npm, brew, apt, cargo, and browser-specific providers. `BinaryCacheService` and the `abx-dl` cache backend then project resolved state into `derived.env`.
 2. **CrawlSetup hooks** (`on_CrawlSetup__*`) launch/configure expensive crawl-scoped processes like chrome, or trigger side effects. they emit no stdout JSONL records.
 4. **Snapshot hooks** (`on_Snapshot__*`) run per URL to extract content and emit only `ArchiveResult`, `Snapshot`, and `Tag` records
 
@@ -184,7 +184,7 @@ abx-dl install wget singlefile ytdlp
 abx-dl plugins
 ```
 
-Successful preflight installs are cached for 24 hours in `derived.env` under `ABX_INSTALL_CACHE`, keyed by binary name. If a binary was installed successfully recently, `abx-dl` skips re-running the install preflight for that binary. Cached abspaths are still validated at use time, and stale cache entries fall back to the normal provider resolution path.
+Successful preflight installs are cached for 24 hours in `derived.env` under `ABX_INSTALL_CACHE`, keyed by binary name. If a binary was installed successfully recently, `abx-dl` skips re-running the install preflight for that binary. Cached abspaths are still validated at use time, and stale cache entries fall back to `abxpkg` provider resolution.
 
 The normal runtime flow after dependency preflight is:
 - `CrawlEvent` (internal lifecycle root)
@@ -194,7 +194,7 @@ The normal runtime flow after dependency preflight is:
 - `SnapshotCleanupEvent` / `CrawlCleanupEvent`
 
 Hook output contract:
-- `on_BinaryRequest__*` hooks emit only `Binary`
+- binary preflight is driven by plugin `required_binaries` and handled by `abxpkg`, not by plugin hooks
 - `on_CrawlSetup__*` hooks emit no stdout JSONL records
 - `on_Snapshot__*` hooks emit only `ArchiveResult`, `Snapshot`, and `Tag`
 - the TUI and services consume structured events derived from those hook records

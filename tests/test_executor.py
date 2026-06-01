@@ -4,11 +4,12 @@ import signal
 import sys
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any, Self
 from uuid import uuid4
 
-from abxpkg.binary_service import BinaryEvent as AbxPkgBinaryEvent
-from abxpkg.binary_service import BinaryRequestEvent as AbxPkgBinaryRequestEvent
+from abxpkg import Binary as AbxBinary
+from abxpkg.base_types import BinProviderName
+from abxpkg.binary_service import BinaryCacheService, BinaryEvent, BinaryRequestEvent, BinaryService
 
 from abx_dl.config import get_initial_env
 from abx_dl.config import get_required_binary_requests
@@ -33,30 +34,28 @@ from abx_dl.limits import CrawlLimitState
 from abx_dl.models import Hook, Plugin, PluginConfig, Snapshot, discover_plugins
 from abx_dl.orchestrator import create_bus, download, setup_services
 from abx_dl.services.archive_result_service import ArchiveResultService
-from abx_dl.services.binary_service import PluginBinariesService
+from abx_dl.services.binary_service import AbxDlEnvConfigFileBinaryCacheBackend
 from abx_dl.services.crawl_service import CrawlService
 from abx_dl.services.machine_service import MachineService
 from abx_dl.services.process_service import ProcessService
 from abx_dl.services.snapshot_service import SnapshotService
 
-if TYPE_CHECKING:
 
-    class BinaryRequestEvent(AbxPkgBinaryRequestEvent):
-        plugin_name: str = ""
-        hook_name: str = ""
-        output_dir: str = ""
-        binary_id: str = ""
-        machine_id: str = ""
-
-    class BinaryEvent(AbxPkgBinaryEvent):
-        plugin_name: str = ""
-        hook_name: str = ""
-        binary_id: str = ""
-        machine_id: str = ""
-else:
-    BinaryEvent = AbxPkgBinaryEvent
-    BinaryRequestEvent = AbxPkgBinaryRequestEvent
-BinaryService: Any = PluginBinariesService
+def _binary_extra_context(
+    *,
+    plugin_name: str,
+    hook_name: str = "",
+    output_dir: str = "",
+    binary_id: str = "",
+    machine_id: str = "",
+) -> dict[str, str]:
+    return {
+        "plugin_name": plugin_name,
+        "hook_name": hook_name,
+        "output_dir": output_dir,
+        "binary_id": binary_id,
+        "machine_id": machine_id,
+    }
 
 
 def _run_download(*args, **kwargs):
@@ -122,7 +121,7 @@ def _cleanup_test_process_group(group_pid: int | None, *child_pids: int | None) 
 
 def _resolve_real_wget_binary(tmp_path: Path) -> BinaryEvent:
     plugins = discover_plugins()
-    selected = {name: plugins[name] for name in ("wget", "env", "apt", "brew")}
+    selected = {"wget": plugins["wget"]}
     bus = create_bus(total_timeout=30.0, name=f"resolve_real_wget_binary_{tmp_path.name}")
     setup_services(bus, plugins=selected, auto_install=True, emit_jsonl=False, persist_derived=False)
     installed_events: list[BinaryEvent] = []
@@ -137,9 +136,8 @@ def _resolve_real_wget_binary(tmp_path: Path) -> BinaryEvent:
         await bus.emit(
             BinaryRequestEvent(
                 name="wget",
-                plugin_name="wget",
-                output_dir=str(tmp_path / "resolve-wget"),
                 binproviders="env,apt,brew",
+                extra_context=_binary_extra_context(plugin_name="wget", output_dir=str(tmp_path / "resolve-wget")),
             ),
         ).now()
         await bus.wait_until_idle()
@@ -151,7 +149,7 @@ def _resolve_real_wget_binary(tmp_path: Path) -> BinaryEvent:
 
 def test_binary_installed_event_preserves_child_provider_metadata(tmp_path: Path) -> None:
     plugins = discover_plugins()
-    selected = {name: plugins[name] for name in ("wget", "env", "apt", "brew")}
+    selected = {"wget": plugins["wget"]}
     bus = create_bus(total_timeout=30.0, name=f"binary_installed_metadata_{tmp_path.name}")
     setup_services(bus, plugins=selected, auto_install=True, emit_jsonl=False, persist_derived=False)
     installed_events: list[BinaryEvent] = []
@@ -166,9 +164,8 @@ def test_binary_installed_event_preserves_child_provider_metadata(tmp_path: Path
         await bus.emit(
             BinaryRequestEvent(
                 name="wget",
-                plugin_name="wget",
-                output_dir=str(tmp_path / "run"),
                 binproviders="env,apt,brew",
+                extra_context=_binary_extra_context(plugin_name="wget", output_dir=str(tmp_path / "run")),
             ),
         ).now()
         await bus.wait_until_idle()
@@ -177,10 +174,10 @@ def test_binary_installed_event_preserves_child_provider_metadata(tmp_path: Path
 
     wget_events = [event for event in installed_events if event.name == "wget"]
     assert wget_events
-    assert all(event.plugin_name == "wget" for event in wget_events)
+    assert all(event.extra_context.get("plugin_name") == "wget" for event in wget_events)
     assert all(event.binproviders == "env,apt,brew" for event in wget_events)
     assert all(event.binprovider == "env" for event in wget_events)
-    assert all(event.binary_id for event in wget_events)
+    assert all("binary_id" in event.extra_context for event in wget_events)
 
 
 def test_binary_installed_event_uses_machine_config_seeded_from_persistent_config(tmp_path: Path) -> None:
@@ -193,11 +190,11 @@ def test_binary_installed_event_uses_machine_config_seeded_from_persistent_confi
     async def run() -> list[BinaryEvent]:
         bus = create_bus(total_timeout=10.0, name=f"machine_config_seeded_{tmp_path.name}")
         MachineService(bus)
-        BinaryService(
+        BinaryCacheService(
             bus,
-            plugins={name: plugins[name] for name in ("wget", "env", "apt", "brew")},
-            auto_install=True,
+            backend=AbxDlEnvConfigFileBinaryCacheBackend(bus, plugins={"wget": plugins["wget"]}),
         )
+        BinaryService(bus, auto_install=True)
         installed_events: list[BinaryEvent] = []
 
         async def on_BinaryEvent(event: BinaryEvent) -> None:
@@ -209,9 +206,8 @@ def test_binary_installed_event_uses_machine_config_seeded_from_persistent_confi
             await bus.emit(
                 BinaryRequestEvent(
                     name=resolved_binary.abspath,
-                    plugin_name="wget",
-                    output_dir=".",
                     binproviders="env,apt,brew",
+                    extra_context=_binary_extra_context(plugin_name="wget", output_dir="."),
                 ),
             ).now()
             await bus.wait_until_idle()
@@ -232,11 +228,11 @@ def test_binary_installed_event_resolves_config_backed_command_name(tmp_path: Pa
     async def run() -> list[BinaryEvent]:
         bus = create_bus(total_timeout=10.0, name=f"config_backed_command_{tmp_path.name}")
         MachineService(bus)
-        BinaryService(
+        BinaryCacheService(
             bus,
-            plugins={name: plugins[name] for name in ("wget", "env", "apt", "brew")},
-            auto_install=True,
+            backend=AbxDlEnvConfigFileBinaryCacheBackend(bus, plugins={"wget": plugins["wget"]}),
         )
+        BinaryService(bus, auto_install=True)
         installed_events: list[BinaryEvent] = []
 
         async def on_BinaryEvent(event: BinaryEvent) -> None:
@@ -249,9 +245,8 @@ def test_binary_installed_event_resolves_config_backed_command_name(tmp_path: Pa
             await bus.emit(
                 BinaryRequestEvent(
                     name="wget",
-                    plugin_name="wget",
-                    output_dir=".",
                     binproviders="env,apt,brew",
+                    extra_context=_binary_extra_context(plugin_name="wget", output_dir="."),
                 ),
             ).now()
             await bus.wait_until_idle()
@@ -272,11 +267,11 @@ def test_binary_installed_event_uses_user_absolute_path_for_real_plugin(tmp_path
     async def run() -> list[BinaryEvent]:
         bus = create_bus(total_timeout=10.0, name=f"user_absolute_path_{tmp_path.name}")
         MachineService(bus)
-        BinaryService(
+        BinaryCacheService(
             bus,
-            plugins={name: plugins[name] for name in ("wget", "env", "apt", "brew")},
-            auto_install=True,
+            backend=AbxDlEnvConfigFileBinaryCacheBackend(bus, plugins={"wget": plugins["wget"]}),
         )
+        BinaryService(bus, auto_install=True)
         installed_events: list[BinaryEvent] = []
 
         async def on_BinaryEvent(event: BinaryEvent) -> None:
@@ -288,9 +283,8 @@ def test_binary_installed_event_uses_user_absolute_path_for_real_plugin(tmp_path
             await bus.emit(
                 BinaryRequestEvent(
                     name=resolved_binary.abspath,
-                    plugin_name="wget",
-                    output_dir=".",
                     binproviders="env,apt,brew",
+                    extra_context=_binary_extra_context(plugin_name="wget", output_dir="."),
                 ),
             ).now()
             await bus.wait_until_idle()
@@ -301,8 +295,8 @@ def test_binary_installed_event_uses_user_absolute_path_for_real_plugin(tmp_path
     wget_events = [event for event in asyncio.run(run()) if event.name == resolved_binary.abspath]
     assert wget_events
     assert wget_events[-1].abspath == resolved_binary.abspath
-    assert wget_events[-1].version == ""
-    assert wget_events[-1].binprovider == ""
+    assert wget_events[-1].version
+    assert wget_events[-1].binprovider == "env"
 
 
 def test_binary_installed_event_reuses_real_plugin_cached_paths_without_provider_inference(tmp_path: Path) -> None:
@@ -312,11 +306,11 @@ def test_binary_installed_event_reuses_real_plugin_cached_paths_without_provider
     async def run() -> list[BinaryEvent]:
         bus = create_bus(total_timeout=10.0, name=f"reuses_cached_paths_{tmp_path.name}")
         MachineService(bus)
-        BinaryService(
+        BinaryCacheService(
             bus,
-            plugins={name: plugins[name] for name in ("wget", "env", "apt", "brew")},
-            auto_install=True,
+            backend=AbxDlEnvConfigFileBinaryCacheBackend(bus, plugins={"wget": plugins["wget"]}),
         )
+        BinaryService(bus, auto_install=True)
         installed_events: list[BinaryEvent] = []
 
         async def on_BinaryEvent(event: BinaryEvent) -> None:
@@ -329,9 +323,8 @@ def test_binary_installed_event_reuses_real_plugin_cached_paths_without_provider
             await bus.emit(
                 BinaryRequestEvent(
                     name="wget",
-                    plugin_name="wget",
-                    output_dir=".",
                     binproviders="env,apt,brew",
+                    extra_context=_binary_extra_context(plugin_name="wget", output_dir="."),
                 ),
             ).now()
             await bus.wait_until_idle()
@@ -346,10 +339,10 @@ def test_binary_installed_event_reuses_real_plugin_cached_paths_without_provider
     assert wget_events[-1].binprovider == ""
 
 
-def test_binary_event_uses_cached_config_binary_before_provider_hooks(tmp_path: Path) -> None:
+def test_binary_event_uses_cached_config_binary_before_abxpkg_resolution(tmp_path: Path) -> None:
     resolved_binary = _resolve_real_wget_binary(tmp_path)
     plugins = discover_plugins()
-    selected = {name: plugins[name] for name in ("wget", "env", "apt", "brew")}
+    selected = {"wget": plugins["wget"]}
     bus = create_bus(total_timeout=60.0, name=f"cached_binary_before_provider_{tmp_path.name}")
     setup_services(
         bus,
@@ -376,9 +369,8 @@ def test_binary_event_uses_cached_config_binary_before_provider_hooks(tmp_path: 
         await bus.emit(
             BinaryRequestEvent(
                 name="wget",
-                plugin_name="wget",
-                output_dir=str(tmp_path / "run"),
                 binproviders="env,apt,brew",
+                extra_context=_binary_extra_context(plugin_name="wget", output_dir=str(tmp_path / "run")),
             ),
         ).now()
         await bus.wait_until_idle()
@@ -429,7 +421,7 @@ def test_setup_services_accepts_runtime_config_overrides_and_seeds_machine_event
                 config_overrides={"TIMEOUT": 123, "DRY_RUN": True},
                 derived_config_overrides={"WGET_BINARY": "/tmp/fake-wget"},
                 MachineService=MachineService,
-                BinaryService=None,
+                PluginBinariesService=None,
                 ProcessService=None,
                 ArchiveResultService=None,
                 TagService=None,
@@ -450,152 +442,18 @@ def test_setup_services_accepts_runtime_config_overrides_and_seeds_machine_event
     assert derived_event.config == {"WGET_BINARY": "/tmp/fake-wget"}
 
 
-def test_binary_service_passes_extra_binary_kwargs_to_provider_hooks(
-    tmp_path: Path,
-) -> None:
-    plugins = discover_plugins()
-    selected = {name: plugins[name] for name in ("papersdl", "pip")}
-
-    async def run() -> list[ProcessEvent]:
-        bus = create_bus(total_timeout=10.0, name=f"binary_kwargs_{tmp_path.name}")
-        MachineService(bus)
-        BinaryService(bus, plugins=selected, auto_install=True)
-        process_events: list[ProcessEvent] = []
-
-        async def on_ProcessEvent(event: ProcessEvent) -> None:
-            process_events.append(event)
-            await event.emit(
-                ProcessCompletedEvent(
-                    plugin_name=event.plugin_name,
-                    hook_name=event.hook_name,
-                    hook_path=event.hook_path,
-                    hook_args=event.hook_args,
-                    env=event.env,
-                    timeout=event.timeout,
-                    stdout="",
-                    stderr="",
-                    exit_code=0,
-                    status="succeeded",
-                    output_dir=event.output_dir,
-                    is_background=event.is_background,
-                ),
-            ).now()
-
-        bus.on(ProcessEvent, on_ProcessEvent)
-        try:
-            await bus.emit(MachineEvent(config=get_initial_env(), config_type="user")).now()
-            await bus.emit(
-                BinaryRequestEvent(
-                    name="papers-dl",
-                    plugin_name="papersdl",
-                    output_dir=str(tmp_path / "papersdl"),
-                    binproviders="pip",
-                    postinstall_scripts=True,
-                ),
-            ).now()
-            await bus.wait_until_idle()
-            return process_events
-        finally:
-            await bus.wait_until_idle()
-
-    process_events = asyncio.run(run())
-    pip_event = next(event for event in process_events if event.hook_name.endswith("on_BinaryRequest__11_pip"))
-
-    assert "--name=papers-dl" in pip_event.hook_args
-    assert "--binproviders=pip" in pip_event.hook_args
-    assert "--postinstall-scripts=true" in pip_event.hook_args
-
-
-def test_binary_service_uses_provider_plugin_timeout_for_provider_hooks(
-    tmp_path: Path,
-) -> None:
-    plugins = discover_plugins()
-    selected = {name: plugins[name] for name in ("chrome", "puppeteer")}
-
-    async def run() -> list[ProcessEvent]:
-        bus = create_bus(total_timeout=10.0, name=f"binary_provider_timeout_{tmp_path.name}")
-        MachineService(bus)
-        BinaryService(bus, plugins=selected, auto_install=True)
-        process_events: list[ProcessEvent] = []
-
-        async def on_ProcessEvent(event: ProcessEvent) -> None:
-            process_events.append(event)
-            await event.emit(
-                ProcessCompletedEvent(
-                    plugin_name=event.plugin_name,
-                    hook_name=event.hook_name,
-                    hook_path=event.hook_path,
-                    hook_args=event.hook_args,
-                    env=event.env,
-                    timeout=event.timeout,
-                    stdout="",
-                    stderr="",
-                    exit_code=0,
-                    status="succeeded",
-                    output_dir=event.output_dir,
-                    is_background=event.is_background,
-                ),
-            ).now()
-
-        bus.on(ProcessEvent, on_ProcessEvent)
-        try:
-            await bus.emit(
-                MachineEvent(
-                    config={
-                        **get_initial_env(),
-                        "PUPPETEER_TIMEOUT": 777,
-                    },
-                    config_type="user",
-                ),
-            ).now()
-            await bus.emit(
-                BinaryRequestEvent(
-                    name="chrome",
-                    plugin_name="chrome",
-                    output_dir=str(tmp_path / "chrome"),
-                    binproviders="puppeteer",
-                ),
-            ).now()
-            await bus.wait_until_idle()
-            return process_events
-        finally:
-            await bus.wait_until_idle()
-
-    process_events = asyncio.run(run())
-    puppeteer_event = next(event for event in process_events if event.plugin_name == "puppeteer")
-
-    assert puppeteer_event.timeout == 777
-    assert puppeteer_event.event_timeout == 807.0
-    assert puppeteer_event.event_handler_timeout == 807.0
-
-
 def test_binary_service_honors_declared_provider_order() -> None:
-    plugins = discover_plugins()
-    selected = {name: plugins[name] for name in ("env", "apt", "brew")}
     bus = create_bus(total_timeout=10.0, name="binary_provider_order")
-    service = BinaryService(bus, plugins=selected, auto_install=True)
+    service = BinaryService(bus, auto_install=True)
 
-    hook_names = [
-        hook.name
-        for _provider_name, _plugin, hook in service._provider_hook_sequence(
-            ["env", "apt", "brew"],
-        )
-    ]
-
-    assert hook_names == [
-        "on_BinaryRequest__00_env",
-        "on_BinaryRequest__13_apt",
-        "on_BinaryRequest__12_brew",
-    ]
+    assert service._provider_names("env,apt,brew") == ["env", "apt", "brew"]
 
 
 def test_binary_service_stops_after_successful_provider_result(tmp_path: Path) -> None:
-    plugins = discover_plugins()
-    selected = {name: plugins[name] for name in ("env", "apt", "brew")}
     bus = create_bus(total_timeout=30.0, name=f"binary_provider_result_{tmp_path.name}")
     setup_services(
         bus,
-        plugins=selected,
+        plugins={},
         auto_install=True,
         emit_jsonl=False,
         persist_derived=False,
@@ -617,9 +475,8 @@ def test_binary_service_stops_after_successful_provider_result(tmp_path: Path) -
         request = bus.emit(
             BinaryRequestEvent(
                 name="python3",
-                plugin_name="python",
-                output_dir=str(tmp_path / "run"),
                 binproviders="env,apt,brew",
+                extra_context=_binary_extra_context(plugin_name="python", output_dir=str(tmp_path / "run")),
             ),
         )
         await request.now(first_result=True)
@@ -628,7 +485,7 @@ def test_binary_service_stops_after_successful_provider_result(tmp_path: Path) -
 
     asyncio.run(run())
 
-    assert [event.plugin_name for event in process_events] == ["env"]
+    assert process_events == []
     python_events = [event for event in binary_events if event.name == "python3"]
     assert python_events
     assert python_events[-1].binprovider == "env"
@@ -636,48 +493,56 @@ def test_binary_service_stops_after_successful_provider_result(tmp_path: Path) -
 
 
 def test_binary_service_serializes_provider_installs(tmp_path: Path) -> None:
-    plugins = discover_plugins()
-    selected = {name: plugins[name] for name in ("env",)}
-
     async def run() -> int:
         bus = create_bus(total_timeout=10.0, name=f"binary_install_lock_{tmp_path.name}")
         MachineService(bus)
         active_installs = 0
         max_active_installs = 0
 
-        class LockedBinaryService(BinaryService):
-            async def _run_binary_provider_hook(
+        class InstrumentedBinary(AbxBinary):
+            def install(
                 self,
-                event: BinaryRequestEvent,
-                *,
-                plugin: Plugin,
-                hook: Hook,
-                inherited_binproviders: str,
-            ) -> str | None:
+                binproviders: list[BinProviderName] | None = None,
+                no_cache: bool = False,
+                dry_run: bool | None = None,
+                postinstall_scripts: bool | None = None,
+                min_release_age: float | None = None,
+                **extra_overrides: Any,
+            ) -> Self:
                 nonlocal active_installs, max_active_installs
                 active_installs += 1
                 max_active_installs = max(max_active_installs, active_installs)
-                await asyncio.sleep(0.05)
+                time.sleep(0.05)
                 active_installs -= 1
-                return f"/tmp/{event.name}"
+                return type(self).model_validate(
+                    {
+                        "name": self.name,
+                        "loaded_abspath": f"/tmp/{self.name}",
+                    },
+                )
 
-        LockedBinaryService(bus, plugins=selected, auto_install=True)
+        class LockedBinaryService(BinaryService):
+            def _load(self, event: BinaryRequestEvent) -> AbxBinary:
+                return AbxBinary.model_validate({"name": event.name})
+
+            def _binary_for_event(self, event: BinaryRequestEvent) -> AbxBinary:
+                return InstrumentedBinary(name=event.name)
+
+        LockedBinaryService(bus, auto_install=True)
         await bus.emit(MachineEvent(config=get_initial_env(), config_type="user")).now()
         await asyncio.gather(
             bus.emit(
                 BinaryRequestEvent(
                     name="first-test-binary",
-                    plugin_name="env",
-                    output_dir=str(tmp_path / "first"),
                     binproviders="env",
+                    extra_context=_binary_extra_context(plugin_name="env", output_dir=str(tmp_path / "first")),
                 ),
             ).now(),
             bus.emit(
                 BinaryRequestEvent(
                     name="second-test-binary",
-                    plugin_name="env",
-                    output_dir=str(tmp_path / "second"),
                     binproviders="env",
+                    extra_context=_binary_extra_context(plugin_name="env", output_dir=str(tmp_path / "second")),
                 ),
             ).now(),
         )
@@ -688,16 +553,14 @@ def test_binary_service_serializes_provider_installs(tmp_path: Path) -> None:
 
 
 def test_binary_event_ignores_unknown_request_plugin_when_persisting_config(tmp_path: Path) -> None:
-    plugins = discover_plugins()
-
     async def run() -> list[BinaryEvent]:
         bus = create_bus(total_timeout=10.0, name=f"unknown_binary_request_plugin_{tmp_path.name}")
         MachineService(bus)
-        BinaryService(
+        BinaryCacheService(
             bus,
-            plugins={name: plugins[name] for name in ("env", "apt", "brew")},
-            auto_install=True,
+            backend=AbxDlEnvConfigFileBinaryCacheBackend(bus, plugins={}),
         )
+        BinaryService(bus, auto_install=True)
         installed_events: list[BinaryEvent] = []
 
         async def on_BinaryEvent(event: BinaryEvent) -> None:
@@ -711,24 +574,28 @@ def test_binary_event_ignores_unknown_request_plugin_when_persisting_config(tmp_
             await bus.emit(
                 BinaryRequestEvent(
                     name=sys.executable,
-                    plugin_name="archivebox",
-                    hook_name="on_BinaryRequest__archivebox_run",
-                    output_dir=str(tmp_path / "run"),
                     binproviders="env",
-                    binary_id=binary_id,
-                    machine_id=machine_id,
+                    extra_context=_binary_extra_context(
+                        plugin_name="archivebox",
+                        hook_name="install:archivebox",
+                        output_dir=str(tmp_path / "run"),
+                        binary_id=binary_id,
+                        machine_id=machine_id,
+                    ),
                 ),
             ).now()
             await bus.emit(
                 BinaryEvent(
                     name=sys.executable,
-                    plugin_name="archivebox",
-                    hook_name="on_BinaryRequest__archivebox_run",
                     abspath=sys.executable,
                     binproviders="env",
                     binprovider="env",
-                    binary_id=binary_id,
-                    machine_id=machine_id,
+                    extra_context=_binary_extra_context(
+                        plugin_name="archivebox",
+                        hook_name="install:archivebox",
+                        binary_id=binary_id,
+                        machine_id=machine_id,
+                    ),
                 ),
             ).now()
             await bus.wait_until_idle()
@@ -739,14 +606,14 @@ def test_binary_event_ignores_unknown_request_plugin_when_persisting_config(tmp_
     installed_events = asyncio.run(run())
     assert installed_events
     assert installed_events[-1].abspath == sys.executable
-    assert installed_events[-1].plugin_name == "archivebox"
+    assert installed_events[-1].extra_context.get("plugin_name") == "archivebox"
 
 
-def test_binary_event_falls_back_from_stale_cached_config_binary_to_provider_hooks(tmp_path: Path) -> None:
+def test_binary_event_falls_back_from_stale_cached_config_binary_to_abxpkg_resolution(tmp_path: Path) -> None:
     managed_lib_dir = tmp_path / "lib"
     stale_binary = managed_lib_dir / "pip" / "venv" / "bin" / "wget"
     plugins = discover_plugins()
-    selected = {name: plugins[name] for name in ("wget", "env", "apt", "brew")}
+    selected = {"wget": plugins["wget"]}
     bus = create_bus(total_timeout=60.0, name=f"stale_cached_binary_{tmp_path.name}")
     setup_services(
         bus,
@@ -781,9 +648,8 @@ def test_binary_event_falls_back_from_stale_cached_config_binary_to_provider_hoo
         await bus.emit(
             BinaryRequestEvent(
                 name="wget",
-                plugin_name="wget",
-                output_dir=str(tmp_path / "run"),
                 binproviders="env,apt,brew",
+                extra_context=_binary_extra_context(plugin_name="wget", output_dir=str(tmp_path / "run")),
             ),
         ).now()
         await bus.wait_until_idle()
@@ -794,7 +660,7 @@ def test_binary_event_falls_back_from_stale_cached_config_binary_to_provider_hoo
     assert wget_events
     assert wget_events[-1].binprovider == "env"
     assert Path(wget_events[-1].abspath).name == "wget"
-    assert any(event.plugin_name == "env" for event in process_events)
+    assert process_events == []
     derived_update = next(
         event
         for event in reversed(asyncio.run(bus.filter(MachineEvent, past=True)))
@@ -803,10 +669,10 @@ def test_binary_event_falls_back_from_stale_cached_config_binary_to_provider_hoo
     assert Path(str(derived_update.value)).name == "wget"
 
 
-def test_binary_event_does_not_fallback_from_user_binary_abspath_override(tmp_path: Path) -> None:
+def test_binary_event_falls_back_from_missing_user_binary_abspath_override_via_abxpkg(tmp_path: Path) -> None:
     broken_binary = tmp_path / "broken" / "wget"
     plugins = discover_plugins()
-    selected = {name: plugins[name] for name in ("wget", "env", "apt", "brew")}
+    selected = {"wget": plugins["wget"]}
     bus = create_bus(total_timeout=60.0, name=f"user_abspath_override_{tmp_path.name}")
     setup_services(
         bus,
@@ -832,23 +698,19 @@ def test_binary_event_does_not_fallback_from_user_binary_abspath_override(tmp_pa
         request = bus.emit(
             BinaryRequestEvent(
                 name=str(broken_binary),
-                plugin_name="wget",
-                output_dir=str(tmp_path / "run"),
                 binproviders="env,apt,brew",
+                extra_context=_binary_extra_context(plugin_name="wget", output_dir=str(tmp_path / "run")),
             ),
         )
-        await request.now()
-        try:
-            await request.event_results_list()
-        except FileNotFoundError as error:
-            assert str(broken_binary) in str(error)
-        else:
-            raise AssertionError("missing user absolute path should fail without provider fallback")
+        await request.now(first_result=True)
+        assert await request.event_result() is not None
         await bus.wait_until_idle()
 
     asyncio.run(run())
 
-    assert installed_events == []
+    assert installed_events
+    assert installed_events[-1].name == str(broken_binary)
+    assert installed_events[-1].binprovider == "env"
     assert process_events == []
 
 
@@ -856,10 +718,9 @@ def test_binary_installed_event_updates_lib_bin_symlink(tmp_path: Path) -> None:
     async def run() -> None:
         bus = create_bus(total_timeout=10.0, name=f"updates_lib_bin_symlink_{tmp_path.name}")
         MachineService(bus)
-        BinaryService(
+        BinaryCacheService(
             bus,
-            plugins={},
-            auto_install=True,
+            backend=AbxDlEnvConfigFileBinaryCacheBackend(bus, plugins={}),
         )
 
         first_target = tmp_path / "targets" / "first-demo"
@@ -873,9 +734,8 @@ def test_binary_installed_event_updates_lib_bin_symlink(tmp_path: Path) -> None:
             await bus.emit(
                 BinaryEvent(
                     name="demo",
-                    plugin_name="demo",
-                    hook_name="install",
                     abspath=str(first_target),
+                    extra_context=_binary_extra_context(plugin_name="demo", hook_name="install"),
                 ),
             ).now()
             link_path = tmp_path / "lib-bin" / "demo"
@@ -885,9 +745,8 @@ def test_binary_installed_event_updates_lib_bin_symlink(tmp_path: Path) -> None:
             await bus.emit(
                 BinaryEvent(
                     name="demo",
-                    plugin_name="demo",
-                    hook_name="install",
                     abspath=str(second_target),
+                    extra_context=_binary_extra_context(plugin_name="demo", hook_name="install"),
                 ),
             ).now()
             assert link_path.is_symlink()
@@ -910,7 +769,7 @@ def test_download_creates_default_persona_dir(tmp_path: Path) -> None:
 
 def test_download_sets_plugin_specific_binary_env_from_binary_default(tmp_path: Path) -> None:
     plugins = discover_plugins()
-    selected = {name: plugins[name] for name in ("wget", "env", "apt", "brew")}
+    selected = {"wget": plugins["wget"]}
     bus = create_bus(total_timeout=120.0, name=f"real_wget_binary_env_{tmp_path.name}")
     snapshot_processes: list[ProcessEvent] = []
 
@@ -933,7 +792,7 @@ def test_download_sets_plugin_specific_binary_env_from_binary_default(tmp_path: 
 
 def test_snapshot_background_only_hook_finishes_before_cleanup_without_filename_special_case(tmp_path: Path) -> None:
     plugins = discover_plugins()
-    selected = {name: plugins[name] for name in ("wget", "env", "apt", "brew")}
+    selected = {"wget": plugins["wget"]}
     results = _run_download(
         "https://example.com",
         selected,
@@ -1091,17 +950,17 @@ def test_snapshot_hook_binary_event_env_replay_applies_newest_last(tmp_path: Pat
         await bus.emit(
             BinaryEvent(
                 name="env-check-tool",
-                plugin_name=plugin.name,
                 abspath="/bin/echo",
                 env={"ABX_TEST_BINARY_MARKER": "old"},
+                extra_context=_binary_extra_context(plugin_name=plugin.name),
             ),
         ).now()
         await bus.emit(
             BinaryEvent(
                 name="env-check-tool",
-                plugin_name=plugin.name,
                 abspath="/bin/echo",
                 env={"ABX_TEST_BINARY_MARKER": "new"},
+                extra_context=_binary_extra_context(plugin_name=plugin.name),
             ),
         ).now()
         crawl_start_event = CrawlStartEvent(url=snapshot.url, snapshot_id=snapshot.id, output_dir=str(output_dir))
@@ -1166,17 +1025,17 @@ def test_crawl_setup_hook_binary_event_env_replay_applies_newest_last(tmp_path: 
         await bus.emit(
             BinaryEvent(
                 name="setup-env-check-tool",
-                plugin_name=plugin.name,
                 abspath="/bin/echo",
                 env={"ABX_TEST_BINARY_MARKER": "old"},
+                extra_context=_binary_extra_context(plugin_name=plugin.name),
             ),
         ).now()
         await bus.emit(
             BinaryEvent(
                 name="setup-env-check-tool",
-                plugin_name=plugin.name,
                 abspath="/bin/echo",
                 env={"ABX_TEST_BINARY_MARKER": "new"},
+                extra_context=_binary_extra_context(plugin_name=plugin.name),
             ),
         ).now()
         crawl_event = CrawlEvent(url=snapshot.url, snapshot_id=snapshot.id, output_dir=str(output_dir))
@@ -2768,7 +2627,7 @@ def test_crawl_abort_interrupts_noninteractive_foreground_process(tmp_path: Path
 
 def test_download_can_suppress_jsonl_stdout(tmp_path: Path, capsys) -> None:
     plugins = discover_plugins()
-    selected = {name: plugins[name] for name in ("wget", "env", "apt", "brew")}
+    selected = {"wget": plugins["wget"]}
     results = _run_download(
         "https://example.com",
         selected,

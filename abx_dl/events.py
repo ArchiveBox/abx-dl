@@ -4,7 +4,7 @@ Events form this phase order during execution::
 
     InstallEvent                                    # orchestrator preflight only
     └── BinaryRequestEvent × N                      # from config.json required_binaries
-        └── ProcessEvent (provider hook) → BinaryEvent
+        └── abxpkg BinaryService → BinaryEvent
 
     CrawlEvent                                      # internal lifecycle root
     ├── CrawlSetupEvent                             # plugin on_CrawlSetup hooks run here
@@ -343,7 +343,6 @@ class ProcessStdoutEvent(BaseEvent):
     parses the line and checks for the JSON shape it cares about. In the
     current hook contract:
 
-    - provider hooks emit ``{"type": "Binary", ...}`` → BinaryEvent
     - snapshot hooks emit ``{"type": "Snapshot", ...}`` → SnapshotEvent
     - snapshot hooks emit ``{"type": "Tag", ...}`` → TagEvent
     - snapshot hooks emit ``{"type": "ArchiveResult", ...}`` → ArchiveResultEvent

@@ -9,12 +9,12 @@ Use this skill when an agent needs to scrape a page, extract content from a webs
 
 `abx-dl` exposes the extractors that power ArchiveBox without requiring a full ArchiveBox install. It is useful for website scraping, page content extraction, media downloading, text extraction, markdown export, screenshots, PDF capture, DOM capture, JSON metadata extraction, and more.
 
-For per-plugin hook details, binary providers, and config schemas, inspect the `abx-plugins` repo:
+For per-plugin hook details, required binary declarations, and config schemas, inspect the `abx-plugins` repo:
 
 - https://github.com/ArchiveBox/abx-plugins
 - https://github.com/ArchiveBox/abx-plugins/tree/main/abx_plugins/plugins
 
-When `abx-dl plugins <name>` is not enough, inspect the plugin's `config.json`, `on_BinaryRequest__*`, `on_CrawlSetup__*`, and `on_Snapshot__*` hooks.
+When `abx-dl plugins <name>` is not enough, inspect the plugin's `config.json`, `required_binaries`, `on_CrawlSetup__*`, and `on_Snapshot__*` hooks.
 
 ## Quick Start
 
@@ -46,8 +46,8 @@ abx-dl install wget ytdlp chrome
 ```
 
 - If you skip pre-install, `abx-dl <url>` will auto-install missing dependencies by default. Use `--no-install` to disable that behavior.
-- Dependency preflight is driven entirely by each plugin's `config.json > required_binaries`.
-- `on_BinaryRequest__*` hooks emit only `Binary` records.
+- Dependency preflight is driven by each plugin's `config.json > required_binaries`.
+- Those declarations are emitted as `abxpkg` `BinaryRequestEvent` records; `abxpkg.binary_service.BinaryService` resolves or installs binaries with built-in providers, and `BinaryCacheService` projects resolved state through the `abx-dl` cache backend.
 
 ## Running Against URLs
 

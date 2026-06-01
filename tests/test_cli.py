@@ -599,8 +599,8 @@ def test_phase_label_for_event_walks_nested_event_ancestors() -> None:
     bus = create_bus(total_timeout=10.0, name="phase_label_nested")
     phase_event = SnapshotEvent(url="https://example.com", snapshot_id="snap", output_dir="/tmp")
     provider_process = ProcessEvent(
-        plugin_name="puppeteer",
-        hook_name="on_BinaryRequest__12_puppeteer_install",
+        plugin_name="chrome",
+        hook_name="on_CrawlSetup__90_chrome_launch",
         hook_path="/bin/echo",
         hook_args=["chromium"],
         is_background=False,

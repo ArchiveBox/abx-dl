@@ -30,32 +30,32 @@ def test_discover_plugins_extension_plugins_declare_required_binaries() -> None:
         assert plugins[plugin_name].config.required_binaries
 
 
-def test_filter_plugins_includes_only_declared_providers_for_wget() -> None:
+def test_filter_plugins_does_not_add_binary_providers_for_wget() -> None:
     plugins = discover_plugins()
 
     selected = filter_plugins(plugins, ["wget"], include_providers=True)
 
     assert "wget" in selected
-    assert "env" in selected
-    assert "apt" in selected
-    assert "brew" in selected
+    assert "env" not in selected
+    assert "apt" not in selected
+    assert "brew" not in selected
     assert "npm" not in selected
     assert "chromewebstore" not in selected
 
 
-def test_filter_plugins_includes_transitive_provider_dependencies() -> None:
+def test_filter_plugins_includes_required_plugins_without_binary_providers() -> None:
     plugins = discover_plugins()
 
     selected = filter_plugins(plugins, ["ublock"], include_providers=True)
 
     assert "ublock" in selected
     assert "chrome" in selected
-    assert "puppeteer" in selected
-    assert "chromewebstore" in selected
-    assert "env" in selected
-    assert "apt" in selected
-    assert "brew" in selected
-    assert "npm" in selected
+    assert "puppeteer" not in selected
+    assert "chromewebstore" not in selected
+    assert "env" not in selected
+    assert "apt" not in selected
+    assert "brew" not in selected
+    assert "npm" not in selected
 
 
 def test_required_binary_requests_ignore_nonexistent_derived_binary_paths() -> None:
