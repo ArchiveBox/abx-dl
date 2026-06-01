@@ -31,3 +31,12 @@ def test_dockerfile_build_installs_disable_release_age_gate() -> None:
 
     assert "ABXPKG_POSTINSTALL_SCRIPTS=True" in text
     assert "ABXPKG_MIN_RELEASE_AGE=0" in text
+
+
+def test_dockerfile_exposes_downloader_binaries_in_env_bin() -> None:
+    text = (REPO_ROOT / "Dockerfile").read_text()
+
+    assert '--bin-dir="$LIB_DIR/env/bin" gallery-dl' in text
+    assert '--bin-dir="$LIB_DIR/env/bin" --overrides=' in text
+    assert "forum-dl" in text
+    assert 'ln -sf "$(command -v git)" "$LIB_DIR/env/bin/git"' in text

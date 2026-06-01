@@ -189,7 +189,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
     && ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 PUID=0 PGID=0 abx-dl plugins --install \
         wget git ytdlp gallerydl forumdl papersdl opendataloader archivedotorg \
         htmltotext readability mercury defuddle trafilatura liteparse \
-        claudecode claudecodecleanup claudecodeextract
+        claudecode claudecodecleanup claudecodeextract \
+    && abxpkg install --no-cache --binproviders=pip --bin-dir="$LIB_DIR/env/bin" gallery-dl \
+    && abxpkg install --no-cache --binproviders=pip --bin-dir="$LIB_DIR/env/bin" --overrides='{"pip":{"install_args":["--no-deps","forum-dl","chardet==5.2.0","pydantic==2.12.3","pydantic-core==2.41.4","typing-extensions>=4.14.1","annotated-types>=0.6.0","typing-inspection>=0.4.2","beautifulsoup4","soupsieve","lxml","requests","urllib3","certifi","idna","charset-normalizer","tenacity","python-dateutil","six","html2text","warcio"]}}' forum-dl \
+    && mkdir -p "$LIB_DIR/env/bin" \
+    && ln -sf "$(command -v git)" "$LIB_DIR/env/bin/git"
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
