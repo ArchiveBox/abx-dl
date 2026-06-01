@@ -9,7 +9,6 @@ derived cache into user config.
 
 import json
 import os
-import platform
 import re
 import tempfile
 from dataclasses import dataclass
@@ -25,13 +24,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from .events import MachineEvent
 from .models import Plugin, PluginConfig, PluginEnv, RequiredBinary
 from abx_plugins.plugins.base import utils as plugin_utils
-
-
-def get_arch() -> str:
-    """Get architecture string like arm64-darwin or x86_64-linux."""
-    machine = platform.machine().lower()
-    system = platform.system().lower()
-    return f"{machine}-{system}"
 
 
 class BootstrapConfig(BaseSettings):
@@ -134,9 +126,18 @@ class GlobalConfig(BaseSettings):
     @model_validator(mode="after")
     def derive_runtime_paths(self) -> Self:
         """Fill runtime path defaults from CONFIG_DIR / DATA_DIR once, centrally."""
+        default_lib_dir = self.CONFIG_DIR / "lib"
         if self.LIB_DIR is None:
-            self.LIB_DIR = self.CONFIG_DIR / "lib" / get_arch()
-        if self.LIB_BIN_DIR is None:
+            self.LIB_DIR = default_lib_dir
+        default_lib_bin_dir = default_lib_dir / "bin"
+        default_pip_home = default_lib_dir / "pip"
+        default_pip_bin_dir = default_pip_home / "venv" / "bin"
+        default_npm_home = default_lib_dir / "npm"
+        default_node_modules_dir = default_npm_home / "node_modules"
+        default_npm_bin_dir = default_node_modules_dir / ".bin"
+        default_puppeteer_cache_dir = default_lib_dir / "puppeteer"
+        lib_dir_changed = self.LIB_DIR != default_lib_dir
+        if self.LIB_BIN_DIR is None or (lib_dir_changed and self.LIB_BIN_DIR == default_lib_bin_dir):
             self.LIB_BIN_DIR = self.LIB_DIR / "bin"
         if self.PERSONAS_DIR is None:
             self.PERSONAS_DIR = self.CONFIG_DIR / "personas"
@@ -146,19 +147,19 @@ class GlobalConfig(BaseSettings):
             self.SNAP_DIR = self.DATA_DIR
         if self.TMP_DIR is None:
             self.TMP_DIR = _default_tmp_dir()
-        if self.PIP_HOME is None:
+        if self.PIP_HOME is None or (lib_dir_changed and self.PIP_HOME == default_pip_home):
             self.PIP_HOME = self.LIB_DIR / "pip"
-        if self.PIP_BIN_DIR is None:
+        if self.PIP_BIN_DIR is None or (lib_dir_changed and self.PIP_BIN_DIR == default_pip_bin_dir):
             self.PIP_BIN_DIR = self.PIP_HOME / "venv" / "bin"
-        if self.NPM_HOME is None:
+        if self.NPM_HOME is None or (lib_dir_changed and self.NPM_HOME == default_npm_home):
             self.NPM_HOME = self.LIB_DIR / "npm"
-        if self.NODE_MODULES_DIR is None:
+        if self.NODE_MODULES_DIR is None or (lib_dir_changed and self.NODE_MODULES_DIR == default_node_modules_dir):
             self.NODE_MODULES_DIR = self.NPM_HOME / "node_modules"
-        if self.NODE_PATH is None:
+        if self.NODE_PATH is None or (lib_dir_changed and self.NODE_PATH == str(default_node_modules_dir)):
             self.NODE_PATH = str(self.NODE_MODULES_DIR)
-        if self.NPM_BIN_DIR is None:
+        if self.NPM_BIN_DIR is None or (lib_dir_changed and self.NPM_BIN_DIR == default_npm_bin_dir):
             self.NPM_BIN_DIR = self.NODE_MODULES_DIR / ".bin"
-        if self.PUPPETEER_CACHE_DIR is None:
+        if self.PUPPETEER_CACHE_DIR is None or (lib_dir_changed and self.PUPPETEER_CACHE_DIR == default_puppeteer_cache_dir):
             self.PUPPETEER_CACHE_DIR = self.LIB_DIR / "puppeteer"
         return self
 
@@ -276,13 +277,8 @@ def _load_plugin_config_model(
                     continue
             global_config[key] = value
     serialized_user_config = {key: dump_to_dotenv_format(value) for key, value in global_config.items() if value is not None}
-    environ = os.environ
-    user_config = serialized_user_config
-    if str(global_config.get("ABX_RUNTIME", "")).lower() == "archivebox":
-        # ArchiveBox scopes runtime paths per crawl/snapshot via MachineEvent.
-        # Those values must beat container-level env like CHROME_USER_DATA_DIR.
-        user_config = {**os.environ, **serialized_user_config}
-        environ = {}
+    user_config = {**os.environ, **serialized_user_config}
+    environ: dict[str, str] = {}
     config_path = plugin.path / "config.json"
     if not config_path.exists():
         return PluginEnv()

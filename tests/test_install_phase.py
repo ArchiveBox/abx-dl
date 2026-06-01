@@ -87,6 +87,68 @@ def test_install_event_does_not_skip_stale_cached_binary_requests(tmp_path: Path
     assert "yt-dlp" not in cache_update.value
 
 
+def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) -> None:
+    plugins = discover_plugins()
+    plugin = plugins["chrome"]
+    snapshot = Snapshot(url="")
+    run_dir = tmp_path / "run"
+    managed_lib_dir = tmp_path / "lib"
+    bus = create_bus(total_timeout=60.0, name=f"install_phase_chrome_abxbus_{tmp_path.name}")
+    PluginBinariesService(
+        bus,
+        plugins={"chrome": plugin},
+        auto_install=False,
+        install_plugins=[plugin],
+        output_dir=run_dir,
+        snapshot=snapshot,
+    )
+    request_events: list[BinaryRequestEvent] = []
+
+    async def on_BinaryRequestEvent(event: BinaryRequestEvent) -> None:
+        request_events.append(event)
+
+    bus.on(BinaryRequestEvent, on_BinaryRequestEvent)
+
+    async def run() -> None:
+        await bus.emit(
+            MachineEvent(
+                config={
+                    **get_initial_env(),
+                    "LIB_DIR": str(managed_lib_dir),
+                },
+                config_type="user",
+            ),
+        ).now()
+        await bus.emit(
+            MachineEvent(
+                config={},
+                config_type="derived",
+            ),
+        ).now()
+        await bus.emit(
+            InstallEvent(
+                url="",
+                snapshot_id=snapshot.id,
+                output_dir=str(run_dir),
+            ),
+        ).now()
+        await bus.wait_until_idle()
+
+    asyncio.run(run())
+
+    abxbus_request = next(event for event in request_events if event.name == "abxbus")
+    assert abxbus_request.binproviders == "npm"
+    assert abxbus_request.min_version == "2.5.9"
+    assert abxbus_request.min_release_age == 0
+    assert abxbus_request.overrides == {
+        "npm": {
+            "install_args": ["abxbus@2.5.9"],
+            "abspath": str(managed_lib_dir / "npm" / "node_modules" / "abxbus" / "dist" / "cjs" / "index.js"),
+            "version": "2.5.9",
+        },
+    }
+
+
 def test_install_event_emits_cached_binary_requests_for_persistence(tmp_path: Path) -> None:
     plugin_dir = tmp_path / "myplugin"
     plugin_dir.mkdir()
