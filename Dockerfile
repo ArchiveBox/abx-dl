@@ -178,7 +178,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
         chrome chromewebstore accessibility consolelog dns dom headers redirects responses \
         screenshot pdf chrome_mhtml chrome_screencast sslcerts \
         parse_dom_outlinks seo archivewebpage singlefile ublock \
-        istilldontcareaboutcookies modalcloser infiniscroll twocaptcha claudechrome
+        istilldontcareaboutcookies modalcloser infiniscroll claudechrome
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
