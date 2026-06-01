@@ -4,18 +4,19 @@ import signal
 import sys
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from abxpkg.binary_service import BinaryEvent as AbxPkgBinaryEvent
+from abxpkg.binary_service import BinaryRequestEvent as AbxPkgBinaryRequestEvent
 
 from abx_dl.config import get_initial_env
 from abx_dl.config import get_required_binary_requests
 from abx_dl.events import (
     ArchiveResultEvent,
-    BinaryEvent,
     CrawlAbortEvent,
     CrawlCleanupEvent,
     CrawlCompletedEvent,
-    BinaryRequestEvent,
     CrawlEvent,
     CrawlSetupEvent,
     CrawlStartEvent,
@@ -32,11 +33,30 @@ from abx_dl.limits import CrawlLimitState
 from abx_dl.models import Hook, Plugin, PluginConfig, Snapshot, discover_plugins
 from abx_dl.orchestrator import create_bus, download, setup_services
 from abx_dl.services.archive_result_service import ArchiveResultService
-from abx_dl.services.binary_service import BinaryService
+from abx_dl.services.binary_service import PluginBinariesService
 from abx_dl.services.crawl_service import CrawlService
 from abx_dl.services.machine_service import MachineService
 from abx_dl.services.process_service import ProcessService
 from abx_dl.services.snapshot_service import SnapshotService
+
+if TYPE_CHECKING:
+
+    class BinaryRequestEvent(AbxPkgBinaryRequestEvent):
+        plugin_name: str = ""
+        hook_name: str = ""
+        output_dir: str = ""
+        binary_id: str = ""
+        machine_id: str = ""
+
+    class BinaryEvent(AbxPkgBinaryEvent):
+        plugin_name: str = ""
+        hook_name: str = ""
+        binary_id: str = ""
+        machine_id: str = ""
+else:
+    BinaryEvent = AbxPkgBinaryEvent
+    BinaryRequestEvent = AbxPkgBinaryRequestEvent
+BinaryService: Any = PluginBinariesService
 
 
 def _run_download(*args, **kwargs):

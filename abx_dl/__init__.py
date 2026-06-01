@@ -1,3 +1,8 @@
 __package__ = "abx_dl"
 
-from .cli import main as main
+
+def main(*args, **kwargs):
+    """Run the abx-dl CLI entrypoint."""
+    from .cli import main as cli_main
+
+    return cli_main(*args, **kwargs)

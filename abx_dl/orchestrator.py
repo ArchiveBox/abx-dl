@@ -88,6 +88,7 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 from abxbus import EventBus, EventBusMiddleware, EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode
+from abxpkg.binary_service import BinaryCacheBackend, BinaryCacheService, BinaryService
 
 from .config import ensure_default_persona_dir, get_initial_env, get_derived_config
 from .events import (
@@ -99,7 +100,16 @@ from .events import (
 from .heartbeat import CrawlHeartbeat
 from .models import Snapshot, write_jsonl
 from .models import Hook, Plugin, discover_plugins, filter_plugins
-from .services import ArchiveResultService, BinaryService, CrawlService, MachineService, ProcessService, SnapshotService, TagService
+from .services import (
+    AbxDlBinaryCacheBackend,
+    ArchiveResultService,
+    CrawlService,
+    MachineService,
+    ProcessService,
+    PluginBinariesService,
+    SnapshotService,
+    TagService,
+)
 
 
 def setup_services(
@@ -128,6 +138,9 @@ def setup_services(
     interactive_tty: bool | None = None,
     abort_requested: Any | None = None,
     MachineService: type[MachineService] | None = MachineService,
+    PluginBinariesService: type[PluginBinariesService] | None = PluginBinariesService,
+    BinaryCacheService: type[BinaryCacheService] | None = BinaryCacheService,
+    BinaryCacheBackend: BinaryCacheBackend | None = None,
     BinaryService: type[BinaryService] | None = BinaryService,
     ProcessService: type[ProcessService] | None = ProcessService,
     ArchiveResultService: type[ArchiveResultService] | None = ArchiveResultService,
@@ -176,9 +189,21 @@ def setup_services(
                     ),
                 )
 
+    if BinaryCacheService is not None:
+        BinaryCacheService(
+            bus,
+            backend=BinaryCacheBackend or AbxDlBinaryCacheBackend(bus, plugins=plugins),
+        )
+
     if BinaryService is not None:
-        install_plugins = get_install_plugins(plugins)
         BinaryService(
+            bus,
+            auto_install=auto_install,
+        )
+
+    if install_enabled and PluginBinariesService is not None:
+        install_plugins = get_install_plugins(plugins)
+        PluginBinariesService(
             bus,
             plugins=plugins,
             auto_install=auto_install,
@@ -266,6 +291,9 @@ async def install_plugins(
     bus: EventBus | None = None,
     dry_run: bool = False,
     MachineService: type[MachineService] | None = MachineService,
+    PluginBinariesService: type[PluginBinariesService] | None = PluginBinariesService,
+    BinaryCacheService: type[BinaryCacheService] | None = BinaryCacheService,
+    BinaryCacheBackend: BinaryCacheBackend | None = None,
     BinaryService: type[BinaryService] | None = BinaryService,
     ProcessService: type[ProcessService] | None = ProcessService,
 ):
@@ -320,6 +348,9 @@ async def install_plugins(
             emit_jsonl=emit_jsonl,
             interactive_tty=sys.stdout.isatty() or sys.stderr.isatty(),
             MachineService=MachineService,
+            PluginBinariesService=PluginBinariesService,
+            BinaryCacheService=BinaryCacheService,
+            BinaryCacheBackend=BinaryCacheBackend,
             BinaryService=BinaryService,
             ProcessService=ProcessService,
             ArchiveResultService=None,
@@ -470,6 +501,9 @@ async def download(
     crawl_event_enabled: bool = True,
     dry_run: bool = False,
     MachineService: type[MachineService] | None = MachineService,
+    PluginBinariesService: type[PluginBinariesService] | None = PluginBinariesService,
+    BinaryCacheService: type[BinaryCacheService] | None = BinaryCacheService,
+    BinaryCacheBackend: BinaryCacheBackend | None = None,
     BinaryService: type[BinaryService] | None = BinaryService,
     ProcessService: type[ProcessService] | None = ProcessService,
     ArchiveResultService: type[ArchiveResultService] | None = ArchiveResultService,
@@ -594,6 +628,9 @@ async def download(
         emit_jsonl=emit_jsonl,
         interactive_tty=interactive_tty,
         MachineService=MachineService,
+        PluginBinariesService=PluginBinariesService,
+        BinaryCacheService=BinaryCacheService,
+        BinaryCacheBackend=BinaryCacheBackend,
         BinaryService=BinaryService,
         ProcessService=ProcessService,
         ArchiveResultService=ArchiveResultService,

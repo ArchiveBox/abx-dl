@@ -1,12 +1,27 @@
 import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+from abxpkg.binary_service import BinaryEvent as AbxPkgBinaryEvent
+from abxpkg.binary_service import BinaryRequestEvent as AbxPkgBinaryRequestEvent
 
 from abx_dl.config import get_initial_env
-from abx_dl.events import BinaryEvent, BinaryRequestEvent, InstallEvent, MachineEvent, ProcessCompletedEvent
+from abx_dl.events import InstallEvent, MachineEvent, ProcessCompletedEvent
 from abx_dl.models import Hook, Plugin, PluginConfig, RequiredBinary, Snapshot, discover_plugins
 from abx_dl.orchestrator import create_bus, download
-from abx_dl.services.binary_service import BinaryService
+from abx_dl.services.binary_service import PluginBinariesService as BinaryService
+
+if TYPE_CHECKING:
+
+    class BinaryRequestEvent(AbxPkgBinaryRequestEvent):
+        plugin_name: str = ""
+
+    class BinaryEvent(AbxPkgBinaryEvent):
+        plugin_name: str = ""
+else:
+    BinaryEvent = AbxPkgBinaryEvent
+    BinaryRequestEvent = AbxPkgBinaryRequestEvent
 
 
 def test_install_event_does_not_skip_stale_cached_binary_requests(tmp_path: Path) -> None:

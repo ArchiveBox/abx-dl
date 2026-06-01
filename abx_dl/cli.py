@@ -29,6 +29,7 @@ from rich.table import Table
 from rich.text import Text
 from rich import box
 from pydantic import ValidationError
+from abxpkg.binary_service import BinaryEvent, BinaryRequestEvent
 
 from .config import (
     CONFIG_FILE,
@@ -42,8 +43,6 @@ from .config import (
 from .dependencies import load_binary
 from .events import (
     ArchiveResultEvent,
-    BinaryEvent,
-    BinaryRequestEvent,
     CrawlAbortEvent,
     CrawlPauseEvent,
     CrawlResumeAndRetryEvent,
@@ -903,6 +902,7 @@ class LiveBusUI:
     async def on_BinaryRequestEvent(self, event: BinaryRequestEvent) -> None:
         if self.progress is None or self.task_id is None:
             return
+        plugin_name = str(event.extra_context.get("plugin_name") or "")
         row_key = self._match_row_key(event)
         if row_key is None:
             self.binary_row_num += 1
@@ -918,14 +918,14 @@ class LiveBusUI:
             if isinstance(existing, _LiveProcessRecord)
             else _LiveProcessRecord(
                 id=row_key,
-                plugin=event.plugin_name or "-",
+                plugin=plugin_name or "-",
                 hook_name=f"install:{event.name}",
                 timeout=int(event.event_timeout or self.timeout_seconds),
                 phase="Install",
                 started_at=datetime.now().isoformat(),
             )
         )
-        row.plugin = event.plugin_name or row.plugin
+        row.plugin = plugin_name or row.plugin
         row.hook_name = f"install:{event.name}"
         row.timeout = int(event.event_timeout or self.timeout_seconds)
         row.output = _binary_event_output(event)
@@ -940,6 +940,7 @@ class LiveBusUI:
     async def on_BinaryEvent(self, event: BinaryEvent) -> None:
         if self.progress is None or self.task_id is None:
             return
+        plugin_name = str(event.extra_context.get("plugin_name") or "")
         row_key = self._match_row_key(event)
         if row_key is None:
             self.binary_row_num += 1
@@ -955,7 +956,7 @@ class LiveBusUI:
             if isinstance(existing, _LiveProcessRecord)
             else _LiveProcessRecord(
                 id=row_key,
-                plugin=event.plugin_name or "-",
+                plugin=plugin_name or "-",
                 hook_name=f"install:{event.name}",
                 timeout=int(event.event_timeout or self.timeout_seconds),
                 phase="Install",
@@ -1412,7 +1413,8 @@ class _InstallRow:
 def _binary_event_output(event: BinaryRequestEvent) -> str:
     output = f"Binary requested: {event.name}"
     if event.binproviders:
-        output += f" binproviders: {event.binproviders}"
+        binproviders = ",".join(event.binproviders) if isinstance(event.binproviders, list) else event.binproviders
+        output += f" binproviders: {binproviders}"
     return output
 
 
@@ -1466,19 +1468,21 @@ def _run_plugin_install(
     rows: list[_InstallRow] = []
     installed_names: set[str] = set()
     request_rows_by_name: dict[str, list[_InstallRow]] = {}
-    failed_install_rows: list[_InstallRow] = []
     install_phase_plugins = get_install_plugins(selected)
     bus = create_bus(total_timeout=compute_install_phase_timeout(install_phase_plugins))
     live = None
 
     async def on_BinaryRequestEvent(event: BinaryRequestEvent) -> None:
+        plugin_name = str(event.extra_context.get("plugin_name") or "")
+        hook_name = str(event.extra_context.get("hook_name") or "")
+        binproviders = ",".join(event.binproviders) if isinstance(event.binproviders, list) else event.binproviders
         row = _InstallRow(
             kind="BinaryRequested",
             name=event.name,
-            plugin=event.plugin_name or "-",
-            hook_name=event.hook_name or "-",
+            plugin=plugin_name or "-",
+            hook_name=hook_name or "-",
             output=_binary_event_output(event),
-            providers=tuple(provider.strip() for provider in event.binproviders.split(",") if provider.strip() and provider.strip() != "*"),
+            providers=tuple(provider.strip() for provider in str(binproviders).split(",") if provider.strip() and provider.strip() != "*"),
             related_names=(event.name,),
         )
         rows.append(row)
@@ -1487,6 +1491,8 @@ def _run_plugin_install(
             live.update(_build_install_table(_filter_install_rows(rows, visible_plugins, installed_names)), refresh=True)
 
     async def on_BinaryEvent(event: BinaryEvent) -> None:
+        plugin_name = str(event.extra_context.get("plugin_name") or "")
+        hook_name = str(event.extra_context.get("hook_name") or "")
         record = _BinaryRecord(
             name=event.name,
             abspath=event.abspath,
@@ -1498,8 +1504,8 @@ def _run_plugin_install(
         row = _InstallRow(
             kind="Binary",
             name=event.name,
-            plugin=event.plugin_name or record.plugin,
-            hook_name=event.hook_name or "-",
+            plugin=plugin_name or record.plugin,
+            hook_name=hook_name or "-",
             output=record.display_output,
             related_names=(event.name,),
         )
@@ -1508,59 +1514,8 @@ def _run_plugin_install(
         if live is not None:
             live.update(_build_install_table(_filter_install_rows(rows, visible_plugins, installed_names)), refresh=True)
 
-    async def on_ProcessCompletedEvent(event: ProcessCompletedEvent) -> None:
-        if event.exit_code in (None, 0) or not event.hook_name.startswith("on_BinaryRequest__"):
-            return
-        details = event.stderr.strip() or event.stdout.strip()
-        detail_lines = [line.strip().replace('"', "") for line in details.splitlines() if line.strip()]
-        no_proxy_hint = next((line for line in detail_lines if "NO_PROXY=" in line), "")
-        summary_output = details
-        if detail_lines:
-            summary_output = _compact_output(
-                " ".join(part for part in [detail_lines[0], no_proxy_hint] if part),
-                limit=220,
-            )
-        requested_name = next(
-            (arg.split("=", 1)[1] for arg in event.hook_args if isinstance(arg, str) and arg.startswith("--name=")),
-            "",
-        )
-        related_names = ()
-        matching_request_rows: list[_InstallRow] = []
-        if requested_name:
-            related_names = (requested_name,)
-            matching_request_rows = [
-                row
-                for row in (request_rows_by_name[requested_name] if requested_name in request_rows_by_name else [])
-                if row.ok and event.plugin_name in row.providers
-            ]
-        else:
-            matching_request_rows = [
-                row
-                for request_rows in request_rows_by_name.values()
-                for row in request_rows
-                if row.ok and event.plugin_name in row.providers
-            ]
-            related_names = tuple(row.name for row in matching_request_rows)
-        for row in matching_request_rows:
-            row.failure_output = summary_output
-            row.failure_details = details
-            row.hook_name = event.hook_name
-        row = _InstallRow(
-            kind="Binary",
-            name=",".join(related_names) if related_names else event.hook_name,
-            plugin=event.plugin_name,
-            hook_name=event.hook_name,
-            output=summary_output,
-            failure_details=details,
-            related_names=related_names,
-            provider_failure=True,
-            ok=False,
-        )
-        failed_install_rows.append(row)
-
     bus.on(BinaryRequestEvent, on_BinaryRequestEvent)
     bus.on(BinaryEvent, on_BinaryEvent)
-    bus.on(ProcessCompletedEvent, on_ProcessCompletedEvent)
 
     with TemporaryDirectory(prefix="abx-dl-install-") as temp_dir:
         live_enabled = console.is_terminal
@@ -1599,9 +1554,6 @@ def _run_plugin_install(
             row.output = row.failure_output or f"Requested binary not resolved: {name}"
             row.failure_details = row.failure_details or row.output
     failed_request_rows = [row for request_rows in request_rows_by_name.values() for row in request_rows if not row.ok]
-    rows.extend(
-        row for row in failed_install_rows if not row.related_names or any(name not in installed_names for name in row.related_names)
-    )
     rows = _filter_install_rows(rows, visible_plugins, installed_names)
 
     if rows:

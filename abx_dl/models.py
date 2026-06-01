@@ -37,7 +37,7 @@ except importlib.metadata.PackageNotFoundError:
 def uuid7() -> str:
     """Generate a UUIDv7-like string (timestamp-based for sortability)."""
     ts = int(datetime.now().timestamp() * 1000)
-    return f"{ts:012x}-{uuid4().hex[:20]}"
+    return f"{ts:012x}{uuid4().hex[:20]}"
 
 
 def now_iso() -> str:
@@ -528,11 +528,9 @@ def plugins_matching_output(plugins: dict[str, Plugin], output_prefixes: list[st
 def filter_plugins(plugins: dict[str, Plugin], names: list[str] | None, *, include_providers: bool = True) -> dict[str, Plugin]:
     """Filter plugins to only include specified names, plus transitive dependencies.
 
-    Dependencies are resolved via:
-    1. `required_plugins` field in each plugin's config.json
-    2. When *include_providers* is True (default), provider plugins named in
-       `required_binaries[].binproviders` are included transitively, along with
-       any required_plugins / provider dependencies they declare themselves.
+    Dependencies are resolved via `required_plugins` in each plugin's
+    config.json. `include_providers` is retained only as a caller hint; binary
+    provider names are handled by abxpkg providers, not plugin dependencies.
     """
     if not names:
         return plugins
@@ -551,30 +549,5 @@ def filter_plugins(plugins: dict[str, Plugin], names: list[str] | None, *, inclu
                 dep_lower = dep.lower()
                 if dep_lower not in resolved:
                     queue.append(dep_lower)
-
-    # walk the required_binaries DAG and add required binprovider plugins
-    if include_providers:
-        queue = list(resolved)
-        while queue:
-            name = queue.pop()
-            plugin = next((plugin for plugin_name, plugin in plugins.items() if plugin_name.lower() == name), None)
-            if plugin is None:
-                continue
-            for spec in plugin.config.required_binaries:
-                for provider_name in (part.strip().lower() for part in spec.binproviders.split(",") if part.strip()):
-                    provider = next(
-                        (candidate for plugin_name, candidate in plugins.items() if plugin_name.lower() == provider_name),
-                        None,
-                    )
-                    if provider is None or not provider.filter_hooks("BinaryRequest"):
-                        continue
-                    if provider_name not in resolved:
-                        resolved.add(provider_name)
-                        queue.append(provider_name)
-                    for dep in provider.config.required_plugins:
-                        dep_lower = dep.lower()
-                        if dep_lower not in resolved:
-                            resolved.add(dep_lower)
-                            queue.append(dep_lower)
 
     return {name: plugin for name, plugin in plugins.items() if name.lower() in resolved}
