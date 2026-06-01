@@ -3,20 +3,20 @@
 from __future__ import annotations
 
 import builtins
+import copy
 import json
-import os
 import re
 import shutil
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timedelta, timezone
 from inspect import isawaitable
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from abxbus import BaseEvent, EventBus
 from abxpkg import Binary as AbxBinary
 from abxpkg import BinProvider, PROVIDER_CLASS_BY_NAME
-from abxpkg.binary_service import BinaryEvent, BinaryRequestEvent
+from abxpkg.binary_service import BinaryRequestEvent
 
 from ..config import RuntimeConfig, get_config, get_plugin_env, get_required_binary_requests, is_path_like_env_value
 from ..events import CrawlAbortEvent, InstallEvent, MachineEvent
@@ -59,73 +59,60 @@ def _providers_for_names(names: list[str]) -> list[BinProvider]:
     return providers
 
 
-def _config_value(config: RuntimeConfig, key: str, default: object = "") -> object:
-    user_config = config.user
-    if key in user_config:
-        return user_config[key]
-    return default
+_ABXPKG_OVERRIDE_KEYS = {
+    "PATH",
+    "INSTALLER_BIN",
+    "euid",
+    "install_root",
+    "bin_dir",
+    "dry_run",
+    "postinstall_scripts",
+    "min_release_age",
+    "install_timeout",
+    "version_timeout",
+    "abspath",
+    "version",
+    "install_args",
+    "packages",
+    "install",
+    "update",
+    "uninstall",
+    "docs_url",
+    "search",
+}
 
 
-def _persona_chrome_extensions_dir(config: RuntimeConfig) -> Path | None:
-    configured = str(_config_value(config, "CHROME_EXTENSIONS_DIR", "") or "").strip()
-    if configured:
-        return Path(configured).expanduser()
-    personas_dir = config.user.PERSONAS_DIR
-    if personas_dir is None:
-        return None
-    active_persona = str(_config_value(config, "ACTIVE_PERSONA", "Default") or "Default").strip() or "Default"
-    return personas_dir / active_persona / "chrome_extensions"
+def split_abxpkg_binary_request_overrides(
+    overrides: Mapping[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Split abxpkg-native overrides from plugin-owned request metadata."""
+    if not isinstance(overrides, Mapping):
+        return {}, {}
 
+    native: dict[str, Any] = {}
+    provider_metadata: dict[str, Any] = {}
+    raw_overrides = copy.deepcopy(dict(overrides))
 
-def _replace_with_symlink(link_path: Path, target: Path) -> None:
-    if link_path.resolve(strict=False) == target.resolve(strict=False):
-        return
-    if link_path.is_symlink() or link_path.is_file():
-        link_path.unlink()
-    elif link_path.exists():
-        shutil.rmtree(link_path)
-    try:
-        relative_target = Path(os.path.relpath(target, link_path.parent))
-    except ValueError:
-        relative_target = target
-    link_path.symlink_to(relative_target, target_is_directory=target.is_dir())
-
-
-def _chromewebstore_managed_paths(binary_name: str, manifest_path: Path) -> list[Path]:
-    extension_root = manifest_path.parent.parent
-    cache_path = extension_root / f"{binary_name}.extension.json"
-    managed_paths = [cache_path, manifest_path.parent]
-    if cache_path.exists():
-        try:
-            metadata = json.loads(cache_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            metadata = {}
-        for key in ("crx_path", "unpacked_path"):
-            value = metadata.get(key) if isinstance(metadata, dict) else None
-            if value:
-                managed_paths.append(Path(str(value)).expanduser())
-    deduped: list[Path] = []
-    seen: set[Path] = set()
-    for path in managed_paths:
-        if path in seen or not path.exists():
+    for provider_name, provider_overrides in overrides.items():
+        provider_key = str(provider_name)
+        if isinstance(provider_overrides, list):
+            native[provider_key] = {"install_args": provider_overrides}
             continue
-        seen.add(path)
-        deduped.append(path)
-    return deduped
+        if not isinstance(provider_overrides, Mapping):
+            continue
+        native_values = {str(key): value for key, value in provider_overrides.items() if str(key) in _ABXPKG_OVERRIDE_KEYS}
+        metadata_values = {str(key): value for key, value in provider_overrides.items() if str(key) not in _ABXPKG_OVERRIDE_KEYS}
+        if native_values:
+            native[provider_key] = native_values
+        if metadata_values:
+            provider_metadata[provider_key] = metadata_values
 
-
-def project_chromewebstore_links(binary_name: str, manifest_path: Path, persona_extensions_dir: Path | None) -> None:
-    if persona_extensions_dir is None:
-        return
-    if manifest_path.name != "manifest.json" or not manifest_path.exists():
-        return
-    source_extensions_dir = manifest_path.parent.parent.resolve(strict=False)
-    target_extensions_dir = persona_extensions_dir.expanduser().resolve(strict=False)
-    if source_extensions_dir == target_extensions_dir:
-        return
-    target_extensions_dir.mkdir(parents=True, exist_ok=True)
-    for source_path in _chromewebstore_managed_paths(binary_name, manifest_path):
-        _replace_with_symlink(target_extensions_dir / source_path.name, source_path)
+    extra_context: dict[str, Any] = {}
+    if provider_metadata:
+        extra_context["provider_metadata"] = provider_metadata
+    if provider_metadata or native != raw_overrides:
+        extra_context["raw_overrides"] = raw_overrides
+    return native, extra_context
 
 
 class PluginBinariesService(BaseService):
@@ -220,6 +207,11 @@ class PluginBinariesService(BaseService):
                 request_payload = {
                     key: value for key, value in record.items() if key in BinaryRequestEvent.model_fields and key != "extra_context"
                 }
+                native_overrides, override_extra_context = split_abxpkg_binary_request_overrides(record.get("overrides"))
+                if native_overrides:
+                    request_payload["overrides"] = native_overrides
+                else:
+                    request_payload.pop("overrides", None)
                 request_event = BinaryRequestEvent(
                     **request_payload,
                     auto_install=self.auto_install,
@@ -233,25 +225,11 @@ class PluginBinariesService(BaseService):
                         "machine_id": "",
                         "install_cache_key": install_cache_key,
                         "install_cache_hit": install_cache_key in pruned_install_cache,
+                        **override_extra_context,
                     },
                 )
                 emitted_request = event.emit(request_event)
                 await (await emitted_request.now()).event_results_list(raise_if_none=False)
-                if "chromewebstore" in _provider_names(request_event.binproviders):
-                    binary_event = await self.bus.find(
-                        BinaryEvent,
-                        child_of=request_event,
-                        past=True,
-                        future=False,
-                        name=request_event.name,
-                        where=lambda candidate: bool(candidate.abspath),
-                    )
-                    if isinstance(binary_event, BinaryEvent):
-                        project_chromewebstore_links(
-                            request_event.name,
-                            Path(binary_event.abspath).expanduser(),
-                            _persona_chrome_extensions_dir(current_config),
-                        )
                 if await self.should_abort():
                     break
             if await self.should_abort():
