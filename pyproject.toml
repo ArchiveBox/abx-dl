@@ -40,7 +40,7 @@ classifiers = [
 dependencies = [
     "rich-click>=1.8.0",
     "rich>=13.0.0",
-    "abxbus==2.5.8",
+    "abxbus==2.5.9",
     "abxpkg>=1.11.141",
     "abx-plugins>=1.11.144",
     "jambo>=0.1.7",

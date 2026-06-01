@@ -15,29 +15,38 @@ from abxpkg import (
     PROVIDER_CLASS_BY_NAME,
 )  # DO NOT REMOVE UNUSED IMPORT, critical for pydantic circular reference fix
 
-from .config import PIP_HOME, NPM_HOME
+from .config import GlobalConfig
 
-DEFAULT_PROVIDERS: list[BinProvider] = []
 
-for provider_name in DEFAULT_PROVIDER_NAMES:
-    provider_class = PROVIDER_CLASS_BY_NAME[provider_name]
-    try:
-        if provider_name == "env":
-            DEFAULT_PROVIDERS.append(EnvProvider())
-        elif provider_name == "pip":
-            DEFAULT_PROVIDERS.append(PipProvider(install_root=PIP_HOME))
-        elif provider_name == "npm":
-            DEFAULT_PROVIDERS.append(NpmProvider(install_root=NPM_HOME))
-        else:
-            DEFAULT_PROVIDERS.append(provider_class())
-    except Exception:
-        pass
+def get_default_providers(config: GlobalConfig | None = None) -> list[BinProvider]:
+    """Build providers from the current runtime config."""
+    runtime_config = config or GlobalConfig()
+    providers: list[BinProvider] = []
+    for provider_name in DEFAULT_PROVIDER_NAMES:
+        provider_class = PROVIDER_CLASS_BY_NAME[provider_name]
+        try:
+            if provider_name == "env":
+                providers.append(EnvProvider())
+            elif provider_name == "pip":
+                providers.append(PipProvider(install_root=runtime_config.PIP_HOME))
+            elif provider_name == "npm":
+                providers.append(NpmProvider(install_root=runtime_config.NPM_HOME))
+            else:
+                providers.append(provider_class())
+        except Exception:
+            pass
+    return providers
+
+
+def _providers_for_spec(spec: dict[str, Any], *, config: GlobalConfig | None = None) -> list[BinProvider]:
+    providers_str = spec.get("binproviders", "env")
+    requested_names = providers_str.split(",")
+    return [provider for provider in get_default_providers(config) if provider.name in requested_names]
 
 
 def load_binary(spec: dict[str, Any]) -> Binary:
     """Load a binary from a spec dict."""
-    providers_str = spec.get("binproviders", "env")
-    providers = [p for p in DEFAULT_PROVIDERS if p.name in providers_str.split(",")]
+    providers = _providers_for_spec(spec)
     overrides = spec.get("overrides", {})
     if isinstance(overrides, dict):
         overrides = {provider: ({"install_args": value} if isinstance(value, list) else value) for provider, value in overrides.items()}
@@ -59,8 +68,7 @@ def load_binary(spec: dict[str, Any]) -> Binary:
 
 def install_binary(spec: dict[str, Any]) -> Binary:
     """Load or install a binary from a spec dict."""
-    providers_str = spec.get("binproviders", "env")
-    providers = [p for p in DEFAULT_PROVIDERS if p.name in providers_str.split(",")]
+    providers = _providers_for_spec(spec)
     overrides = spec.get("overrides", {})
     if isinstance(overrides, dict):
         overrides = {provider: ({"install_args": value} if isinstance(value, list) else value) for provider, value in overrides.items()}

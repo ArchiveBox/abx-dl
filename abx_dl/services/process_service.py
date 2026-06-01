@@ -2,6 +2,7 @@
 
 import asyncio
 import signal
+import sys
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -50,6 +51,12 @@ def _process_status(exit_code: int) -> ProcessStatus:
     if exit_code == PROCESS_EXIT_SKIPPED:
         return "skipped"
     return "failed"
+
+
+def _process_command(event: ProcessEvent) -> list[str]:
+    if event.env.get("ABX_RUNTIME", "").lower() == "archivebox" and event.hook_path.endswith(".py"):
+        return [sys.executable, event.hook_path, *event.hook_args]
+    return [event.hook_path, *event.hook_args]
 
 
 def _rotate_existing_log(path: Path) -> Path | None:
@@ -247,8 +254,9 @@ class ProcessService(BaseService):
         plugin_output_dir = Path(event.output_dir)
         plugin_output_dir.mkdir(parents=True, exist_ok=True)
 
+        cmd = _process_command(event)
         proc = Process(
-            cmd=[event.hook_path, *event.hook_args],
+            cmd=cmd,
             pwd=str(plugin_output_dir),
             timeout=event.timeout,
             started_at=now_iso(),
@@ -261,7 +269,6 @@ class ProcessService(BaseService):
         # distinct so one completion path cannot rotate/delete another's logs.
         artifact_stem = f"{event.hook_name}.{proc.id}"
 
-        cmd = [event.hook_path, *event.hook_args]
         stdout_file = plugin_output_dir / f"{artifact_stem}.stdout.log"
         stderr_file = plugin_output_dir / f"{artifact_stem}.stderr.log"
         pid_file = plugin_output_dir / f"{artifact_stem}.pid"
@@ -362,7 +369,7 @@ class ProcessService(BaseService):
             ).now()
             assert started_event is not None
             proc = Process(
-                cmd=[event.hook_path, *event.hook_args],
+                cmd=cmd,
                 pwd=event.output_dir,
                 timeout=event.timeout,
                 started_at=started_event.start_ts,
@@ -735,13 +742,18 @@ class ProcessService(BaseService):
             stripped = line.strip()
             if event.env.get("ABX_RUNTIME", "").lower() == "archivebox" and '"type": "Snapshot"' in stripped:
                 continue
-            await event.emit(
-                ProcessStdoutEvent(
-                    line=stripped,
-                    plugin_name=event.plugin_name,
-                    hook_name=event.hook_name,
-                    output_dir=event.output_dir,
-                    start_ts=proc.started_at or "",
-                    end_ts=now_iso(),
-                ),
-            ).now()
+            try:
+                await event.emit(
+                    ProcessStdoutEvent(
+                        line=stripped,
+                        plugin_name=event.plugin_name,
+                        hook_name=event.hook_name,
+                        output_dir=event.output_dir,
+                        start_ts=proc.started_at or "",
+                        end_ts=now_iso(),
+                    ),
+                ).now()
+            except RuntimeError as err:
+                if "event has no bus attached" in str(err):
+                    return
+                raise

@@ -13,8 +13,9 @@ import platform
 import re
 import tempfile
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Self, cast
 from collections.abc import Mapping
 
 from abxbus import EventBus
@@ -53,9 +54,12 @@ CONFIG_DIR = BOOTSTRAP_CONFIG.CONFIG_DIR
 CONFIG_FILE = CONFIG_DIR / "config.env"
 DERIVED_CONFIG_FILE = CONFIG_DIR / "derived.env"
 DATA_DIR = BOOTSTRAP_CONFIG.DATA_DIR
-LIB_DIR = Path(os.environ.get("LIB_DIR") or (CONFIG_DIR / "lib" / get_arch()))
-PERSONAS_DIR = Path(os.environ.get("PERSONAS_DIR") or (CONFIG_DIR / "personas"))
-TMP_DIR = Path(os.environ.get("TMP_DIR") or tempfile.mkdtemp(prefix="abx-dl-"))
+
+
+@lru_cache(maxsize=1)
+def _default_tmp_dir() -> Path:
+    """Create the process-local fallback temp dir only if config asks for it."""
+    return Path(tempfile.mkdtemp(prefix="abx-dl-"))
 
 
 class GlobalConfig(BaseSettings):
@@ -91,6 +95,10 @@ class GlobalConfig(BaseSettings):
         extra="allow",
         validate_default=True,
     )
+
+    def __init__(self, **values: Any) -> None:
+        values.setdefault("_env_file", BootstrapConfig().CONFIG_DIR / "config.env")
+        super().__init__(**values)
 
     @field_validator("CHROME_SANDBOX", mode="before")
     @classmethod
@@ -137,7 +145,7 @@ class GlobalConfig(BaseSettings):
         if self.SNAP_DIR is None:
             self.SNAP_DIR = self.DATA_DIR
         if self.TMP_DIR is None:
-            self.TMP_DIR = TMP_DIR
+            self.TMP_DIR = _default_tmp_dir()
         if self.PIP_HOME is None:
             self.PIP_HOME = self.LIB_DIR / "pip"
         if self.PIP_BIN_DIR is None:
@@ -171,9 +179,19 @@ class RuntimeConfig:
     derived: dict[str, Any]
 
 
+def _config_file(settings: GlobalConfig | None = None) -> Path:
+    runtime_settings = settings or GlobalConfig()
+    return runtime_settings.CONFIG_DIR / "config.env"
+
+
+def _derived_config_file(settings: GlobalConfig | None = None) -> Path:
+    runtime_settings = settings or GlobalConfig()
+    return runtime_settings.CONFIG_DIR / "derived.env"
+
+
 def ensure_default_persona_dir() -> Path:
     """Ensure the default persona directory exists and return its path."""
-    default_persona_dir = PERSONAS_DIR / "Default"
+    default_persona_dir = cast(Path, GlobalConfig().PERSONAS_DIR) / "Default"
     default_persona_dir.mkdir(parents=True, exist_ok=True)
     return default_persona_dir
 
@@ -342,8 +360,8 @@ def get_initial_env(*keys: str, plugin_schemas: dict[str, dict[str, Any]] | None
     """
     settings = GlobalConfig()
     all_config = dict(settings.model_dump(mode="json"))
-    global_config = {key: all_config[key] for key in GLOBAL_DEFAULTS if key in all_config}
-    raw_user_config = _load_env_file(CONFIG_FILE)
+    global_config = {key: all_config[key] for key in GLOBAL_DEFAULT_KEYS if key in all_config}
+    raw_user_config = _load_env_file(_config_file(settings))
     user_config = {key: plugin_utils._parse_config_value(value) for key, value in raw_user_config.items()}
     flat_config = dict(global_config)
     flat_config.update(user_config)
@@ -380,12 +398,13 @@ def get_initial_env(*keys: str, plugin_schemas: dict[str, dict[str, Any]] | None
 
 def set_user_config(plugin_schemas: dict[str, dict[str, Any]] | None = None, **kwargs: Any) -> dict[str, Any]:
     """Validate and persist user-owned config updates into ``config.env``."""
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    settings = GlobalConfig()
+    config_file = _config_file(settings)
+    config_file.parent.mkdir(parents=True, exist_ok=True)
 
     # Load existing user config
-    config = _load_env_file(CONFIG_FILE)
-    settings = GlobalConfig()
-    global_config = {key: value for key, value in dict(settings.model_dump(mode="json")).items() if key in GLOBAL_DEFAULTS}
+    config = _load_env_file(config_file)
+    global_config = {key: value for key, value in dict(settings.model_dump(mode="json")).items() if key in GLOBAL_DEFAULT_KEY_SET}
 
     # Resolve aliases and update values (store as JSON)
     saved: dict[str, Any] = {}
@@ -393,7 +412,7 @@ def set_user_config(plugin_schemas: dict[str, dict[str, Any]] | None = None, **k
         canonical_key = plugin_utils.resolve_alias(key, plugin_schemas)
         validated_value: Any = None
 
-        if canonical_key in GLOBAL_DEFAULTS:
+        if canonical_key in GLOBAL_DEFAULT_KEY_SET:
             validated_value = GlobalConfig(**{canonical_key: value}).model_dump(mode="json")[canonical_key]
         else:
             if plugin_schemas is None:
@@ -419,7 +438,7 @@ def set_user_config(plugin_schemas: dict[str, dict[str, Any]] | None = None, **k
         config[canonical_key] = json.dumps(validated_value)
         saved[canonical_key] = validated_value
 
-    _write_env_file(CONFIG_FILE, config)
+    _write_env_file(config_file, config)
 
     return saved
 
@@ -429,20 +448,21 @@ def unset_user_config(*keys: str) -> list[str]:
     if not keys:
         return []
 
-    config = _load_env_file(CONFIG_FILE)
+    config_file = _config_file()
+    config = _load_env_file(config_file)
     removed: list[str] = []
     for key in keys:
         if key in config:
             removed.append(key)
             config.pop(key, None)
 
-    _write_env_file(CONFIG_FILE, config)
+    _write_env_file(config_file, config)
     return removed
 
 
 def get_derived_config(current_config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Load persisted derived runtime cache from ``derived.env``."""
-    raw = _load_env_file(DERIVED_CONFIG_FILE)
+    raw = _load_env_file(_derived_config_file(GlobalConfig(**(current_config or {}))))
     if not raw:
         return {}
 
@@ -454,8 +474,9 @@ def get_derived_config(current_config: dict[str, Any] | None = None) -> dict[str
 
 def set_derived_config(current_config: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
     """Persist derived runtime cache values into ``derived.env``."""
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    config = _load_env_file(DERIVED_CONFIG_FILE)
+    derived_config_file = _derived_config_file(GlobalConfig(**(current_config or {})))
+    derived_config_file.parent.mkdir(parents=True, exist_ok=True)
+    config = _load_env_file(derived_config_file)
 
     saved = {}
     for key, value in kwargs.items():
@@ -464,7 +485,7 @@ def set_derived_config(current_config: dict[str, Any] | None = None, **kwargs: A
         config[key] = json.dumps(value)
         saved[key] = value
 
-    _write_env_file(DERIVED_CONFIG_FILE, config)
+    _write_env_file(derived_config_file, config)
     return saved
 
 
@@ -473,54 +494,43 @@ def unset_derived_config(*keys: str, current_config: dict[str, Any] | None = Non
     if not keys:
         return []
 
-    config = _load_env_file(DERIVED_CONFIG_FILE)
+    derived_config_file = _derived_config_file(GlobalConfig(**(current_config or {})))
+    config = _load_env_file(derived_config_file)
     removed: list[str] = []
     for key in keys:
         if key in config:
             removed.append(key)
             config.pop(key, None)
 
-    _write_env_file(DERIVED_CONFIG_FILE, config)
+    _write_env_file(derived_config_file, config)
     return removed
 
 
-# Derived paths for package managers
-LIB_BIN_DIR = LIB_DIR / "bin"
-PIP_HOME = LIB_DIR / "pip"
-NPM_HOME = LIB_DIR / "npm"
-PIP_BIN_DIR = PIP_HOME / "venv" / "bin"
-NODE_MODULES_DIR = NPM_HOME / "node_modules"
-NPM_BIN_DIR = NODE_MODULES_DIR / ".bin"
-
-# Global config defaults
-GLOBAL_DEFAULTS = {
-    "DATA_DIR": str(DATA_DIR),
-    "ABX_RUNTIME": "abx-dl",
-    "DRY_RUN": False,
-    "TIMEOUT": 60,
-    "USER_AGENT": "Mozilla/5.0 (compatible; abx-dl/1.0; +https://github.com/ArchiveBox/abx-dl)",
-    "CHECK_SSL_VALIDITY": True,
-    "COOKIES_FILE": "",
-    "LIB_DIR": str(LIB_DIR),
-    "LIB_BIN_DIR": str(LIB_BIN_DIR),
-    "PERSONAS_DIR": str(PERSONAS_DIR),
-    "CRAWL_DIR": str(DATA_DIR),
-    "SNAP_DIR": str(DATA_DIR),
-    "TMP_DIR": str(TMP_DIR),
-    "PIP_HOME": str(PIP_HOME),
-    "PIP_BIN_DIR": str(PIP_BIN_DIR),
-    "NPM_HOME": str(NPM_HOME),
-    "NODE_MODULES_DIR": str(NODE_MODULES_DIR),
-    "NODE_PATH": str(NODE_MODULES_DIR),
-    "NPM_BIN_DIR": str(NPM_BIN_DIR),
-    # Prevent puppeteer's postinstall from downloading Chrome automatically;
-    # Chromium installation is handled by abxpkg browser providers instead.
-    "PUPPETEER_SKIP_DOWNLOAD": "1",
-    "PUPPETEER_CACHE_DIR": str(LIB_DIR / "puppeteer"),
-    # Keep Chrome's sandbox enabled by default; callers that need --no-sandbox
-    # in Docker/root environments must opt out explicitly.
-    "CHROME_SANDBOX": "true",
-}
+GLOBAL_DEFAULT_KEYS = (
+    "DATA_DIR",
+    "ABX_RUNTIME",
+    "DRY_RUN",
+    "TIMEOUT",
+    "USER_AGENT",
+    "CHECK_SSL_VALIDITY",
+    "COOKIES_FILE",
+    "LIB_DIR",
+    "LIB_BIN_DIR",
+    "PERSONAS_DIR",
+    "CRAWL_DIR",
+    "SNAP_DIR",
+    "TMP_DIR",
+    "PIP_HOME",
+    "PIP_BIN_DIR",
+    "NPM_HOME",
+    "NODE_MODULES_DIR",
+    "NODE_PATH",
+    "NPM_BIN_DIR",
+    "PUPPETEER_SKIP_DOWNLOAD",
+    "PUPPETEER_CACHE_DIR",
+    "CHROME_SANDBOX",
+)
+GLOBAL_DEFAULT_KEY_SET = frozenset(GLOBAL_DEFAULT_KEYS)
 
 
 def load_plugin_schema(plugin_dir: Path) -> dict[str, Any]:
