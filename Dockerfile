@@ -152,7 +152,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
     echo "[+] Installing provider plugin dependencies..." \
     && apt-get update -qq \
     && mkdir -p "$LIB_DIR" \
-    && ABXPKG_INSTALL_TIMEOUT=900 TIMEOUT=900 PUID=0 PGID=0 abx-dl plugins --install apt bash npm pip puppeteer
+    && ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 PUID=0 PGID=0 abx-dl plugins --install apt bash npm pip puppeteer
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
@@ -160,7 +160,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
     --mount=type=cache,target=/root/.cache/ms-playwright,sharing=locked,id=browsers-$TARGETARCH$TARGETVARIANT \
     echo "[+] Installing Playwright-managed Chrome into $LIB_DIR..." \
     && apt-get update -qq \
-    && abxpkg install --no-cache --install-timeout=900 --binproviders=playwright chrome \
+    && ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 abxpkg install --no-cache --install-timeout=900 --binproviders=playwright chrome \
     && CHROME_BINARY="$(abxpkg load --binproviders=playwright chromium | awk 'NF {print $2; exit}')" \
     && export CHROME_BINARY \
     && test -x "$CHROME_BINARY" \
@@ -174,7 +174,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
     echo "[+] Installing browser plugin dependencies..." \
     && CHROME_BINARY="$(abxpkg load --binproviders=playwright chromium | awk 'NF {print $2; exit}')" \
     && export CHROME_BINARY \
-    && ABXPKG_INSTALL_TIMEOUT=900 TIMEOUT=900 PUID=0 PGID=0 abx-dl plugins --install \
+    && ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 PUID=0 PGID=0 abx-dl plugins --install \
         chrome chromewebstore accessibility consolelog dns dom headers redirects responses \
         screenshot pdf chrome_mhtml chrome_screencast sslcerts \
         parse_dom_outlinks seo archivewebpage singlefile ublock \
@@ -186,7 +186,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
     --mount=type=cache,target=/root/.cache/pip,sharing=locked,id=pip-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/puppeteer,sharing=locked,id=puppeteer-$TARGETARCH$TARGETVARIANT \
     echo "[+] Installing downloader and document plugin dependencies..." \
-    && ABXPKG_INSTALL_TIMEOUT=900 TIMEOUT=900 PUID=0 PGID=0 abx-dl plugins --install \
+    && ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 PUID=0 PGID=0 abx-dl plugins --install \
         wget git ytdlp gallerydl forumdl papersdl opendataloader archivedotorg \
         htmltotext readability mercury defuddle trafilatura liteparse \
         claudecode claudecodecleanup claudecodeextract
@@ -197,7 +197,7 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
     --mount=type=cache,target=/root/.cache/pip,sharing=locked,id=pip-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/puppeteer,sharing=locked,id=puppeteer-$TARGETARCH$TARGETVARIANT \
     echo "[+] Installing lightweight plugin dependencies..." \
-    && ABXPKG_INSTALL_TIMEOUT=900 TIMEOUT=900 PUID=0 PGID=0 abx-dl plugins --install \
+    && ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 PUID=0 PGID=0 abx-dl plugins --install \
         archivedotorg base brew cargo favicon hashes media parse_html_urls \
         parse_jsonl_urls parse_netscape_urls parse_rss_urls parse_txt_urls \
         search_backend_sqlite ssl staticfile title

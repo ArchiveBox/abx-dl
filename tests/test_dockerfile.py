@@ -24,3 +24,10 @@ def test_dockerfile_skips_optional_twocaptcha_extension_preinstall() -> None:
     assert "ublock" in targets
     assert "istilldontcareaboutcookies" in targets
     assert "twocaptcha" not in targets
+
+
+def test_dockerfile_build_installs_disable_release_age_gate() -> None:
+    text = (REPO_ROOT / "Dockerfile").read_text()
+
+    assert "ABXPKG_POSTINSTALL_SCRIPTS=True" in text
+    assert "ABXPKG_MIN_RELEASE_AGE=0" in text
