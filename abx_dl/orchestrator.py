@@ -349,7 +349,9 @@ async def install_plugins(
                     event_handler_slow_timeout=slow_warning_timeout(install_phase_timeout),
                 ),
             )
-            await (await install_event.now()).event_results_list()
+            await install_event.now(timeout=install_phase_timeout)
+            await install_event.wait(timeout=install_phase_timeout)
+            await install_event.event_results_list()
         finally:
             await bus.wait_until_idle()
 
@@ -633,7 +635,9 @@ async def download(
                     event_handler_slow_timeout=slow_warning_timeout(install_phase_timeout),
                 ),
             )
-            await (await install_event.now()).event_results_list()
+            await install_event.now(timeout=install_phase_timeout)
+            await install_event.wait(timeout=install_phase_timeout)
+            await install_event.event_results_list()
             await bus.wait_until_idle()
         if crawl_setup_enabled or crawl_start_enabled or crawl_cleanup_enabled:
             crawl_event_timeout = (
