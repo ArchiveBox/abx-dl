@@ -161,6 +161,7 @@ class ProcessService(BaseService):
         self.pause_requested = asyncio.Event()
         self.abort_requested = False
         self._active_process_event_tasks: dict[str, asyncio.Task[Process | None]] = {}
+        self._background_completion_tasks: set[asyncio.Task[Process | None]] = set()
         self._completed_process_event_ids: set[str] = set()
         super().__init__(bus)
         self.bus.on(CrawlPauseEvent, self.on_CrawlPauseEvent)
@@ -380,6 +381,20 @@ class ProcessService(BaseService):
                 files_before=files_before,
                 foreground_interrupts=foreground_interrupts,
             )
+            if event.is_background:
+                completion_task = asyncio.create_task(completion)
+                self._background_completion_tasks.add(completion_task)
+
+                def forget_background_completion(task: asyncio.Task[Process | None]) -> None:
+                    self._background_completion_tasks.discard(task)
+                    try:
+                        task.result()
+                    except Exception:
+                        pass
+
+                completion_task.add_done_callback(forget_background_completion)
+                completion_owns_process = True
+                return proc
             completion_owns_process = True
             return await completion
         except asyncio.CancelledError:
