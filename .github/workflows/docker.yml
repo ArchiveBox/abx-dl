@@ -34,11 +34,15 @@ jobs:
             cache_scope: docker-amd64
             artifact_name: digest-linux-amd64
             local_tag: archivebox/abxdl:test-amd64
+            smoke_timeout: 180
+            crawl_timeout: 240
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
             cache_scope: docker-arm64
             artifact_name: digest-linux-arm64
             local_tag: archivebox/abxdl:test-arm64
+            smoke_timeout: 900
+            crawl_timeout: 1200
 
     steps:
       - name: Checkout abx-dl
@@ -119,7 +123,7 @@ jobs:
           mkdir -p "$OUT_DIR" "$PERSONAS_DIR"
 
           script -q -e -c \
-            "docker run --rm -it --platform '${{ matrix.platform }}' --volume '$OUT_DIR:/out' --volume '$PERSONAS_DIR:/data/personas' '${{ matrix.local_tag }}' --no-install --timeout=180 --crawl-timeout=240 --max-urls=1 https://example.com" \
+            "docker run --rm -it --platform '${{ matrix.platform }}' --volume '$OUT_DIR:/out' --volume '$PERSONAS_DIR:/data/personas' '${{ matrix.local_tag }}' --no-install --timeout='${{ matrix.smoke_timeout }}' --crawl-timeout='${{ matrix.crawl_timeout }}' --max-urls=1 https://example.com" \
             /dev/null 2>&1 | tee "$OUT_DIR/crawl.log"
 
           script -q -e -c \
