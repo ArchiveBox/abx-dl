@@ -72,6 +72,19 @@ def _perf_trace(label):
     return decorator
 
 
+@contextmanager
+def _perf_span(label: str):
+    if os.environ.get("ARCHIVEBOX_PERF_TRACE") != "1":
+        yield
+        return
+    started_at = time.perf_counter()
+    try:
+        yield
+    finally:
+        elapsed_ms = (time.perf_counter() - started_at) * 1000
+        print(f"PERF_TRACE label={label} ms={elapsed_ms:.3f}", file=sys.stderr, flush=True)
+
+
 @dataclass
 class _StdoutStreamState:
     stdout_lines: list[str] = field(default_factory=list)
@@ -287,18 +300,20 @@ class ProcessService(BaseService):
         if foreground_interrupts:
             self.pause_requested.clear()
             self.abort_requested = False
-        plugin_output_dir = Path(event.output_dir)
-        plugin_output_dir.mkdir(parents=True, exist_ok=True)
+        with _perf_span("abx_dl.ProcessService._run_process_event.prepare_output_dir"):
+            plugin_output_dir = Path(event.output_dir)
+            plugin_output_dir.mkdir(parents=True, exist_ok=True)
 
-        cmd = _process_command(event)
-        proc = Process(
-            cmd=cmd,
-            pwd=str(plugin_output_dir),
-            timeout=event.timeout,
-            started_at=now_iso(),
-            plugin=event.plugin_name,
-            hook_name=event.hook_name,
-        )
+        with _perf_span("abx_dl.ProcessService._run_process_event.prepare_process_model"):
+            cmd = _process_command(event)
+            proc = Process(
+                cmd=cmd,
+                pwd=str(plugin_output_dir),
+                timeout=event.timeout,
+                started_at=now_iso(),
+                plugin=event.plugin_name,
+                hook_name=event.hook_name,
+            )
 
         # A hook can be retried, requeued, or briefly overlap with another run
         # for the same plugin/output dir. Keep every subprocess' artifacts
@@ -310,32 +325,37 @@ class ProcessService(BaseService):
         pid_file = plugin_output_dir / f"{artifact_stem}.pid"
         cmd_file = plugin_output_dir / f"{artifact_stem}.sh"
 
-        _rotate_existing_log(stdout_file)
-        _rotate_existing_log(stderr_file)
+        with _perf_span("abx_dl.ProcessService._run_process_event.rotate_logs"):
+            _rotate_existing_log(stdout_file)
+            _rotate_existing_log(stderr_file)
 
-        write_cmd_file(cmd_file, cmd)
+        with _perf_span("abx_dl.ProcessService._run_process_event.write_cmd_file"):
+            write_cmd_file(cmd_file, cmd)
         # Track the directory contents before the hook runs so completion can
         # report only newly created output files.
-        files_before = set(plugin_output_dir.rglob("*")) if plugin_output_dir.exists() else set()
+        with _perf_span("abx_dl.ProcessService._run_process_event.scan_files_before"):
+            files_before = set(plugin_output_dir.rglob("*")) if plugin_output_dir.exists() else set()
 
         process: asyncio.subprocess.Process | None = None
         started_event: ProcessStartedEvent | None = None
         completion_owns_process = False
         try:
             try:
-                with open(stdout_file, "wb") as out_fh, open(stderr_file, "w") as err_fh:
-                    process = await asyncio.create_subprocess_exec(
-                        *cmd,
-                        cwd=str(plugin_output_dir),
-                        stdout=out_fh,
-                        stderr=err_fh,
-                        env=event.env,
-                        # Give every hook its own process group so interrupts and
-                        # cleanup can target the hook explicitly instead of relying
-                        # on terminal-delivered SIGINT reaching the right child.
-                        start_new_session=True,
-                    )
-                write_pid_file_with_mtime(pid_file, process.pid, time.time())
+                with _perf_span("abx_dl.ProcessService._run_process_event.spawn_subprocess"):
+                    with open(stdout_file, "wb") as out_fh, open(stderr_file, "w") as err_fh:
+                        process = await asyncio.create_subprocess_exec(
+                            *cmd,
+                            cwd=str(plugin_output_dir),
+                            stdout=out_fh,
+                            stderr=err_fh,
+                            env=event.env,
+                            # Give every hook its own process group so interrupts and
+                            # cleanup can target the hook explicitly instead of relying
+                            # on terminal-delivered SIGINT reaching the right child.
+                            start_new_session=True,
+                        )
+                with _perf_span("abx_dl.ProcessService._run_process_event.write_pid_file"):
+                    write_pid_file_with_mtime(pid_file, process.pid, time.time())
             except Exception as e:
                 # If spawn partially succeeded, shut it down before surfacing the
                 # failure as a normal ProcessCompletedEvent.
@@ -375,34 +395,35 @@ class ProcessService(BaseService):
                     ),
                 ).now()
                 return proc
-            started_event = await event.emit(
-                ProcessStartedEvent(
-                    plugin_name=event.plugin_name,
-                    hook_name=event.hook_name,
-                    hook_path=event.hook_path,
-                    hook_args=event.hook_args,
-                    output_dir=event.output_dir,
-                    env=event.env,
-                    timeout=event.timeout,
-                    pid=process.pid,
-                    is_background=event.is_background,
-                    url=event.url,
-                    process_type=event.process_type,
-                    worker_type=event.worker_type,
-                    start_ts=proc.started_at or "",
-                    # These runtime-only fields carry the rest of the subprocess
-                    # lifetime through bus history.
-                    subprocess=process,
-                    stdout_file=stdout_file,
-                    stderr_file=stderr_file,
-                    pid_file=pid_file,
-                    cmd_file=cmd_file,
-                    files_before=files_before,
-                    event_timeout=event.timeout + 30.0,
-                    event_handler_timeout=event.timeout + 30.0,
-                    event_handler_slow_timeout=10000.0,
-                ),
-            ).now()
+            with _perf_span("abx_dl.ProcessService._run_process_event.emit_started_event"):
+                started_event = await event.emit(
+                    ProcessStartedEvent(
+                        plugin_name=event.plugin_name,
+                        hook_name=event.hook_name,
+                        hook_path=event.hook_path,
+                        hook_args=event.hook_args,
+                        output_dir=event.output_dir,
+                        env=event.env,
+                        timeout=event.timeout,
+                        pid=process.pid,
+                        is_background=event.is_background,
+                        url=event.url,
+                        process_type=event.process_type,
+                        worker_type=event.worker_type,
+                        start_ts=proc.started_at or "",
+                        # These runtime-only fields carry the rest of the subprocess
+                        # lifetime through bus history.
+                        subprocess=process,
+                        stdout_file=stdout_file,
+                        stderr_file=stderr_file,
+                        pid_file=pid_file,
+                        cmd_file=cmd_file,
+                        files_before=files_before,
+                        event_timeout=event.timeout + 30.0,
+                        event_handler_timeout=event.timeout + 30.0,
+                        event_handler_slow_timeout=10000.0,
+                    ),
+                ).now()
             assert started_event is not None
             proc = Process(
                 cmd=cmd,
@@ -439,7 +460,8 @@ class ProcessService(BaseService):
                 completion_owns_process = True
                 return proc
             completion_owns_process = True
-            return await completion
+            with _perf_span("abx_dl.ProcessService._run_process_event.complete_foreground"):
+                return await completion
         except asyncio.CancelledError:
             if process is not None and not completion_owns_process:
                 await graceful_kill_process(process)
@@ -462,63 +484,66 @@ class ProcessService(BaseService):
         files_before: set[Path],
         foreground_interrupts: bool,
     ) -> Process | None:
-        stdout_state = _StdoutStreamState()
-        stream_task = asyncio.create_task(
-            self._stream_stdout(
-                event=started_event,
-                proc=proc,
-                stdout_file=stdout_file,
-                state=stdout_state,
-            ),
-        )
-        wait_task = asyncio.create_task(process.wait())
+        with _perf_span("abx_dl.ProcessService._complete_process_event.start_stream_tasks"):
+            stdout_state = _StdoutStreamState()
+            stream_task = asyncio.create_task(
+                self._stream_stdout(
+                    event=started_event,
+                    proc=proc,
+                    stdout_file=stdout_file,
+                    state=stdout_state,
+                ),
+            )
+            wait_task = asyncio.create_task(process.wait())
         interrupted = False
         timed_out = False
         try:
-            deadline = asyncio.get_running_loop().time() + event.timeout if event.timeout and not event.is_background else None
-            while True:
-                pending = {wait_task}
-                interrupt_task: asyncio.Task[bool] | None = None
-                if foreground_interrupts:
-                    interrupt_task = asyncio.create_task(self.pause_requested.wait())
-                    pending.add(interrupt_task)
-                remaining = None if deadline is None else max(deadline - asyncio.get_running_loop().time(), 0.0)
-                done, pending = await asyncio.wait(
-                    pending,
-                    timeout=remaining,
-                    return_when=asyncio.FIRST_COMPLETED,
+            with _perf_span("abx_dl.ProcessService._complete_process_event.wait_subprocess"):
+                deadline = asyncio.get_running_loop().time() + event.timeout if event.timeout and not event.is_background else None
+                while True:
+                    pending = {wait_task}
+                    interrupt_task: asyncio.Task[bool] | None = None
+                    if foreground_interrupts:
+                        interrupt_task = asyncio.create_task(self.pause_requested.wait())
+                        pending.add(interrupt_task)
+                    remaining = None if deadline is None else max(deadline - asyncio.get_running_loop().time(), 0.0)
+                    done, pending = await asyncio.wait(
+                        pending,
+                        timeout=remaining,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if interrupt_task is not None and interrupt_task not in done:
+                        interrupt_task.cancel()
+                    if not done:
+                        timed_out = True
+                        await graceful_kill_process(process)
+                        await wait_task
+                        break
+                    if wait_task in done:
+                        break
+                    if interrupt_task is not None and interrupt_task in done:
+                        self.pause_requested.clear()
+                        interrupted = True
+                        await started_event.emit(
+                            ProcessKillEvent(
+                                plugin_name=event.plugin_name,
+                                hook_name=event.hook_name,
+                                pid=process.pid,
+                                grace_period=float(event.timeout),
+                            ),
+                        ).now()
+                        await wait_task
+                        break
+            with _perf_span("abx_dl.ProcessService._complete_process_event.finish_stdout"):
+                stream_task.cancel()
+                await self._finish_stream_stdout(stream_task)
+                await self._emit_new_stdout_lines(
+                    event=started_event,
+                    proc=proc,
+                    stdout_file=stdout_file,
+                    state=stdout_state,
+                    emit_partial=True,
                 )
-                if interrupt_task is not None and interrupt_task not in done:
-                    interrupt_task.cancel()
-                if not done:
-                    timed_out = True
-                    await graceful_kill_process(process)
-                    await wait_task
-                    break
-                if wait_task in done:
-                    break
-                if interrupt_task is not None and interrupt_task in done:
-                    self.pause_requested.clear()
-                    interrupted = True
-                    await started_event.emit(
-                        ProcessKillEvent(
-                            plugin_name=event.plugin_name,
-                            hook_name=event.hook_name,
-                            pid=process.pid,
-                            grace_period=float(event.timeout),
-                        ),
-                    ).now()
-                    await wait_task
-                    break
-            stream_task.cancel()
-            await self._finish_stream_stdout(stream_task)
-            await self._emit_new_stdout_lines(
-                event=started_event,
-                proc=proc,
-                stdout_file=stdout_file,
-                state=stdout_state,
-                emit_partial=True,
-            )
         except TimeoutError:
             timed_out = True
             await graceful_kill_process(process)
@@ -531,9 +556,10 @@ class ProcessService(BaseService):
             await graceful_kill_process(process)
             raise
 
-        returncode = process.returncode if process.returncode is not None else 0
-        stdout = stdout_file.read_text() if stdout_file.exists() else ""
-        stderr = stderr_file.read_text() if stderr_file.exists() else ""
+        with _perf_span("abx_dl.ProcessService._complete_process_event.read_logs"):
+            returncode = process.returncode if process.returncode is not None else 0
+            stdout = stdout_file.read_text() if stdout_file.exists() else ""
+            stderr = stderr_file.read_text() if stderr_file.exists() else ""
 
         if timed_out:
             returncode = -1
@@ -565,47 +591,53 @@ class ProcessService(BaseService):
         proc.stderr = stderr
         proc.ended_at = now_iso()
 
-        files_after = set(plugin_output_dir.rglob("*")) if plugin_output_dir.exists() else set()
-        new_files = scan_output_files(
-            plugin_output_dir,
-            file_paths=files_after - files_before,
-        )
+        with _perf_span("abx_dl.ProcessService._complete_process_event.scan_files_after"):
+            files_after = set(plugin_output_dir.rglob("*")) if plugin_output_dir.exists() else set()
+        with _perf_span("abx_dl.ProcessService._complete_process_event.scan_output_files"):
+            new_files = scan_output_files(
+                plugin_output_dir,
+                file_paths=files_after - files_before,
+            )
 
-        pid_file.unlink(missing_ok=True)
+        with _perf_span("abx_dl.ProcessService._complete_process_event.cleanup_pid_file"):
+            pid_file.unlink(missing_ok=True)
 
         if returncode == 0:
-            stdout_file.unlink(missing_ok=True)
-            stderr_file.unlink(missing_ok=True)
+            with _perf_span("abx_dl.ProcessService._complete_process_event.cleanup_logs"):
+                stdout_file.unlink(missing_ok=True)
+                stderr_file.unlink(missing_ok=True)
 
         index_path = plugin_output_dir.parent / "index.jsonl"
-        write_jsonl(index_path, proc, also_print=self.emit_jsonl)
+        with _perf_span("abx_dl.ProcessService._complete_process_event.write_jsonl"):
+            write_jsonl(index_path, proc, also_print=self.emit_jsonl)
 
-        await started_event.emit(
-            ProcessCompletedEvent(
-                plugin_name=event.plugin_name,
-                hook_name=event.hook_name,
-                hook_path=event.hook_path,
-                hook_args=event.hook_args,
-                env=event.env,
-                timeout=event.timeout,
-                stdout=stdout,
-                stderr=stderr,
-                exit_code=returncode,
-                status=status,
-                output_dir=event.output_dir,
-                output_files=new_files,
-                is_background=event.is_background,
-                pid=process.pid,
-                url=event.url,
-                process_type=event.process_type,
-                worker_type=event.worker_type,
-                start_ts=proc.started_at or "",
-                end_ts=proc.ended_at or "",
-                event_timeout=event.event_timeout,
-                event_handler_timeout=event.event_handler_timeout,
-                event_handler_slow_timeout=event.event_handler_slow_timeout,
-            ),
-        ).now()
+        with _perf_span("abx_dl.ProcessService._complete_process_event.emit_completed_event"):
+            await started_event.emit(
+                ProcessCompletedEvent(
+                    plugin_name=event.plugin_name,
+                    hook_name=event.hook_name,
+                    hook_path=event.hook_path,
+                    hook_args=event.hook_args,
+                    env=event.env,
+                    timeout=event.timeout,
+                    stdout=stdout,
+                    stderr=stderr,
+                    exit_code=returncode,
+                    status=status,
+                    output_dir=event.output_dir,
+                    output_files=new_files,
+                    is_background=event.is_background,
+                    pid=process.pid,
+                    url=event.url,
+                    process_type=event.process_type,
+                    worker_type=event.worker_type,
+                    start_ts=proc.started_at or "",
+                    end_ts=proc.ended_at or "",
+                    event_timeout=event.event_timeout,
+                    event_handler_timeout=event.event_handler_timeout,
+                    event_handler_slow_timeout=event.event_handler_slow_timeout,
+                ),
+            ).now()
         if action == "retry":
             await event.emit(
                 ProcessEvent(
