@@ -13,9 +13,7 @@ import platform
 import re
 import socket
 import sys
-import time
 from datetime import datetime
-from functools import wraps
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
@@ -34,24 +32,6 @@ except importlib.metadata.PackageNotFoundError:
 
 
 # ── Utility functions ──────────────────────────────────────────────────────
-
-
-def _perf_trace(label):
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            if os.environ.get("ARCHIVEBOX_PERF_TRACE") != "1":
-                return func(*args, **kwargs)
-            started_at = time.perf_counter()
-            try:
-                return func(*args, **kwargs)
-            finally:
-                elapsed_ms = (time.perf_counter() - started_at) * 1000
-                print(f"PERF_TRACE label={label} ms={elapsed_ms:.3f}", file=sys.stderr, flush=True)
-
-        return wrapper
-
-    return decorator
 
 
 def uuid7() -> str:
@@ -375,7 +355,6 @@ class ArchiveResult(BaseModel):
         return json.dumps(d, default=str)
 
 
-@_perf_trace("abx_dl.models.write_jsonl")
 def write_jsonl(path: Path, record: Any, also_print: bool = False):
     """Append a record to a JSONL file."""
     line = record.to_jsonl()

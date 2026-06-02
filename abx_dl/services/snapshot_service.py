@@ -2,11 +2,6 @@
 
 import asyncio
 import json
-import os
-import sys
-import time
-from contextlib import contextmanager
-from functools import wraps
 from inspect import isawaitable
 from pathlib import Path
 from typing import ClassVar
@@ -35,52 +30,6 @@ from ..limits import CrawlLimitState
 from ..models import Snapshot
 from ..models import Hook, Plugin
 from .base import BaseService, plugin_with_required_plugin_names
-
-
-def _perf_trace(label):
-    def decorator(func):
-        if asyncio.iscoroutinefunction(func):
-
-            @wraps(func)
-            async def async_wrapper(*args, **kwargs):
-                if os.environ.get("ARCHIVEBOX_PERF_TRACE") != "1":
-                    return await func(*args, **kwargs)
-                started_at = time.perf_counter()
-                try:
-                    return await func(*args, **kwargs)
-                finally:
-                    elapsed_ms = (time.perf_counter() - started_at) * 1000
-                    print(f"PERF_TRACE label={label} ms={elapsed_ms:.3f}", file=sys.stderr, flush=True)
-
-            return async_wrapper
-
-        @wraps(func)
-        def sync_wrapper(*args, **kwargs):
-            if os.environ.get("ARCHIVEBOX_PERF_TRACE") != "1":
-                return func(*args, **kwargs)
-            started_at = time.perf_counter()
-            try:
-                return func(*args, **kwargs)
-            finally:
-                elapsed_ms = (time.perf_counter() - started_at) * 1000
-                print(f"PERF_TRACE label={label} ms={elapsed_ms:.3f}", file=sys.stderr, flush=True)
-
-        return sync_wrapper
-
-    return decorator
-
-
-@contextmanager
-def _perf_span(label: str):
-    if os.environ.get("ARCHIVEBOX_PERF_TRACE") != "1":
-        yield
-        return
-    started_at = time.perf_counter()
-    try:
-        yield
-    finally:
-        elapsed_ms = (time.perf_counter() - started_at) * 1000
-        print(f"PERF_TRACE label={label} ms={elapsed_ms:.3f}", file=sys.stderr, flush=True)
 
 
 async def _wait_for_process_completed(event: ProcessCompletedEvent | None, timeout: float | None) -> ProcessCompletedEvent | None:
@@ -232,61 +181,56 @@ class SnapshotService(BaseService):
             if await self.should_abort():
                 return
             assert self.limit_state is not None
-            with _perf_span("abx_dl.SnapshotService.on_SnapshotEvent__hook.get_plugin_env"):
-                plugin_config = await get_plugin_env(
-                    self.bus,
-                    plugin=plugin,
-                    run_output_dir=self.output_dir,
-                    extra_context={
-                        "snapshot_id": self.snapshot.id,
-                        "snapshot_depth": self.snapshot.depth,
-                        "plugin": plugin.name,
-                        "hook_name": hook.name,
-                    },
-                    config=self._config,
-                )
+            plugin_config = await get_plugin_env(
+                self.bus,
+                plugin=plugin,
+                run_output_dir=self.output_dir,
+                extra_context={
+                    "snapshot_id": self.snapshot.id,
+                    "snapshot_depth": self.snapshot.depth,
+                    "plugin": plugin.name,
+                    "hook_name": hook.name,
+                },
+                config=self._config,
+            )
             if plugin_config.DRY_RUN:
                 return
-            with _perf_span("abx_dl.SnapshotService.on_SnapshotEvent__hook.prepare_env"):
-                env = plugin_config.to_env()
-                env_plugin_names = set(plugin_with_required_plugin_names(plugin, self.plugins))
-            with _perf_span("abx_dl.SnapshotService.on_SnapshotEvent__hook.binary_event_filter"):
-                binary_events = await self.bus.filter(
-                    BinaryEvent,
-                    past=True,
-                    where=lambda candidate: str(candidate.extra_context.get("plugin_name") or "") in env_plugin_names,
-                )
-            with _perf_span("abx_dl.SnapshotService.on_SnapshotEvent__hook.apply_binary_env"):
-                for binary_event in reversed(binary_events):
-                    if binary_event.env:
-                        env = BinProvider.build_exec_env(
-                            base_env=env,
-                            extra_env=binary_event.env,
-                        )
-                env["SNAP_DIR"] = str(self.output_dir)
-            with _perf_span("abx_dl.SnapshotService.on_SnapshotEvent__hook.prepare_process_event"):
-                timeout_key = f"{plugin.name.upper()}_TIMEOUT"
-                timeout = plugin_config[timeout_key] if timeout_key in plugin.config.properties else plugin_config.TIMEOUT
-                self._hook_timeouts[(plugin.name, hook.name)] = timeout
-                plugin_output_dir = self.output_dir / plugin.name
-                plugin_output_dir.mkdir(parents=True, exist_ok=True)
-                handler_timeout = (
-                    self.snapshot_phase_timeout + self.snapshot_cleanup_phase_timeout + 30.0 if hook.is_background else timeout + 30.0
-                )
-                process_event = ProcessEvent(
-                    plugin_name=plugin.name,
-                    hook_name=hook.name,
-                    hook_path=str(hook.path),
-                    hook_args=[f"--url={self.url}"],
-                    is_background=hook.is_background,
-                    output_dir=str(plugin_output_dir),
-                    env=env,
-                    timeout=timeout,
-                    event_blocks_parent_completion=not hook.is_background,
-                    event_timeout=handler_timeout,
-                    event_handler_timeout=handler_timeout,
-                    event_handler_slow_timeout=slow_warning_timeout(handler_timeout),
-                )
+            env = plugin_config.to_env()
+            env_plugin_names = set(plugin_with_required_plugin_names(plugin, self.plugins))
+            binary_events = await self.bus.filter(
+                BinaryEvent,
+                past=True,
+                where=lambda candidate: str(candidate.extra_context.get("plugin_name") or "") in env_plugin_names,
+            )
+            for binary_event in reversed(binary_events):
+                if binary_event.env:
+                    env = BinProvider.build_exec_env(
+                        base_env=env,
+                        extra_env=binary_event.env,
+                    )
+            env["SNAP_DIR"] = str(self.output_dir)
+            timeout_key = f"{plugin.name.upper()}_TIMEOUT"
+            timeout = plugin_config[timeout_key] if timeout_key in plugin.config.properties else plugin_config.TIMEOUT
+            self._hook_timeouts[(plugin.name, hook.name)] = timeout
+            plugin_output_dir = self.output_dir / plugin.name
+            plugin_output_dir.mkdir(parents=True, exist_ok=True)
+            handler_timeout = (
+                self.snapshot_phase_timeout + self.snapshot_cleanup_phase_timeout + 30.0 if hook.is_background else timeout + 30.0
+            )
+            process_event = ProcessEvent(
+                plugin_name=plugin.name,
+                hook_name=hook.name,
+                hook_path=str(hook.path),
+                hook_args=[f"--url={self.url}"],
+                is_background=hook.is_background,
+                output_dir=str(plugin_output_dir),
+                env=env,
+                timeout=timeout,
+                event_blocks_parent_completion=not hook.is_background,
+                event_timeout=handler_timeout,
+                event_handler_timeout=handler_timeout,
+                event_handler_slow_timeout=slow_warning_timeout(handler_timeout),
+            )
             if hook.is_background:
                 background_process = event.emit(process_event)
                 # First-run PEP-723 hooks need to resolve + install their inline
@@ -308,19 +252,16 @@ class SnapshotService(BaseService):
                     raise RuntimeError(f"Background hook {hook.name} did not start")
             else:
                 foreground_process = event.emit(process_event)
-                with _perf_span("abx_dl.SnapshotService.on_SnapshotEvent__hook.foreground_process_event"):
-                    await _run_event_now(foreground_process, handler_timeout)
-                with _perf_span("abx_dl.SnapshotService.on_SnapshotEvent__hook.find_completed_process"):
-                    completed_process = await self.bus.find(
-                        ProcessCompletedEvent,
-                        child_of=foreground_process,
-                        past=True,
-                        future=handler_timeout,
-                    )
+                await _run_event_now(foreground_process, handler_timeout)
+                completed_process = await self.bus.find(
+                    ProcessCompletedEvent,
+                    child_of=foreground_process,
+                    past=True,
+                    future=handler_timeout,
+                )
                 if completed_process is None:
                     raise RuntimeError(f"Foreground hook {hook.name} did not complete")
-                with _perf_span("abx_dl.SnapshotService.on_SnapshotEvent__hook.wait_completed_process"):
-                    await _wait_for_process_completed(completed_process, handler_timeout)
+                await _wait_for_process_completed(completed_process, handler_timeout)
                 if await self.should_abort():
                     return
 
@@ -421,40 +362,35 @@ class SnapshotService(BaseService):
             self._active_snapshot_event_ids.discard(event.event_id)
             self._completed_snapshot_event_ids.add(event.event_id)
 
-    @_perf_trace("abx_dl.SnapshotService._run_root_snapshot_event")
     async def _run_root_snapshot_event(self, event: SnapshotEvent) -> None:
-        with _perf_span("abx_dl.SnapshotService._run_root_snapshot_event.find_existing_completed"):
-            completed_event = await self.bus.find(
-                SnapshotCompletedEvent,
-                past=True,
-                future=False,
-                where=lambda candidate: self.bus.event_is_child_of(candidate, event),
-                snapshot_id=self.snapshot.id,
-                output_dir=str(self.output_dir),
-            )
+        completed_event = await self.bus.find(
+            SnapshotCompletedEvent,
+            past=True,
+            future=False,
+            where=lambda candidate: self.bus.event_is_child_of(candidate, event),
+            snapshot_id=self.snapshot.id,
+            output_dir=str(self.output_dir),
+        )
         if completed_event is not None:
             return
-        with _perf_span("abx_dl.SnapshotService._run_root_snapshot_event.get_config"):
-            self._config = self._config or await get_config(self.bus)
-        with _perf_span("abx_dl.SnapshotService._run_root_snapshot_event.limit_state"):
-            if self.limit_state is None:
-                self.limit_state = CrawlLimitState.from_config(self._config.user.model_dump(mode="json"))
-            admission = self.limit_state.admit_snapshot(event.snapshot_id) if self.limit_state.has_limits() else None
+        self._config = self._config or await get_config(self.bus)
+        if self.limit_state is None:
+            self.limit_state = CrawlLimitState.from_config(self._config.user.model_dump(mode="json"))
+        admission = self.limit_state.admit_snapshot(event.snapshot_id) if self.limit_state.has_limits() else None
         if admission is not None and not admission.allowed:
             raise RuntimeError(f"Snapshot {event.snapshot_id} denied by crawl limits: {admission.stop_reason}")
         url = self.url
         snapshot_id = self.snapshot.id
         output_dir = str(self.output_dir)
         try:
-            with _perf_span("abx_dl.SnapshotService._run_root_snapshot_event.hooks_loop"):
-                for plugin, hook in self.hooks:
-                    if await self.should_abort():
-                        break
-                    await self.on_SnapshotEvent__for_hook(plugin, hook)(event)
-                    if await self.should_abort():
-                        break
-                    if self.limit_state.get_snapshot_stop_reason(event.snapshot_id) == "snapshot_max_size":
-                        break
+            for plugin, hook in self.hooks:
+                if await self.should_abort():
+                    break
+                await self.on_SnapshotEvent__for_hook(plugin, hook)(event)
+                if await self.should_abort():
+                    break
+                if self.limit_state.get_snapshot_stop_reason(event.snapshot_id) == "snapshot_max_size":
+                    break
             foreground_process = await self.bus.find(
                 ProcessEvent,
                 past=True,
@@ -491,15 +427,14 @@ class SnapshotService(BaseService):
                         break
         finally:
             if self.snapshot_cleanup_enabled:
-                with _perf_span("abx_dl.SnapshotService._run_root_snapshot_event.emit_cleanup"):
-                    cleanup_event = SnapshotCleanupEvent(
-                        url=url,
-                        snapshot_id=snapshot_id,
-                        output_dir=output_dir,
-                        event_timeout=self.snapshot_cleanup_phase_timeout,
-                        event_handler_slow_timeout=slow_warning_timeout(self.snapshot_cleanup_phase_timeout),
-                    )
-                    event.emit(cleanup_event)
+                cleanup_event = SnapshotCleanupEvent(
+                    url=url,
+                    snapshot_id=snapshot_id,
+                    output_dir=output_dir,
+                    event_timeout=self.snapshot_cleanup_phase_timeout,
+                    event_handler_slow_timeout=slow_warning_timeout(self.snapshot_cleanup_phase_timeout),
+                )
+                event.emit(cleanup_event)
         if self.snapshot_cleanup_enabled:
             return
 

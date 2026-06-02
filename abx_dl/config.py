@@ -7,15 +7,12 @@ and sparse derived state through ``get_config()`` and never blindly merges
 derived cache into user config.
 """
 
-import asyncio
 import json
 import os
 import re
-import sys
-import time
 import tempfile
 from dataclasses import dataclass
-from functools import lru_cache, wraps
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Self, cast
 from collections.abc import Mapping
@@ -27,39 +24,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from .events import MachineEvent
 from .models import Plugin, PluginConfig, PluginEnv, RequiredBinary
 from abx_plugins.plugins.base import utils as plugin_utils
-
-
-def _perf_trace(label):
-    def decorator(func):
-        if asyncio.iscoroutinefunction(func):
-
-            @wraps(func)
-            async def async_wrapper(*args, **kwargs):
-                if os.environ.get("ARCHIVEBOX_PERF_TRACE") != "1":
-                    return await func(*args, **kwargs)
-                started_at = time.perf_counter()
-                try:
-                    return await func(*args, **kwargs)
-                finally:
-                    elapsed_ms = (time.perf_counter() - started_at) * 1000
-                    print(f"PERF_TRACE label={label} ms={elapsed_ms:.3f}", file=sys.stderr, flush=True)
-
-            return async_wrapper
-
-        @wraps(func)
-        def sync_wrapper(*args, **kwargs):
-            if os.environ.get("ARCHIVEBOX_PERF_TRACE") != "1":
-                return func(*args, **kwargs)
-            started_at = time.perf_counter()
-            try:
-                return func(*args, **kwargs)
-            finally:
-                elapsed_ms = (time.perf_counter() - started_at) * 1000
-                print(f"PERF_TRACE label={label} ms={elapsed_ms:.3f}", file=sys.stderr, flush=True)
-
-        return sync_wrapper
-
-    return decorator
 
 
 class BootstrapConfig(BaseSettings):
@@ -265,7 +229,6 @@ def is_path_like_env_value(value: Any) -> bool:
     return bool(text) and (text.startswith(("~/", "./", "/")) or "/" in text or "\\" in text)
 
 
-@_perf_trace("abx_dl.config._load_plugin_config_model")
 def _load_plugin_config_model(
     plugin: Plugin,
     *,
@@ -329,7 +292,6 @@ def _load_plugin_config_model(
     return resolved_config
 
 
-@_perf_trace("abx_dl.config.get_config")
 async def get_config(bus: EventBus | None = None, *, include_derived: bool = True) -> RuntimeConfig:
     """Return the current runtime config state from one canonical derivation path.
 
@@ -363,7 +325,6 @@ async def get_config(bus: EventBus | None = None, *, include_derived: bool = Tru
     return RuntimeConfig(user=GlobalConfig(**current_user_config), derived=current_derived_config)
 
 
-@_perf_trace("abx_dl.config.get_plugin_env")
 async def get_plugin_env(
     bus: EventBus,
     *,

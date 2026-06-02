@@ -5,9 +5,6 @@ from __future__ import annotations
 import mimetypes
 import os
 import stat
-import sys
-import time
-from functools import wraps
 from pathlib import Path
 from collections.abc import Iterable
 
@@ -22,24 +19,6 @@ OUTPUT_FILE_METADATA_SUFFIXES = (".stdout.log", ".stderr.log", ".log", ".pid", "
 
 EXECUTABLE_BITS = 0o111
 BROKEN_SYMLINK_SUFFIX = ".broken-symlink.txt"
-
-
-def _perf_trace(label):
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            if os.environ.get("ARCHIVEBOX_PERF_TRACE") != "1":
-                return func(*args, **kwargs)
-            started_at = time.perf_counter()
-            try:
-                return func(*args, **kwargs)
-            finally:
-                elapsed_ms = (time.perf_counter() - started_at) * 1000
-                print(f"PERF_TRACE label={label} ms={elapsed_ms:.3f}", file=sys.stderr, flush=True)
-
-        return wrapper
-
-    return decorator
 
 
 class OutputFile(BaseModel):
@@ -83,7 +62,6 @@ def output_file_from_path(file_path: Path, *, relative_to: Path) -> OutputFile:
     )
 
 
-@_perf_trace("abx_dl.output_files.scan_output_files")
 def scan_output_files(output_dir: Path, file_paths: Iterable[Path] | None = None) -> list[OutputFile]:
     """Collect metadata for real hook output files, excluding process artifacts.
 
