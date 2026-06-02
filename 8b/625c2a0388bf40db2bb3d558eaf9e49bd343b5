@@ -1,0 +1,21 @@
+abx_dl/services/snapshot_service.py
+  s_c5ae786df4a14c::t_c8743601ca7426 8,73-85,235-247,250-289,311-319,322-323,426-434,437-442,449-457,494-502
+abx_dl/services/process_service.py
+  s_c5ae786df4a14c::t_201f95303d71e8 75-87,303-316,328-330,332-333,336-337,344-358,398-426,463-464,487-497,501-545,559-562,594-600,602-603,606-608,611-612,614-640
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "8b625c2a0388bf40db2bb3d558eaf9e49bd343b5",
+  "prompts": {},
+  "sessions": {
+    "s_c5ae786df4a14c": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e81c2-3271-70c1-8ea7-2c49783fb389",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
