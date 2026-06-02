@@ -1,11 +1,13 @@
 """ProcessService — owns hook subprocess execution and raw process events."""
 
 import asyncio
+import os
 import signal
 import sys
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from functools import wraps
 from pathlib import Path
 from typing import ClassVar, Literal
 
@@ -35,6 +37,39 @@ from .base import BaseService
 
 ProcessStatus = Literal["succeeded", "failed", "skipped"]
 STDOUT_POLL_INTERVAL = 0.5
+
+
+def _perf_trace(label):
+    def decorator(func):
+        if asyncio.iscoroutinefunction(func):
+
+            @wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                if os.environ.get("ARCHIVEBOX_PERF_TRACE") != "1":
+                    return await func(*args, **kwargs)
+                started_at = time.perf_counter()
+                try:
+                    return await func(*args, **kwargs)
+                finally:
+                    elapsed_ms = (time.perf_counter() - started_at) * 1000
+                    print(f"PERF_TRACE label={label} ms={elapsed_ms:.3f}", file=sys.stderr, flush=True)
+
+            return async_wrapper
+
+        @wraps(func)
+        def sync_wrapper(*args, **kwargs):
+            if os.environ.get("ARCHIVEBOX_PERF_TRACE") != "1":
+                return func(*args, **kwargs)
+            started_at = time.perf_counter()
+            try:
+                return func(*args, **kwargs)
+            finally:
+                elapsed_ms = (time.perf_counter() - started_at) * 1000
+                print(f"PERF_TRACE label={label} ms={elapsed_ms:.3f}", file=sys.stderr, flush=True)
+
+        return sync_wrapper
+
+    return decorator
 
 
 @dataclass
@@ -240,6 +275,7 @@ class ProcessService(BaseService):
             if self._active_process_event_tasks.get(event.event_id) is task:
                 self._active_process_event_tasks.pop(event.event_id, None)
 
+    @_perf_trace("abx_dl.ProcessService._run_process_event")
     async def _run_process_event(self, event: ProcessEvent) -> Process | None:
         """Spawn one hook subprocess and emit ProcessStartedEvent.
 
@@ -411,6 +447,7 @@ class ProcessService(BaseService):
         finally:
             self.pause_requested.clear()
 
+    @_perf_trace("abx_dl.ProcessService._complete_process_event")
     async def _complete_process_event(
         self,
         *,

@@ -11,6 +11,9 @@ import asyncio
 import os
 import shlex
 import signal
+import sys
+import time
+from functools import wraps
 from pathlib import Path
 
 
@@ -21,6 +24,24 @@ import psutil
 # 15s to flush its user_data_dir (cookies, local storage, session data) before
 # exiting. Shorter timeouts risk corrupting the profile.
 GRACEFUL_SHUTDOWN_TIMEOUT = 15.0
+
+
+def _perf_trace(label):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            if os.environ.get("ARCHIVEBOX_PERF_TRACE") != "1":
+                return func(*args, **kwargs)
+            started_at = time.perf_counter()
+            try:
+                return func(*args, **kwargs)
+            finally:
+                elapsed_ms = (time.perf_counter() - started_at) * 1000
+                print(f"PERF_TRACE label={label} ms={elapsed_ms:.3f}", file=sys.stderr, flush=True)
+
+        return wrapper
+
+    return decorator
 
 
 def _normalize_exec_name(exec_path: str) -> str:
@@ -141,6 +162,7 @@ def validate_pid_file(pid_file: Path, cmd_file: Path | None = None, tolerance: f
         return False
 
 
+@_perf_trace("abx_dl.process_utils.write_pid_file_with_mtime")
 def write_pid_file_with_mtime(pid_file: Path, pid: int, start_time: float):
     """Write PID file and set mtime to process start time.
 
@@ -154,6 +176,7 @@ def write_pid_file_with_mtime(pid_file: Path, pid: int, start_time: float):
         pass  # mtime optional, validation degrades gracefully
 
 
+@_perf_trace("abx_dl.process_utils.write_cmd_file")
 def write_cmd_file(cmd_file: Path, cmd: list[str]):
     """Write shell command script for debugging and PID validation."""
 

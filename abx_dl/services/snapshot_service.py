@@ -2,6 +2,10 @@
 
 import asyncio
 import json
+import os
+import sys
+import time
+from functools import wraps
 from inspect import isawaitable
 from pathlib import Path
 from typing import ClassVar
@@ -30,6 +34,39 @@ from ..limits import CrawlLimitState
 from ..models import Snapshot
 from ..models import Hook, Plugin
 from .base import BaseService, plugin_with_required_plugin_names
+
+
+def _perf_trace(label):
+    def decorator(func):
+        if asyncio.iscoroutinefunction(func):
+
+            @wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                if os.environ.get("ARCHIVEBOX_PERF_TRACE") != "1":
+                    return await func(*args, **kwargs)
+                started_at = time.perf_counter()
+                try:
+                    return await func(*args, **kwargs)
+                finally:
+                    elapsed_ms = (time.perf_counter() - started_at) * 1000
+                    print(f"PERF_TRACE label={label} ms={elapsed_ms:.3f}", file=sys.stderr, flush=True)
+
+            return async_wrapper
+
+        @wraps(func)
+        def sync_wrapper(*args, **kwargs):
+            if os.environ.get("ARCHIVEBOX_PERF_TRACE") != "1":
+                return func(*args, **kwargs)
+            started_at = time.perf_counter()
+            try:
+                return func(*args, **kwargs)
+            finally:
+                elapsed_ms = (time.perf_counter() - started_at) * 1000
+                print(f"PERF_TRACE label={label} ms={elapsed_ms:.3f}", file=sys.stderr, flush=True)
+
+        return sync_wrapper
+
+    return decorator
 
 
 async def _wait_for_process_completed(event: ProcessCompletedEvent | None, timeout: float | None) -> ProcessCompletedEvent | None:
@@ -362,6 +399,7 @@ class SnapshotService(BaseService):
             self._active_snapshot_event_ids.discard(event.event_id)
             self._completed_snapshot_event_ids.add(event.event_id)
 
+    @_perf_trace("abx_dl.SnapshotService._run_root_snapshot_event")
     async def _run_root_snapshot_event(self, event: SnapshotEvent) -> None:
         completed_event = await self.bus.find(
             SnapshotCompletedEvent,
