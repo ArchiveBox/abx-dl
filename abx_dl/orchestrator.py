@@ -79,8 +79,9 @@ Key abxbus concepts used:
 from __future__ import annotations
 
 import asyncio
-import sys
 import json
+import os
+import sys
 from collections.abc import Sequence
 from contextlib import nullcontext
 from pathlib import Path
@@ -88,7 +89,7 @@ from tempfile import TemporaryDirectory
 from typing import Any
 
 from abxbus import EventBus, EventBusMiddleware, EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode
-from abxpkg.binary_service import BinaryCacheBackend, BinaryCacheService, BinaryService
+from abxpkg.binary_service import BinaryCacheBackend, BinaryCacheService, BinaryRequestEvent, BinaryService
 
 from .config import ensure_default_persona_dir, get_initial_env, get_derived_config
 from .events import (
@@ -99,7 +100,7 @@ from .events import (
 )
 from .heartbeat import CrawlHeartbeat
 from .models import Snapshot, write_jsonl
-from .models import Hook, Plugin, discover_plugins, filter_plugins
+from .models import Hook, Plugin, RequiredBinary, discover_plugins, filter_plugins
 from .services import (
     AbxDlEnvConfigFileBinaryCacheBackend,
     ArchiveResultService,
@@ -274,9 +275,36 @@ def get_install_plugins(plugins: dict[str, Plugin]) -> list[Plugin]:
     return [plugin for plugin in plugins.values() if plugin.config.required_binaries]
 
 
+def _positive_int(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def get_binary_request_install_timeout(record: RequiredBinary | dict[str, Any], config: dict[str, Any] | None = None) -> int:
+    """Resolve the timeout budget needed for a required binary request."""
+    cfg = config or {}
+    record_data = record.model_dump(mode="json") if isinstance(record, RequiredBinary) else record
+    default_event_timeout = _positive_int(BinaryRequestEvent.model_fields["event_timeout"].default) or 300
+    candidates = [
+        record_data.get("event_timeout"),
+        record_data.get("install_timeout"),
+        cfg.get("ABXPKG_INSTALL_TIMEOUT"),
+        os.environ.get("ABXPKG_INSTALL_TIMEOUT"),
+        default_event_timeout,
+    ]
+    return max(_positive_int(candidate) or 0 for candidate in candidates)
+
+
 def compute_install_phase_timeout(plugins: list[Plugin], config: dict[str, Any] | None = None) -> float:
-    """Sum per-plugin timeouts across plugins that declare required binaries."""
-    total = sum(get_plugin_timeout(plugin, config) for plugin in plugins)
+    """Sum timeout budgets across binary requests emitted during install."""
+    total = 0
+    for plugin in plugins:
+        plugin_timeout = get_plugin_timeout(plugin, config)
+        for record in plugin.config.required_binaries:
+            total += max(plugin_timeout, get_binary_request_install_timeout(record, config))
     return max(float(total), 60.0)
 
 
