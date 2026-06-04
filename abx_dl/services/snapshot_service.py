@@ -209,14 +209,28 @@ class SnapshotService(BaseService):
                         extra_env=binary_event.env,
                     )
             env["SNAP_DIR"] = str(self.output_dir)
+            if str(env.get("CHROME_ISOLATION") or "").lower() == "snapshot":
+                active_persona = str(env.get("ACTIVE_PERSONA") or "Default")
+                chrome_persona_dir = self.output_dir / ".persona" / active_persona
+                env["CHROME_USER_DATA_DIR"] = str(chrome_persona_dir / "chrome_profile")
+                env["CHROME_DOWNLOADS_DIR"] = str(chrome_persona_dir / "chrome_downloads")
             timeout_key = f"{plugin.name.upper()}_TIMEOUT"
             timeout = plugin_config[timeout_key] if timeout_key in plugin.config.properties else plugin_config.TIMEOUT
             self._hook_timeouts[(plugin.name, hook.name)] = timeout
             plugin_output_dir = self.output_dir / plugin.name
             plugin_output_dir.mkdir(parents=True, exist_ok=True)
-            handler_timeout = (
-                self.snapshot_phase_timeout + self.snapshot_cleanup_phase_timeout + 30.0 if hook.is_background else timeout + 30.0
-            )
+            # Snapshot background hooks own resources that are explicitly
+            # shut down by SnapshotCleanupEvent. Do not give abxbus a
+            # wall-clock handler timeout for them; the foreground barrier
+            # hooks enforce readiness and cleanup owns termination.
+            if hook.is_background:
+                handler_timeout: float | None = None
+                handler_slow_timeout: float | None = None
+                started_wait_timeout = 60.0
+            else:
+                handler_timeout = timeout + 30.0
+                handler_slow_timeout = slow_warning_timeout(handler_timeout)
+                started_wait_timeout = handler_timeout
             process_event = ProcessEvent(
                 plugin_name=plugin.name,
                 hook_name=hook.name,
@@ -229,7 +243,7 @@ class SnapshotService(BaseService):
                 event_blocks_parent_completion=not hook.is_background,
                 event_timeout=handler_timeout,
                 event_handler_timeout=handler_timeout,
-                event_handler_slow_timeout=slow_warning_timeout(handler_timeout),
+                event_handler_slow_timeout=handler_slow_timeout,
             )
             if hook.is_background:
                 background_process = event.emit(process_event)
@@ -244,7 +258,7 @@ class SnapshotService(BaseService):
                     ProcessStartedEvent,
                     child_of=background_process,
                     past=True,
-                    future=min(60.0, handler_timeout),
+                    future=started_wait_timeout,
                 )
                 if await self.should_abort():
                     return

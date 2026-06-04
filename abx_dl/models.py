@@ -99,6 +99,8 @@ class PluginConfig(BaseModel):
 
     title: str = ""
     description: str = ""
+    x_runtimes: list[str] = Field(default_factory=list, alias="x-runtimes")
+    x_install_when_disabled: bool = Field(default=False, alias="x-install-when-disabled")
     output_mimetypes: list[str] = Field(default_factory=list)  # e.g. ['text/html', 'video/']
     properties: dict[str, dict[str, Any]] = Field(default_factory=dict)  # JSONSchema format describing plugin config
     required_binaries: list[RequiredBinary] = Field(default_factory=list)  # e.g. [{'name': 'wget', 'binproviders': 'env,apt,brew'}]
@@ -240,6 +242,7 @@ class PluginEnv(BaseModel):
         for extra_dir in (
             str(Path(sys.executable).parent),
             str(Path(env["PIP_BIN_DIR"])),
+            str(Path(env["PNPM_BIN_DIR"])),
             str(Path(env["NPM_BIN_DIR"])),
         ):
             if extra_dir and extra_dir not in runtime_bin_dirs:
@@ -402,7 +405,15 @@ def parse_hook_filename(filename: str) -> tuple[str, int, bool] | None:
     return (event, order, is_background)
 
 
-def load_plugin(plugin_dir: Path) -> Plugin | None:
+def _plugin_runtime_enabled(config: PluginConfig, runtime: str | None = None) -> bool:
+    allowed_runtimes = {str(item).strip().lower() for item in config.x_runtimes if str(item).strip()}
+    if not allowed_runtimes:
+        return True
+    current_runtime = str(runtime or os.environ.get("ABX_RUNTIME") or "abx-dl").strip().lower()
+    return current_runtime in allowed_runtimes
+
+
+def load_plugin(plugin_dir: Path, *, runtime: str | None = None) -> Plugin | None:
     """Load a single plugin from a directory.
 
     Reads config.json for metadata/schema/dependencies and discovers hook scripts
@@ -423,6 +434,8 @@ def load_plugin(plugin_dir: Path) -> Plugin | None:
     config_file = plugin_dir / "config.json"
     if config_file.exists():
         plugin.config = PluginConfig.model_validate_json(config_file.read_text())
+        if not _plugin_runtime_enabled(plugin.config, runtime=runtime):
+            return None
 
     # Discover hooks
     for hook_file in plugin_dir.glob("on_*"):
@@ -450,7 +463,7 @@ def load_plugin(plugin_dir: Path) -> Plugin | None:
     return plugin
 
 
-def discover_plugins(plugins_dir: Path = PLUGINS_DIR) -> dict[str, Plugin]:
+def discover_plugins(plugins_dir: Path = PLUGINS_DIR, *, runtime: str | None = None) -> dict[str, Plugin]:
     """Discover all plugins in the plugins directory."""
     plugins = {}
 
@@ -458,7 +471,7 @@ def discover_plugins(plugins_dir: Path = PLUGINS_DIR) -> dict[str, Plugin]:
         return plugins
 
     for plugin_dir in sorted(plugins_dir.iterdir()):
-        plugin = load_plugin(plugin_dir)
+        plugin = load_plugin(plugin_dir, runtime=runtime)
         if plugin:
             plugins[plugin.name] = plugin
 

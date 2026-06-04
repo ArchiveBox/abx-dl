@@ -2,7 +2,6 @@
 
 import asyncio
 import signal
-import sys
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -54,8 +53,6 @@ def _process_status(exit_code: int) -> ProcessStatus:
 
 
 def _process_command(event: ProcessEvent) -> list[str]:
-    if event.env.get("ABX_RUNTIME", "").lower() == "archivebox" and event.hook_path.endswith(".py"):
-        return [sys.executable, event.hook_path, *event.hook_args]
     return [event.hook_path, *event.hook_args]
 
 

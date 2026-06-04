@@ -20,6 +20,8 @@ def test_plugin_env_sets_run_dirs_and_node_path(monkeypatch, tmp_path: Path) -> 
         "SNAP_DIR",
         "LIB_DIR",
         "LIB_BIN_DIR",
+        "PNPM_HOME",
+        "PNPM_BIN_DIR",
         "NPM_HOME",
         "NODE_MODULES_DIR",
         "NODE_PATH",
@@ -37,6 +39,7 @@ def test_plugin_env_sets_run_dirs_and_node_path(monkeypatch, tmp_path: Path) -> 
     assert env["LIB_BIN_DIR"] == str(Path(env["LIB_DIR"]) / "bin")
     assert env["NODE_PATH"] == env["NODE_MODULES_DIR"]
     assert env["PIP_BIN_DIR"] in env["PATH"].split(":")
+    assert env["PNPM_BIN_DIR"] in env["PATH"].split(":")
     assert env["NPM_BIN_DIR"] in env["PATH"].split(":")
     assert "VIRTUAL_ENV" not in env
 
@@ -89,16 +92,19 @@ def test_plugin_env_exports_shared_runtime_paths_after_real_install_phase(
 
     lib_dir = Path(ytdlp_env["LIB_DIR"])
     pip_venv = lib_dir / "pip" / "venv"
-    npm_prefix = lib_dir / "npm"
-    npm_bin_dir = npm_prefix / "node_modules" / ".bin"
+    pnpm_prefix = lib_dir / "pnpm" / "packages" / "chrome"
+    pnpm_bin_dir = pnpm_prefix / "node_modules" / ".bin"
 
     assert "VIRTUAL_ENV" not in ytdlp_env
     assert ytdlp_env["PIP_BIN_DIR"] == str(pip_venv / "bin")
     assert ytdlp_env["PIP_BIN_DIR"] in ytdlp_env["PATH"].split(":")
-    assert ytdlp_env["NPM_HOME"] == str(npm_prefix)
-    assert ytdlp_env["NODE_MODULES_DIR"] == str(npm_prefix / "node_modules")
-    assert ytdlp_env["NODE_PATH"] == str(npm_prefix / "node_modules")
-    assert ytdlp_env["NPM_BIN_DIR"] == str(npm_bin_dir)
+    assert ytdlp_env["PNPM_HOME"] == str(pnpm_prefix)
+    assert ytdlp_env["PNPM_BIN_DIR"] == str(pnpm_bin_dir)
+    assert ytdlp_env["NPM_HOME"] == str(pnpm_prefix)
+    assert ytdlp_env["NODE_MODULES_DIR"] == str(pnpm_prefix / "node_modules")
+    assert ytdlp_env["NODE_PATH"] == str(pnpm_prefix / "node_modules")
+    assert ytdlp_env["NPM_BIN_DIR"] == str(pnpm_bin_dir)
+    assert ytdlp_env["PNPM_BIN_DIR"] in ytdlp_env["PATH"].split(":")
     assert ytdlp_env["NPM_BIN_DIR"] in ytdlp_env["PATH"].split(":")
 
 
@@ -116,22 +122,24 @@ def test_plugin_env_treats_empty_optional_node_paths_as_unset(tmp_path: Path) ->
     node_path = ":".join(
         [
             "/home/archivebox/.npm/lib/node_modules",
-            str(lib_dir / "npm" / "node_modules"),
-            "/usr/share/archivebox/lib/npm/node_modules",
+            str(lib_dir / "pnpm" / "packages" / "chrome" / "node_modules"),
+            "/usr/share/archivebox/lib/pnpm/packages/chrome/node_modules",
         ],
     )
     env = assemble_env(
         overrides={
             "LIB_DIR": str(lib_dir),
             "NODE_MODULES_DIR": "",
+            "PNPM_BIN_DIR": "",
             "NPM_BIN_DIR": "",
             "NODE_PATH": node_path,
         },
         run_output_dir=tmp_path / "run",
     )
 
-    assert env["NODE_MODULES_DIR"] == str(lib_dir / "npm" / "node_modules")
-    assert env["NPM_BIN_DIR"] == str(lib_dir / "npm" / "node_modules" / ".bin")
+    assert env["NODE_MODULES_DIR"] == str(lib_dir / "pnpm" / "packages" / "chrome" / "node_modules")
+    assert env["PNPM_BIN_DIR"] == str(lib_dir / "pnpm" / "packages" / "chrome" / "node_modules" / ".bin")
+    assert env["NPM_BIN_DIR"] == str(lib_dir / "pnpm" / "packages" / "chrome" / "node_modules" / ".bin")
     assert env["NODE_PATH"] == node_path
     assert env["NODE_MODULES_DIR"] in env["NODE_PATH"].split(":")
 
@@ -188,6 +196,8 @@ def test_plugin_env_preserves_user_runtime_dirs_when_derived_config_has_defaults
     for key in (
         "LIB_DIR",
         "LIB_BIN_DIR",
+        "PNPM_HOME",
+        "PNPM_BIN_DIR",
         "NPM_HOME",
         "NODE_MODULES_DIR",
         "NODE_PATH",
@@ -234,9 +244,10 @@ def test_plugin_env_preserves_user_runtime_dirs_when_derived_config_has_defaults
     assert env["CRAWL_DIR"] == str(crawl_dir)
     assert env["SNAP_DIR"] == str(snap_dir)
     assert env["LIB_DIR"] == str(lib_dir)
-    assert env["NPM_HOME"] == str(lib_dir / "npm")
-    assert env["NODE_MODULES_DIR"] == str(lib_dir / "npm" / "node_modules")
-    assert env["NODE_PATH"] == str(lib_dir / "npm" / "node_modules")
+    assert env["PNPM_HOME"] == str(lib_dir / "pnpm" / "packages" / "chrome")
+    assert env["NPM_HOME"] == str(lib_dir / "pnpm" / "packages" / "chrome")
+    assert env["NODE_MODULES_DIR"] == str(lib_dir / "pnpm" / "packages" / "chrome" / "node_modules")
+    assert env["NODE_PATH"] == str(lib_dir / "pnpm" / "packages" / "chrome" / "node_modules")
     assert env["PUPPETEER_CACHE_DIR"] == str(lib_dir / "puppeteer")
 
 

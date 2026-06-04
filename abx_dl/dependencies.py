@@ -10,7 +10,7 @@ from abxpkg import (
     BinProvider,
     EnvProvider,
     PipProvider,
-    NpmProvider,
+    PnpmProvider,
     DEFAULT_PROVIDER_NAMES,
     PROVIDER_CLASS_BY_NAME,
 )  # DO NOT REMOVE UNUSED IMPORT, critical for pydantic circular reference fix
@@ -29,8 +29,8 @@ def get_default_providers(config: GlobalConfig | None = None) -> list[BinProvide
                 providers.append(EnvProvider())
             elif provider_name == "pip":
                 providers.append(PipProvider(install_root=runtime_config.PIP_HOME))
-            elif provider_name == "npm":
-                providers.append(NpmProvider(install_root=runtime_config.NPM_HOME))
+            elif provider_name == "pnpm":
+                providers.append(PnpmProvider(install_root=runtime_config.PNPM_HOME))
             else:
                 providers.append(provider_class())
         except Exception:

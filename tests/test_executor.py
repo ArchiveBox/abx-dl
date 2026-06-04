@@ -867,6 +867,102 @@ def test_snapshot_service_emits_background_process_without_extra_wait(tmp_path: 
     assert emitted.hook_name == "on_Snapshot__24_responses.daemon.bg"
 
 
+def test_snapshot_service_repins_snapshot_chrome_dirs_after_global_config_merge(tmp_path: Path) -> None:
+    bus = create_bus(total_timeout=30.0, name=f"snapshot_chrome_env_{tmp_path.name}")
+    MachineService(bus, persist_derived=False)
+    output_dir = tmp_path / "archive" / "users" / "system" / "snapshots" / "20260603" / "example.com" / "current"
+    stale_dir = tmp_path / "archive" / "users" / "system" / "snapshots" / "20260603" / "example.com" / "stale"
+    plugin_dir = tmp_path / "plugins" / "chrome"
+    plugin_dir.mkdir(parents=True)
+    hook_path = plugin_dir / "on_Snapshot__09_chrome_launch.sh"
+    hook_path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'printf \'{"type":"ArchiveResult","status":"succeeded","output_str":"ok"}\\n\'',
+                "",
+            ],
+        ),
+    )
+    hook_path.chmod(0o755)
+    real_chrome_plugin = discover_plugins()["chrome"]
+    plugin = Plugin(
+        name="chrome",
+        path=real_chrome_plugin.path,
+        config=real_chrome_plugin.config,
+        hooks=[
+            Hook(
+                name=hook_path.name,
+                event="Snapshot",
+                plugin_name="chrome",
+                path=hook_path,
+                order=9,
+                is_background=False,
+            ),
+        ],
+    )
+    snapshot = Snapshot(url="https://example.com", id="snap-current")
+    ProcessService(bus, emit_jsonl=False, interactive_tty=False)
+    SnapshotService(
+        bus,
+        url=snapshot.url,
+        snapshot=snapshot,
+        output_dir=output_dir,
+        plugins={plugin.name: plugin},
+        snapshot_phase_timeout=10.0,
+    )
+
+    async def run() -> ProcessEvent | None:
+        await bus.emit(
+            MachineEvent(
+                config={
+                    "ABX_RUNTIME": "archivebox",
+                    "CHROME_ISOLATION": "snapshot",
+                    "CHROME_TIMEOUT": "10",
+                    "ACTIVE_PERSONA": "Default",
+                    "CHROME_USER_DATA_DIR": str(stale_dir / ".persona" / "Default" / "chrome_profile"),
+                    "CHROME_DOWNLOADS_DIR": str(stale_dir / ".persona" / "Default" / "chrome_downloads"),
+                },
+                config_type="user",
+            ),
+        ).now()
+        crawl_start_event = CrawlStartEvent(
+            url=snapshot.url,
+            snapshot_id=snapshot.id,
+            output_dir=str(output_dir),
+        )
+        root_event = SnapshotEvent(
+            url=snapshot.url,
+            snapshot_id=snapshot.id,
+            output_dir=str(output_dir),
+            event_parent_id=crawl_start_event.event_id,
+        )
+        await bus.emit(crawl_start_event).now()
+        await bus.emit(root_event).now()
+        process_event = await bus.find(
+            ProcessEvent,
+            past=True,
+            future=False,
+            child_of=root_event,
+            plugin_name=plugin.name,
+            hook_name=hook_path.name,
+        )
+        return process_event if isinstance(process_event, ProcessEvent) else None
+
+    try:
+        emitted = asyncio.run(run())
+    finally:
+        asyncio.run(bus.wait_until_idle())
+
+    assert emitted is not None
+    assert emitted.env["SNAP_DIR"] == str(output_dir)
+    assert emitted.env["CHROME_USER_DATA_DIR"] == str(output_dir / ".persona" / "Default" / "chrome_profile")
+    assert emitted.env["CHROME_DOWNLOADS_DIR"] == str(output_dir / ".persona" / "Default" / "chrome_downloads")
+    assert str(stale_dir) not in emitted.env["CHROME_USER_DATA_DIR"]
+    assert str(stale_dir) not in emitted.env["CHROME_DOWNLOADS_DIR"]
+
+
 def test_snapshot_limit_admission_uses_stable_snapshot_id_across_retries(tmp_path: Path) -> None:
     output_dir = tmp_path / "run"
     snapshot = Snapshot(url="https://example.com", id="snap-limit-retry")

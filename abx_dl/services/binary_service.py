@@ -59,6 +59,27 @@ def _providers_for_names(names: list[str]) -> list[BinProvider]:
     return providers
 
 
+def _config_bool(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() not in {"", "0", "false", "no", "off", "none", "null"}
+    return bool(value)
+
+
+def _plugin_enabled_from_user_config(plugin: Plugin, user_config: RuntimeConfig) -> bool:
+    if plugin.config.x_install_when_disabled:
+        return True
+    enabled_key = plugin.enabled_key
+    if enabled_key not in plugin.config.properties:
+        return True
+    user_payload = user_config.user.model_dump(mode="json")
+    if enabled_key in user_payload:
+        return _config_bool(user_payload[enabled_key])
+    prop = plugin.config.properties.get(enabled_key) or {}
+    if isinstance(prop, Mapping) and "default" in prop:
+        return _config_bool(prop["default"])
+    return True
+
+
 _ABXPKG_OVERRIDE_KEYS = {
     "PATH",
     "INSTALLER_BIN",
@@ -179,16 +200,8 @@ class PluginBinariesService(BaseService):
         for plugin in self.install_plugins:
             if await self.should_abort():
                 break
-            if plugin.enabled_key in plugin.config.properties:
-                plugin_env = await get_plugin_env(
-                    self.bus,
-                    plugin=plugin,
-                    run_output_dir=self.output_dir,
-                    include_derived=False,
-                    config=current_config,
-                )
-                if not plugin_env[plugin.enabled_key]:
-                    continue
+            if not _plugin_enabled_from_user_config(plugin, current_config):
+                continue
             plugin_output_dir = self.output_dir / plugin.name
             for record in get_required_binary_requests(
                 plugin,

@@ -73,6 +73,8 @@ class GlobalConfig(BaseSettings):
     TMP_DIR: Path | None = None
     PIP_HOME: Path | None = None
     PIP_BIN_DIR: Path | None = None
+    PNPM_HOME: Path | None = None
+    PNPM_BIN_DIR: Path | None = None
     NPM_HOME: Path | None = None
     NODE_MODULES_DIR: Path | None = None
     NODE_PATH: str | None = None
@@ -109,6 +111,8 @@ class GlobalConfig(BaseSettings):
         "TMP_DIR",
         "PIP_HOME",
         "PIP_BIN_DIR",
+        "PNPM_HOME",
+        "PNPM_BIN_DIR",
         "NPM_HOME",
         "NODE_MODULES_DIR",
         "NODE_PATH",
@@ -132,9 +136,11 @@ class GlobalConfig(BaseSettings):
         default_lib_bin_dir = default_lib_dir / "bin"
         default_pip_home = default_lib_dir / "pip"
         default_pip_bin_dir = default_pip_home / "venv" / "bin"
-        default_npm_home = default_lib_dir / "npm"
-        default_node_modules_dir = default_npm_home / "node_modules"
-        default_npm_bin_dir = default_node_modules_dir / ".bin"
+        default_pnpm_home = default_lib_dir / "pnpm" / "packages" / "chrome"
+        default_pnpm_bin_dir = default_pnpm_home / "node_modules" / ".bin"
+        default_npm_home = default_pnpm_home
+        default_node_modules_dir = default_pnpm_home / "node_modules"
+        default_npm_bin_dir = default_pnpm_bin_dir
         default_puppeteer_cache_dir = default_lib_dir / "puppeteer"
         lib_dir_changed = self.LIB_DIR != default_lib_dir
         if self.LIB_BIN_DIR is None or (lib_dir_changed and self.LIB_BIN_DIR == default_lib_bin_dir):
@@ -151,14 +157,18 @@ class GlobalConfig(BaseSettings):
             self.PIP_HOME = self.LIB_DIR / "pip"
         if self.PIP_BIN_DIR is None or (lib_dir_changed and self.PIP_BIN_DIR == default_pip_bin_dir):
             self.PIP_BIN_DIR = self.PIP_HOME / "venv" / "bin"
+        if self.PNPM_HOME is None or (lib_dir_changed and self.PNPM_HOME == default_pnpm_home):
+            self.PNPM_HOME = self.LIB_DIR / "pnpm" / "packages" / "chrome"
+        if self.PNPM_BIN_DIR is None or (lib_dir_changed and self.PNPM_BIN_DIR == default_pnpm_bin_dir):
+            self.PNPM_BIN_DIR = self.PNPM_HOME / "node_modules" / ".bin"
         if self.NPM_HOME is None or (lib_dir_changed and self.NPM_HOME == default_npm_home):
-            self.NPM_HOME = self.LIB_DIR / "npm"
+            self.NPM_HOME = self.PNPM_HOME
         if self.NODE_MODULES_DIR is None or (lib_dir_changed and self.NODE_MODULES_DIR == default_node_modules_dir):
-            self.NODE_MODULES_DIR = self.NPM_HOME / "node_modules"
+            self.NODE_MODULES_DIR = self.PNPM_HOME / "node_modules"
         if self.NODE_PATH is None or (lib_dir_changed and self.NODE_PATH == str(default_node_modules_dir)):
             self.NODE_PATH = str(self.NODE_MODULES_DIR)
         if self.NPM_BIN_DIR is None or (lib_dir_changed and self.NPM_BIN_DIR == default_npm_bin_dir):
-            self.NPM_BIN_DIR = self.NODE_MODULES_DIR / ".bin"
+            self.NPM_BIN_DIR = self.PNPM_BIN_DIR
         if self.PUPPETEER_CACHE_DIR is None or (lib_dir_changed and self.PUPPETEER_CACHE_DIR == default_puppeteer_cache_dir):
             self.PUPPETEER_CACHE_DIR = self.LIB_DIR / "puppeteer"
         return self
@@ -518,6 +528,8 @@ GLOBAL_DEFAULT_KEYS = (
     "TMP_DIR",
     "PIP_HOME",
     "PIP_BIN_DIR",
+    "PNPM_HOME",
+    "PNPM_BIN_DIR",
     "NPM_HOME",
     "NODE_MODULES_DIR",
     "NODE_PATH",
@@ -552,20 +564,14 @@ def get_required_binary_requests(
         plugin,
         user_env=overrides,
         derived_env=derived_overrides,
+        hydrate_binaries=False,
     )
     # For the cache-key signature we want the binary's *logical* name (e.g.
     # ``chromium``) regardless of where it's installed on this machine, so the
     # ``ABX_INSTALL_CACHE`` key matches across runs and installs. Replace any
     # resolved ``*_BINARY`` overrides with their plugin-schema defaults so
     # ``{X_BINARY}`` name templates hydrate to ``"chromium"``/``"node"``/etc.
-    # rather than the local abspath. Stripping the keys outright would let
-    # ``plugin_utils.load_config``'s chrome auto-detect re-inject Google Chrome
-    # Canary's abspath; setting an explicit default short-circuits that path
-    # (its ``has_explicit_browser`` check looks for the key, not the value).
-    if isinstance(overrides, BaseSettings):
-        request_name_overrides: dict[str, Any] = overrides.model_dump(mode="json")
-    else:
-        request_name_overrides = dict(overrides or {})
+    # rather than the local abspath.
     schema_binary_defaults: dict[str, Any] = {}
     for prop_key, prop in plugin.config.properties.items():
         if not prop_key.endswith("_BINARY"):
@@ -573,22 +579,11 @@ def get_required_binary_requests(
         default = prop.get("default") if isinstance(prop, dict) else None
         if isinstance(default, str) and default:
             schema_binary_defaults[prop_key] = default
-    request_name_overrides = {key: value for key, value in request_name_overrides.items() if not key.endswith("_BINARY")}
-    request_name_overrides.update(schema_binary_defaults)
-    request_name_config = _load_plugin_config_model(
-        plugin,
-        user_env=request_name_overrides,
-        derived_env=None,
-        hydrate_binaries=False,
-    )
     env = PluginEnv.from_config(
         plugin_config,
         run_output_dir=run_output_dir or Path.cwd(),
     ).to_env()
-    request_name_env = PluginEnv.from_config(
-        request_name_config,
-        run_output_dir=run_output_dir or Path.cwd(),
-    ).to_env()
+    request_name_env = {**env, **{key: dump_to_dotenv_format(value) for key, value in schema_binary_defaults.items()}}
     requests: list[dict[str, Any]] = []
     seen: set[str] = set()
     for spec in binaries:
