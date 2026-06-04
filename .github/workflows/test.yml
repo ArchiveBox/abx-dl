@@ -47,8 +47,7 @@ jobs:
         env:
           PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
         run: |
-          uv sync --no-cache --no-sources --group dev
-          uv pip install -e "${{ runner.temp }}/abxpkg" -e "${{ runner.temp }}/abx-plugins[dev]"
+          uv pip install --group dev -e "${{ runner.temp }}/abxpkg" -e "${{ runner.temp }}/abx-plugins" -e .
 
       - name: Run prek
         env:
@@ -92,8 +91,7 @@ jobs:
         env:
           PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
         run: |
-          uv sync --no-cache --no-sources --group dev
-          uv pip install -e "${{ runner.temp }}/abxpkg" -e "${{ runner.temp }}/abx-plugins[dev]"
+          uv pip install --group dev -e "${{ runner.temp }}/abxpkg" -e "${{ runner.temp }}/abx-plugins" -e .
 
       - name: Run repo test suite
         env:
@@ -203,8 +201,7 @@ jobs:
         env:
           PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
         run: |
-          uv sync --no-cache --no-sources --group dev
-          uv pip install -e "${{ runner.temp }}/abxpkg" -e "${{ runner.temp }}/abx-plugins[dev]"
+          uv pip install --group dev -e "${{ runner.temp }}/abxpkg" -e "${{ runner.temp }}/abx-plugins" -e .
 
       - name: Select Chromium for extension-capable CDP
         if: ${{ matrix.plugin.needs_chromium }}
@@ -349,8 +346,7 @@ jobs:
         env:
           PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
         run: |
-          uv sync --no-cache --no-sources --group dev
-          uv pip install -e "${{ runner.temp }}/abxpkg" -e "${{ runner.temp }}/abx-plugins[dev]"
+          uv pip install --group dev -e "${{ runner.temp }}/abxpkg" -e "${{ runner.temp }}/abx-plugins" -e .
 
       - name: Select Chromium for extension-capable CDP
         env:
