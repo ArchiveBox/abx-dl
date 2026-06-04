@@ -47,6 +47,7 @@ jobs:
         env:
           PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
         run: |
+          uv venv
           uv pip install --group dev -e "${{ runner.temp }}/abxpkg" -e "${{ runner.temp }}/abx-plugins" -e .
 
       - name: Run prek
@@ -91,6 +92,7 @@ jobs:
         env:
           PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
         run: |
+          uv venv
           uv pip install --group dev -e "${{ runner.temp }}/abxpkg" -e "${{ runner.temp }}/abx-plugins" -e .
 
       - name: Run repo test suite
@@ -201,6 +203,7 @@ jobs:
         env:
           PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
         run: |
+          uv venv
           uv pip install --group dev -e "${{ runner.temp }}/abxpkg" -e "${{ runner.temp }}/abx-plugins" -e .
 
       - name: Select Chromium for extension-capable CDP
@@ -346,6 +349,7 @@ jobs:
         env:
           PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
         run: |
+          uv venv
           uv pip install --group dev -e "${{ runner.temp }}/abxpkg" -e "${{ runner.temp }}/abx-plugins" -e .
 
       - name: Select Chromium for extension-capable CDP
