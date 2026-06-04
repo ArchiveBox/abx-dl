@@ -397,15 +397,15 @@ def test_required_binary_requests_preserve_extra_config_fields() -> None:
 
     papersdl_request = next(request for request in requests if request["name"] == "papers-dl")
     assert papersdl_request["postinstall_scripts"] is True
-    install_args = papersdl_request["overrides"]["pip"]["install_args"]
+    install_args = papersdl_request["overrides"]["uv"]["install_args"]
     assert install_args[:3] == [
         "--no-deps",
         "--only-binary=PyMuPDF,PyMuPDFb",
         "papers-dl==0.0.25",
     ]
     assert "aiohttp>=3.13.2" in install_args
-    assert "/lib/" in papersdl_request["overrides"]["pip"]["install_root"]
-    assert papersdl_request["overrides"]["pip"]["install_root"].endswith("/pip/packages/papers-dl")
+    assert "/lib/" in papersdl_request["overrides"]["uv"]["install_root"]
+    assert papersdl_request["overrides"]["uv"]["install_root"].endswith("/uv/packages/papers-dl")
 
 
 def test_setup_services_accepts_runtime_config_overrides_and_seeds_machine_events() -> None:
@@ -813,23 +813,55 @@ def test_snapshot_background_only_hook_finishes_before_cleanup_without_filename_
 
 
 def test_snapshot_service_emits_background_process_without_extra_wait(tmp_path: Path) -> None:
-    bus = create_bus(total_timeout=30.0, name=f"make_hook_handler_background_{tmp_path.name}")
+    plugin_dir = tmp_path / "plugins" / "background_start"
+    plugin_dir.mkdir(parents=True)
+    hook_path = plugin_dir / "on_Snapshot__10_background.daemon.bg.sh"
+    hook_path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                "trap 'echo cleaned; exit 0' TERM",
+                "echo ready",
+                "while true; do sleep 1; done",
+                "",
+            ],
+        ),
+    )
+    hook_path.chmod(0o755)
+
+    plugin = Plugin(
+        name="background_start",
+        path=plugin_dir,
+        config=PluginConfig(),
+        hooks=[
+            Hook(
+                name=hook_path.name,
+                event="Snapshot",
+                plugin_name="background_start",
+                path=hook_path,
+                order=10,
+                is_background=True,
+            ),
+        ],
+    )
+    bus = create_bus(total_timeout=20.0, name=f"make_hook_handler_background_{tmp_path.name}")
     MachineService(bus, persist_derived=False)
+    ProcessService(bus, emit_jsonl=False, interactive_tty=False)
     snapshot = Snapshot(url="https://example.com", id="snap-123")
-    plugin = discover_plugins()["responses"]
-    hook = next(h for h in plugin.hooks if h.name == "on_Snapshot__24_responses.daemon.bg")
     SnapshotService(
         bus,
         url="https://example.com",
         snapshot=snapshot,
         output_dir=tmp_path / "run",
         plugins={plugin.name: plugin},
-        snapshot_phase_timeout=300.0,
+        snapshot_phase_timeout=1.0,
+        snapshot_cleanup_phase_timeout=5.0,
     )
 
     try:
 
-        async def run() -> ProcessEvent | None:
+        async def run() -> tuple[ProcessEvent | None, ProcessStartedEvent | None, ProcessStdoutEvent | None, ProcessCompletedEvent | None]:
             crawl_start_event = CrawlStartEvent(
                 url="https://example.com",
                 snapshot_id=snapshot.id,
@@ -851,20 +883,52 @@ def test_snapshot_service_emits_background_process_without_extra_wait(tmp_path: 
                 future=1.0,
                 child_of=root_event,
                 plugin_name=plugin.name,
-                hook_name=hook.name,
+                hook_name=hook_path.name,
             )
-            return process_event if isinstance(process_event, ProcessEvent) else None
+            assert isinstance(process_event, ProcessEvent)
+            started_process = await bus.find(
+                ProcessStartedEvent,
+                child_of=process_event,
+                past=True,
+                future=5.0,
+            )
+            ready_line = await bus.find(
+                ProcessStdoutEvent,
+                child_of=started_process,
+                past=True,
+                future=5.0,
+                where=lambda candidate: candidate.line == "ready",
+            )
+            completed_process = await bus.find(
+                ProcessCompletedEvent,
+                child_of=process_event,
+                past=True,
+                future=5.0,
+            )
+            return (
+                process_event,
+                started_process if isinstance(started_process, ProcessStartedEvent) else None,
+                ready_line if isinstance(ready_line, ProcessStdoutEvent) else None,
+                completed_process if isinstance(completed_process, ProcessCompletedEvent) else None,
+            )
 
-        emitted = asyncio.run(run())
+        emitted, started, ready, completed = asyncio.run(run())
     finally:
         asyncio.run(bus.wait_until_idle())
 
     assert emitted is not None
     assert emitted.is_background is True
     assert emitted.event_blocks_parent_completion is False
-    assert emitted.event_timeout and emitted.event_timeout > 0
-    assert emitted.event_handler_timeout and emitted.event_handler_timeout > 0
-    assert emitted.hook_name == "on_Snapshot__24_responses.daemon.bg"
+    assert emitted.timeout and emitted.timeout > 0
+    assert emitted.event_timeout is None
+    assert emitted.event_handler_timeout is None
+    assert emitted.hook_name == hook_path.name
+    assert started is not None
+    assert ready is not None
+    assert completed is not None
+    assert completed.status == "succeeded"
+    assert "cleaned" in completed.stdout
+    assert not list((tmp_path / "run" / "background_start").glob("*.pid"))
 
 
 def test_snapshot_service_repins_snapshot_chrome_dirs_after_global_config_merge(tmp_path: Path) -> None:
