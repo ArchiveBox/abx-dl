@@ -17,6 +17,7 @@ concurrency:
 jobs:
   release-state:
     runs-on: ubuntu-latest
+    environment: pypi
     steps:
       - uses: actions/checkout@v4
         with:
