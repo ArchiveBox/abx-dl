@@ -335,7 +335,7 @@ publish_artifacts() {
         if [[ -n "${pypi_token}" ]]; then
             UV_PUBLISH_TOKEN="${pypi_token}" uv publish --username=__token__ "${artifacts[@]}"
         else
-            uv publish --username=__token__ "${artifacts[@]}"
+            uv publish --trusted-publishing always "${artifacts[@]}"
         fi
     fi
 
