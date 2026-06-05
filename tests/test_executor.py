@@ -931,6 +931,69 @@ def test_snapshot_service_emits_background_process_without_extra_wait(tmp_path: 
     assert not list((tmp_path / "run" / "background_start").glob("*.pid"))
 
 
+def test_snapshot_service_selected_hooks_by_plugin_runs_only_named_hooks(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "plugins" / "selected_hooks"
+    plugin_dir.mkdir(parents=True)
+    first_hook = plugin_dir / "on_Snapshot__10_first.sh"
+    second_hook = plugin_dir / "on_Snapshot__20_second.sh"
+    marker_dir = tmp_path / "markers"
+    for hook_path, marker_name in ((first_hook, "first"), (second_hook, "second")):
+        hook_path.write_text(
+            "\n".join(
+                [
+                    "#!/usr/bin/env bash",
+                    "set -euo pipefail",
+                    f"mkdir -p {str(marker_dir)!r}",
+                    f"touch {str(marker_dir / marker_name)!r}",
+                    "",
+                ],
+            ),
+        )
+        hook_path.chmod(0o755)
+
+    plugin = Plugin(
+        name="selected_hooks",
+        path=plugin_dir,
+        config=PluginConfig(),
+        hooks=[
+            Hook(name=first_hook.name, event="Snapshot", plugin_name="selected_hooks", path=first_hook, order=10, is_background=False),
+            Hook(name=second_hook.name, event="Snapshot", plugin_name="selected_hooks", path=second_hook, order=20, is_background=False),
+        ],
+    )
+    bus = create_bus(total_timeout=20.0, name=f"selected_snapshot_hooks_{tmp_path.name}")
+    MachineService(bus, persist_derived=False)
+    ProcessService(bus, emit_jsonl=False, interactive_tty=False)
+    snapshot = Snapshot(url="https://example.com", id="snap-123")
+    SnapshotService(
+        bus,
+        url="https://example.com",
+        snapshot=snapshot,
+        output_dir=tmp_path / "run",
+        plugins={plugin.name: plugin},
+        snapshot_phase_timeout=5.0,
+        selected_hooks_by_plugin={plugin.name: {second_hook.stem}},
+    )
+
+    async def run() -> list[ProcessEvent]:
+        crawl_start_event = CrawlStartEvent(url=snapshot.url, snapshot_id=snapshot.id, output_dir=str(tmp_path / "run"))
+        root_event = SnapshotEvent(
+            url=snapshot.url,
+            snapshot_id=snapshot.id,
+            output_dir=str(tmp_path / "run"),
+            event_parent_id=crawl_start_event.event_id,
+        )
+        await bus.emit(crawl_start_event).now()
+        await bus.emit(root_event).now()
+        await bus.wait_until_idle()
+        return await bus.filter(ProcessEvent, child_of=root_event, past=True, future=False)
+
+    process_events = asyncio.run(run())
+
+    assert [event.hook_name for event in process_events] == [second_hook.name]
+    assert not (marker_dir / "first").exists()
+    assert (marker_dir / "second").exists()
+
+
 def test_snapshot_service_repins_snapshot_chrome_dirs_after_global_config_merge(tmp_path: Path) -> None:
     bus = create_bus(total_timeout=30.0, name=f"snapshot_chrome_env_{tmp_path.name}")
     MachineService(bus, persist_derived=False)

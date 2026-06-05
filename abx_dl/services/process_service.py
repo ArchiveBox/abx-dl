@@ -1,6 +1,7 @@
 """ProcessService — owns hook subprocess execution and raw process events."""
 
 import asyncio
+import re
 import signal
 import time
 from contextlib import contextmanager
@@ -34,6 +35,7 @@ from .base import BaseService
 
 ProcessStatus = Literal["succeeded", "failed", "skipped"]
 STDOUT_POLL_INTERVAL = 0.5
+SHELL_SIGNAL_STDERR_RE = re.compile(r"(?:Terminated|Killed):\s*(\d+)")
 
 
 @dataclass
@@ -495,6 +497,17 @@ class ProcessService(BaseService):
         stdout = stdout_file.read_text() if stdout_file.exists() else ""
         stderr = stderr_file.read_text() if stderr_file.exists() else ""
 
+        files_after = set(plugin_output_dir.rglob("*")) if plugin_output_dir.exists() else set()
+        new_files = scan_output_files(
+            plugin_output_dir,
+            file_paths=files_after - files_before,
+        )
+        if not stderr and stderr_file.exists():
+            stderr = stderr_file.read_text()
+
+        if returncode == 0 and not stdout.strip() and (signal_match := SHELL_SIGNAL_STDERR_RE.search(stderr)):
+            returncode = 128 + int(signal_match.group(1))
+
         if timed_out:
             returncode = -1
             stderr = f"Hook timed out after {event.timeout} seconds"
@@ -524,12 +537,6 @@ class ProcessService(BaseService):
         proc.stdout = stdout
         proc.stderr = stderr
         proc.ended_at = now_iso()
-
-        files_after = set(plugin_output_dir.rglob("*")) if plugin_output_dir.exists() else set()
-        new_files = scan_output_files(
-            plugin_output_dir,
-            file_paths=files_after - files_before,
-        )
 
         pid_file.unlink(missing_ok=True)
 

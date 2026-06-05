@@ -223,7 +223,6 @@ class PluginEnv(BaseModel):
         if env.get("LIB_DIR"):
             env["ABXPKG_LIB_DIR"] = env["LIB_DIR"]
 
-        path_dirs = [part for part in env["PATH"].split(os.pathsep) if part]
         runtime_bin_dirs: list[str] = []
 
         for key, raw_value in env.items():
@@ -240,6 +239,7 @@ class PluginEnv(BaseModel):
                 runtime_bin_dirs.append(binary_dir)
 
         for extra_dir in (
+            str(Path(env["LIB_DIR"]) / "env" / "bin"),
             str(Path(sys.executable).parent),
             str(Path(env["PIP_BIN_DIR"])),
             str(Path(env["PNPM_BIN_DIR"])),
@@ -252,14 +252,14 @@ class PluginEnv(BaseModel):
             if uv_bin_dir not in runtime_bin_dirs:
                 runtime_bin_dirs.append(uv_bin_dir)
 
-        # Prepend provider-specific runtime dirs ahead of the inherited PATH so
-        # hooks see abx-managed binaries before host-global ones.
-        derived_path = env["PATH"]
-        for extra_dir in reversed(runtime_bin_dirs):
+        # Prepend runtime dirs even if they already appear later in PATH. Hooks
+        # are executed via shebangs like ``abxpkg run --script``; a stale abxpkg
+        # in the managed pip venv must not shadow the active ArchiveBox runtime.
+        path_dirs: list[str] = []
+        for extra_dir in (*runtime_bin_dirs, *env["PATH"].split(os.pathsep)):
             if extra_dir and extra_dir not in path_dirs:
-                derived_path = f"{extra_dir}{os.pathsep}{derived_path}" if derived_path else extra_dir
-                path_dirs.insert(0, extra_dir)
-        env["PATH"] = derived_path
+                path_dirs.append(extra_dir)
+        env["PATH"] = os.pathsep.join(path_dirs)
 
         return env
 
@@ -371,14 +371,24 @@ def write_jsonl(path: Path, record: Any, also_print: bool = False):
 
 
 def _default_plugins_dir() -> Path:
-    """Determine the plugins directory.
+    return get_plugins_dir()
 
-    Priority: ABX_PLUGINS_DIR env var > abx_plugins package.
-    """
+
+def _plugin_dirs(plugins_dir: Path | None = None) -> list[Path]:
+    if plugins_dir is not None:
+        return [plugins_dir]
+
+    dirs = [Path(get_plugins_dir())]
     override = os.environ.get("ABX_PLUGINS_DIR")
     if override:
-        return Path(override)
-    return get_plugins_dir()
+        for raw_path in override.split(os.pathsep):
+            path = Path(raw_path).expanduser()
+            if path and path not in dirs:
+                # Runtime/user plugin dirs extend the packaged plugin set; they
+                # do not replace it. Name collisions below intentionally let
+                # later dirs override packaged plugins.
+                dirs.append(path)
+    return dirs
 
 
 # Plugins directory
@@ -463,17 +473,17 @@ def load_plugin(plugin_dir: Path, *, runtime: str | None = None) -> Plugin | Non
     return plugin
 
 
-def discover_plugins(plugins_dir: Path = PLUGINS_DIR, *, runtime: str | None = None) -> dict[str, Plugin]:
-    """Discover all plugins in the plugins directory."""
+def discover_plugins(plugins_dir: Path | None = None, *, runtime: str | None = None) -> dict[str, Plugin]:
+    """Discover plugins from packaged plugins plus optional runtime plugin dirs."""
     plugins = {}
 
-    if not plugins_dir.exists():
-        return plugins
-
-    for plugin_dir in sorted(plugins_dir.iterdir()):
-        plugin = load_plugin(plugin_dir, runtime=runtime)
-        if plugin:
-            plugins[plugin.name] = plugin
+    for base_dir in _plugin_dirs(plugins_dir):
+        if not base_dir.exists():
+            continue
+        for plugin_dir in sorted(base_dir.iterdir()):
+            plugin = load_plugin(plugin_dir, runtime=runtime)
+            if plugin:
+                plugins[plugin.name] = plugin
 
     return plugins
 

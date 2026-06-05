@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from abx_dl.config import get_initial_env, get_required_binary_requests
@@ -28,6 +29,29 @@ def test_discover_plugins_extension_plugins_declare_required_binaries() -> None:
 
     for plugin_name in expected:
         assert plugins[plugin_name].config.required_binaries
+
+
+def test_discover_plugins_extends_packaged_plugins_with_runtime_plugin_dir(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "runtime_only"
+    plugin_dir.mkdir()
+    hook = plugin_dir / "on_Snapshot__10_runtime.sh"
+    hook.write_text("#!/usr/bin/env bash\nexit 0\n")
+    hook.chmod(0o755)
+
+    previous = os.environ.get("ABX_PLUGINS_DIR")
+    os.environ["ABX_PLUGINS_DIR"] = str(tmp_path)
+    try:
+        plugins = discover_plugins(runtime="archivebox")
+    finally:
+        if previous is None:
+            os.environ.pop("ABX_PLUGINS_DIR", None)
+        else:
+            os.environ["ABX_PLUGINS_DIR"] = previous
+
+    assert "wget" in plugins
+    assert "parse_html_urls" in plugins
+    assert "runtime_only" in plugins
+    assert [hook.name for hook in plugins["runtime_only"].hooks] == ["on_Snapshot__10_runtime"]
 
 
 def test_filter_plugins_does_not_add_binary_providers_for_wget() -> None:

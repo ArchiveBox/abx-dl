@@ -118,6 +118,7 @@ class SnapshotService(BaseService):
         snapshot_cleanup_enabled: bool = True,
         snapshot_cleanup_phase_timeout: float = 300.0,
         abort_requested: Callable[[], bool | Awaitable[bool]] | None = None,
+        selected_hooks_by_plugin: dict[str, set[str] | None] | None = None,
     ):
         self.url = url
         self.snapshot = snapshot
@@ -125,7 +126,16 @@ class SnapshotService(BaseService):
         self.hooks: list[tuple[Plugin, Hook]] = []
         self.plugins = plugins
         for plugin in plugins.values():
+            if selected_hooks_by_plugin is not None and plugin.name not in selected_hooks_by_plugin:
+                continue
+            selected_hook_names = selected_hooks_by_plugin.get(plugin.name) if selected_hooks_by_plugin is not None else None
             for hook in plugin.filter_hooks("Snapshot"):
+                if (
+                    selected_hook_names is not None
+                    and hook.name not in selected_hook_names
+                    and Path(hook.name).stem not in selected_hook_names
+                ):
+                    continue
                 self.hooks.append((plugin, hook))
         self.hooks.sort(key=lambda item: item[1].sort_key)
         self.snapshot_phase_timeout = snapshot_phase_timeout
@@ -264,6 +274,16 @@ class SnapshotService(BaseService):
                     return
                 if started_process is None:
                     raise RuntimeError(f"Background hook {hook.name} did not start")
+                if ".finite." in hook.name:
+                    completed_process = await self.bus.find(
+                        ProcessCompletedEvent,
+                        child_of=background_process,
+                        past=True,
+                        future=timeout + 30.0,
+                    )
+                    if completed_process is None:
+                        raise RuntimeError(f"Finite background hook {hook.name} did not complete")
+                    await _wait_for_process_completed(completed_process, timeout + 30.0)
             else:
                 foreground_process = event.emit(process_event)
                 await _run_event_now(foreground_process, handler_timeout)
@@ -405,40 +425,33 @@ class SnapshotService(BaseService):
                     break
                 if self.limit_state.get_snapshot_stop_reason(event.snapshot_id) == "snapshot_max_size":
                     break
-            foreground_process = await self.bus.find(
+            finite_background_process_events = await self.bus.filter(
                 ProcessEvent,
+                child_of=event,
                 past=True,
                 future=False,
-                where=lambda candidate: self.bus.event_is_child_of(candidate, event) and not candidate.is_background,
+                where=lambda candidate: candidate.is_background and ".finite." in candidate.hook_name,
             )
-            if foreground_process is None:
-                background_process_events = await self.bus.filter(
-                    ProcessEvent,
-                    child_of=event,
-                    past=True,
-                    future=False,
-                    is_background=True,
+            deadline = asyncio.get_running_loop().time() + self.snapshot_phase_timeout
+            while finite_background_process_events and not await self.should_abort():
+                completed_processes = await asyncio.gather(
+                    *[
+                        self.bus.find(
+                            ProcessCompletedEvent,
+                            child_of=process_event,
+                            past=True,
+                            future=0.5,
+                        )
+                        for process_event in finite_background_process_events
+                    ],
                 )
-                deadline = asyncio.get_running_loop().time() + self.snapshot_phase_timeout
-                while background_process_events and not await self.should_abort():
-                    completed_processes = await asyncio.gather(
-                        *[
-                            self.bus.find(
-                                ProcessCompletedEvent,
-                                child_of=process_event,
-                                past=True,
-                                future=0.5,
-                            )
-                            for process_event in background_process_events
-                        ],
-                    )
-                    background_process_events = [
-                        process_event
-                        for process_event, completed_process in zip(background_process_events, completed_processes, strict=True)
-                        if completed_process is None
-                    ]
-                    if asyncio.get_running_loop().time() >= deadline:
-                        break
+                finite_background_process_events = [
+                    process_event
+                    for process_event, completed_process in zip(finite_background_process_events, completed_processes, strict=True)
+                    if completed_process is None
+                ]
+                if asyncio.get_running_loop().time() >= deadline:
+                    break
         finally:
             if self.snapshot_cleanup_enabled:
                 cleanup_event = SnapshotCleanupEvent(
