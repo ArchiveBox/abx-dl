@@ -152,7 +152,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
     echo "[+] Installing provider plugin dependencies..." \
     && apt-get update -qq \
     && mkdir -p "$LIB_DIR" \
-    && ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 PUID=0 PGID=0 abx-dl plugins --install apt bash npm pip puppeteer
+    && ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 PUID=0 PGID=0 abx-dl plugins --install apt bash npm pip puppeteer \
+    && rm -rf /var/lib/apt/lists/* /tmp/*
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
@@ -164,7 +165,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
     && CHROME_BINARY="$(abxpkg load --binproviders=playwright chromium | awk 'NF {print $2; exit}')" \
     && export CHROME_BINARY \
     && test -x "$CHROME_BINARY" \
-    && "$CHROME_BINARY" --version | tee -a /VERSION.txt
+    && "$CHROME_BINARY" --version | tee -a /VERSION.txt \
+    && rm -rf /var/lib/apt/lists/* /tmp/*
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
@@ -178,7 +180,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
         chrome chromewebstore accessibility consolelog dns dom headers redirects responses \
         screenshot pdf chrome_mhtml chrome_screencast sslcerts \
         parse_dom_outlinks seo archivewebpage singlefile ublock \
-        istilldontcareaboutcookies modalcloser infiniscroll claudechrome
+        istilldontcareaboutcookies modalcloser infiniscroll claudechrome \
+    && rm -rf /var/lib/apt/lists/* /tmp/*
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
@@ -193,7 +196,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
     && abxpkg install --no-cache --binproviders=pip --bin-dir="$LIB_DIR/env/bin" gallery-dl \
     && abxpkg install --no-cache --binproviders=pip --bin-dir="$LIB_DIR/env/bin" --overrides='{"pip":{"install_args":["--no-deps","forum-dl","chardet==5.2.0","pydantic==2.12.3","pydantic-core==2.41.4","typing-extensions>=4.14.1","annotated-types>=0.6.0","typing-inspection>=0.4.2","beautifulsoup4","soupsieve","lxml","requests","urllib3","certifi","idna","charset-normalizer","tenacity","python-dateutil","six","html2text","warcio"]}}' forum-dl \
     && mkdir -p "$LIB_DIR/env/bin" \
-    && ln -sf "$(command -v git)" "$LIB_DIR/env/bin/git"
+    && ln -sf "$(command -v git)" "$LIB_DIR/env/bin/git" \
+    && rm -rf /var/lib/apt/lists/* /tmp/*
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
@@ -204,7 +208,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
     && ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 PUID=0 PGID=0 abx-dl plugins --install \
         archivedotorg base brew cargo favicon hashes media parse_html_urls \
         parse_jsonl_urls parse_netscape_urls parse_rss_urls parse_txt_urls \
-        search_backend_sqlite ssl staticfile title
+        search_backend_sqlite ssl staticfile title \
+    && rm -rf /var/lib/apt/lists/* /tmp/*
 
 RUN echo "[+] Cleaning plugin-managed runtime caches..." \
     && find "$LIB_DIR" -type d \( \
@@ -235,8 +240,8 @@ RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_PUID}..." \
     && useradd --system --create-home --gid "$ARCHIVEBOX_USER" --groups audio,video "$ARCHIVEBOX_USER" \
     && usermod -u "$DEFAULT_PUID" "$ARCHIVEBOX_USER" \
     && groupmod -g "$DEFAULT_PGID" "$ARCHIVEBOX_USER" \
-    && mkdir -p "$DATA_DIR" "$LIB_DIR" \
-    && chown -R "$DEFAULT_PUID:$DEFAULT_PGID" "$DATA_DIR" "$LIB_DIR" \
+    && mkdir -p "$DATA_DIR" \
+    && chown "$DEFAULT_PUID:$DEFAULT_PGID" "$DATA_DIR" \
     && echo "ARCHIVEBOX_USER=$ARCHIVEBOX_USER PUID=$(id -u "$ARCHIVEBOX_USER") PGID=$(id -g "$ARCHIVEBOX_USER")" | tee -a /VERSION.txt
 
 WORKDIR /out
