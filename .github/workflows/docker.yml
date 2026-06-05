@@ -10,8 +10,8 @@ on:
       - main
 
 env:
-  DOCKERHUB_IMAGE: archivebox/abxdl
-  GHCR_IMAGE: ghcr.io/archivebox/abxdl
+  DOCKERHUB_IMAGE: archivebox/abx-dl
+  GHCR_IMAGE: ghcr.io/archivebox/abx-dl
 
 permissions:
   contents: read
@@ -33,14 +33,14 @@ jobs:
             runner: ubuntu-24.04
             cache_scope: docker-amd64
             artifact_name: digest-linux-amd64
-            local_tag: archivebox/abxdl:test-amd64
+            local_tag: archivebox/abx-dl:test-amd64
             smoke_timeout: 180
             crawl_timeout: 240
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
             cache_scope: docker-arm64
             artifact_name: digest-linux-arm64
-            local_tag: archivebox/abxdl:test-arm64
+            local_tag: archivebox/abx-dl:test-arm64
             smoke_timeout: 900
             crawl_timeout: 1200
 
