@@ -16,7 +16,7 @@ permissions:
   packages: write
 
 concurrency:
-  group: docker-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -268,16 +268,24 @@ jobs:
 
           {
             echo 'dockerhub_tags<<EOF'
-            echo "${DOCKERHUB_IMAGE}:latest"
+            if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
+              echo "${DOCKERHUB_IMAGE}:latest"
+            fi
             echo "${DOCKERHUB_IMAGE}:${BRANCH_TAG}"
             echo "${DOCKERHUB_IMAGE}:sha-${SHORT_SHA}"
-            echo "${DOCKERHUB_IMAGE}:${VERSION}"
+            if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
+              echo "${DOCKERHUB_IMAGE}:${VERSION}"
+            fi
             echo 'EOF'
             echo 'ghcr_tags<<EOF'
-            echo "${GHCR_IMAGE}:latest"
+            if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
+              echo "${GHCR_IMAGE}:latest"
+            fi
             echo "${GHCR_IMAGE}:${BRANCH_TAG}"
             echo "${GHCR_IMAGE}:sha-${SHORT_SHA}"
-            echo "${GHCR_IMAGE}:${VERSION}"
+            if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
+              echo "${GHCR_IMAGE}:${VERSION}"
+            fi
             echo 'EOF'
             echo "version=${VERSION}"
             echo "branch_tag=${BRANCH_TAG}"
@@ -285,17 +293,21 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
           echo "[+] Publishing Docker Hub tags:"
-          printf '%s\n' \
-            "${DOCKERHUB_IMAGE}:latest" \
-            "${DOCKERHUB_IMAGE}:${BRANCH_TAG}" \
-            "${DOCKERHUB_IMAGE}:sha-${SHORT_SHA}" \
-            "${DOCKERHUB_IMAGE}:${VERSION}"
+          if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
+            printf '%s\n' "${DOCKERHUB_IMAGE}:latest"
+          fi
+          printf '%s\n' "${DOCKERHUB_IMAGE}:${BRANCH_TAG}" "${DOCKERHUB_IMAGE}:sha-${SHORT_SHA}"
+          if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
+            printf '%s\n' "${DOCKERHUB_IMAGE}:${VERSION}"
+          fi
           echo "[+] Publishing GHCR tags:"
-          printf '%s\n' \
-            "${GHCR_IMAGE}:latest" \
-            "${GHCR_IMAGE}:${BRANCH_TAG}" \
-            "${GHCR_IMAGE}:sha-${SHORT_SHA}" \
-            "${GHCR_IMAGE}:${VERSION}"
+          if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
+            printf '%s\n' "${GHCR_IMAGE}:latest"
+          fi
+          printf '%s\n' "${GHCR_IMAGE}:${BRANCH_TAG}" "${GHCR_IMAGE}:sha-${SHORT_SHA}"
+          if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
+            printf '%s\n' "${GHCR_IMAGE}:${VERSION}"
+          fi
 
       - name: Create Docker Hub manifest
         shell: bash
