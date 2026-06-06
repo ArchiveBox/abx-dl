@@ -193,10 +193,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
         wget git ytdlp gallerydl forumdl papersdl opendataloader archivedotorg \
         htmltotext readability mercury defuddle trafilatura liteparse \
         claudecode claudecodecleanup claudecodeextract \
-    && abxpkg install --no-cache --binproviders=pip --bin-dir="$LIB_DIR/env/bin" gallery-dl \
-    && abxpkg install --no-cache --binproviders=pip --bin-dir="$LIB_DIR/env/bin" --overrides='{"pip":{"install_args":["--no-deps","forum-dl","chardet==5.2.0","pydantic==2.12.3","pydantic-core==2.41.4","typing-extensions>=4.14.1","annotated-types>=0.6.0","typing-inspection>=0.4.2","beautifulsoup4","soupsieve","lxml","requests","urllib3","certifi","idna","charset-normalizer","tenacity","python-dateutil","six","html2text","warcio"]}}' forum-dl \
     && mkdir -p "$LIB_DIR/env/bin" \
     && ln -sf "$(command -v git)" "$LIB_DIR/env/bin/git" \
+    && rm -rf /var/lib/apt/lists/* /tmp/*
+
+RUN --mount=type=cache,target=/root/.npm,sharing=locked,id=npm-$TARGETARCH$TARGETVARIANT \
+    echo "[+] Installing ArchiveBox runtime plugin dependencies..." \
+    && ABX_RUNTIME=archivebox ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 PUID=0 PGID=0 abx-dl plugins --install opencode \
     && rm -rf /var/lib/apt/lists/* /tmp/*
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$TARGETVARIANT \
@@ -242,6 +245,7 @@ RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_PUID}..." \
     && groupmod -g "$DEFAULT_PGID" "$ARCHIVEBOX_USER" \
     && mkdir -p "$DATA_DIR" \
     && chown "$DEFAULT_PUID:$DEFAULT_PGID" "$DATA_DIR" \
+    && chown -R "$DEFAULT_PUID:$DEFAULT_PGID" "$LIB_DIR" \
     && echo "ARCHIVEBOX_USER=$ARCHIVEBOX_USER PUID=$(id -u "$ARCHIVEBOX_USER") PGID=$(id -g "$ARCHIVEBOX_USER")" | tee -a /VERSION.txt
 
 WORKDIR /out
