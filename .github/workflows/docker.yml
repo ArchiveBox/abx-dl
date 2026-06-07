@@ -351,5 +351,9 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          docker buildx imagetools inspect "${DOCKERHUB_IMAGE}:sha-${{ steps.docker_meta.outputs.short_sha }}"
-          docker buildx imagetools inspect "${GHCR_IMAGE}:sha-${{ steps.docker_meta.outputs.short_sha }}"
+          while IFS= read -r tag; do
+            [[ -n "$tag" ]] && docker buildx imagetools inspect "$tag"
+          done <<< "${{ steps.docker_meta.outputs.dockerhub_tags }}"
+          while IFS= read -r tag; do
+            [[ -n "$tag" ]] && docker buildx imagetools inspect "$tag"
+          done <<< "${{ steps.docker_meta.outputs.ghcr_tags }}"
