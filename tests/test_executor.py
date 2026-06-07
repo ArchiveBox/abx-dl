@@ -1,6 +1,7 @@
 import asyncio
 import os
 import signal
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -717,9 +718,9 @@ def test_binary_event_falls_back_from_missing_user_binary_abspath_override_via_a
     assert process_events == []
 
 
-def test_binary_installed_event_updates_lib_bin_symlink(tmp_path: Path) -> None:
+def test_binary_installed_event_updates_lib_bin_command(tmp_path: Path) -> None:
     async def run() -> None:
-        bus = create_bus(total_timeout=10.0, name=f"updates_lib_bin_symlink_{tmp_path.name}")
+        bus = create_bus(total_timeout=10.0, name=f"updates_lib_bin_command_{tmp_path.name}")
         MachineService(bus)
         BinaryCacheService(
             bus,
@@ -729,8 +730,10 @@ def test_binary_installed_event_updates_lib_bin_symlink(tmp_path: Path) -> None:
         first_target = tmp_path / "targets" / "first-demo"
         second_target = tmp_path / "targets" / "second-demo"
         first_target.parent.mkdir(parents=True, exist_ok=True)
-        first_target.write_text("first")
-        second_target.write_text("second")
+        first_target.write_text("#!/bin/sh\nprintf first\n")
+        first_target.chmod(0o755)
+        second_target.write_text("#!/bin/sh\nprintf second\n")
+        second_target.chmod(0o755)
 
         try:
             await bus.emit(MachineEvent(config={"LIB_BIN_DIR": str(tmp_path / "lib-bin")}, config_type="user")).now()
@@ -742,8 +745,7 @@ def test_binary_installed_event_updates_lib_bin_symlink(tmp_path: Path) -> None:
                 ),
             ).now()
             link_path = tmp_path / "lib-bin" / "demo"
-            assert link_path.is_symlink()
-            assert link_path.resolve() == first_target.resolve()
+            assert subprocess.run([str(link_path)], check=True, capture_output=True, text=True).stdout == "first"
 
             await bus.emit(
                 BinaryEvent(
@@ -752,8 +754,7 @@ def test_binary_installed_event_updates_lib_bin_symlink(tmp_path: Path) -> None:
                     extra_context=_binary_extra_context(plugin_name="demo", hook_name="install"),
                 ),
             ).now()
-            assert link_path.is_symlink()
-            assert link_path.resolve() == second_target.resolve()
+            assert subprocess.run([str(link_path)], check=True, capture_output=True, text=True).stdout == "second"
         finally:
             await bus.wait_until_idle()
 

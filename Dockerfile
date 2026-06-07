@@ -46,7 +46,7 @@ ENV TZ=UTC \
     PIP_ONLY_BINARY=aiohttp \
     npm_config_loglevel=error
 
-ENV PYTHON_VERSION=3.12 \
+ENV PYTHON_VERSION=3.13 \
     NODE_VERSION=24
 
 ENV ARCHIVEBOX_USER=archivebox \
@@ -58,6 +58,7 @@ ENV CODE_DIR=/app \
     DATA_DIR=/out \
     LIB_DIR=/opt/archivebox/lib \
     ABXPKG_LIB_DIR=/opt/archivebox/lib \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/archivebox/lib/playwright/cache \
     PERSONAS_DIR=/data/personas \
     CHROME_HEADLESS=true \
     CHROME_SANDBOX=false \
@@ -130,7 +131,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && uv pip install --no-deps /src/abxbus /src/abxpkg /src/abx-plugins "$CODE_DIR" \
     && /usr/bin/uv pip show abx-dl | tee -a /VERSION.txt \
     && rm -f /venv/bin/uv /venv/bin/uvx \
-    && rm -rf /venv/lib/python3.12/site-packages/pip* /venv/lib/python3.12/site-packages/setuptools* /venv/lib/python3.12/site-packages/wheel* /venv/bin/pip /venv/bin/pip3 /venv/bin/pip3.12 /venv/bin/wheel \
+    && rm -rf /venv/lib/python3.*/site-packages/pip* /venv/lib/python3.*/site-packages/setuptools* /venv/lib/python3.*/site-packages/wheel* /venv/bin/pip /venv/bin/pip3 /venv/bin/pip3.* /venv/bin/wheel \
     && (which abx-dl && abx-dl --version) | tee -a /VERSION.txt
 
 ########################################################################################################
@@ -152,43 +153,26 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     --mount=type=cache,target=/root/.cache/npm,sharing=locked,id=abxpkg-npm-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/pnpm,sharing=locked,id=abxpkg-pnpm-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/pip,sharing=locked,id=pip-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/puppeteer,sharing=locked,id=puppeteer-$TARGETARCH$TARGETVARIANT \
-    echo "[+] Installing plugin dependencies..." \
+    --mount=type=cache,target=/root/.cache/ms-playwright,sharing=locked,id=browsers-$TARGETARCH$TARGETVARIANT \
+    echo "[+] Installing Chrome and plugin dependencies..." \
     && apt-get update -qq \
+    && apt-get install -qq -y --no-install-recommends binutils \
+    && ABX_RUNTIME=archivebox ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 PUID=0 PGID=0 abx-dl install chrome \
+    && CHROME_BINARY="$LIB_DIR/playwright/bin/chromium" \
+    && export CHROME_BINARY \
+    && test -x "$CHROME_BINARY" \
+    && "$CHROME_BINARY" --version | tee -a /VERSION.txt \
     && ABX_RUNTIME=archivebox ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 PUID=0 PGID=0 abx-dl install \
         base archivedotorg claudecode claudecodecleanup claudecodeextract \
         defuddle favicon forumdl gallerydl git hashes htmltotext liteparse media mercury \
         opendataloader papersdl parse_html_urls parse_jsonl_urls parse_netscape_urls \
         parse_rss_urls parse_txt_urls readability ssl trafilatura wget ytdlp \
-    && mkdir -p "$LIB_DIR/env/bin" \
-    && ln -sf "$(command -v git)" "$LIB_DIR/env/bin/git" \
-    && rm -rf /usr/lib/*-linux-gnu/dri /usr/lib/*-linux-gnu/libLLVM-*.so* /usr/lib/*-linux-gnu/libz3.so.* \
-    && rm -rf /usr/share/icons /usr/share/doc /usr/share/man /usr/share/bash-completion /usr/share/zsh /usr/share/info /usr/share/lintian /usr/share/bug \
-    && rm -rf /opt/node/include /opt/node/share/doc /opt/node/share/man \
-    && rm -f /opt/node/CHANGELOG.md /opt/node/README.md /opt/node/LICENSE \
-    && rm -f /usr/share/fonts/truetype/wqy/wqy-zenhei.ttc /usr/share/fonts/truetype/noto/NotoColorEmoji.ttf /usr/lib/jvm/java-17-openjdk-*/lib/server/classes*.jsa \
-    && rm -f /venv/bin/uv /venv/bin/uvx \
-    && find "$LIB_DIR" \( ! -user "$DEFAULT_PUID" -o ! -group "$DEFAULT_PGID" \) -exec chown "$DEFAULT_PUID:$DEFAULT_PGID" {} + \
-    && rm -rf /var/lib/apt/lists/* /tmp/*
-
-RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.npm,sharing=locked,id=npm-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/npm,sharing=locked,id=abxpkg-npm-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/pnpm,sharing=locked,id=abxpkg-pnpm-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/ms-playwright,sharing=locked,id=browsers-$TARGETARCH$TARGETVARIANT \
-    echo "[+] Installing Chrome plugin dependencies..." \
-    && apt-get update -qq \
-    && apt-get install -qq -y libatk-bridge2.0-0 libatspi2.0-0 \
-    && ABX_RUNTIME=archivebox ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 PUID=0 PGID=0 abx-dl install chrome \
-    && CHROME_BINARY="$(command -v chromium)" \
-    && export CHROME_BINARY \
-    && test -x "$CHROME_BINARY" \
-    && "$CHROME_BINARY" --version | tee -a /VERSION.txt \
-    && ABX_RUNTIME=archivebox ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 PUID=0 PGID=0 abx-dl install \
         accessibility archivewebpage chrome_mhtml chrome_screencast claudechrome \
         consolelog dns dom headers infiniscroll istilldontcareaboutcookies modalcloser \
         parse_dom_outlinks pdf redirects responses screenshot seo singlefile sslcerts \
         staticfile title ublock \
+    && mkdir -p "$LIB_DIR/env/bin" \
+    && ln -sf "$(command -v git)" "$LIB_DIR/env/bin/git" \
     && rm -rf "$LIB_DIR"/playwright/cache/ffmpeg-* \
     && find "$LIB_DIR"/chromewebstore -type f -name '*.crx' -delete \
     && find "$LIB_DIR"/playwright/cache -path '*/chrome-linux*/locales/*' ! -name 'en-US.pak' -delete \
@@ -196,7 +180,18 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && rm -f "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/libvk_swiftshader.so "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/libGLESv2.so \
     && rm -f "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/chrome_200_percent.pak \
     && rm -rf "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/MEIPreload "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/PrivacySandboxAttestationsPreloaded "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/WidevineCdm \
-    && rm -rf /usr/lib/*-linux-gnu/dri /usr/lib/*-linux-gnu/libLLVM-*.so* /usr/lib/*-linux-gnu/libz3.so.* \
+    && rm -rf "$LIB_DIR"/pnpm/packages/singlefile/node_modules/.pnpm/selenium-webdriver@*/node_modules/selenium-webdriver/bin/macos "$LIB_DIR"/pnpm/packages/singlefile/node_modules/.pnpm/selenium-webdriver@*/node_modules/selenium-webdriver/bin/windows \
+    && if [[ "$TARGETARCH" == "arm64" ]]; then rm -f "$LIB_DIR"/pnpm/packages/liteparse/node_modules/.pnpm/@llamaindex+liteparse@*/node_modules/@llamaindex/liteparse/liteparse.linux-x64-gnu.node "$LIB_DIR"/pnpm/packages/liteparse/node_modules/.pnpm/@llamaindex+liteparse@*/node_modules/@llamaindex/liteparse/libpdfium.so; fi \
+    && find "$LIB_DIR"/pnpm /opt/node -type f -name '*.map' -delete \
+    && rm -rf /usr/lib/*-linux-gnu/dri /usr/lib/*-linux-gnu/libLLVM*.so* /usr/lib/*-linux-gnu/libz3.so.* \
+    && rm -rf /usr/share/icons /usr/share/doc /usr/share/man /usr/share/bash-completion /usr/share/zsh /usr/share/info /usr/share/lintian /usr/share/bug \
+    && rm -rf /opt/node/include /opt/node/share/doc /opt/node/share/man \
+    && rm -f /opt/node/CHANGELOG.md /opt/node/README.md /opt/node/LICENSE \
+    && rm -f /usr/lib/jvm/java-*-openjdk-*/lib/server/classes*.jsa \
+    && strip --strip-unneeded "$CHROME_BINARY" \
+    && (find "$LIB_DIR" -type f \( -name '*.so' -o -name '*.node' \) -exec strip --strip-unneeded {} + 2>/dev/null || true) \
+    && apt-get purge -y --auto-remove binutils \
+    && rm -f /venv/bin/uv /venv/bin/uvx \
     && find "$LIB_DIR" \( ! -user "$DEFAULT_PUID" -o ! -group "$DEFAULT_PGID" \) -exec chown "$DEFAULT_PUID:$DEFAULT_PGID" {} + \
     && rm -rf /var/lib/apt/lists/* /tmp/*
 
@@ -204,8 +199,9 @@ RUN (echo -e "\n\n[+] abx-dl runtime versions" \
     && abx-dl --version \
     && /opt/node/bin/node --version \
     && /venv/bin/python3 --version \
-    && CHROME_BINARY="$(command -v chromium)" \
+    && CHROME_BINARY="$LIB_DIR/playwright/bin/chromium" \
     && export CHROME_BINARY \
+    && "$CHROME_BINARY" --version \
     && abx-dl plugins chrome \
     && ! command -v gcc \
     && ! command -v g++ \
