@@ -40,7 +40,9 @@ ENV TZ=UTC \
     APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE=1 \
     PYTHONIOENCODING=UTF-8 \
     PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_COMPILE=1 \
     PIP_ONLY_BINARY=aiohttp \
     npm_config_loglevel=error
 
@@ -61,7 +63,7 @@ ENV CODE_DIR=/app \
     CHROME_SANDBOX=false \
     CHROME_ISOLATION=crawl
 
-ENV UV_COMPILE_BYTECODE=0 \
+ENV UV_COMPILE_BYTECODE=false \
     UV_PYTHON_PREFERENCE=managed \
     UV_PYTHON_INSTALL_DIR=/opt/uv/python \
     UV_LINK_MODE=copy \
@@ -83,7 +85,6 @@ RUN (echo "[i] Docker build for abx-dl starting..." \
     && echo "BUILD_START_TIME=$(date +"%Y-%m-%d %H:%M:%S %s") TZ=${TZ} LANG=${LANG}" \
     && uname -a \
     && sed -n '1,7p' /etc/os-release \
-    && env \
     ) | tee -a /VERSION.txt
 
 # Bootstrap packages only. Downloader/browser/media runtimes are installed by
@@ -108,9 +109,6 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && uv pip install setuptools pip wheel \
     && (which python3 && python3 --version && which uv && uv self version && uv python find) | tee -a /VERSION.txt
 
-ENV PYTHONDONTWRITEBYTECODE=1
-
-
 ########################################################################################################
 FROM abx-dl-runtime-base AS abx-dl-builder
 
@@ -123,9 +121,7 @@ RUN --mount=type=bind,source=pyproject.toml,target=/app/pyproject.toml \
     --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
     echo "[+] UV Installing external Python dependencies from local package metadata..." \
     && /venv/bin/python3 -c 'import re, tomllib; paths = ["/src/abxbus/pyproject.toml", "/src/abxpkg/pyproject.toml", "/src/abx-plugins/pyproject.toml", "/app/pyproject.toml"]; skip = {"abxbus", "abxpkg", "abx-plugins", "abx-dl"}; deps = []; [deps.extend(tomllib.load(open(path, "rb"))["project"].get("dependencies", [])) for path in paths]; seen = set(); print("\n".join(dep for dep in deps if (name := re.split(r"[<>=!~;\\[]", dep, 1)[0].strip().lower()) not in skip and not (dep in seen or seen.add(dep))))' > /tmp/abx-dl-requirements.txt \
-    && uv pip install --refresh -r /tmp/abx-dl-requirements.txt \
-    && find /venv -type d -name __pycache__ -prune -exec rm -rf {} + \
-    && find /venv -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
+    && uv pip install --refresh -r /tmp/abx-dl-requirements.txt
 
 COPY --from=abxbus --chown=root:root --chmod=755 abxbus /src/abxbus/abxbus
 COPY --from=abxpkg --chown=root:root --chmod=755 abxpkg /src/abxpkg/abxpkg
@@ -134,9 +130,7 @@ COPY --chown=root:root --chmod=755 abx_dl "$CODE_DIR/abx_dl"
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
     echo "[*] Installing local abxbus/abxpkg/abx-plugins/abx-dl Python source code..." \
     && uv pip install --no-deps /src/abxbus /src/abxpkg /src/abx-plugins "$CODE_DIR" \
-    && (uv pip show abx-dl && which abx-dl && abx-dl --version) | tee -a /VERSION.txt \
-    && find /venv /src "$CODE_DIR" -type d -name __pycache__ -prune -exec rm -rf {} + \
-    && find /venv /src "$CODE_DIR" -type f \( -name '*.pyc' -o -name '*.pyo' \) -delete
+    && (uv pip show abx-dl && which abx-dl && abx-dl --version) | tee -a /VERSION.txt
 
 ########################################################################################################
 FROM abx-dl-runtime-base
@@ -147,17 +141,8 @@ COPY --from=abx-dl-builder /VERSION.txt /VERSION.txt
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.npm,sharing=locked,id=npm-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/pip,sharing=locked,id=pip-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/puppeteer,sharing=locked,id=puppeteer-$TARGETARCH$TARGETVARIANT \
-    echo "[+] Installing provider plugin dependencies..." \
-    && apt-get update -qq \
-    && mkdir -p "$LIB_DIR" \
-    && ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 PUID=0 PGID=0 abx-dl plugins --install apt bash npm pip puppeteer \
-    && rm -rf /var/lib/apt/lists/* /tmp/*
-
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.npm,sharing=locked,id=npm-$TARGETARCH$TARGETVARIANT \
+    --mount=type=cache,target=/root/.cache/npm,sharing=locked,id=abxpkg-npm-$TARGETARCH$TARGETVARIANT \
+    --mount=type=cache,target=/root/.cache/pnpm,sharing=locked,id=abxpkg-pnpm-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/ms-playwright,sharing=locked,id=browsers-$TARGETARCH$TARGETVARIANT \
     echo "[+] Installing Playwright-managed Chrome into $LIB_DIR..." \
     && apt-get update -qq \
@@ -171,72 +156,24 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$T
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.npm,sharing=locked,id=npm-$TARGETARCH$TARGETVARIANT \
+    --mount=type=cache,target=/root/.cache/npm,sharing=locked,id=abxpkg-npm-$TARGETARCH$TARGETVARIANT \
+    --mount=type=cache,target=/root/.cache/pnpm,sharing=locked,id=abxpkg-pnpm-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/pip,sharing=locked,id=pip-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/puppeteer,sharing=locked,id=puppeteer-$TARGETARCH$TARGETVARIANT \
-    echo "[+] Installing browser plugin dependencies..." \
+    echo "[+] Installing plugin dependencies..." \
     && CHROME_BINARY="$(abxpkg load --binproviders=playwright chromium | awk 'NF {print $2; exit}')" \
     && export CHROME_BINARY \
-    && ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 PUID=0 PGID=0 abx-dl plugins --install \
-        chrome chromewebstore accessibility consolelog dns dom headers redirects responses \
-        screenshot pdf chrome_mhtml chrome_screencast sslcerts \
-        parse_dom_outlinks seo archivewebpage singlefile ublock \
-        istilldontcareaboutcookies modalcloser infiniscroll claudechrome \
-    && rm -rf /var/lib/apt/lists/* /tmp/*
-
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.npm,sharing=locked,id=npm-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/pip,sharing=locked,id=pip-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/puppeteer,sharing=locked,id=puppeteer-$TARGETARCH$TARGETVARIANT \
-    echo "[+] Installing downloader and document plugin dependencies..." \
-    && ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 PUID=0 PGID=0 abx-dl plugins --install \
-        wget git ytdlp gallerydl forumdl papersdl opendataloader archivedotorg \
-        htmltotext readability mercury defuddle trafilatura liteparse \
-        claudecode claudecodecleanup claudecodeextract \
+    && ABX_RUNTIME=archivebox ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 PUID=0 PGID=0 abx-dl install \
+        base chrome accessibility archivedotorg archivewebpage \
+        chrome_mhtml chrome_screencast claudechrome claudecode claudecodecleanup claudecodeextract \
+        consolelog defuddle dns dom favicon forumdl gallerydl git hashes headers htmltotext \
+        infiniscroll istilldontcareaboutcookies liteparse media mercury modalcloser opencode \
+        opendataloader papersdl parse_dom_outlinks parse_html_urls parse_jsonl_urls \
+        parse_netscape_urls parse_rss_urls parse_txt_urls pdf readability redirects responses \
+        screenshot seo singlefile ssl sslcerts staticfile title trafilatura ublock wget ytdlp \
     && mkdir -p "$LIB_DIR/env/bin" \
     && ln -sf "$(command -v git)" "$LIB_DIR/env/bin/git" \
     && rm -rf /var/lib/apt/lists/* /tmp/*
-
-RUN --mount=type=cache,target=/root/.npm,sharing=locked,id=npm-$TARGETARCH$TARGETVARIANT \
-    echo "[+] Installing ArchiveBox runtime plugin dependencies..." \
-    && ABX_RUNTIME=archivebox ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 PUID=0 PGID=0 abx-dl plugins --install opencode \
-    && rm -rf /var/lib/apt/lists/* /tmp/*
-
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.npm,sharing=locked,id=npm-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/pip,sharing=locked,id=pip-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/puppeteer,sharing=locked,id=puppeteer-$TARGETARCH$TARGETVARIANT \
-    echo "[+] Installing lightweight plugin dependencies..." \
-    && ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 PUID=0 PGID=0 abx-dl plugins --install \
-        archivedotorg base brew cargo favicon hashes media parse_html_urls \
-        parse_jsonl_urls parse_netscape_urls parse_rss_urls parse_txt_urls \
-        search_backend_sqlite ssl staticfile title \
-    && rm -rf /var/lib/apt/lists/* /tmp/*
-
-RUN echo "[+] Cleaning plugin-managed runtime caches..." \
-    && find "$LIB_DIR" -type d \( \
-            -name __pycache__ -o -name test -o -name tests -o -name doc -o -name docs -o -name example -o -name examples \
-        \) -prune -exec rm -rf {} + \
-    && find "$LIB_DIR" -type f \( \
-            -name '*.pyc' -o -name '*.pyo' -o -name '*.map' -o -name '*.ts' -o -name '*.md' -o -name '*.markdown' \
-        \) -delete \
-    && find "$LIB_DIR" -type f -name '*.crx' -delete \
-    && if [ -d "$LIB_DIR/puppeteer/cache" ]; then \
-        find "$LIB_DIR/puppeteer/cache" -type d -name WidevineCdm -prune -exec rm -rf {} +; \
-        find "$LIB_DIR/puppeteer/cache" -type f -path '*/locales/*' ! -name 'en-US.pak' -delete; \
-    fi \
-    && CHROME_BINARY="$(abxpkg load --binproviders=playwright chromium | awk 'NF {print $2; exit}')" \
-    && export CHROME_BINARY \
-    && abx-dl plugins chrome \
-    && ! command -v gcc \
-    && ! command -v g++ \
-    && ! command -v make \
-    && ! command -v cargo \
-    && ! command -v rg \
-    && ! command -v sonic \
-    && ! command -v supervisord \
-    && rm -rf /root/.cache /var/cache/apt/* /var/lib/apt/lists/*
 
 RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_PUID}..." \
     && groupadd --system "$ARCHIVEBOX_USER" \
@@ -247,8 +184,6 @@ RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_PUID}..." \
     && chown "$DEFAULT_PUID:$DEFAULT_PGID" "$DATA_DIR" \
     && chown -R "$DEFAULT_PUID:$DEFAULT_PGID" "$LIB_DIR" \
     && echo "ARCHIVEBOX_USER=$ARCHIVEBOX_USER PUID=$(id -u "$ARCHIVEBOX_USER") PGID=$(id -g "$ARCHIVEBOX_USER")" | tee -a /VERSION.txt
-
-WORKDIR /out
 
 RUN (echo -e "\n\n[+] abx-dl runtime versions" \
     && abx-dl --version \
@@ -266,8 +201,7 @@ RUN (echo -e "\n\n[+] abx-dl runtime versions" \
     && ! command -v supervisord \
     && echo -e "\n\n[√] Finished abx-dl Docker build successfully." \
     && echo -e "BUILD_END_TIME=$(date +"%Y-%m-%d %H:%M:%S %s")\n\n" \
-    ) | tee -a /VERSION.txt \
-    && rm -rf /root/.cache /var/cache/apt/* /var/lib/apt/lists/*
+    ) | tee -a /VERSION.txt
 
 WORKDIR /out
 VOLUME ["/out", "/data/personas"]
