@@ -191,11 +191,11 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
         staticfile title ublock \
     && rm -rf "$LIB_DIR"/playwright/cache/ffmpeg-* \
     && find "$LIB_DIR"/chromewebstore -type f -name '*.crx' -delete \
-    && find "$LIB_DIR"/playwright/cache -path '*/chrome-linux/locales/*' ! -name 'en-US.pak' -delete \
-    && find "$LIB_DIR"/playwright/cache -path '*/chrome-linux/*.pak.info' -delete \
-    && rm -f "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux/libvk_swiftshader.so "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux/libGLESv2.so \
-    && rm -f "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux/chrome_200_percent.pak \
-    && rm -rf "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux/MEIPreload "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux/PrivacySandboxAttestationsPreloaded \
+    && find "$LIB_DIR"/playwright/cache -path '*/chrome-linux*/locales/*' ! -name 'en-US.pak' -delete \
+    && find "$LIB_DIR"/playwright/cache -path '*/chrome-linux*/*.pak.info' -delete \
+    && rm -f "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/libvk_swiftshader.so "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/libGLESv2.so \
+    && rm -f "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/chrome_200_percent.pak \
+    && rm -rf "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/MEIPreload "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/PrivacySandboxAttestationsPreloaded "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/WidevineCdm \
     && rm -rf /usr/lib/*-linux-gnu/dri /usr/lib/*-linux-gnu/libLLVM-*.so* /usr/lib/*-linux-gnu/libz3.so.* \
     && find "$LIB_DIR" \( ! -user "$DEFAULT_PUID" -o ! -group "$DEFAULT_PGID" \) -exec chown "$DEFAULT_PUID:$DEFAULT_PGID" {} + \
     && rm -rf /var/lib/apt/lists/* /tmp/*
