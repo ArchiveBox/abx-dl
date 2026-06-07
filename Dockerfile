@@ -14,8 +14,8 @@
 
 ARG NODE_VERSION=24
 
-FROM --platform=$TARGETPLATFORM node:${NODE_VERSION}-bookworm-slim AS node-runtime
-FROM --platform=$TARGETPLATFORM debian:bookworm-slim AS abx-dl-runtime-base
+FROM --platform=$TARGETPLATFORM node:${NODE_VERSION}-trixie-slim AS node-runtime
+FROM --platform=$TARGETPLATFORM debian:trixie-slim AS abx-dl-runtime-base
 
 LABEL name="abx-dl" \
     maintainer="Nick Sweeting <dockerfile@archivebox.io>" \
