@@ -70,15 +70,14 @@ ENV UV_COMPILE_BYTECODE=false \
     UV_PROJECT_ENVIRONMENT=/venv \
     VIRTUAL_ENV=/venv \
     PIP_VENV_PYTHON=/venv/bin/python3 \
-    PATH="/venv/bin:/opt/node/bin:$PATH"
+    PATH="/venv/bin:/opt/node/bin:$LIB_DIR/bin:$LIB_DIR/env/bin:$PATH"
 
 SHELL ["/bin/bash", "-o", "pipefail", "-o", "errexit", "-o", "errtrace", "-o", "nounset", "-c"]
 WORKDIR "$CODE_DIR"
 
-RUN echo 'Binary::apt::APT::Keep-Downloaded-Packages "1";' > /etc/apt/apt.conf.d/99keep-cache \
+RUN echo 'Binary::apt::APT::Keep-Downloaded-Packages "0";' > /etc/apt/apt.conf.d/99keep-cache \
     && echo 'APT::Install-Recommends "0";' > /etc/apt/apt.conf.d/99no-install-recommends \
-    && echo 'APT::Install-Suggests "0";' > /etc/apt/apt.conf.d/99no-install-suggests \
-    && rm -f /etc/apt/apt.conf.d/docker-clean
+    && echo 'APT::Install-Suggests "0";' > /etc/apt/apt.conf.d/99no-install-suggests
 
 RUN (echo "[i] Docker build for abx-dl starting..." \
     && echo "PLATFORM=${TARGETPLATFORM} ARCH=$(uname -m) (${TARGETARCH} ${TARGETVARIANT})" \
@@ -89,8 +88,7 @@ RUN (echo "[i] Docker build for abx-dl starting..." \
 
 # Bootstrap packages only. Downloader/browser/media runtimes are installed by
 # their owning plugin install hooks in separate layers below.
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$TARGETVARIANT \
-    echo "[+] APT Installing abx-dl bootstrap dependencies for $TARGETPLATFORM..." \
+RUN echo "[+] APT Installing abx-dl bootstrap dependencies for $TARGETPLATFORM..." \
     && apt-get update -qq \
     && apt-get install -qq -y \
         ca-certificates curl dumb-init util-linux procps openssl unzip xz-utils zlib1g \
@@ -130,7 +128,10 @@ COPY --chown=root:root --chmod=755 abx_dl "$CODE_DIR/abx_dl"
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
     echo "[*] Installing local abxbus/abxpkg/abx-plugins/abx-dl Python source code..." \
     && uv pip install --no-deps /src/abxbus /src/abxpkg /src/abx-plugins "$CODE_DIR" \
-    && (uv pip show abx-dl && which abx-dl && abx-dl --version) | tee -a /VERSION.txt
+    && /usr/bin/uv pip show abx-dl | tee -a /VERSION.txt \
+    && rm -f /venv/bin/uv /venv/bin/uvx \
+    && rm -rf /venv/lib/python3.12/site-packages/pip* /venv/lib/python3.12/site-packages/setuptools* /venv/lib/python3.12/site-packages/wheel* /venv/bin/pip /venv/bin/pip3 /venv/bin/pip3.12 /venv/bin/wheel \
+    && (which abx-dl && abx-dl --version) | tee -a /VERSION.txt
 
 ########################################################################################################
 FROM abx-dl-runtime-base
@@ -138,58 +139,72 @@ FROM abx-dl-runtime-base
 COPY --from=abx-dl-builder /venv /venv
 COPY --from=abx-dl-builder /VERSION.txt /VERSION.txt
 
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.npm,sharing=locked,id=npm-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/npm,sharing=locked,id=abxpkg-npm-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/pnpm,sharing=locked,id=abxpkg-pnpm-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/ms-playwright,sharing=locked,id=browsers-$TARGETARCH$TARGETVARIANT \
-    echo "[+] Installing Playwright-managed Chrome into $LIB_DIR..." \
-    && apt-get update -qq \
-    && ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 abxpkg install --no-cache --install-timeout=900 --binproviders=playwright chrome \
-    && CHROME_BINARY="$(abxpkg load --binproviders=playwright chromium | awk 'NF {print $2; exit}')" \
-    && export CHROME_BINARY \
-    && test -x "$CHROME_BINARY" \
-    && "$CHROME_BINARY" --version | tee -a /VERSION.txt \
-    && rm -rf /var/lib/apt/lists/* /tmp/*
+RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_PUID}..." \
+    && groupadd --system "$ARCHIVEBOX_USER" \
+    && useradd --system --create-home --gid "$ARCHIVEBOX_USER" --groups audio,video "$ARCHIVEBOX_USER" \
+    && usermod -u "$DEFAULT_PUID" "$ARCHIVEBOX_USER" \
+    && groupmod -g "$DEFAULT_PGID" "$ARCHIVEBOX_USER" \
+    && install -d -o "$DEFAULT_PUID" -g "$DEFAULT_PGID" "$DATA_DIR" "$LIB_DIR" \
+    && echo "ARCHIVEBOX_USER=$ARCHIVEBOX_USER PUID=$(id -u "$ARCHIVEBOX_USER") PGID=$(id -g "$ARCHIVEBOX_USER")" | tee -a /VERSION.txt
 
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked,id=apt-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.npm,sharing=locked,id=npm-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/npm,sharing=locked,id=abxpkg-npm-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/pnpm,sharing=locked,id=abxpkg-pnpm-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/pip,sharing=locked,id=pip-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/puppeteer,sharing=locked,id=puppeteer-$TARGETARCH$TARGETVARIANT \
     echo "[+] Installing plugin dependencies..." \
-    && CHROME_BINARY="$(abxpkg load --binproviders=playwright chromium | awk 'NF {print $2; exit}')" \
-    && export CHROME_BINARY \
+    && apt-get update -qq \
     && ABX_RUNTIME=archivebox ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 PUID=0 PGID=0 abx-dl install \
-        base chrome accessibility archivedotorg archivewebpage \
-        chrome_mhtml chrome_screencast claudechrome claudecode claudecodecleanup claudecodeextract \
-        consolelog defuddle dns dom favicon forumdl gallerydl git hashes headers htmltotext \
-        infiniscroll istilldontcareaboutcookies liteparse media mercury modalcloser opencode \
-        opendataloader papersdl parse_dom_outlinks parse_html_urls parse_jsonl_urls \
-        parse_netscape_urls parse_rss_urls parse_txt_urls pdf readability redirects responses \
-        screenshot seo singlefile ssl sslcerts staticfile title trafilatura ublock wget ytdlp \
+        base archivedotorg claudecode claudecodecleanup claudecodeextract \
+        defuddle favicon forumdl gallerydl git hashes htmltotext liteparse media mercury \
+        opendataloader papersdl parse_html_urls parse_jsonl_urls parse_netscape_urls \
+        parse_rss_urls parse_txt_urls readability ssl trafilatura wget ytdlp \
     && mkdir -p "$LIB_DIR/env/bin" \
     && ln -sf "$(command -v git)" "$LIB_DIR/env/bin/git" \
+    && rm -rf /usr/lib/*-linux-gnu/dri /usr/lib/*-linux-gnu/libLLVM-*.so* /usr/lib/*-linux-gnu/libz3.so.* \
+    && rm -rf /usr/share/icons /usr/share/doc /usr/share/man /usr/share/bash-completion /usr/share/zsh /usr/share/info /usr/share/lintian /usr/share/bug \
+    && rm -rf /opt/node/include /opt/node/share/doc /opt/node/share/man \
+    && rm -f /opt/node/CHANGELOG.md /opt/node/README.md /opt/node/LICENSE \
+    && rm -f /usr/share/fonts/truetype/wqy/wqy-zenhei.ttc /usr/share/fonts/truetype/noto/NotoColorEmoji.ttf /usr/lib/jvm/java-17-openjdk-*/lib/server/classes*.jsa \
+    && rm -f /venv/bin/uv /venv/bin/uvx \
+    && find "$LIB_DIR" \( ! -user "$DEFAULT_PUID" -o ! -group "$DEFAULT_PGID" \) -exec chown "$DEFAULT_PUID:$DEFAULT_PGID" {} + \
     && rm -rf /var/lib/apt/lists/* /tmp/*
 
-RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_PUID}..." \
-    && groupadd --system "$ARCHIVEBOX_USER" \
-    && useradd --system --create-home --gid "$ARCHIVEBOX_USER" --groups audio,video "$ARCHIVEBOX_USER" \
-    && usermod -u "$DEFAULT_PUID" "$ARCHIVEBOX_USER" \
-    && groupmod -g "$DEFAULT_PGID" "$ARCHIVEBOX_USER" \
-    && mkdir -p "$DATA_DIR" \
-    && chown "$DEFAULT_PUID:$DEFAULT_PGID" "$DATA_DIR" \
-    && chown -R "$DEFAULT_PUID:$DEFAULT_PGID" "$LIB_DIR" \
-    && echo "ARCHIVEBOX_USER=$ARCHIVEBOX_USER PUID=$(id -u "$ARCHIVEBOX_USER") PGID=$(id -g "$ARCHIVEBOX_USER")" | tee -a /VERSION.txt
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
+    --mount=type=cache,target=/root/.npm,sharing=locked,id=npm-$TARGETARCH$TARGETVARIANT \
+    --mount=type=cache,target=/root/.cache/npm,sharing=locked,id=abxpkg-npm-$TARGETARCH$TARGETVARIANT \
+    --mount=type=cache,target=/root/.cache/pnpm,sharing=locked,id=abxpkg-pnpm-$TARGETARCH$TARGETVARIANT \
+    --mount=type=cache,target=/root/.cache/ms-playwright,sharing=locked,id=browsers-$TARGETARCH$TARGETVARIANT \
+    echo "[+] Installing Chrome plugin dependencies..." \
+    && apt-get update -qq \
+    && apt-get install -qq -y libatk-bridge2.0-0 libatspi2.0-0 \
+    && ABX_RUNTIME=archivebox ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 PUID=0 PGID=0 abx-dl install chrome \
+    && CHROME_BINARY="$(command -v chromium)" \
+    && export CHROME_BINARY \
+    && test -x "$CHROME_BINARY" \
+    && "$CHROME_BINARY" --version | tee -a /VERSION.txt \
+    && ABX_RUNTIME=archivebox ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 PUID=0 PGID=0 abx-dl install \
+        accessibility archivewebpage chrome_mhtml chrome_screencast claudechrome \
+        consolelog dns dom headers infiniscroll istilldontcareaboutcookies modalcloser \
+        parse_dom_outlinks pdf redirects responses screenshot seo singlefile sslcerts \
+        staticfile title ublock \
+    && rm -rf "$LIB_DIR"/playwright/cache/ffmpeg-* \
+    && find "$LIB_DIR"/chromewebstore -type f -name '*.crx' -delete \
+    && find "$LIB_DIR"/playwright/cache -path '*/chrome-linux/locales/*' ! -name 'en-US.pak' -delete \
+    && find "$LIB_DIR"/playwright/cache -path '*/chrome-linux/*.pak.info' -delete \
+    && rm -f "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux/libvk_swiftshader.so "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux/libGLESv2.so \
+    && rm -f "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux/chrome_200_percent.pak \
+    && rm -rf "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux/MEIPreload "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux/PrivacySandboxAttestationsPreloaded \
+    && rm -rf /usr/lib/*-linux-gnu/dri /usr/lib/*-linux-gnu/libLLVM-*.so* /usr/lib/*-linux-gnu/libz3.so.* \
+    && find "$LIB_DIR" \( ! -user "$DEFAULT_PUID" -o ! -group "$DEFAULT_PGID" \) -exec chown "$DEFAULT_PUID:$DEFAULT_PGID" {} + \
+    && rm -rf /var/lib/apt/lists/* /tmp/*
 
 RUN (echo -e "\n\n[+] abx-dl runtime versions" \
     && abx-dl --version \
     && /opt/node/bin/node --version \
     && /venv/bin/python3 --version \
-    && CHROME_BINARY="$(abxpkg load --binproviders=playwright chromium | awk 'NF {print $2; exit}')" \
+    && CHROME_BINARY="$(command -v chromium)" \
     && export CHROME_BINARY \
     && abx-dl plugins chrome \
     && ! command -v gcc \
