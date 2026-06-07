@@ -6,6 +6,7 @@ import builtins
 import copy
 import json
 import re
+import shlex
 import shutil
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime, timedelta, timezone
@@ -34,6 +35,12 @@ def _is_app_bundle_binary(path: Path) -> bool:
     except StopIteration:
         return False
     return len(parts) > app_index + 2 and parts[app_index + 1 : app_index + 3] == ("Contents", "MacOS")
+
+
+def _write_binary_wrapper(wrapper_path: Path, target: Path) -> None:
+    target_abspath = target.expanduser().resolve(strict=False)
+    wrapper_path.write_text(f'#!/bin/sh\nexec {shlex.quote(str(target_abspath))} "$@"\n')
+    wrapper_path.chmod(0o755)
 
 
 def _provider_names(binproviders: str | list[str] | None) -> list[str]:
@@ -454,7 +461,7 @@ class AbxDlEnvConfigFileBinaryCacheBackend:
             return
         lib_bin_dir.mkdir(parents=True, exist_ok=True)
 
-        target = Path(binary_abspath).expanduser()
+        target = Path(binary_abspath).expanduser().resolve(strict=False)
         link_path = lib_bin_dir / binary_name
         if target == link_path:
             return
@@ -468,7 +475,7 @@ class AbxDlEnvConfigFileBinaryCacheBackend:
             link_path.unlink()
         elif link_path.exists():
             shutil.rmtree(link_path)
-        link_path.symlink_to(target)
+        _write_binary_wrapper(link_path, target)
 
 
 def _install_cache_from_config(config: RuntimeConfig) -> dict[str, str]:
