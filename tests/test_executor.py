@@ -401,7 +401,7 @@ def test_required_binary_requests_preserve_extra_config_fields() -> None:
     install_args = papersdl_request["overrides"]["uv"]["install_args"]
     assert install_args[:3] == [
         "--no-deps",
-        "--only-binary=PyMuPDF,PyMuPDFb",
+        "--only-binary=PyMuPDF",
         "papers-dl==0.0.25",
     ]
     assert "aiohttp>=3.13.2" in install_args
