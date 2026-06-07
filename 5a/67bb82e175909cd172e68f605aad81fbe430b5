@@ -1,0 +1,26 @@
+Dockerfile
+  s_7cc75db5230061::t_592266eb006a3b 204
+  s_7cc75db5230061::t_d2c9125460c2b8 124,133
+  s_7cc75db5230061::t_f62566ffc93bd3 144-145,159-160
+  s_7cc75db5230061::t_74d46d077f598a 163,166-173
+  s_7cc75db5230061::t_c9d63085588689 43,45,66
+.dockerignore
+  s_7cc75db5230061::t_a37ab2b4a573a2 1-11,14-24
+  s_7cc75db5230061::t_8d004c106da908 12-13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "5a67bb82e175909cd172e68f605aad81fbe430b5",
+  "prompts": {},
+  "sessions": {
+    "s_7cc75db5230061": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9181-9d0e-7f61-a8dc-95dc82bc59e7",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
