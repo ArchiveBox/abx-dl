@@ -456,9 +456,9 @@ class AbxDlEnvConfigFileBinaryCacheBackend:
         if is_path_like_env_value(binary_name):
             return
         current_user_config = (config or await get_config(self.bus)).user
-        lib_bin_dir = current_user_config.LIB_BIN_DIR
-        if lib_bin_dir is None:
+        if current_user_config.LIB_DIR is None:
             return
+        lib_bin_dir = current_user_config.LIB_DIR / "bin"
         lib_bin_dir.mkdir(parents=True, exist_ok=True)
 
         target = Path(binary_abspath).expanduser().resolve(strict=False)

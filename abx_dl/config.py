@@ -20,6 +20,7 @@ from collections.abc import Mapping
 from abxbus import EventBus
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from platformdirs import user_config_path
 
 from .events import MachineEvent
 from .models import Plugin, PluginConfig, PluginEnv, RequiredBinary
@@ -29,7 +30,7 @@ from abx_plugins.plugins.base import utils as plugin_utils
 class BootstrapConfig(BaseSettings):
     """Minimal settings needed to locate config files before full settings load."""
 
-    CONFIG_DIR: Path = Field(default_factory=lambda: Path.home() / ".config" / "abx")
+    CONFIG_DIR: Path = Field(default_factory=lambda: user_config_path("abx"))
     DATA_DIR: Path = Field(default_factory=Path.cwd)
 
     model_config = SettingsConfigDict(
@@ -66,7 +67,6 @@ class GlobalConfig(BaseSettings):
     CHECK_SSL_VALIDITY: bool = True
     COOKIES_FILE: str = ""
     LIB_DIR: Path | None = None
-    LIB_BIN_DIR: Path | None = None
     PERSONAS_DIR: Path | None = None
     CRAWL_DIR: Path | None = None
     SNAP_DIR: Path | None = None
@@ -104,7 +104,6 @@ class GlobalConfig(BaseSettings):
 
     @field_validator(
         "LIB_DIR",
-        "LIB_BIN_DIR",
         "PERSONAS_DIR",
         "CRAWL_DIR",
         "SNAP_DIR",
@@ -133,7 +132,6 @@ class GlobalConfig(BaseSettings):
         default_lib_dir = self.CONFIG_DIR / "lib"
         if self.LIB_DIR is None:
             self.LIB_DIR = default_lib_dir
-        default_lib_bin_dir = default_lib_dir / "bin"
         default_pip_home = default_lib_dir / "pip"
         default_pip_bin_dir = default_pip_home / "venv" / "bin"
         default_pnpm_home = default_lib_dir / "pnpm" / "packages" / "chrome"
@@ -143,8 +141,6 @@ class GlobalConfig(BaseSettings):
         default_npm_bin_dir = default_pnpm_bin_dir
         default_puppeteer_cache_dir = default_lib_dir / "puppeteer"
         lib_dir_changed = self.LIB_DIR != default_lib_dir
-        if self.LIB_BIN_DIR is None or (lib_dir_changed and self.LIB_BIN_DIR == default_lib_bin_dir):
-            self.LIB_BIN_DIR = self.LIB_DIR / "bin"
         if self.PERSONAS_DIR is None:
             self.PERSONAS_DIR = self.CONFIG_DIR / "personas"
         if self.CRAWL_DIR is None:
@@ -450,7 +446,7 @@ def set_user_config(plugin_schemas: dict[str, dict[str, Any]] | None = None, **k
 
 
 def unset_user_config(*keys: str) -> list[str]:
-    """Remove user config keys from ~/.config/abx/config.env if present."""
+    """Remove user config keys from the platformdirs abx config.env if present."""
     if not keys:
         return []
 
@@ -521,7 +517,6 @@ GLOBAL_DEFAULT_KEYS = (
     "CHECK_SSL_VALIDITY",
     "COOKIES_FILE",
     "LIB_DIR",
-    "LIB_BIN_DIR",
     "PERSONAS_DIR",
     "CRAWL_DIR",
     "SNAP_DIR",

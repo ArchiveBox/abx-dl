@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 import pytest
+from platformdirs import user_config_path
 
 
 # Keys that test hooks may mirror into runtime envs.
@@ -20,7 +21,7 @@ _TEST_CONFIG_KEYS = frozenset(
         "DEMO_FLAG",
         "HOOK_ORDER",
         "JAVA_VERSION_CONSTRAINT",
-        "LIB_BIN_DIR",
+        "ABXPKG_LIB_DIR",
         "LIB_DIR",
         "NPM_BIN_DIR",
         "NPM_HOME",
@@ -32,6 +33,8 @@ _TEST_CONFIG_KEYS = frozenset(
         "PUPPETEER_CACHE_DIR",
         "SNAP_DIR",
         "TMP_DIR",
+        "XDG_CACHE_HOME",
+        "XDG_CONFIG_HOME",
     },
 )
 
@@ -39,8 +42,17 @@ _TEST_CONFIG_KEYS = frozenset(
 @pytest.fixture(autouse=True)
 def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Point config.env and derived.env at a temp dir so tests don't share state."""
+    # Remove any env vars leaked from prior tests before setting the isolated values.
+    for key in _TEST_CONFIG_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    for key in list(os.environ):
+        if key.endswith("_BINARY"):
+            monkeypatch.delenv(key, raising=False)
+
     home_dir = tmp_path / "home"
-    config_dir = home_dir / ".config" / "abx"
+    monkeypatch.setenv("HOME", str(home_dir))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home_dir / ".config"))
+    config_dir = user_config_path("abx")
     data_dir = tmp_path / "data"
     personas_dir = config_dir / "personas"
     tmp_dir = tmp_path / "tmp"
@@ -52,15 +64,7 @@ def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     lib_bin_dir = lib_dir / "bin"
     lib_bin_dir.mkdir(parents=True, exist_ok=True)
 
-    # Remove any env vars leaked from prior tests before setting the isolated values.
-    for key in _TEST_CONFIG_KEYS:
-        monkeypatch.delenv(key, raising=False)
-    for key in list(os.environ):
-        if key.endswith("_BINARY"):
-            monkeypatch.delenv(key, raising=False)
-
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("HOME", str(home_dir))
     monkeypatch.setenv("CONFIG_DIR", str(config_dir))
     monkeypatch.setenv("DATA_DIR", str(data_dir))
     monkeypatch.setenv("LIB_DIR", str(lib_dir))

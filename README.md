@@ -55,7 +55,7 @@ Plugins are loaded from the installed [`abx-plugins`](https://pypi.org/project/a
 
 #### ⚙️ Configuration
 
-Configuration is handled via environment variables plus a user config file (`~/.config/abx/config.env`). Runtime-derived cache entries such as resolved binary paths are stored separately in `~/.config/abx/derived.env`:
+Configuration is handled via environment variables plus a user config file under the platformdirs user config path (`<user-config>/abx/config.env`). Runtime-derived cache entries such as resolved binary paths are stored separately in `<user-config>/abx/derived.env`:
 
 ```bash
 abx-dl config                        # show all config (global + per-plugin)
@@ -199,9 +199,9 @@ Hook output contract:
 - `on_Snapshot__*` hooks emit only `ArchiveResult`, `Snapshot`, and `Tag`
 - the TUI and services consume structured events derived from those hook records
 
-Dependencies are installed to `~/.config/abx/lib/{arch}/` using the appropriate package manager:
-- **pip packages** → `~/.config/abx/lib/{arch}/pip/venv/`
-- **npm packages** → `~/.config/abx/lib/{arch}/npm/`
+Dependencies are installed to `<user-config>/abx/lib/{arch}/` using the appropriate package manager:
+- **pip packages** → `<user-config>/abx/lib/{arch}/pip/venv/`
+- **npm packages** → `<user-config>/abx/lib/{arch}/npm/`
 - **brew/apt packages** → system locations
 
 You can override the install location with `LIB_DIR=/path/to/lib abx-dl install wget`.

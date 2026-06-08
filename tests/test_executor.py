@@ -736,7 +736,7 @@ def test_binary_installed_event_updates_lib_bin_command(tmp_path: Path) -> None:
         second_target.chmod(0o755)
 
         try:
-            await bus.emit(MachineEvent(config={"LIB_BIN_DIR": str(tmp_path / "lib-bin")}, config_type="user")).now()
+            await bus.emit(MachineEvent(config={"LIB_DIR": str(tmp_path / "lib")}, config_type="user")).now()
             await bus.emit(
                 BinaryEvent(
                     name="demo",
@@ -744,7 +744,7 @@ def test_binary_installed_event_updates_lib_bin_command(tmp_path: Path) -> None:
                     extra_context=_binary_extra_context(plugin_name="demo", hook_name="install"),
                 ),
             ).now()
-            link_path = tmp_path / "lib-bin" / "demo"
+            link_path = tmp_path / "lib" / "bin" / "demo"
             assert subprocess.run([str(link_path)], check=True, capture_output=True, text=True).stdout == "first"
 
             await bus.emit(
@@ -797,18 +797,32 @@ def test_download_sets_plugin_specific_binary_env_from_binary_default(tmp_path: 
 def test_snapshot_background_only_hook_finishes_before_cleanup_without_filename_special_case(tmp_path: Path) -> None:
     plugins = discover_plugins()
     selected = {"wget": plugins["wget"]}
+    bus = create_bus(total_timeout=120.0, name=f"real_wget_background_cleanup_{tmp_path.name}")
+    completed_processes: list[ProcessCompletedEvent] = []
+
+    async def on_ProcessCompletedEvent(event: ProcessCompletedEvent) -> None:
+        if event.plugin_name == "wget" and event.hook_name == "on_Snapshot__06_wget.finite.bg":
+            completed_processes.append(event)
+
+    bus.on(ProcessCompletedEvent, on_ProcessCompletedEvent)
     results = _run_download(
         "https://example.com",
         selected,
         tmp_path / "run",
         auto_install=True,
         emit_jsonl=False,
+        bus=bus,
     )
 
     result = next(r for r in results if r.plugin == "wget")
     assert result.hook_name == "on_Snapshot__06_wget.finite.bg"
     assert result.status == "succeeded"
     assert result.output_str == "wget/example.com/index.html"
+    assert completed_processes
+    assert completed_processes[-1].status == "succeeded"
+    assert completed_processes[-1].exit_code == 0
+    assert "ArchiveResult" in completed_processes[-1].stdout
+    assert completed_processes[-1].stderr == ""
     assert (tmp_path / "run" / "wget" / "example.com" / "index.html").exists()
     assert not list((tmp_path / "run" / "wget").glob("*.pid"))
 
@@ -821,8 +835,8 @@ def test_snapshot_service_emits_background_process_without_extra_wait(tmp_path: 
         "\n".join(
             [
                 "#!/usr/bin/env bash",
-                "set -euo pipefail",
                 "trap 'echo cleaned; exit 0' TERM",
+                "set -euo pipefail",
                 "echo ready",
                 "while true; do sleep 1; done",
                 "",
@@ -928,8 +942,134 @@ def test_snapshot_service_emits_background_process_without_extra_wait(tmp_path: 
     assert ready is not None
     assert completed is not None
     assert completed.status == "succeeded"
+    assert completed.exit_code == 0
+    assert "ready" in completed.stdout
     assert "cleaned" in completed.stdout
     assert not list((tmp_path / "run" / "background_start").glob("*.pid"))
+
+
+def test_snapshot_background_js_hook_replays_early_sigterm_to_real_cleanup(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "plugins" / "background_js_relay"
+    plugin_dir.mkdir(parents=True)
+    hook_path = plugin_dir / "on_Snapshot__10_background.daemon.bg.js"
+    hook_path.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env node",
+                "let __abxEarlyShutdownSignal = null;",
+                "function __abxRememberEarlyShutdown(signal) {",
+                "  if (__abxEarlyShutdownSignal === null) {",
+                "    __abxEarlyShutdownSignal = signal;",
+                "  }",
+                "}",
+                "function __abxInstallShutdownHandler(handler) {",
+                "  process.removeAllListeners('SIGTERM');",
+                "  process.removeAllListeners('SIGINT');",
+                "  process.on('SIGTERM', () => handler('SIGTERM'));",
+                "  process.on('SIGINT', () => handler('SIGINT'));",
+                "  if (__abxEarlyShutdownSignal !== null) {",
+                "    const signal = __abxEarlyShutdownSignal;",
+                "    __abxEarlyShutdownSignal = null;",
+                "    setImmediate(() => handler(signal));",
+                "  }",
+                "}",
+                "process.on('SIGTERM', () => __abxRememberEarlyShutdown('SIGTERM'));",
+                "process.on('SIGINT', () => __abxRememberEarlyShutdown('SIGINT'));",
+                "console.log('ready');",
+                "setTimeout(() => {",
+                "  __abxInstallShutdownHandler((signal) => {",
+                "    console.log(`cleaned ${signal}`);",
+                "    process.exit(0);",
+                "  });",
+                "}, 150);",
+                "setInterval(() => {}, 1000);",
+                "",
+            ],
+        ),
+    )
+    hook_path.chmod(0o755)
+
+    plugin = Plugin(
+        name="background_js_relay",
+        path=plugin_dir,
+        config=PluginConfig(),
+        hooks=[
+            Hook(
+                name=hook_path.name,
+                event="Snapshot",
+                plugin_name="background_js_relay",
+                path=hook_path,
+                order=10,
+                is_background=True,
+            ),
+        ],
+    )
+    bus = create_bus(total_timeout=20.0, name=f"js_background_relay_{tmp_path.name}")
+    MachineService(bus, persist_derived=False)
+    ProcessService(bus, emit_jsonl=False, interactive_tty=False)
+    snapshot = Snapshot(url="https://example.com", id="snap-js-relay")
+    SnapshotService(
+        bus,
+        url="https://example.com",
+        snapshot=snapshot,
+        output_dir=tmp_path / "run",
+        plugins={plugin.name: plugin},
+        snapshot_phase_timeout=1.0,
+        snapshot_cleanup_phase_timeout=5.0,
+    )
+
+    try:
+
+        async def run() -> ProcessCompletedEvent:
+            crawl_start_event = CrawlStartEvent(
+                url="https://example.com",
+                snapshot_id=snapshot.id,
+                output_dir=str(tmp_path / "run"),
+            )
+            root_event = SnapshotEvent(
+                url="https://example.com",
+                snapshot_id=snapshot.id,
+                output_dir=str(tmp_path / "run"),
+                event_parent_id=crawl_start_event.event_id,
+            )
+            await bus.emit(crawl_start_event).now()
+            await bus.emit(root_event).now()
+            process_event = await bus.find(
+                ProcessEvent,
+                past=True,
+                future=1.0,
+                child_of=root_event,
+                plugin_name=plugin.name,
+                hook_name=hook_path.name,
+            )
+            assert isinstance(process_event, ProcessEvent)
+            ready_line = await bus.find(
+                ProcessStdoutEvent,
+                child_of=process_event,
+                past=True,
+                future=5.0,
+                where=lambda candidate: candidate.line == "ready",
+            )
+            assert isinstance(ready_line, ProcessStdoutEvent)
+            completed_process = await bus.find(
+                ProcessCompletedEvent,
+                child_of=process_event,
+                past=True,
+                future=5.0,
+            )
+            assert isinstance(completed_process, ProcessCompletedEvent)
+            return completed_process
+
+        completed = asyncio.run(run())
+    finally:
+        asyncio.run(bus.wait_until_idle())
+
+    assert completed.status == "succeeded"
+    assert completed.exit_code == 0
+    assert "ready" in completed.stdout
+    assert "cleaned SIGTERM" in completed.stdout
+    assert completed.stderr == ""
+    assert not list((tmp_path / "run" / "background_js_relay").glob("*.pid"))
 
 
 def test_snapshot_service_selected_hooks_by_plugin_runs_only_named_hooks(tmp_path: Path) -> None:
@@ -1295,10 +1435,10 @@ def test_snapshot_background_daemon_stays_alive_until_cleanup(tmp_path: Path) ->
         "\n".join(
             [
                 "#!/usr/bin/env bash",
+                "trap 'echo cleaned; exit 0' TERM",
                 "set -euo pipefail",
                 'echo $$ > "$SNAP_DIR/daemon.pid"',
                 'echo ready > "$SNAP_DIR/daemon.ready"',
-                "trap 'echo cleaned; exit 0' TERM",
                 "while true; do sleep 1; done",
                 "",
             ],
@@ -1541,9 +1681,9 @@ def test_snapshot_completed_waits_for_cleanup_process_listeners(tmp_path: Path) 
         "\n".join(
             [
                 "#!/usr/bin/env bash",
+                "trap 'echo cleaned; exit 0' TERM",
                 "set -euo pipefail",
                 'echo $$ > "$SNAP_DIR/daemon.pid"',
-                "trap 'echo cleaned; exit 0' TERM",
                 "while true; do sleep 1; done",
                 "",
             ],
@@ -1624,11 +1764,11 @@ def test_crawl_setup_background_daemon_survives_until_explicit_cleanup(tmp_path:
         "\n".join(
             [
                 "#!/usr/bin/env bash",
+                "trap 'echo cleaned; exit 0' TERM",
                 "set -euo pipefail",
                 'crawl_dir="${CRAWL_DIR:-$(dirname "$PWD")}"',
                 'echo $$ > "$crawl_dir/daemon.pid"',
                 'echo ready > "$crawl_dir/daemon.ready"',
-                "trap 'echo cleaned; exit 0' TERM",
                 "while true; do sleep 1; done",
                 "",
             ],
@@ -1721,9 +1861,9 @@ def test_crawl_completed_waits_for_cleanup_process_listeners(tmp_path: Path) -> 
         "\n".join(
             [
                 "#!/usr/bin/env bash",
+                "trap 'echo cleaned; exit 0' TERM",
                 "set -euo pipefail",
                 'crawl_dir="${CRAWL_DIR:-$(dirname "$PWD")}"',
-                "trap 'echo cleaned; exit 0' TERM",
                 'echo $$ > "$crawl_dir/daemon.pid"',
                 'echo ready > "$crawl_dir/daemon.ready"',
                 "while true; do sleep 1; done",
@@ -1804,9 +1944,9 @@ def test_crawl_abort_during_setup_cleans_background_daemon(tmp_path: Path) -> No
         "\n".join(
             [
                 "#!/usr/bin/env bash",
+                "trap 'echo cleaned; exit 0' TERM",
                 "set -euo pipefail",
                 'crawl_dir="${CRAWL_DIR:-$(dirname "$PWD")}"',
-                "trap 'echo cleaned; exit 0' TERM",
                 'echo $$ > "$crawl_dir/daemon.pid"',
                 'echo ready > "$crawl_dir/daemon.ready"',
                 "while true; do sleep 1; done",
@@ -2301,11 +2441,11 @@ def test_crawl_background_daemon_stays_alive_through_snapshot_until_cleanup(tmp_
         "\n".join(
             [
                 "#!/usr/bin/env bash",
+                "trap 'echo cleaned; exit 0' TERM",
                 "set -euo pipefail",
                 'crawl_dir="${CRAWL_DIR:-$(dirname "$PWD")}"',
                 'echo $$ > "$crawl_dir/daemon.pid"',
                 'echo ready > "$crawl_dir/daemon.ready"',
-                "trap 'echo cleaned; exit 0' TERM",
                 "while true; do sleep 1; done",
                 "",
             ],

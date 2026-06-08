@@ -104,7 +104,7 @@ CHROME_BINARY=/usr/bin/chromium abx-dl --plugins=screenshot,pdf 'https://example
 LIB_DIR=./.abx/lib PERSONAS_DIR=./.abx/personas abx-dl 'https://example.com'
 ```
 
-- User config is stored in `~/.config/abx/config.env`; runtime-derived cache entries are stored in `~/.config/abx/derived.env`.
+- User config is stored in the platformdirs user config path at `<user-config>/abx/config.env`; runtime-derived cache entries are stored in `<user-config>/abx/derived.env`.
 - `config.env` is user-owned only.
 - `derived.env` stores derived binary cache entries such as resolved `*_BINARY` paths and `ABX_INSTALL_CACHE`.
 - `MachineService` keeps those layers separate during a run instead of merging them together.

@@ -187,11 +187,10 @@ class CrawlService(BaseService):
             timeout = runtime[timeout_key] if timeout_key in plugin.config.properties else runtime.TIMEOUT
             plugin_output_dir = self.output_dir / plugin.name
             plugin_output_dir.mkdir(parents=True, exist_ok=True)
-            # CrawlSetup background daemons own a crawl-scoped resource for
+            # CrawlSetup background hooks own a crawl-scoped resource for
             # the *whole crawl* and are torn down by the explicit
             # ``CrawlCleanupEvent`` SIGTERM below — they must not have a
-            # wall-clock handler_timeout. Finite hooks still get
-            # ``timeout + 30s``.
+            # wall-clock handler_timeout.
             if hook.is_background:
                 handler_timeout: float | None = None
                 handler_slow_timeout: float | None = None

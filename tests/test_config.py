@@ -3,6 +3,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from platformdirs import user_config_path
+
 from abx_dl.config import GlobalConfig, RuntimeConfig, get_config, get_initial_env, get_plugin_env
 from abx_dl.events import MachineEvent
 from abx_dl.models import PluginEnv, discover_plugins
@@ -19,7 +21,6 @@ def test_plugin_env_sets_run_dirs_and_node_path(monkeypatch, tmp_path: Path) -> 
         "CRAWL_DIR",
         "SNAP_DIR",
         "LIB_DIR",
-        "LIB_BIN_DIR",
         "PNPM_HOME",
         "PNPM_BIN_DIR",
         "NPM_HOME",
@@ -33,10 +34,14 @@ def test_plugin_env_sets_run_dirs_and_node_path(monkeypatch, tmp_path: Path) -> 
         monkeypatch.delenv(key, raising=False)
 
     env = assemble_env(run_output_dir=tmp_path)
+    expected_config_dir = user_config_path("abx")
+    expected_lib_dir = expected_config_dir / "lib"
 
+    assert Path(env["CONFIG_DIR"]) == expected_config_dir
     assert env["CRAWL_DIR"] == str(tmp_path)
     assert env["SNAP_DIR"] == str(tmp_path)
-    assert env["LIB_BIN_DIR"] == str(Path(env["LIB_DIR"]) / "bin")
+    assert Path(env["LIB_DIR"]) == expected_lib_dir
+    assert env["ABXPKG_LIB_DIR"] == env["LIB_DIR"]
     assert env["NODE_PATH"] == env["NODE_MODULES_DIR"]
     assert env["PIP_BIN_DIR"] in env["PATH"].split(":")
     assert env["PNPM_BIN_DIR"] in env["PATH"].split(":")
@@ -114,7 +119,6 @@ def test_plugin_env_derives_puppeteer_cache_from_effective_lib_dir(monkeypatch, 
     env = assemble_env(overrides={"LIB_DIR": str(tmp_path / "lib")}, run_output_dir=tmp_path)
 
     assert env["PUPPETEER_CACHE_DIR"] == str(tmp_path / "lib" / "puppeteer")
-    assert env["LIB_BIN_DIR"] == str(tmp_path / "lib" / "bin")
 
 
 def test_plugin_env_treats_empty_optional_node_paths_as_unset(tmp_path: Path) -> None:
@@ -195,7 +199,6 @@ def test_plugin_env_preserves_user_runtime_dirs_when_derived_config_has_defaults
 ) -> None:
     for key in (
         "LIB_DIR",
-        "LIB_BIN_DIR",
         "PNPM_HOME",
         "PNPM_BIN_DIR",
         "NPM_HOME",
