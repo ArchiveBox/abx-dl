@@ -163,7 +163,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && apt-get update -qq \
     && apt-get install -qq -y --no-install-recommends binutils \
     && ABX_RUNTIME=archivebox ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 PUID=0 PGID=0 abx-dl install chrome \
-    && CHROME_BINARY="$LIB_DIR/playwright/bin/chrome" \
+    && CHROME_BINARY="$LIB_DIR/playwright/bin/chromium" \
     && export CHROME_BINARY \
     && test -x "$CHROME_BINARY" \
     && "$CHROME_BINARY" --version | tee -a /VERSION.txt \
@@ -204,7 +204,7 @@ RUN (echo -e "\n\n[+] abx-dl runtime versions" \
     && abx-dl --version \
     && /opt/node/bin/node --version \
     && /venv/bin/python3 --version \
-    && CHROME_BINARY="$LIB_DIR/playwright/bin/chrome" \
+    && CHROME_BINARY="$LIB_DIR/playwright/bin/chromium" \
     && export CHROME_BINARY \
     && "$CHROME_BINARY" --version \
     && abx-dl plugins chrome \
