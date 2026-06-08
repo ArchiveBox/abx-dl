@@ -177,7 +177,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
         parse_dom_outlinks pdf redirects responses screenshot seo singlefile sslcerts \
         staticfile title ublock \
     && mkdir -p "$LIB_DIR/env/bin" \
-    && ln -sf "$(command -v git)" "$LIB_DIR/env/bin/git" \
+    && ln -sf /usr/bin/git "$LIB_DIR/env/bin/git" \
     && rm -rf "$LIB_DIR"/playwright/cache/ffmpeg-* \
     && find "$LIB_DIR"/chromewebstore -type f -name '*.crx' -delete \
     && find "$LIB_DIR"/playwright/cache -path '*/chrome-linux*/locales/*' ! -name 'en-US.pak' -delete \
