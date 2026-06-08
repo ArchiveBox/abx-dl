@@ -56,10 +56,10 @@ ENV ARCHIVEBOX_USER=archivebox \
 
 ENV CODE_DIR=/app \
     DATA_DIR=/out \
-    CONFIG_DIR=/home/archivebox/.config/abx \
-    LIB_DIR=/home/archivebox/.config/abx/lib \
-    ABXPKG_LIB_DIR=/home/archivebox/.config/abx/lib \
-    PLAYWRIGHT_BROWSERS_PATH=/home/archivebox/.config/abx/lib/playwright/cache \
+    CONFIG_DIR=/opt/archivebox \
+    LIB_DIR=/opt/archivebox/lib \
+    ABXPKG_LIB_DIR=/opt/archivebox/lib \
+    PLAYWRIGHT_BROWSERS_PATH=/opt/archivebox/lib/playwright/cache \
     PERSONAS_DIR=/data/personas \
     CHROME_HEADLESS=true \
     CHROME_SANDBOX=false \
@@ -72,10 +72,10 @@ ENV UV_COMPILE_BYTECODE=false \
     UV_PROJECT_ENVIRONMENT=/venv \
     VIRTUAL_ENV=/venv \
     PIP_VENV_PYTHON=/venv/bin/python3 \
-    PATH="/venv/bin:/opt/node/bin:$LIB_DIR/env/bin:$PATH"
+    PATH="/venv/bin:/opt/node/bin:$PATH"
 
 ENV HOME=/home/archivebox \
-    XDG_CONFIG_HOME=/home/archivebox/.config \
+    XDG_CONFIG_HOME=/opt/archivebox \
     XDG_CACHE_HOME=/home/archivebox/.cache
 
 SHELL ["/bin/bash", "-o", "pipefail", "-o", "errexit", "-o", "errtrace", "-o", "nounset", "-c"]
@@ -150,7 +150,7 @@ RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_PUID}..." \
     && useradd --system --create-home --gid "$ARCHIVEBOX_USER" --groups audio,video "$ARCHIVEBOX_USER" \
     && usermod -u "$DEFAULT_PUID" "$ARCHIVEBOX_USER" \
     && groupmod -g "$DEFAULT_PGID" "$ARCHIVEBOX_USER" \
-    && install -d -o "$DEFAULT_PUID" -g "$DEFAULT_PGID" "$DATA_DIR" "$LIB_DIR" \
+    && install -d -o "$DEFAULT_PUID" -g "$DEFAULT_PGID" "$DATA_DIR" "$CONFIG_DIR" "$LIB_DIR" "$PLAYWRIGHT_BROWSERS_PATH" \
     && echo "ARCHIVEBOX_USER=$ARCHIVEBOX_USER PUID=$(id -u "$ARCHIVEBOX_USER") PGID=$(id -g "$ARCHIVEBOX_USER")" | tee -a /VERSION.txt
 
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
