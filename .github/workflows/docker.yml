@@ -147,8 +147,8 @@ jobs:
                   failed_hooks.add(record["hook_name"])
 
           print(f"failed_hooks={sorted(failed_hooks)}")
-          if len(failed_hooks) > 2:
-              raise SystemExit(f"Too many hook failures: {len(failed_hooks)}")
+          if failed_hooks:
+              raise SystemExit(f"Hook failures are not allowed: {sorted(failed_hooks)}")
           PY
 
           test -s "$OUT_DIR/wget/example.com/index.html"
