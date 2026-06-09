@@ -102,6 +102,7 @@ class PluginConfig(BaseModel):
     x_runtimes: list[str] = Field(default_factory=list, alias="x-runtimes")
     x_install_when_disabled: bool = Field(default=False, alias="x-install-when-disabled")
     output_mimetypes: list[str] = Field(default_factory=list)  # e.g. ['text/html', 'video/']
+    supported_url_schemes: list[str] = Field(default_factory=lambda: ["http", "https"], alias="x-supported-url-schemes")
     properties: dict[str, dict[str, Any]] = Field(default_factory=dict)  # JSONSchema format describing plugin config
     required_binaries: list[RequiredBinary] = Field(default_factory=list)  # e.g. [{'name': 'wget', 'binproviders': 'env,apt,brew'}]
     required_plugins: list[str] = Field(default_factory=list)  # e.g. ['chrome', 'pdf']
