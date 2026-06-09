@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 from ..config import RuntimeConfig, get_config, get_plugin_env
 from ..events import (
+    ArchiveResultEvent,
     CrawlAbortEvent,
     CrawlStartEvent,
     ProcessEvent,
@@ -45,6 +46,11 @@ async def _run_event_now(event: BaseEvent, timeout: float | None = None) -> Base
     await event.wait(timeout=timeout)
     await event.event_results_list()
     return event
+
+
+def _plugin_accepts_url(plugin: Plugin, url: str) -> bool:
+    patterns = plugin.config.input_url_patterns or ["http://", "https://"]
+    return any(url.startswith(pattern) for pattern in patterns)
 
 
 class SnapshotService(BaseService):
@@ -191,6 +197,17 @@ class SnapshotService(BaseService):
             if await self.should_abort():
                 return
             assert self.limit_state is not None
+            if not _plugin_accepts_url(plugin, self.url):
+                await event.emit(
+                    ArchiveResultEvent(
+                        snapshot_id=self.snapshot.id,
+                        plugin=plugin.name,
+                        hook_name=hook.name,
+                        status="noresults",
+                        output_str=f"URL does not match plugin input_url_patterns: {self.url}",
+                    ),
+                ).now()
+                return
             plugin_config = await get_plugin_env(
                 self.bus,
                 plugin=plugin,
