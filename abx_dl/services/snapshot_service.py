@@ -28,7 +28,7 @@ from ..events import (
     slow_warning_timeout,
 )
 from ..limits import CrawlLimitState
-from ..models import Snapshot
+from ..models import ArchiveResult, Snapshot, write_jsonl
 from ..models import Hook, Plugin
 from .base import BaseService, plugin_with_required_plugin_names
 
@@ -105,6 +105,7 @@ class SnapshotService(BaseService):
         SnapshotCleanupEvent,
     ]
     EMITS: ClassVar[list[type[BaseEvent]]] = [
+        ArchiveResultEvent,
         ProcessEvent,
         ProcessKillEvent,
         SnapshotEvent,
@@ -125,6 +126,7 @@ class SnapshotService(BaseService):
         snapshot_cleanup_phase_timeout: float = 300.0,
         abort_requested: Callable[[], bool | Awaitable[bool]] | None = None,
         selected_hooks_by_plugin: dict[str, set[str] | None] | None = None,
+        emit_jsonl: bool = False,
     ):
         self.url = url
         self.snapshot = snapshot
@@ -149,6 +151,7 @@ class SnapshotService(BaseService):
         self.snapshot_cleanup_phase_timeout = snapshot_cleanup_phase_timeout
         self.abort_requested = False
         self.abort_requested_callback = abort_requested
+        self.emit_jsonl = emit_jsonl
         self.limit_state: CrawlLimitState | None = None
         self._config: RuntimeConfig | None = None
         self._hook_timeouts: dict[tuple[str, str], int] = {}
@@ -198,13 +201,22 @@ class SnapshotService(BaseService):
                 return
             assert self.limit_state is not None
             if not _plugin_accepts_url(plugin, self.url):
+                ar = ArchiveResult(
+                    snapshot_id=self.snapshot.id,
+                    plugin=plugin.name,
+                    hook_name=hook.name,
+                    status="noresults",
+                    output_str=f"URL does not match plugin input_url_patterns: {self.url}",
+                )
+                write_jsonl(self.output_dir / "index.jsonl", ar, also_print=self.emit_jsonl)
                 await event.emit(
                     ArchiveResultEvent(
-                        snapshot_id=self.snapshot.id,
-                        plugin=plugin.name,
-                        hook_name=hook.name,
-                        status="noresults",
-                        output_str=f"URL does not match plugin input_url_patterns: {self.url}",
+                        snapshot_id=ar.snapshot_id,
+                        plugin=ar.plugin,
+                        id=ar.id,
+                        hook_name=ar.hook_name,
+                        status=ar.status,
+                        output_str=ar.output_str,
                     ),
                 ).now()
                 return
