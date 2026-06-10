@@ -236,11 +236,6 @@ def _write_env_file(path: Path, config: dict[str, str]) -> None:
             puid, pgid = parent_stat.st_uid, parent_stat.st_gid
         except OSError:
             puid = pgid = 0
-        try:
-            puid = puid or int(os.environ.get("PUID", "0"))
-            pgid = pgid or int(os.environ.get("PGID", "0"))
-        except ValueError:
-            puid = pgid = 0
         if puid and pgid:
             try:
                 os.chown(path, puid, pgid)
