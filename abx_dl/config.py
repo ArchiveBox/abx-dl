@@ -226,7 +226,11 @@ def _load_env_file(path: Path) -> dict[str, str]:
 def _write_env_file(path: Path, config: dict[str, str]) -> None:
     """Write env-style config back to disk in stable key order."""
     lines = [f"{k}={v}" for k, v in sorted(config.items())]
-    path.write_text(("\n".join(lines) + "\n") if lines else "")
+    contents = ("\n".join(lines) + "\n") if lines else ""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as tmp:
+        tmp.write(contents)
+        tmp_path = Path(tmp.name)
     if os.geteuid() == 0:
         # Docker builds and init hooks may run as root, but the config dir is
         # prepared for the runtime user. Keep root-created cache files usable by
@@ -238,9 +242,10 @@ def _write_env_file(path: Path, config: dict[str, str]) -> None:
             puid = pgid = 0
         if puid and pgid:
             try:
-                os.chown(path, puid, pgid)
+                os.chown(tmp_path, puid, pgid)
             except PermissionError:
                 pass
+    os.replace(tmp_path, path)
 
 
 def is_path_like_env_value(value: Any) -> bool:
