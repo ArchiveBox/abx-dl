@@ -265,7 +265,6 @@ def setup_services(
                 snapshot_cleanup_enabled=snapshot_cleanup_enabled,
                 snapshot_cleanup_phase_timeout=snapshot_cleanup_phase_timeout,
                 abort_requested=abort_requested,
-                emit_jsonl=emit_jsonl,
             )
 
     return None
