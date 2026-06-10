@@ -227,6 +227,25 @@ def _write_env_file(path: Path, config: dict[str, str]) -> None:
     """Write env-style config back to disk in stable key order."""
     lines = [f"{k}={v}" for k, v in sorted(config.items())]
     path.write_text(("\n".join(lines) + "\n") if lines else "")
+    if os.geteuid() == 0:
+        # Docker builds and init hooks may run as root, but the config dir is
+        # prepared for the runtime user. Keep root-created cache files usable by
+        # the later non-root process instead of requiring a Dockerfile cleanup.
+        try:
+            parent_stat = path.parent.stat()
+            puid, pgid = parent_stat.st_uid, parent_stat.st_gid
+        except OSError:
+            puid = pgid = 0
+        try:
+            puid = puid or int(os.environ.get("PUID", "0"))
+            pgid = pgid or int(os.environ.get("PGID", "0"))
+        except ValueError:
+            puid = pgid = 0
+        if puid and pgid:
+            try:
+                os.chown(path, puid, pgid)
+            except PermissionError:
+                pass
 
 
 def is_path_like_env_value(value: Any) -> bool:
