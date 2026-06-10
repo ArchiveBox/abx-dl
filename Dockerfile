@@ -50,8 +50,8 @@ ENV PYTHON_VERSION=3.13 \
     NODE_VERSION=24
 
 ENV ARCHIVEBOX_USER=archivebox \
-    DEFAULT_PUID=911 \
-    DEFAULT_PGID=911 \
+    DEFAULT_ARCHIVEBOX_UID=911 \
+    DEFAULT_ARCHIVEBOX_GID=911 \
     IN_DOCKER=True
 
 ENV CODE_DIR=/app \
@@ -145,13 +145,13 @@ FROM abx-dl-runtime-base
 COPY --from=abx-dl-builder /venv /venv
 COPY --from=abx-dl-builder /VERSION.txt /VERSION.txt
 
-RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_PUID}..." \
+RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_ARCHIVEBOX_UID}..." \
     && groupadd --system "$ARCHIVEBOX_USER" \
     && useradd --system --create-home --gid "$ARCHIVEBOX_USER" --groups audio,video "$ARCHIVEBOX_USER" \
-    && usermod -u "$DEFAULT_PUID" "$ARCHIVEBOX_USER" \
-    && groupmod -g "$DEFAULT_PGID" "$ARCHIVEBOX_USER" \
-    && install -d -o "$DEFAULT_PUID" -g "$DEFAULT_PGID" "$DATA_DIR" "$CONFIG_DIR" "$LIB_DIR" "$PLAYWRIGHT_BROWSERS_PATH" \
-    && echo "ARCHIVEBOX_USER=$ARCHIVEBOX_USER PUID=$(id -u "$ARCHIVEBOX_USER") PGID=$(id -g "$ARCHIVEBOX_USER")" | tee -a /VERSION.txt
+    && usermod -u "$DEFAULT_ARCHIVEBOX_UID" "$ARCHIVEBOX_USER" \
+    && groupmod -g "$DEFAULT_ARCHIVEBOX_GID" "$ARCHIVEBOX_USER" \
+    && install -d -o "$DEFAULT_ARCHIVEBOX_UID" -g "$DEFAULT_ARCHIVEBOX_GID" "$DATA_DIR" "$CONFIG_DIR" "$LIB_DIR" "$PLAYWRIGHT_BROWSERS_PATH" \
+    && echo "ARCHIVEBOX_USER=$ARCHIVEBOX_USER ARCHIVEBOX_UID=$(id -u "$ARCHIVEBOX_USER") ARCHIVEBOX_GID=$(id -g "$ARCHIVEBOX_USER")" | tee -a /VERSION.txt
 
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.npm,sharing=locked,id=npm-$TARGETARCH$TARGETVARIANT \
@@ -197,7 +197,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && (find "$LIB_DIR" -type f \( -name '*.so' -o -name '*.node' \) -exec strip --strip-unneeded {} + 2>/dev/null || true) \
     && apt-get purge -y --auto-remove binutils \
     && rm -f /venv/bin/uv /venv/bin/uvx \
-    && find "$LIB_DIR" \( ! -user "$DEFAULT_PUID" -o ! -group "$DEFAULT_PGID" \) -exec chown "$DEFAULT_PUID:$DEFAULT_PGID" {} + \
+    && find "$LIB_DIR" \( ! -user "$DEFAULT_ARCHIVEBOX_UID" -o ! -group "$DEFAULT_ARCHIVEBOX_GID" \) -exec chown "$DEFAULT_ARCHIVEBOX_UID:$DEFAULT_ARCHIVEBOX_GID" {} + \
     && rm -rf /var/lib/apt/lists/* /tmp/*
 
 RUN (echo -e "\n\n[+] abx-dl runtime versions" \
