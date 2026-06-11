@@ -22,6 +22,7 @@ from ..events import (
     ProcessEvent,
     ProcessKillEvent,
     ProcessStartedEvent,
+    ProcessStdoutEvent,
     SnapshotCompletedEvent,
     SnapshotEvent,
     slow_warning_timeout,
@@ -44,6 +45,28 @@ async def _run_event_now(event: BaseEvent, timeout: float | None = None) -> Base
     await event.wait(timeout=timeout)
     await event.event_results_list()
     return event
+
+
+async def _wait_for_background_ready(bus: EventBus, process_event: BaseEvent, timeout: float) -> None:
+    # Background hook stdout is the existing readiness contract: launchers may
+    # exist before the hook has published the shared state later hooks need.
+    # A hook that exits before stdout is also ready from the scheduler's
+    # perspective because its final event/result has already been emitted.
+    stdout_task = asyncio.create_task(
+        bus.find(ProcessStdoutEvent, child_of=process_event, past=True, future=timeout),
+    )
+    completed_task = asyncio.create_task(
+        bus.find(ProcessCompletedEvent, child_of=process_event, past=True, future=timeout),
+    )
+    done, pending = await asyncio.wait(
+        {stdout_task, completed_task},
+        timeout=timeout,
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+    for task in pending:
+        task.cancel()
+    if not done:
+        raise RuntimeError("Background hook did not emit stdout or exit")
 
 
 class CrawlService(BaseService):
@@ -197,10 +220,12 @@ class CrawlService(BaseService):
                 # Spawn + PEP-723 cold-cache dep install fits comfortably in
                 # 60s; ``None`` would silently hang on a failed spawn.
                 started_wait_timeout = 60.0
+                ready_wait_timeout = float(timeout or 0) + 30.0
             else:
-                handler_timeout = timeout + 30.0
+                handler_timeout = float(timeout or 0) + 30.0
                 handler_slow_timeout = slow_warning_timeout(handler_timeout)
                 started_wait_timeout = handler_timeout
+                ready_wait_timeout = handler_timeout
             process_event = ProcessEvent(
                 plugin_name=plugin.name,
                 hook_name=hook.name,
@@ -230,6 +255,7 @@ class CrawlService(BaseService):
                     return
                 if started_process is None:
                     raise RuntimeError(f"Background hook {hook.name} did not start")
+                await _wait_for_background_ready(self.bus, background_process, ready_wait_timeout)
             else:
                 foreground_process = event.emit(process_event)
                 await _run_event_now(foreground_process, handler_timeout)
