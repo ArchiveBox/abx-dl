@@ -153,6 +153,7 @@ jobs:
     if: ${{ needs.discover-plugins.outputs.plugins != '[]' }}
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
       CLAUDECODEEXTRACT_MODEL: sonnet
       CLAUDECODEEXTRACT_MAX_TURNS: "10"
       CLAUDECODEEXTRACT_TIMEOUT: "120"
