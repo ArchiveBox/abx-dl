@@ -170,7 +170,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && ABXPKG_NO_CACHE=True ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 abx-dl install \
         base archivedotorg claudecode claudecodecleanup claudecodeextract \
         defuddle favicon forumdl gallerydl git hashes htmltotext liteparse media mercury \
-        opendataloader papersdl parse_html_urls parse_jsonl_urls parse_netscape_urls \
+        papersdl parse_html_urls parse_jsonl_urls parse_netscape_urls \
         parse_rss_urls parse_txt_urls readability ssl trafilatura wget ytdlp \
         accessibility archivewebpage chrome_mhtml chrome_screencast claudechrome \
         consolelog dns dom headers infiniscroll istilldontcareaboutcookies modalcloser \

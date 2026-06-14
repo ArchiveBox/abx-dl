@@ -337,6 +337,10 @@ async def install_plugins(
         return []
 
     merged_config = dict(config_overrides or {})
+    if plugin_names:
+        for plugin in selected.values():
+            if plugin.enabled_key in plugin.config.properties:
+                merged_config[plugin.enabled_key] = True
     if dry_run:
         merged_config["DRY_RUN"] = True
     initial_user_config = get_initial_env()
