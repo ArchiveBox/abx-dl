@@ -168,11 +168,11 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && test -x "$CHROME_BINARY" \
     && "$CHROME_BINARY" --version | tee -a /VERSION.txt \
     && ABXPKG_NO_CACHE=True ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 abx-dl install \
-        base archivedotorg claudecode claudecodecleanup claudecodeextract \
+        base archivedotorg \
         defuddle favicon forumdl gallerydl git hashes htmltotext liteparse media mercury \
         papersdl parse_html_urls parse_jsonl_urls parse_netscape_urls \
         parse_rss_urls parse_txt_urls readability ssl trafilatura wget ytdlp \
-        accessibility archivewebpage chrome_mhtml chrome_screencast claudechrome \
+        accessibility archivewebpage chrome_mhtml chrome_screencast \
         consolelog dns dom headers infiniscroll istilldontcareaboutcookies modalcloser \
         parse_dom_outlinks pdf redirects responses screenshot seo singlefile sslcerts \
         staticfile title ublock \
