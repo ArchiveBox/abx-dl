@@ -1,0 +1,21 @@
+Dockerfile
+  s_cdb7ab28cd51df::t_ad08710c464a68 165,170
+abx_dl/dependencies.py
+  s_cdb7ab28cd51df::t_c36df551aba1c9 17,87
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "8db6a931da05d46f55fdb17e5e30a885d6067778",
+  "prompts": {},
+  "sessions": {
+    "s_cdb7ab28cd51df": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019eaa76-c893-7193-bd47-d91b6111304f",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
