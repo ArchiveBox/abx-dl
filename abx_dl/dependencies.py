@@ -14,6 +14,7 @@ from abxpkg import (
     DEFAULT_PROVIDER_NAMES,
     PROVIDER_CLASS_BY_NAME,
 )  # DO NOT REMOVE UNUSED IMPORT, critical for pydantic circular reference fix
+from abxpkg.binprovider import env_flag_is_true
 
 from .config import GlobalConfig
 
@@ -83,6 +84,6 @@ def install_binary(spec: dict[str, Any]) -> Binary:
     )
 
     try:
-        return binary.load_or_install()
+        return binary.install(no_cache=env_flag_is_true("ABXPKG_NO_CACHE"))
     except Exception:
         return binary

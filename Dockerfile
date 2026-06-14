@@ -162,12 +162,12 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     echo "[+] Installing Chrome and plugin dependencies..." \
     && apt-get update -qq \
     && apt-get install -qq -y --no-install-recommends binutils \
-    && ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 abx-dl install chrome \
+    && ABXPKG_NO_CACHE=True ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 abx-dl install chrome \
     && CHROME_BINARY="$LIB_DIR/playwright/bin/chromium" \
     && export CHROME_BINARY \
     && test -x "$CHROME_BINARY" \
     && "$CHROME_BINARY" --version | tee -a /VERSION.txt \
-    && ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 abx-dl install \
+    && ABXPKG_NO_CACHE=True ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 abx-dl install \
         base archivedotorg claudecode claudecodecleanup claudecodeextract \
         defuddle favicon forumdl gallerydl git hashes htmltotext liteparse media mercury \
         opendataloader papersdl parse_html_urls parse_jsonl_urls parse_netscape_urls \
