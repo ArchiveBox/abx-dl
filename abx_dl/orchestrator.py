@@ -574,7 +574,11 @@ async def download(
     if derived_config_overrides:
         initial_derived_config.update(derived_config_overrides)
     ensure_default_persona_dir()
-    output_dir = output_dir or Path.cwd()
+    # Hook subprocesses run with cwd set to SNAP_DIR/<plugin>, while hook env
+    # carries shared crawl/snapshot paths like SNAP_DIR and CRAWL_DIR. Keeping
+    # those paths absolute here prevents JS/Python hooks from resolving the
+    # same run directory differently after ProcessService enters a plugin cwd.
+    output_dir = (output_dir or Path.cwd()).expanduser().resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     index_path = output_dir / "index.jsonl"
     stdout_is_tty = sys.stdout.isatty()

@@ -7,11 +7,11 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer = "2026-06-09T19:01:05.988788Z"
 exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
-abxbus = { timestamp = "0001-01-01T00:00:00Z", span = "PT1S" }
+abxbus = { timestamp = "2026-06-14T19:01:04.988991Z", span = "PT1S" }
 abx-dl = "2100-01-01T00:00:00Z"
 abx-plugins = "2100-01-01T00:00:00Z"
 abxpkg = "2100-01-01T00:00:00Z"
@@ -39,9 +39,11 @@ dev = [
     { name = "flake8" },
     { name = "flask" },
     { name = "mypy" },
+    { name = "pdm-backend" },
     { name = "prek" },
     { name = "pyright" },
     { name = "pytest" },
+    { name = "pytest-codeblocks" },
     { name = "pytest-github-actions-annotate-failures" },
     { name = "pytest-httpserver" },
     { name = "pytest-sugar" },
@@ -53,9 +55,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "abx-plugins", specifier = ">=1.11.223" },
+    { name = "abx-plugins", specifier = ">=1.11.224" },
     { name = "abxbus", specifier = "==2.5.10" },
-    { name = "abxpkg", specifier = ">=1.11.219" },
+    { name = "abxpkg", specifier = ">=1.11.224" },
     { name = "jambo", specifier = ">=0.1.7" },
     { name = "platformdirs", specifier = ">=4.0.0" },
     { name = "psutil", specifier = ">=7.2.1" },
@@ -71,10 +73,12 @@ dev = [
     { name = "flake8", specifier = ">=7.1.1" },
     { name = "flask", specifier = ">=3.0" },
     { name = "mypy", specifier = ">=1.11.2" },
+    { name = "pdm-backend", specifier = ">=2.4.0" },
     { name = "prek", specifier = ">=0.3.6" },
     { name = "pyright", specifier = ">=1.1.408" },
-    { name = "pytest", specifier = ">=8.0.0" },
-    { name = "pytest-github-actions-annotate-failures", specifier = ">=0.3.0" },
+    { name = "pytest", specifier = ">=8.3.3,<9" },
+    { name = "pytest-codeblocks", specifier = ">=0.17.0" },
+    { name = "pytest-github-actions-annotate-failures", specifier = ">=0.4.0" },
     { name = "pytest-httpserver", specifier = ">=1.1.0" },
     { name = "pytest-sugar", specifier = ">=1.0.0" },
     { name = "pytest-timeout", specifier = ">=2.3.1" },
@@ -85,7 +89,7 @@ dev = [
 
 [[package]]
 name = "abx-plugins"
-version = "1.11.225"
+version = "1.11.227"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "abxbus" },
@@ -96,9 +100,9 @@ dependencies = [
     { name = "rich-click" },
     { name = "uv" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/cf/98/a26b70cd8b803815f98d7e7a9ff47ada2df58206c4908efcf008d4eccecf/abx_plugins-1.11.225.tar.gz", hash = "sha256:06f6644f2c416aa204003004aa5a9028d8f370bed31e98cc54646cbc9fdb8020", size = 256913, upload-time = "2026-06-14T16:42:58.166Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ca/d8/bb507d4c8154c40c22c7fa51992dde73d41a43ffd16b493f660c74ab9320/abx_plugins-1.11.227.tar.gz", hash = "sha256:f463534d14094da6d838043fb9ced58411073855cb5e9638da1e1da777b02c32", size = 255759, upload-time = "2026-06-14T18:47:34.207Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/fd/1f/d18cd690f7bdbb40378c920a3a3696d12af5f523b9bd57ef51ab7ae26961/abx_plugins-1.11.225-py3-none-any.whl", hash = "sha256:1523b5efef7a2b026d02e7ba82253f37f051e90e26ca417a838f59ff8cce9022", size = 405884, upload-time = "2026-06-14T16:42:59.266Z" },
+    { url = "https://files.pythonhosted.org/packages/10/41/19f927f5e3778788625f0c5360c35bd9549f9f10b51872cffb3487159854/abx_plugins-1.11.227-py3-none-any.whl", hash = "sha256:2ce92d3593f57c0edbc84dae5a06dbc90f4fddb8fe2ad38533ec71f34c4c52e7", size = 404060, upload-time = "2026-06-14T18:47:32.829Z" },
 ]
 
 [[package]]
@@ -117,7 +121,7 @@ wheels = [
 
 [[package]]
 name = "abxpkg"
-version = "1.11.222"
+version = "1.11.224"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pip" },
@@ -126,9 +130,9 @@ dependencies = [
     { name = "rich-click" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/da/84/0ff6eeb0592eddbf3524aa8941c1cfe79ff381cdc83e77057ef9801fb6ef/abxpkg-1.11.222.tar.gz", hash = "sha256:4898b70666a949184f519d2838f2d005c7bdfafcc109d71c43e5ec824645f02c", size = 231442, upload-time = "2026-06-14T17:59:12.973Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a1/47/9cdffee101a8fc1ac6ae3a27d287516b87b8665e7bce64ff019c609602c9/abxpkg-1.11.224.tar.gz", hash = "sha256:e46c25d0f3ce671004c8f81ce598af2151e510af800c4a9cc93cbc75a0d9542f", size = 231769, upload-time = "2026-06-14T18:46:48.987Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/41/8c/40ee81e2a0d7fc3c769ce8ecce55502134185d70e1d25f5f8d2149f4494b/abxpkg-1.11.222-py3-none-any.whl", hash = "sha256:bc8e1a2696e992fc63f7a95971f4960951f9f1362e665d24a539fd232f2a048e", size = 248433, upload-time = "2026-06-14T17:59:11.642Z" },
+    { url = "https://files.pythonhosted.org/packages/8e/6e/f84c2ed45e5f7ec4e1cbb9b200037fc0c4348604332e62d8e147fb063158/abxpkg-1.11.224-py3-none-any.whl", hash = "sha256:cacc36617a8f9c13366d803674cf5c44c1be5cd1c22c30267d665a53e45be0c0", size = 248779, upload-time = "2026-06-14T18:46:47.551Z" },
 ]
 
 [[package]]
@@ -733,6 +737,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pdm-backend"
+version = "2.4.9"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f1/b2/73898a92113f532fe9cecaae97f070a12ec4c786d66af377a6f81d38e208/pdm_backend-2.4.9.tar.gz", hash = "sha256:c41a852ccbf4b567b033db9b2ae78660d7a4ea49307719959ab88a01f0aabb2e", size = 119709, upload-time = "2026-06-05T08:07:58.08Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/55/30/c8bd9fab1f3811462451e4a41a36e2d85b361560416ec874131611cc7982/pdm_backend-2.4.9-py3-none-any.whl", hash = "sha256:8d1064751dadb0c40b1026b46826a448d85c8228a564985c62fb53d4aba538a1", size = 115770, upload-time = "2026-06-05T08:07:57.073Z" },
+]
+
+[[package]]
 name = "pip"
 version = "26.1.2"
 source = { registry = "https://pypi.org/simple" }
@@ -957,7 +970,7 @@ wheels = [
 
 [[package]]
 name = "pytest"
-version = "9.0.3"
+version = "8.4.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama", marker = "sys_platform == 'win32'" },
@@ -966,9 +979,21 @@ dependencies = [
     { name = "pluggy" },
     { name = "pygments" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7d/0d/549bd94f1a0a402dc8cf64563a117c0f3765662e2e668477624baeec44d5/pytest-9.0.3.tar.gz", hash = "sha256:b86ada508af81d19edeb213c681b1d48246c1a91d304c6c81a427674c17eb91c", size = 1572165, upload-time = "2026-04-07T17:16:18.027Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/a3/5c/00a0e072241553e1a7496d638deababa67c5058571567b92a7eaa258397c/pytest-8.4.2.tar.gz", hash = "sha256:86c0d0b93306b961d58d62a4db4879f27fe25513d4b969df351abdddb3c30e01", size = 1519618, upload-time = "2025-09-04T14:34:22.711Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d4/24/a372aaf5c9b7208e7112038812994107bc65a84cd00e0354a88c2c77a617/pytest-9.0.3-py3-none-any.whl", hash = "sha256:2c5efc453d45394fdd706ade797c0a81091eccd1d6e4bccfcd476e2b8e0ab5d9", size = 375249, upload-time = "2026-04-07T17:16:16.13Z" },
+    { url = "https://files.pythonhosted.org/packages/a8/a4/20da314d277121d6534b3a980b29035dcd51e6744bd79075a6ce8fa4eb8d/pytest-8.4.2-py3-none-any.whl", hash = "sha256:872f880de3fc3a5bdc88a11b39c9710c3497a547cfa9320bc3c5e62fbf272e79", size = 365750, upload-time = "2025-09-04T14:34:20.226Z" },
+]
+
+[[package]]
+name = "pytest-codeblocks"
+version = "0.17.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pytest" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a5/99/1ee3017a525dcb36566f0523938fbc20fb33ef8bf957205fafe6659f3a60/pytest_codeblocks-0.17.0.tar.gz", hash = "sha256:446e1babd182f54b4f113d567737a22f5405cade144c08a0085b2985247943d5", size = 11176, upload-time = "2023-09-17T19:17:31.05Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/fa/2c/503f797c7ac1e35d81944f8fbcf3ea7a1965e435676570a833035d8d0937/pytest_codeblocks-0.17.0-py3-none-any.whl", hash = "sha256:b2aed8e66c3ce65435630783b391e7c7ae46f80b8220d3fa1bb7c689b36e78ad", size = 7716, upload-time = "2023-09-17T19:17:29.506Z" },
 ]
 
 [[package]]

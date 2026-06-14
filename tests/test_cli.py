@@ -849,3 +849,31 @@ def test_readme_dl_command_downloads_example_dot_com_with_real_output(tmp_path: 
     index_records = [json.loads(line) for line in (output_dir / "index.jsonl").read_text().splitlines() if line.startswith("{")]
     wget_results = [record for record in index_records if record["type"] == "ArchiveResult" and record["plugin"] == "wget"]
     assert any(record["output_str"] == "wget/example.com/index.html" for record in wget_results)
+
+
+def test_dl_relative_dir_keeps_shared_hook_paths_in_run_dir(tmp_path: Path) -> None:
+    result = _run_cli(
+        tmp_path,
+        "dl",
+        "--plugins=title,wget",
+        "--dir=out",
+        "https://example.com/",
+    )
+    assert result.returncode == 0, result.stderr
+
+    output_dir = tmp_path / "cwd" / "out"
+    records = [json.loads(line) for line in (output_dir / "index.jsonl").read_text().splitlines() if line.startswith("{")]
+    archive_results = [record for record in records if record["type"] == "ArchiveResult"]
+    failed_results = [record for record in archive_results if record["status"] == "failed"]
+    assert failed_results == []
+
+    title_result = next(record for record in archive_results if record["plugin"] == "title")
+    wget_result = next(record for record in archive_results if record["plugin"] == "wget")
+    assert title_result["status"] == "succeeded"
+    assert title_result["output_str"] == "Example Domain"
+    assert wget_result["status"] == "succeeded"
+    assert wget_result["output_str"] == "wget/example.com/index.html"
+    assert (output_dir / "title" / "title.txt").read_text() == "Example Domain"
+    assert "Example Domain" in (output_dir / "wget" / "example.com" / "index.html").read_text()
+    assert not (output_dir / "chrome" / "out").exists()
+    assert not (output_dir / "wget" / "out").exists()

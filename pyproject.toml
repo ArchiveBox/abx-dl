@@ -41,7 +41,7 @@ dependencies = [
     "rich-click>=1.8.0",
     "rich>=13.0.0",
     "abxbus==2.5.10",
-    "abxpkg>=1.11.220",
+    "abxpkg>=1.11.224",
     "abx-plugins>=1.11.224",
     "jambo>=0.1.7",
     "pydantic>=2.0.0",
@@ -109,7 +109,8 @@ exclude = ["*.pyi", "typings/", "migrations/", "vendor/"]
 ignore = ["E731", "E303", "E266", "E241", "E222"]
 
 [tool.pytest.ini_options]
-testpaths = [ "tests", "server/tests" ]
+testpaths = [ "tests", "server/tests", "README.md", "AGENTS.md", "skills" ]
+addopts = ["--codeblocks"]
 timeout = 600
 timeout_method = "thread"
 
