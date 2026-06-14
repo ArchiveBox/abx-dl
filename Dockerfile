@@ -171,11 +171,11 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     --mount=type=cache,target=/root/.cache/pnpm,sharing=locked,id=abxpkg-pnpm-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/pip,sharing=locked,id=pip-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/ms-playwright,sharing=locked,id=browsers-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/tmp/abxpkg-cache,sharing=locked,mode=1777,id=abxpkg-tmp-$TARGETARCH$TARGETVARIANT \
+    --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=abxpkg-tmp-$TARGETARCH$TARGETVARIANT \
     echo "[+] Installing Chrome and plugin dependencies..." \
     && apt-get update -qq \
     && apt-get install -qq -y --no-install-recommends binutils \
-    && export HOME=/tmp/abxpkg-cache ABXPKG_TMP_CACHE_DIR=/tmp/abxpkg-cache \
+    && export HOME=/var/tmp/abxpkg-cache ABXPKG_TMP_CACHE_DIR=/var/tmp/abxpkg-cache \
     && ABXPKG_NO_CACHE=True ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 abx-dl install chrome \
     && CHROME_BINARY="$LIB_DIR/playwright/bin/chromium" \
     && export CHROME_BINARY \
