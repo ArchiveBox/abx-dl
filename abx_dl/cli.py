@@ -89,6 +89,19 @@ SIZE_ORANGE_MAX = 100 * 1024 * 1024
 SIZE_FLASHING_MIN = 1024 * 1024 * 1024
 
 
+def _binary_display_path(path: object) -> str:
+    if not path:
+        return "-"
+    text = str(path)
+    try:
+        home = str(Path.home())
+        if text.startswith(home):
+            return "~" + text.removeprefix(home)
+    except Exception:
+        pass
+    return text
+
+
 @dataclass
 class _LiveProcessRecord:
     id: str
@@ -1597,6 +1610,10 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
     else:
         all_plugins = discover_plugins()
 
+    enabled_plugin_names = [name for name, plugin in all_plugins.items() if _plugin_enabled_for_install(plugin)]
+    enabled_plugins = filter_plugins(all_plugins, enabled_plugin_names, include_providers=True)
+    enabled_plugin_set = set(enabled_plugins)
+
     # Filter to selected plugins if specified (resolves required_plugins dependencies)
     if plugin_names:
         selected = filter_plugins(all_plugins, list(plugin_names), include_providers=do_install)
@@ -1609,14 +1626,14 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
             console.print(f"[dim]Available: {', '.join(sorted(all_plugins.keys()))}[/dim]")
             return
     else:
-        enabled_plugin_names = [name for name, plugin in all_plugins.items() if _plugin_enabled_for_install(plugin)]
-        selected = filter_plugins(all_plugins, enabled_plugin_names, include_providers=do_install)
-        visible_plugins = set(selected)
+        selected = all_plugins
+        visible_plugins = set(enabled_plugins)
 
     if do_install:
+        install_selected = selected if plugin_names else enabled_plugins
         raise SystemExit(
             _run_plugin_install(
-                selected,
+                install_selected,
                 visible_plugins=visible_plugins,
                 label_plugins=plugin_names,
                 debug=debug,
@@ -1625,25 +1642,17 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
         )
     else:
         # Check + info mode (default)
-        # Show summary table
-        table = Table(title="Plugins")
-        table.add_column("Name", style="cyan")
-        table.add_column("Status")
-        table.add_column("Hooks", justify="right")
-        table.add_column("Deps")
-        table.add_column("Outputs")
-        table.add_column("Info")
-
+        console.print("[bold]Plugin Binaries[/bold]")
         all_ok = True
         for name in sorted(selected.keys()):
             plugin = selected[name]
-            hooks = plugin.filter_hooks("CrawlSetup") + plugin.filter_hooks("Snapshot")
-            hooks_count = len(hooks)
+            plugin_enabled = name in enabled_plugin_set
             initial_user_env = get_initial_env()
+            row_style = None if plugin_enabled else "dim"
+            enabled_label = "[green]enabled[/green]" if plugin_enabled else "[grey53]disabled[/grey53]"
 
             # Check binary status
             if plugin.config.required_binaries:
-                binary_statuses = []
                 for hydrated_spec in get_required_binary_requests(
                     plugin,
                     plugin.config.required_binaries,
@@ -1654,24 +1663,40 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
                 ):
                     binary = load_binary(hydrated_spec)
                     if binary.is_valid:
-                        binary_statuses.append(f"[green]{binary.name}[/green]")
+                        status = "[green]✓[/green]" if plugin_enabled else "[grey53]-[/grey53]"
                     else:
-                        binary_statuses.append(f"[red]{binary.name}[/red]")
-                        all_ok = False
-                status = "[green]✓[/green]" if all(b.startswith("[green]") for b in binary_statuses) else "[yellow]○[/yellow]"
+                        status = "[red]X[/red]" if plugin_enabled else "[grey53]-[/grey53]"
+                        if plugin_enabled:
+                            all_ok = False
+
+                    console.print(
+                        "",
+                        status,
+                        name.ljust(22),
+                        enabled_label,
+                        binary.name.ljust(24),
+                        str(binary.loaded_version or "-")[:15].ljust(16),
+                        ((binary.loaded_binprovider.name if binary.loaded_binprovider else "-")[:8]).ljust(8),
+                        _binary_display_path(binary.loaded_abspath),
+                        style=row_style,
+                        overflow="ignore",
+                        crop=False,
+                    )
             else:
-                status = "[green]✓[/green]"
+                console.print(
+                    "",
+                    "[green]✓[/green]" if plugin_enabled else "[grey53]-[/grey53]",
+                    name.ljust(22),
+                    enabled_label,
+                    "-".ljust(24),
+                    "-".ljust(16),
+                    "-".ljust(8),
+                    "-",
+                    style=row_style,
+                    overflow="ignore",
+                    crop=False,
+                )
 
-            table.add_row(
-                name,
-                status,
-                str(hooks_count),
-                _format_plugin_badges(plugin.config.required_plugins, style="yellow3"),
-                _format_plugin_badges(plugin.config.output_mimetypes, style="magenta"),
-                _plugin_info(plugin),
-            )
-
-        console.print(table)
         console.print(f"\n[dim]{len(selected)} plugins[/dim]")
 
         if not all_ok:
