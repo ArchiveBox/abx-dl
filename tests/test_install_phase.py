@@ -156,6 +156,64 @@ def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) 
     assert no_cache_request.no_cache is True
 
 
+def test_install_event_includes_opencode_when_route_is_disabled(tmp_path: Path) -> None:
+    plugins = discover_plugins(runtime="archivebox")
+    plugin = plugins["opencode"]
+    snapshot = Snapshot(url="")
+    run_dir = tmp_path / "run"
+    managed_lib_dir = tmp_path / "lib"
+    bus = create_bus(total_timeout=60.0, name=f"install_phase_opencode_disabled_{tmp_path.name}")
+    PluginBinariesService(
+        bus,
+        plugins={"opencode": plugin},
+        auto_install=False,
+        install_plugins=[plugin],
+        output_dir=run_dir,
+        snapshot=snapshot,
+    )
+    request_events: list[BinaryRequestEvent] = []
+
+    async def on_BinaryRequestEvent(event: BinaryRequestEvent) -> None:
+        request_events.append(event)
+
+    bus.on(BinaryRequestEvent, on_BinaryRequestEvent)
+
+    async def run() -> None:
+        await bus.emit(
+            MachineEvent(
+                config={
+                    **get_initial_env(),
+                    "LIB_DIR": str(managed_lib_dir),
+                    "OPENCODE_ENABLED": False,
+                },
+                config_type="user",
+            ),
+        ).now()
+        await bus.emit(
+            MachineEvent(
+                config={},
+                config_type="derived",
+            ),
+        ).now()
+        await bus.emit(
+            InstallEvent(
+                url="",
+                snapshot_id=snapshot.id,
+                output_dir=str(run_dir),
+            ),
+        ).now()
+        await bus.wait_until_idle()
+
+    asyncio.run(run())
+
+    opencode_request = next(
+        event for event in request_events if event.extra_context.get("plugin_name") == "opencode" and event.name == "opencode"
+    )
+    assert opencode_request.binproviders == "env,pnpm"
+    assert opencode_request.overrides is not None
+    assert opencode_request.overrides["pnpm"]["install_root"] == str(managed_lib_dir / "pnpm" / "packages" / "opencode")
+
+
 def test_install_event_emits_cached_binary_requests_for_persistence(tmp_path: Path) -> None:
     plugin_dir = tmp_path / "myplugin"
     plugin_dir.mkdir()
