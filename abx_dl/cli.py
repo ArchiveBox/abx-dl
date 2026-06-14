@@ -1604,7 +1604,8 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
             console.print(f"[dim]Available: {', '.join(sorted(all_plugins.keys()))}[/dim]")
             return
     else:
-        selected = all_plugins
+        enabled_plugin_names = [name for name, plugin in all_plugins.items() if _plugin_enabled_for_install(plugin)]
+        selected = filter_plugins(all_plugins, enabled_plugin_names, include_providers=do_install)
         visible_plugins = set(selected)
 
     if do_install:
@@ -1644,6 +1645,7 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
                     overrides=initial_user_env,
                     derived_overrides=get_derived_config(initial_user_env),
                     run_output_dir=Path.cwd(),
+                    logical_names=False,
                 ):
                     binary = load_binary(hydrated_spec)
                     if binary.is_valid:
@@ -1697,6 +1699,9 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
                 for hook in hooks:
                     bg = " [dim](background)[/dim]" if hook.is_background else ""
                     console.print(f"  {hook.order:02d}: {hook.name}{bg}")
+
+        if not all_ok:
+            raise SystemExit(1)
 
 
 @cli.command()

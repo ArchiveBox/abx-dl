@@ -2,8 +2,8 @@
 
 # Dockerfile for abx-dl. This image owns the shared downloader runtime layer:
 # Python, Node, abx-dl/abxpkg/abx-plugins, Chromium, and downloader plugin-managed tools.
-# ArchiveBox-specific search/server pieces such as ripgrep, sonic, and
-# supervisor intentionally remain owned by the ArchiveBox image.
+# ArchiveBox-specific server pieces such as sonic and supervisor intentionally
+# remain owned by the ArchiveBox image.
 #
 # Build from the abx-dl package directory:
 #   docker buildx build ./abx-dl -f ./abx-dl/Dockerfile \
@@ -176,20 +176,15 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && apt-get update -qq \
     && apt-get install -qq -y --no-install-recommends binutils \
     && export HOME=/var/tmp/abxpkg-cache ABXPKG_TMP_CACHE_DIR=/var/tmp/abxpkg-cache \
+    && python3 -c 'from abx_dl.models import discover_plugins; [print(f"export {plugin.enabled_key}=True") for plugin in discover_plugins(runtime="abx-dl").values() if plugin.enabled_key in plugin.config.properties]' > /tmp/abx-dl-enable-plugins.env \
+    && sort /tmp/abx-dl-enable-plugins.env | tee -a /VERSION.txt \
+    && source /tmp/abx-dl-enable-plugins.env \
     && ABXPKG_NO_CACHE=True ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 abx-dl install chrome \
     && CHROME_BINARY="$LIB_DIR/playwright/bin/chromium" \
     && export CHROME_BINARY \
     && test -x "$CHROME_BINARY" \
     && "$CHROME_BINARY" --version | tee -a /VERSION.txt \
     && ABXPKG_NO_CACHE=True ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 abx-dl install \
-        base archivedotorg \
-        defuddle favicon forumdl gallerydl git hashes htmltotext liteparse media mercury \
-        papersdl parse_html_urls parse_jsonl_urls parse_netscape_urls \
-        parse_rss_urls parse_txt_urls readability ssl trafilatura wget ytdlp \
-        accessibility archivewebpage chrome_mhtml chrome_screencast \
-        consolelog dns dom headers infiniscroll istilldontcareaboutcookies modalcloser \
-        parse_dom_outlinks pdf redirects responses screenshot seo singlefile sslcerts \
-        staticfile title ublock \
     && mkdir -p "$LIB_DIR/env/bin" \
     && ln -sf /usr/bin/git "$LIB_DIR/env/bin/git" \
     && rm -rf "$LIB_DIR"/playwright/cache/ffmpeg-* \
@@ -218,15 +213,17 @@ RUN (echo -e "\n\n[+] abx-dl runtime versions" \
     && abx-dl --version \
     && /opt/node/bin/node --version \
     && /venv/bin/python3 --version \
+    && python3 -c 'from abx_dl.models import discover_plugins; [print(f"export {plugin.enabled_key}=True") for plugin in discover_plugins(runtime="abx-dl").values() if plugin.enabled_key in plugin.config.properties]' > /tmp/abx-dl-enable-plugins.env \
+    && source /tmp/abx-dl-enable-plugins.env \
     && CHROME_BINARY="$LIB_DIR/playwright/bin/chromium" \
     && export CHROME_BINARY \
     && "$CHROME_BINARY" --version \
-    && abx-dl plugins chrome \
+    && abx-dl plugins \
+    && rg --version | head -1 \
     && ! command -v gcc \
     && ! command -v g++ \
     && ! command -v make \
     && ! command -v cargo \
-    && ! command -v rg \
     && ! command -v sonic \
     && ! command -v supervisord \
     && echo -e "\n\n[√] Finished abx-dl Docker build successfully." \

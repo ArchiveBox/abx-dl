@@ -282,6 +282,8 @@ def _load_plugin_config_model(
         else:
             effective_derived_env = dict(derived_env)
         for key, value in effective_derived_env.items():
+            if key in os.environ:
+                continue
             if value is None:
                 continue
             if key in {"DATA_DIR", "CRAWL_DIR", "SNAP_DIR"} and global_config.get(key) != value:
@@ -574,6 +576,7 @@ def get_required_binary_requests(
     overrides: GlobalConfig | Mapping[str, Any] | None = None,
     derived_overrides: GlobalConfig | Mapping[str, Any] | None = None,
     run_output_dir: Path | None = None,
+    logical_names: bool = True,
 ) -> list[dict[str, Any]]:
     """Hydrate one plugin's ``required_binaries`` into BinaryRequest payloads."""
     plugin_config = _load_plugin_config_model(
@@ -599,7 +602,9 @@ def get_required_binary_requests(
         plugin_config,
         run_output_dir=run_output_dir or Path.cwd(),
     ).to_env()
-    request_name_env = {**env, **{key: dump_to_dotenv_format(value) for key, value in schema_binary_defaults.items()}}
+    request_name_env = env
+    if logical_names:
+        request_name_env = {**env, **{key: dump_to_dotenv_format(value) for key, value in schema_binary_defaults.items()}}
     requests: list[dict[str, Any]] = []
     seen: set[str] = set()
     for spec in binaries:
