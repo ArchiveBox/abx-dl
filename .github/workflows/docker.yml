@@ -155,6 +155,17 @@ jobs:
           grep -R --fixed-strings 'Example Domain' "$OUT_DIR"
           grep -R --fixed-strings 'This domain is for use' "$OUT_DIR"
 
+      - name: Validate image version and commit
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          VERSION_OUTPUT="$(docker run --rm --platform '${{ matrix.platform }}' --entrypoint abx-dl '${{ matrix.local_tag }}' --version)"
+          printf '%s\n' "$VERSION_OUTPUT"
+          test "$VERSION_OUTPUT" = "${{ steps.docker_meta.outputs.version }}"
+
+          docker run --rm --platform '${{ matrix.platform }}' --entrypoint bash '${{ matrix.local_tag }}' -lc \
+            'set -Eeuo pipefail; grep -Fx "COMMIT_HASH='"${GITHUB_SHA}"'" /VERSION.txt'
+
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         if: github.event_name != 'pull_request'
@@ -191,6 +202,25 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.cache_scope }}
           platforms: ${{ matrix.platform }}
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
+
+      - name: Validate pushed image size
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          python3 - "${DOCKERHUB_IMAGE}@${{ steps.docker_build.outputs.digest }}" <<'PY'
+          import json
+          import subprocess
+          import sys
+
+          image = sys.argv[1]
+          limit = 750 * 1024 * 1024
+          manifest = json.loads(subprocess.check_output(["docker", "manifest", "inspect", image]))
+          total = manifest.get("config", {}).get("size", 0) + sum(layer.get("size", 0) for layer in manifest.get("layers", []))
+          print(f"{image} compressed_size={total / 1024 / 1024:.2f} MiB limit={limit / 1024 / 1024:.2f} MiB")
+          if total > limit:
+              raise SystemExit(f"{image} is over the compressed size limit")
+          PY
 
       - name: Export digest
         if: github.event_name != 'pull_request'

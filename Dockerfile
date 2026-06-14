@@ -131,8 +131,20 @@ COPY --from=abxbus --chown=root:root --chmod=755 abxbus /src/abxbus/abxbus
 COPY --from=abxpkg --chown=root:root --chmod=755 abxpkg /src/abxpkg/abxpkg
 COPY --from=abx-plugins --chown=root:root --chmod=755 abx_plugins /src/abx-plugins/abx_plugins
 COPY --chown=root:root --chmod=755 abx_dl "$CODE_DIR/abx_dl"
+COPY --chown=root:root --chmod=755 .git "$CODE_DIR/.git"
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
     echo "[*] Installing local abxbus/abxpkg/abx-plugins/abx-dl Python source code..." \
+    && COMMIT_HASH="$( \
+        if [[ -f "$CODE_DIR/.git/HEAD" ]]; then \
+            HEAD_REF="$(cat "$CODE_DIR/.git/HEAD")"; \
+            if [[ "$HEAD_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then \
+                echo "$HEAD_REF"; \
+            elif [[ "$HEAD_REF" == ref:\ * ]]; then \
+                REF_PATH="${HEAD_REF#ref: }"; \
+                cat "$CODE_DIR/.git/$REF_PATH" 2>/dev/null || awk -v ref="$REF_PATH" '$2 == ref {print $1}' "$CODE_DIR/.git/packed-refs" 2>/dev/null || true; \
+            fi; \
+        fi)" \
+    && if [[ "$COMMIT_HASH" =~ ^[0-9a-fA-F]{40}$ ]]; then echo "COMMIT_HASH=$COMMIT_HASH" | tee -a /VERSION.txt; fi \
     && uv pip install --no-deps /src/abxbus /src/abxpkg /src/abx-plugins "$CODE_DIR" \
     && /usr/bin/uv pip show abx-dl | tee -a /VERSION.txt \
     && rm -f /venv/bin/uv /venv/bin/uvx \
@@ -159,9 +171,11 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     --mount=type=cache,target=/root/.cache/pnpm,sharing=locked,id=abxpkg-pnpm-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/pip,sharing=locked,id=pip-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/ms-playwright,sharing=locked,id=browsers-$TARGETARCH$TARGETVARIANT \
+    --mount=type=cache,target=/tmp/abxpkg-cache,sharing=locked,mode=1777,id=abxpkg-tmp-$TARGETARCH$TARGETVARIANT \
     echo "[+] Installing Chrome and plugin dependencies..." \
     && apt-get update -qq \
     && apt-get install -qq -y --no-install-recommends binutils \
+    && export HOME=/tmp/abxpkg-cache ABXPKG_TMP_CACHE_DIR=/tmp/abxpkg-cache \
     && ABXPKG_NO_CACHE=True ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 abx-dl install chrome \
     && CHROME_BINARY="$LIB_DIR/playwright/bin/chromium" \
     && export CHROME_BINARY \
