@@ -224,7 +224,7 @@ def test_run_download_reaps_timed_out_child(server_client, slow_http_url: str) -
             break
         time.sleep(0.05)
     else:
-        pytest.fail(f"download session did not time out: {server_module.sessions[sid]}")
+        raise AssertionError(f"download session did not time out: {server_module.sessions[sid]}")
 
     with server_module.sessions_lock:
         info = dict(server_module.sessions[sid])

@@ -22,7 +22,7 @@ _TEST_CONFIG_KEYS = frozenset(
         "HOOK_ORDER",
         "JAVA_VERSION_CONSTRAINT",
         "ABXPKG_LIB_DIR",
-        "LIB_DIR",
+        "ABXPKG_LIB_DIR",
         "NPM_BIN_DIR",
         "NPM_HOME",
         "NODE_MODULES_DIR",
@@ -67,7 +67,7 @@ def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("CONFIG_DIR", str(config_dir))
     monkeypatch.setenv("DATA_DIR", str(data_dir))
-    monkeypatch.setenv("LIB_DIR", str(lib_dir))
+    monkeypatch.setenv("ABXPKG_LIB_DIR", str(lib_dir))
     monkeypatch.setenv("PERSONAS_DIR", str(personas_dir))
     monkeypatch.setenv("TMP_DIR", str(tmp_dir))
 

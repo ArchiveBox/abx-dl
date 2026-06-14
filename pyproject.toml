@@ -41,8 +41,8 @@ dependencies = [
     "rich-click>=1.8.0",
     "rich>=13.0.0",
     "abxbus==2.5.10",
-    "abxpkg>=1.11.219",
-    "abx-plugins>=1.11.223",
+    "abxpkg>=1.11.220",
+    "abx-plugins>=1.11.224",
     "jambo>=0.1.7",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
@@ -55,8 +55,9 @@ dependencies = [
 dev = [
     # TESTING
     "flask>=3.0",
-    "pytest>=8.0.0",
-    "pytest-github-actions-annotate-failures>=0.3.0",
+    "pytest>=8.3.3,<9",  # pytest-codeblocks 0.17.0 still uses the pre-pytest-9 collect hook signature.
+    "pytest-codeblocks>=0.17.0",
+    "pytest-github-actions-annotate-failures>=0.4.0",
     "pytest-httpserver>=1.1.0",
     "pytest-sugar>=1.0.0",
     "pytest-timeout>=2.3.1",
@@ -64,6 +65,7 @@ dev = [
     # LINTING / TYPECHECKING
     "flake8>=7.1.1",
     "mypy>=1.11.2",
+    "pdm-backend>=2.4.0",
     "prek>=0.3.6",
     "pyright>=1.1.408",
     "ruff>=0.15.7",
@@ -76,11 +78,22 @@ build-backend = "pdm.backend"
 # https://github.com/astral-sh/uv/issues/3957
 
 [tool.pdm.build]
-includes = ["abx_dl/"]
-source-includes = []
+includes = [
+    "abx_dl/",
+    # Package the same minimal git metadata shape ArchiveBox uses, so
+    # abx-dl resolves COMMIT_HASH by reading .git in both dev and installs.
+    ".git/HEAD",
+    ".git/refs/heads/main",
+]
+source-includes = [
+    # Keep sdists self-contained; pdm_build.py mirrors these files into wheels.
+    ".git/HEAD",
+    ".git/refs/heads/main",
+]
 excludes = [
     ".DS_Store",
     "**/.DS_Store",
+    ".gitignore",
     "tests/",
     "tests/**",
 ]

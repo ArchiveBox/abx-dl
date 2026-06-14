@@ -67,7 +67,7 @@ class GlobalConfig(BaseSettings):
     USER_AGENT: str = "Mozilla/5.0 (compatible; abx-dl/1.0; +https://github.com/ArchiveBox/abx-dl)"
     CHECK_SSL_VALIDITY: bool = True
     COOKIES_FILE: str = ""
-    LIB_DIR: Path | None = None
+    ABXPKG_LIB_DIR: Path | None = None
     PERSONAS_DIR: Path | None = None
     CRAWL_DIR: Path | None = None
     SNAP_DIR: Path | None = None
@@ -104,7 +104,7 @@ class GlobalConfig(BaseSettings):
         return value
 
     @field_validator(
-        "LIB_DIR",
+        "ABXPKG_LIB_DIR",
         "PERSONAS_DIR",
         "CRAWL_DIR",
         "SNAP_DIR",
@@ -131,8 +131,8 @@ class GlobalConfig(BaseSettings):
     def derive_runtime_paths(self) -> Self:
         """Fill runtime path defaults from CONFIG_DIR / DATA_DIR once, centrally."""
         default_lib_dir = self.CONFIG_DIR / "lib"
-        if self.LIB_DIR is None:
-            self.LIB_DIR = default_lib_dir
+        if self.ABXPKG_LIB_DIR is None:
+            self.ABXPKG_LIB_DIR = default_lib_dir
         default_pip_home = default_lib_dir / "pip"
         default_pip_bin_dir = default_pip_home / "venv" / "bin"
         default_pnpm_home = default_lib_dir / "pnpm" / "packages" / "chrome"
@@ -141,7 +141,7 @@ class GlobalConfig(BaseSettings):
         default_node_modules_dir = default_pnpm_home / "node_modules"
         default_npm_bin_dir = default_pnpm_bin_dir
         default_puppeteer_cache_dir = default_lib_dir / "puppeteer"
-        lib_dir_changed = self.LIB_DIR != default_lib_dir
+        lib_dir_changed = self.ABXPKG_LIB_DIR != default_lib_dir
         if self.PERSONAS_DIR is None:
             self.PERSONAS_DIR = self.CONFIG_DIR / "personas"
         if self.CRAWL_DIR is None:
@@ -151,11 +151,11 @@ class GlobalConfig(BaseSettings):
         if self.TMP_DIR is None:
             self.TMP_DIR = _default_tmp_dir()
         if self.PIP_HOME is None or (lib_dir_changed and self.PIP_HOME == default_pip_home):
-            self.PIP_HOME = self.LIB_DIR / "pip"
+            self.PIP_HOME = self.ABXPKG_LIB_DIR / "pip"
         if self.PIP_BIN_DIR is None or (lib_dir_changed and self.PIP_BIN_DIR == default_pip_bin_dir):
             self.PIP_BIN_DIR = self.PIP_HOME / "venv" / "bin"
         if self.PNPM_HOME is None or (lib_dir_changed and self.PNPM_HOME == default_pnpm_home):
-            self.PNPM_HOME = self.LIB_DIR / "pnpm" / "packages" / "chrome"
+            self.PNPM_HOME = self.ABXPKG_LIB_DIR / "pnpm" / "packages" / "chrome"
         if self.PNPM_BIN_DIR is None or (lib_dir_changed and self.PNPM_BIN_DIR == default_pnpm_bin_dir):
             self.PNPM_BIN_DIR = self.PNPM_HOME / "node_modules" / ".bin"
         if self.NPM_HOME is None or (lib_dir_changed and self.NPM_HOME == default_npm_home):
@@ -167,7 +167,7 @@ class GlobalConfig(BaseSettings):
         if self.NPM_BIN_DIR is None or (lib_dir_changed and self.NPM_BIN_DIR == default_npm_bin_dir):
             self.NPM_BIN_DIR = self.PNPM_BIN_DIR
         if self.PUPPETEER_CACHE_DIR is None or (lib_dir_changed and self.PUPPETEER_CACHE_DIR == default_puppeteer_cache_dir):
-            self.PUPPETEER_CACHE_DIR = self.LIB_DIR / "puppeteer"
+            self.PUPPETEER_CACHE_DIR = self.ABXPKG_LIB_DIR / "puppeteer"
         return self
 
     def __getitem__(self, key: str) -> Any:
@@ -354,7 +354,7 @@ async def get_config(bus: EventBus | None = None, *, include_derived: bool = Tru
 
 
 async def get_plugin_env(
-    bus: EventBus,
+    bus: EventBus | None,
     *,
     plugin: Plugin,
     run_output_dir: Path,
@@ -539,7 +539,7 @@ GLOBAL_DEFAULT_KEYS = (
     "USER_AGENT",
     "CHECK_SSL_VALIDITY",
     "COOKIES_FILE",
-    "LIB_DIR",
+    "ABXPKG_LIB_DIR",
     "PERSONAS_DIR",
     "CRAWL_DIR",
     "SNAP_DIR",

@@ -7,6 +7,7 @@ import json
 import os
 import re
 import signal
+import subprocess
 import sys
 import time
 from collections import defaultdict, deque
@@ -35,8 +36,10 @@ from .config import (
     CONFIG_FILE,
     GlobalConfig,
     _load_plugin_config_model,
+    get_config,
     get_derived_config,
     get_initial_env,
+    get_plugin_env,
     get_required_binary_requests,
     set_user_config,
 )
@@ -53,7 +56,7 @@ from .events import (
 )
 from .limits import parse_filesize_to_bytes
 from .orchestrator import compute_install_phase_timeout, compute_phase_timeout, create_bus, download, get_install_plugins, install_plugins
-from .models import ArchiveResult, PluginEnv, Process, now_iso
+from .models import ArchiveResult, LIBRARY_VERSION, PluginEnv, Process, now_iso
 from .models import Hook, Plugin, discover_plugins, filter_plugins, plugins_matching_output
 from .output_files import OutputFile
 
@@ -67,6 +70,51 @@ click.rich_click.GROUP_ARGUMENTS_OPTIONS = True
 
 REPR_HIGHLIGHTER = ReprHighlighter()
 HOME_PREFIX = str(Path.home())
+
+
+def _get_commit_hash() -> str | None:
+    for env_var in ("ABX_DL_COMMIT_HASH", "COMMIT_HASH"):
+        env_commit_hash = os.environ.get(env_var, "").strip()
+        if re.fullmatch(r"[0-9a-fA-F]{40}", env_commit_hash):
+            return env_commit_hash
+
+    def read_git_file(git_dir: Path, ref: str) -> str | None:
+        try:
+            return git_dir.joinpath(ref).read_text().strip()
+        except Exception:
+            pass
+
+        try:
+            packed_refs = git_dir.joinpath("packed-refs").read_text().splitlines()
+        except Exception:
+            return None
+
+        for line in packed_refs:
+            if line.startswith("#") or line.startswith("^") or not line.strip():
+                continue
+            commit_hash, packed_ref = line.split(" ", 1)
+            if packed_ref == ref:
+                return commit_hash.strip()
+        return None
+
+    try:
+        git_dir = Path(__file__).resolve().parents[1] / ".git"
+        if git_dir.is_file():
+            gitdir_path = git_dir.read_text().strip().removeprefix("gitdir:").strip()
+            git_dir = Path(gitdir_path) if Path(gitdir_path).is_absolute() else git_dir.parent / gitdir_path
+
+        head = (git_dir / "HEAD").read_text().strip()
+        if re.fullmatch(r"[0-9a-fA-F]{40}", head):
+            return head
+
+        ref = head.removeprefix("ref:").strip()
+        commit_hash = read_git_file(git_dir, ref)
+        if commit_hash:
+            return commit_hash
+    except Exception:
+        pass
+
+    return None
 
 
 STATUS_STYLES = {
@@ -100,6 +148,45 @@ def _binary_display_path(path: object) -> str:
     except Exception:
         pass
     return text
+
+
+def _build_plugin_binary_table(rows: list[dict[str, str]]) -> Table:
+    table = Table(title="Plugin Binaries", box=box.SIMPLE_HEAVY, expand=True)
+    table.add_column("Plugin", no_wrap=True, max_width=24)
+    table.add_column("State", no_wrap=True, width=8)
+    table.add_column("Status", justify="center", no_wrap=True, width=6)
+    table.add_column("Binary", no_wrap=True, max_width=28)
+    table.add_column("Version", no_wrap=True, width=16)
+    table.add_column("Provider", no_wrap=True, width=8)
+    table.add_column("Path", overflow="fold", ratio=1)
+    for row in rows:
+        table.add_row(
+            row["plugin"],
+            row["state"],
+            row["status"],
+            row["binary"],
+            row["version"],
+            row["provider"],
+            row["path"],
+            style=row.get("style"),
+        )
+    return table
+
+
+def _print_plugin_binary_row(row: dict[str, str]) -> None:
+    console.print(
+        "",
+        row["status"],
+        row["plugin"].ljust(24),
+        row["state"].ljust(8),
+        row["binary"].ljust(28),
+        row["version"].ljust(16),
+        row["provider"].ljust(8),
+        row["path"],
+        style=row.get("style"),
+        overflow="ignore",
+        crop=False,
+    )
 
 
 @dataclass
@@ -1142,6 +1229,35 @@ def cli(ctx):
 
 
 @cli.command()
+@click.option("--quiet", "-q", is_flag=True, help="Only print the abx-dl version number")
+@click.pass_context
+def version(ctx, quiet: bool):
+    """Print the abx-dl version and build metadata."""
+    print(LIBRARY_VERSION)
+    if quiet:
+        return
+
+    commit_hash = _get_commit_hash()
+    console.print(
+        f"[dark_green]abx-dl[/dark_green] [dark_goldenrod]v{LIBRARY_VERSION}[/dark_goldenrod]",
+        f"COMMIT_HASH={commit_hash[:7] if commit_hash else 'unknown'}",
+    )
+
+    async def _version_env() -> dict[str, str]:
+        runtime_config = await get_config(None)
+        runtime_env = await get_plugin_env(
+            None,
+            plugin=next(iter(ctx.obj["plugins"].values())),
+            run_output_dir=runtime_config.user.DATA_DIR,
+            config=runtime_config,
+        )
+        return runtime_env.to_env()
+
+    env = asyncio.run(_version_env())
+    raise SystemExit(subprocess.run(["abxpkg", "list"], env=env, check=False).returncode)
+
+
+@cli.command()
 @click.argument("url")
 @click.option("--plugins", "-p", "plugin_list", help="Comma-separated list of plugins to use")
 @click.option(
@@ -1642,60 +1758,78 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
         )
     else:
         # Check + info mode (default)
-        console.print("[bold]Plugin Binaries[/bold]")
+        rows: list[dict[str, str]] = []
+        live_enabled = console.is_terminal
+        live_cm = Live(_build_plugin_binary_table(rows), console=console, refresh_per_second=8) if live_enabled else nullcontext()
+        if not live_enabled:
+            console.print("[bold]Plugin Binaries[/bold]")
+            console.print(
+                "",
+                "Status",
+                "Plugin".ljust(24),
+                "State".ljust(8),
+                "Binary".ljust(28),
+                "Version".ljust(16),
+                "Provider".ljust(8),
+                "Path",
+            )
         all_ok = True
-        for name in sorted(selected.keys()):
-            plugin = selected[name]
-            plugin_enabled = name in enabled_plugin_set
-            initial_user_env = get_initial_env()
-            row_style = None if plugin_enabled else "dim"
-            enabled_label = "[green]enabled[/green]" if plugin_enabled else "[grey53]disabled[/grey53]"
+        with live_cm as live:
+            for name in sorted(selected.keys()):
+                plugin = selected[name]
+                plugin_enabled = name in enabled_plugin_set
+                initial_user_env = get_initial_env()
+                row_style = "" if plugin_enabled else "dim"
+                enabled_label = "enabled" if plugin_enabled else "disabled"
 
-            # Check binary status
-            if plugin.config.required_binaries:
-                for hydrated_spec in get_required_binary_requests(
-                    plugin,
-                    plugin.config.required_binaries,
-                    overrides=initial_user_env,
-                    derived_overrides=get_derived_config(initial_user_env),
-                    run_output_dir=Path.cwd(),
-                    logical_names=False,
-                ):
-                    binary = load_binary(hydrated_spec)
-                    if binary.is_valid:
-                        status = "[green]✓[/green]" if plugin_enabled else "[grey53]-[/grey53]"
+                if plugin.config.required_binaries:
+                    for hydrated_spec in get_required_binary_requests(
+                        plugin,
+                        plugin.config.required_binaries,
+                        overrides=initial_user_env,
+                        derived_overrides=get_derived_config(initial_user_env),
+                        run_output_dir=Path.cwd(),
+                        logical_names=False,
+                    ):
+                        binary = load_binary(hydrated_spec)
+                        if binary.is_valid:
+                            status = "[green]✓[/green]" if plugin_enabled else "[grey53]-[/grey53]"
+                        else:
+                            status = "[red]X[/red]" if plugin_enabled else "[grey53]-[/grey53]"
+                            if plugin_enabled:
+                                all_ok = False
+
+                        row = {
+                            "plugin": name,
+                            "state": enabled_label,
+                            "status": status,
+                            "binary": binary.name,
+                            "version": str(binary.loaded_version or "-")[:15],
+                            "provider": (binary.loaded_binprovider.name if binary.loaded_binprovider else "-")[:8],
+                            "path": _binary_display_path(binary.loaded_abspath),
+                            "style": row_style,
+                        }
+                        rows.append(row)
+                        if live is not None:
+                            live.update(_build_plugin_binary_table(rows), refresh=True)
+                        else:
+                            _print_plugin_binary_row(row)
+                else:
+                    row = {
+                        "plugin": name,
+                        "state": enabled_label,
+                        "status": "[green]✓[/green]" if plugin_enabled else "[grey53]-[/grey53]",
+                        "binary": "-",
+                        "version": "-",
+                        "provider": "-",
+                        "path": "-",
+                        "style": row_style,
+                    }
+                    rows.append(row)
+                    if live is not None:
+                        live.update(_build_plugin_binary_table(rows), refresh=True)
                     else:
-                        status = "[red]X[/red]" if plugin_enabled else "[grey53]-[/grey53]"
-                        if plugin_enabled:
-                            all_ok = False
-
-                    console.print(
-                        "",
-                        status,
-                        name.ljust(22),
-                        enabled_label,
-                        binary.name.ljust(24),
-                        str(binary.loaded_version or "-")[:15].ljust(16),
-                        ((binary.loaded_binprovider.name if binary.loaded_binprovider else "-")[:8]).ljust(8),
-                        _binary_display_path(binary.loaded_abspath),
-                        style=row_style,
-                        overflow="ignore",
-                        crop=False,
-                    )
-            else:
-                console.print(
-                    "",
-                    "[green]✓[/green]" if plugin_enabled else "[grey53]-[/grey53]",
-                    name.ljust(22),
-                    enabled_label,
-                    "-".ljust(24),
-                    "-".ljust(16),
-                    "-".ljust(8),
-                    "-",
-                    style=row_style,
-                    overflow="ignore",
-                    crop=False,
-                )
+                        _print_plugin_binary_row(row)
 
         console.print(f"\n[dim]{len(selected)} plugins[/dim]")
 

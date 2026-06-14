@@ -20,7 +20,7 @@ def test_plugin_env_sets_run_dirs_and_node_path(monkeypatch, tmp_path: Path) -> 
     for key in (
         "CRAWL_DIR",
         "SNAP_DIR",
-        "LIB_DIR",
+        "ABXPKG_LIB_DIR",
         "PNPM_HOME",
         "PNPM_BIN_DIR",
         "NPM_HOME",
@@ -40,8 +40,7 @@ def test_plugin_env_sets_run_dirs_and_node_path(monkeypatch, tmp_path: Path) -> 
     assert Path(env["CONFIG_DIR"]) == expected_config_dir
     assert env["CRAWL_DIR"] == str(tmp_path)
     assert env["SNAP_DIR"] == str(tmp_path)
-    assert Path(env["LIB_DIR"]) == expected_lib_dir
-    assert env["ABXPKG_LIB_DIR"] == env["LIB_DIR"]
+    assert Path(env["ABXPKG_LIB_DIR"]) == expected_lib_dir
     assert env["NODE_PATH"] == env["NODE_MODULES_DIR"]
     assert env["PIP_BIN_DIR"] in env["PATH"].split(":")
     assert env["PNPM_BIN_DIR"] in env["PATH"].split(":")
@@ -53,10 +52,12 @@ def test_machine_event_config_rebuild_applies_events_oldest_to_newest(tmp_path: 
     bus = create_bus(total_timeout=10.0, name=f"test_config_machine_event_order_{tmp_path.name}")
 
     async def run() -> RuntimeConfig:
-        await bus.emit(MachineEvent(config={"FAVICON_PROVIDER": "first", "LIB_DIR": str(tmp_path / "lib-a")}, config_type="user")).now()
+        await bus.emit(
+            MachineEvent(config={"FAVICON_PROVIDER": "first", "ABXPKG_LIB_DIR": str(tmp_path / "lib-a")}, config_type="user"),
+        ).now()
         await bus.emit(MachineEvent(config={"FAVICON_PROVIDER": "second"}, config_type="user")).now()
-        await bus.emit(MachineEvent(config={"LIB_DIR": str(tmp_path / "lib-b")}, config_type="derived")).now()
-        await bus.emit(MachineEvent(config={"LIB_DIR": str(tmp_path / "lib-c")}, config_type="derived")).now()
+        await bus.emit(MachineEvent(config={"ABXPKG_LIB_DIR": str(tmp_path / "lib-b")}, config_type="derived")).now()
+        await bus.emit(MachineEvent(config={"ABXPKG_LIB_DIR": str(tmp_path / "lib-c")}, config_type="derived")).now()
         return await get_config(bus)
 
     try:
@@ -65,7 +66,7 @@ def test_machine_event_config_rebuild_applies_events_oldest_to_newest(tmp_path: 
         asyncio.run(bus.wait_until_idle())
 
     assert runtime_config.user["FAVICON_PROVIDER"] == "second"
-    assert runtime_config.derived["LIB_DIR"] == str(tmp_path / "lib-c")
+    assert runtime_config.derived["ABXPKG_LIB_DIR"] == str(tmp_path / "lib-c")
 
 
 def test_plugin_env_exports_shared_runtime_paths_after_real_install_phase(
@@ -95,7 +96,7 @@ def test_plugin_env_exports_shared_runtime_paths_after_real_install_phase(
     finally:
         asyncio.run(bus.wait_until_idle())
 
-    lib_dir = Path(ytdlp_env["LIB_DIR"])
+    lib_dir = Path(ytdlp_env["ABXPKG_LIB_DIR"])
     pip_venv = lib_dir / "pip" / "venv"
     pnpm_prefix = lib_dir / "pnpm" / "packages" / "chrome"
     pnpm_bin_dir = pnpm_prefix / "node_modules" / ".bin"
@@ -116,7 +117,7 @@ def test_plugin_env_exports_shared_runtime_paths_after_real_install_phase(
 def test_plugin_env_derives_puppeteer_cache_from_effective_lib_dir(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.delenv("PUPPETEER_CACHE_DIR", raising=False)
 
-    env = assemble_env(overrides={"LIB_DIR": str(tmp_path / "lib")}, run_output_dir=tmp_path)
+    env = assemble_env(overrides={"ABXPKG_LIB_DIR": str(tmp_path / "lib")}, run_output_dir=tmp_path)
 
     assert env["PUPPETEER_CACHE_DIR"] == str(tmp_path / "lib" / "puppeteer")
 
@@ -132,7 +133,7 @@ def test_plugin_env_treats_empty_optional_node_paths_as_unset(tmp_path: Path) ->
     )
     env = assemble_env(
         overrides={
-            "LIB_DIR": str(lib_dir),
+            "ABXPKG_LIB_DIR": str(lib_dir),
             "NODE_MODULES_DIR": "",
             "PNPM_BIN_DIR": "",
             "NPM_BIN_DIR": "",
@@ -198,7 +199,7 @@ def test_plugin_env_preserves_user_runtime_dirs_when_derived_config_has_defaults
     tmp_path: Path,
 ) -> None:
     for key in (
-        "LIB_DIR",
+        "ABXPKG_LIB_DIR",
         "PNPM_HOME",
         "PNPM_BIN_DIR",
         "NPM_HOME",
@@ -224,7 +225,7 @@ def test_plugin_env_preserves_user_runtime_dirs_when_derived_config_has_defaults
                     "DATA_DIR": str(data_dir),
                     "CRAWL_DIR": str(crawl_dir),
                     "SNAP_DIR": str(snap_dir),
-                    "LIB_DIR": str(lib_dir),
+                    "ABXPKG_LIB_DIR": str(lib_dir),
                 },
                 config_type="user",
             ),
@@ -246,7 +247,7 @@ def test_plugin_env_preserves_user_runtime_dirs_when_derived_config_has_defaults
     assert env["DATA_DIR"] == str(data_dir)
     assert env["CRAWL_DIR"] == str(crawl_dir)
     assert env["SNAP_DIR"] == str(snap_dir)
-    assert env["LIB_DIR"] == str(lib_dir)
+    assert env["ABXPKG_LIB_DIR"] == str(lib_dir)
     assert env["PNPM_HOME"] == str(lib_dir / "pnpm" / "packages" / "chrome")
     assert env["NPM_HOME"] == str(lib_dir / "pnpm" / "packages" / "chrome")
     assert env["NODE_MODULES_DIR"] == str(lib_dir / "pnpm" / "packages" / "chrome" / "node_modules")

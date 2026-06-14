@@ -204,7 +204,7 @@ Dependencies are installed to `<user-config>/abx/lib/{arch}/` using the appropri
 - **npm packages** → `<user-config>/abx/lib/{arch}/npm/`
 - **brew/apt packages** → system locations
 
-You can override the install location with `LIB_DIR=/path/to/lib abx-dl install wget`.
+You can override the install location with `ABXPKG_LIB_DIR=/path/to/lib abx-dl install wget`.
 
 <br/>
 

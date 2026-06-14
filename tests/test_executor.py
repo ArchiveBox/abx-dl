@@ -643,7 +643,7 @@ def test_binary_event_falls_back_from_stale_cached_config_binary_to_abxpkg_resol
             MachineEvent(
                 config={
                     **get_initial_env(),
-                    "LIB_DIR": str(managed_lib_dir),
+                    "ABXPKG_LIB_DIR": str(managed_lib_dir),
                 },
                 config_type="user",
             ),
@@ -736,7 +736,7 @@ def test_binary_installed_event_updates_lib_bin_command(tmp_path: Path) -> None:
         second_target.chmod(0o755)
 
         try:
-            await bus.emit(MachineEvent(config={"LIB_DIR": str(tmp_path / "lib")}, config_type="user")).now()
+            await bus.emit(MachineEvent(config={"ABXPKG_LIB_DIR": str(tmp_path / "lib")}, config_type="user")).now()
             await bus.emit(
                 BinaryEvent(
                     name="demo",

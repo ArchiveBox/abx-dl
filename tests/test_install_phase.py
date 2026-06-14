@@ -45,7 +45,7 @@ def test_install_event_does_not_skip_stale_cached_binary_requests(tmp_path: Path
             MachineEvent(
                 config={
                     **get_initial_env(),
-                    "LIB_DIR": str(managed_lib_dir),
+                    "ABXPKG_LIB_DIR": str(managed_lib_dir),
                 },
                 config_type="user",
             ),
@@ -112,7 +112,7 @@ def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) 
         bus.on(BinaryRequestEvent, on_BinaryRequestEvent)
         config = {
             **get_initial_env(),
-            "LIB_DIR": str(managed_lib_dir),
+            "ABXPKG_LIB_DIR": str(managed_lib_dir),
         }
         if no_cache:
             config["ABXPKG_NO_CACHE"] = "1"
@@ -183,7 +183,7 @@ def test_install_event_includes_opencode_when_route_is_disabled(tmp_path: Path) 
             MachineEvent(
                 config={
                     **get_initial_env(),
-                    "LIB_DIR": str(managed_lib_dir),
+                    "ABXPKG_LIB_DIR": str(managed_lib_dir),
                     "OPENCODE_ENABLED": False,
                 },
                 config_type="user",
@@ -271,7 +271,7 @@ def test_install_event_emits_cached_binary_requests_for_persistence(tmp_path: Pa
             MachineEvent(
                 config={
                     **get_initial_env(),
-                    "LIB_DIR": str(managed_lib_dir),
+                    "ABXPKG_LIB_DIR": str(managed_lib_dir),
                 },
                 config_type="user",
             ),
@@ -351,7 +351,7 @@ def test_install_event_moves_plugin_override_metadata_to_extra_context(tmp_path:
             MachineEvent(
                 config={
                     **get_initial_env(),
-                    "LIB_DIR": str(managed_lib_dir),
+                    "ABXPKG_LIB_DIR": str(managed_lib_dir),
                 },
                 config_type="user",
             ),
@@ -431,7 +431,7 @@ def test_chromewebstore_install_preflight_uses_shared_cache_without_persona_dupl
             MachineEvent(
                 config={
                     **get_initial_env(),
-                    "LIB_DIR": str(managed_lib_dir),
+                    "ABXPKG_LIB_DIR": str(managed_lib_dir),
                     "PERSONAS_DIR": str(personas_dir),
                     "ARCHIVEWEBPAGE_ENABLED": "true",
                 },

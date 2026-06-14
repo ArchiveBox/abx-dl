@@ -57,7 +57,6 @@ ENV ARCHIVEBOX_USER=archivebox \
 ENV CODE_DIR=/app \
     DATA_DIR=/out \
     CONFIG_DIR=/opt/archivebox \
-    LIB_DIR=/opt/archivebox/lib \
     ABXPKG_LIB_DIR=/opt/archivebox/lib \
     PLAYWRIGHT_BROWSERS_PATH=/opt/archivebox/lib/playwright/cache \
     PERSONAS_DIR=/data/personas \
@@ -103,7 +102,7 @@ RUN echo "[+] APT Installing abx-dl bootstrap dependencies for $TARGETPLATFORM..
 COPY --from=node-runtime /usr/local /opt/node
 
 RUN export PATH="/opt/node/bin:$PATH" \
-    && (/opt/node/bin/node --version && /opt/node/bin/npm --version) | tee -a /VERSION.txt
+    && (which node && which npm) | tee -a /VERSION.txt
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/bin sh
 
@@ -111,7 +110,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     echo "[+] UV Creating /venv using python ${PYTHON_VERSION} for ${TARGETPLATFORM}..." \
     && uv venv /venv --python "${PYTHON_VERSION}" \
     && uv pip install setuptools pip wheel \
-    && (which python3 && python3 --version && which uv && uv self version && uv python find) | tee -a /VERSION.txt
+    && (which python3 && which uv && uv python find) | tee -a /VERSION.txt
 
 ########################################################################################################
 FROM abx-dl-runtime-base AS abx-dl-builder
@@ -149,7 +148,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && /usr/bin/uv pip show abx-dl | tee -a /VERSION.txt \
     && rm -f /venv/bin/uv /venv/bin/uvx \
     && rm -rf /venv/lib/python3.*/site-packages/pip* /venv/lib/python3.*/site-packages/setuptools* /venv/lib/python3.*/site-packages/wheel* /venv/bin/pip /venv/bin/pip3 /venv/bin/pip3.* /venv/bin/wheel \
-    && (which abx-dl && abx-dl --version) | tee -a /VERSION.txt
+    && (which abx-dl && abx-dl version) | tee -a /VERSION.txt
 
 ########################################################################################################
 FROM abx-dl-runtime-base
@@ -162,7 +161,7 @@ RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_ARCHIVEBOX_UID}..."
     && useradd --system --create-home --gid "$ARCHIVEBOX_USER" --groups audio,video "$ARCHIVEBOX_USER" \
     && usermod -u "$DEFAULT_ARCHIVEBOX_UID" "$ARCHIVEBOX_USER" \
     && groupmod -g "$DEFAULT_ARCHIVEBOX_GID" "$ARCHIVEBOX_USER" \
-    && install -d -o "$DEFAULT_ARCHIVEBOX_UID" -g "$DEFAULT_ARCHIVEBOX_GID" "$DATA_DIR" "$CONFIG_DIR" "$LIB_DIR" "$PLAYWRIGHT_BROWSERS_PATH" \
+    && install -d -o "$DEFAULT_ARCHIVEBOX_UID" -g "$DEFAULT_ARCHIVEBOX_GID" "$DATA_DIR" "$CONFIG_DIR" "$ABXPKG_LIB_DIR" "$PLAYWRIGHT_BROWSERS_PATH" \
     && echo "ARCHIVEBOX_USER=$ARCHIVEBOX_USER ARCHIVEBOX_UID=$(id -u "$ARCHIVEBOX_USER") ARCHIVEBOX_GID=$(id -g "$ARCHIVEBOX_USER")" | tee -a /VERSION.txt
 
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
@@ -180,46 +179,46 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && sort /tmp/abx-dl-enable-plugins.env | tee -a /VERSION.txt \
     && source /tmp/abx-dl-enable-plugins.env \
     && ABXPKG_NO_CACHE=True ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 abx-dl install chrome \
-    && CHROME_BINARY="$LIB_DIR/playwright/bin/chromium" \
+    && CHROME_BINARY="$ABXPKG_LIB_DIR/playwright/bin/chromium" \
     && export CHROME_BINARY \
     && test -x "$CHROME_BINARY" \
-    && "$CHROME_BINARY" --version | tee -a /VERSION.txt \
+    && abxpkg load --binproviders=env --min-version=149.0.0 "$CHROME_BINARY" | tee -a /VERSION.txt \
     && ABXPKG_NO_CACHE=True ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 abx-dl install \
-    && mkdir -p "$LIB_DIR/env/bin" \
-    && ln -sf /usr/bin/git "$LIB_DIR/env/bin/git" \
-    && rm -rf "$LIB_DIR"/playwright/cache/ffmpeg-* \
-    && find "$LIB_DIR"/chromewebstore -type f -name '*.crx' -delete \
-    && find "$LIB_DIR"/playwright/cache -path '*/chrome-linux*/locales/*' ! -name 'en-US.pak' -delete \
-    && find "$LIB_DIR"/playwright/cache -path '*/chrome-linux*/*.pak.info' -delete \
-    && rm -f "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/libvk_swiftshader.so "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/libGLESv2.so \
-    && rm -f "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/chrome_200_percent.pak \
-    && rm -rf "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/MEIPreload "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/PrivacySandboxAttestationsPreloaded "$LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/WidevineCdm \
-    && rm -rf "$LIB_DIR"/pnpm/packages/singlefile/node_modules/.pnpm/selenium-webdriver@*/node_modules/selenium-webdriver/bin/macos "$LIB_DIR"/pnpm/packages/singlefile/node_modules/.pnpm/selenium-webdriver@*/node_modules/selenium-webdriver/bin/windows \
-    && if [[ "$TARGETARCH" == "arm64" ]]; then rm -f "$LIB_DIR"/pnpm/packages/liteparse/node_modules/.pnpm/@llamaindex+liteparse@*/node_modules/@llamaindex/liteparse/liteparse.linux-x64-gnu.node "$LIB_DIR"/pnpm/packages/liteparse/node_modules/.pnpm/@llamaindex+liteparse@*/node_modules/@llamaindex/liteparse/libpdfium.so; fi \
-    && find "$LIB_DIR"/pnpm /opt/node -type f -name '*.map' -delete \
+    && mkdir -p "$ABXPKG_LIB_DIR/env/bin" \
+    && ln -sf /usr/bin/git "$ABXPKG_LIB_DIR/env/bin/git" \
+    && rm -rf "$ABXPKG_LIB_DIR"/playwright/cache/ffmpeg-* \
+    && find "$ABXPKG_LIB_DIR"/chromewebstore -type f -name '*.crx' -delete \
+    && find "$ABXPKG_LIB_DIR"/playwright/cache -path '*/chrome-linux*/locales/*' ! -name 'en-US.pak' -delete \
+    && find "$ABXPKG_LIB_DIR"/playwright/cache -path '*/chrome-linux*/*.pak.info' -delete \
+    && rm -f "$ABXPKG_LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/libvk_swiftshader.so "$ABXPKG_LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/libGLESv2.so \
+    && rm -f "$ABXPKG_LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/chrome_200_percent.pak \
+    && rm -rf "$ABXPKG_LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/MEIPreload "$ABXPKG_LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/PrivacySandboxAttestationsPreloaded "$ABXPKG_LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/WidevineCdm \
+    && rm -rf "$ABXPKG_LIB_DIR"/pnpm/packages/singlefile/node_modules/.pnpm/selenium-webdriver@*/node_modules/selenium-webdriver/bin/macos "$ABXPKG_LIB_DIR"/pnpm/packages/singlefile/node_modules/.pnpm/selenium-webdriver@*/node_modules/selenium-webdriver/bin/windows \
+    && if [[ "$TARGETARCH" == "arm64" ]]; then rm -f "$ABXPKG_LIB_DIR"/pnpm/packages/liteparse/node_modules/.pnpm/@llamaindex+liteparse@*/node_modules/@llamaindex/liteparse/liteparse.linux-x64-gnu.node "$ABXPKG_LIB_DIR"/pnpm/packages/liteparse/node_modules/.pnpm/@llamaindex+liteparse@*/node_modules/@llamaindex/liteparse/libpdfium.so; fi \
+    && find "$ABXPKG_LIB_DIR"/pnpm /opt/node -type f -name '*.map' -delete \
     && rm -rf /usr/lib/*-linux-gnu/dri /usr/lib/*-linux-gnu/libLLVM*.so* /usr/lib/*-linux-gnu/libz3.so.* \
     && rm -rf /usr/share/icons /usr/share/doc /usr/share/man /usr/share/bash-completion /usr/share/zsh /usr/share/info /usr/share/lintian /usr/share/bug \
     && rm -rf /opt/node/include /opt/node/share/doc /opt/node/share/man \
     && rm -f /opt/node/CHANGELOG.md /opt/node/README.md /opt/node/LICENSE \
     && rm -f /usr/lib/jvm/java-*-openjdk-*/lib/server/classes*.jsa \
     && strip --strip-unneeded "$CHROME_BINARY" \
-    && (find "$LIB_DIR" -type f \( -name '*.so' -o -name '*.node' \) -exec strip --strip-unneeded {} + 2>/dev/null || true) \
+    && (find "$ABXPKG_LIB_DIR" -type f \( -name '*.so' -o -name '*.node' \) -exec strip --strip-unneeded {} + 2>/dev/null || true) \
     && apt-get purge -y --auto-remove binutils \
     && rm -f /venv/bin/uv /venv/bin/uvx \
-    && find "$LIB_DIR" \( ! -user "$DEFAULT_ARCHIVEBOX_UID" -o ! -group "$DEFAULT_ARCHIVEBOX_GID" \) -exec chown "$DEFAULT_ARCHIVEBOX_UID:$DEFAULT_ARCHIVEBOX_GID" {} + \
+    && find "$ABXPKG_LIB_DIR" \( ! -user "$DEFAULT_ARCHIVEBOX_UID" -o ! -group "$DEFAULT_ARCHIVEBOX_GID" \) -exec chown "$DEFAULT_ARCHIVEBOX_UID:$DEFAULT_ARCHIVEBOX_GID" {} + \
     && rm -rf /var/lib/apt/lists/* /tmp/*
 
 RUN (echo -e "\n\n[+] abx-dl runtime versions" \
-    && abx-dl --version \
-    && /opt/node/bin/node --version \
-    && /venv/bin/python3 --version \
+    && abx-dl version \
+    && abxpkg load --binproviders=env /opt/node/bin/node \
+    && abxpkg load --binproviders=env /venv/bin/python3 \
     && python3 -c 'from abx_dl.models import discover_plugins; [print(f"export {plugin.enabled_key}=True") for plugin in discover_plugins(runtime="abx-dl").values() if plugin.enabled_key in plugin.config.properties]' > /tmp/abx-dl-enable-plugins.env \
     && source /tmp/abx-dl-enable-plugins.env \
-    && CHROME_BINARY="$LIB_DIR/playwright/bin/chromium" \
+    && CHROME_BINARY="$ABXPKG_LIB_DIR/playwright/bin/chromium" \
     && export CHROME_BINARY \
-    && "$CHROME_BINARY" --version \
+    && abxpkg load --binproviders=env --min-version=149.0.0 "$CHROME_BINARY" \
     && abx-dl plugins \
-    && rg --version | head -1 \
+    && abxpkg load --binproviders=env rg \
     && ! command -v gcc \
     && ! command -v g++ \
     && ! command -v make \

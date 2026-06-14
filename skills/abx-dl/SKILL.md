@@ -92,7 +92,7 @@ find . -maxdepth 2 -type f | sort
 
 - Useful env vars:
   - `TIMEOUT`, `USER_AGENT`, `CHECK_SSL_VALIDITY`
-  - `LIB_DIR`, `PERSONAS_DIR`, `TMP_DIR`
+  - `ABXPKG_LIB_DIR`, `PERSONAS_DIR`, `TMP_DIR`
   - `{PLUGIN}_BINARY`, `{PLUGIN}_ENABLED`, `{PLUGIN}_TIMEOUT`
   - `ABX_PLUGINS_DIR`
 
@@ -101,7 +101,7 @@ Examples:
 ```bash
 TIMEOUT=120 USER_AGENT='Mozilla/5.0 (abx-dl test)' abx-dl 'https://example.com'
 CHROME_BINARY=/usr/bin/chromium abx-dl --plugins=screenshot,pdf 'https://example.com'
-LIB_DIR=./.abx/lib PERSONAS_DIR=./.abx/personas abx-dl 'https://example.com'
+ABXPKG_LIB_DIR=./.abx/lib PERSONAS_DIR=./.abx/personas abx-dl 'https://example.com'
 ```
 
 - User config is stored in the platformdirs user config path at `<user-config>/abx/config.env`; runtime-derived cache entries are stored in `<user-config>/abx/derived.env`.

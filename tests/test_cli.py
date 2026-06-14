@@ -29,7 +29,7 @@ ABX_ENV_KEYS = {
     "COOKIES_FILE",
     "CRAWL_DIR",
     "DATA_DIR",
-    "LIB_DIR",
+    "ABXPKG_LIB_DIR",
     "NODE_MODULES_DIR",
     "NODE_PATH",
     "NPM_BIN_DIR",
@@ -60,7 +60,7 @@ def _cli_env(tmp_path: Path) -> dict[str, str]:
         pythonpath_entries.append(env["PYTHONPATH"])
     env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
     env["CONFIG_DIR"] = str(config_dir)
-    env["LIB_DIR"] = str(config_dir / "lib")
+    env["ABXPKG_LIB_DIR"] = str(config_dir / "lib")
     env["PERSONAS_DIR"] = str(config_dir / "personas")
     env["DATA_DIR"] = str(tmp_path / "data")
     env["TMP_DIR"] = str(tmp_path / "tmp")
