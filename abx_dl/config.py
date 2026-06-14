@@ -62,6 +62,7 @@ class GlobalConfig(BaseSettings):
     DATA_DIR: Path = Field(default_factory=lambda: BOOTSTRAP_CONFIG.DATA_DIR)
     ABX_RUNTIME: str = "abx-dl"
     DRY_RUN: bool = False
+    ABXPKG_NO_CACHE: bool = False
     TIMEOUT: int = 60
     USER_AGENT: str = "Mozilla/5.0 (compatible; abx-dl/1.0; +https://github.com/ArchiveBox/abx-dl)"
     CHECK_SSL_VALIDITY: bool = True
@@ -531,6 +532,7 @@ GLOBAL_DEFAULT_KEYS = (
     "DATA_DIR",
     "ABX_RUNTIME",
     "DRY_RUN",
+    "ABXPKG_NO_CACHE",
     "TIMEOUT",
     "USER_AGENT",
     "CHECK_SSL_VALIDITY",

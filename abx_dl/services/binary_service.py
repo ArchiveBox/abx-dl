@@ -232,6 +232,8 @@ class PluginBinariesService(BaseService):
                     request_payload["overrides"] = native_overrides
                 else:
                     request_payload.pop("overrides", None)
+                if current_user_config.ABXPKG_NO_CACHE:
+                    request_payload["no_cache"] = True
                 request_event = BinaryRequestEvent(
                     **request_payload,
                     auto_install=self.auto_install,

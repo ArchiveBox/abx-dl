@@ -93,29 +93,32 @@ def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) 
     snapshot = Snapshot(url="")
     run_dir = tmp_path / "run"
     managed_lib_dir = tmp_path / "lib"
-    bus = create_bus(total_timeout=60.0, name=f"install_phase_chrome_abxbus_{tmp_path.name}")
-    PluginBinariesService(
-        bus,
-        plugins={"chrome": plugin},
-        auto_install=False,
-        install_plugins=[plugin],
-        output_dir=run_dir,
-        snapshot=snapshot,
-    )
-    request_events: list[BinaryRequestEvent] = []
 
-    async def on_BinaryRequestEvent(event: BinaryRequestEvent) -> None:
-        request_events.append(event)
+    async def collect_abxbus_request(*, no_cache: bool) -> BinaryRequestEvent:
+        bus = create_bus(total_timeout=60.0, name=f"install_phase_chrome_abxbus_{tmp_path.name}_{no_cache}")
+        PluginBinariesService(
+            bus,
+            plugins={"chrome": plugin},
+            auto_install=False,
+            install_plugins=[plugin],
+            output_dir=run_dir,
+            snapshot=snapshot,
+        )
+        request_events: list[BinaryRequestEvent] = []
 
-    bus.on(BinaryRequestEvent, on_BinaryRequestEvent)
+        async def on_BinaryRequestEvent(event: BinaryRequestEvent) -> None:
+            request_events.append(event)
 
-    async def run() -> None:
+        bus.on(BinaryRequestEvent, on_BinaryRequestEvent)
+        config = {
+            **get_initial_env(),
+            "LIB_DIR": str(managed_lib_dir),
+        }
+        if no_cache:
+            config["ABXPKG_NO_CACHE"] = "1"
         await bus.emit(
             MachineEvent(
-                config={
-                    **get_initial_env(),
-                    "LIB_DIR": str(managed_lib_dir),
-                },
+                config=config,
                 config_type="user",
             ),
         ).now()
@@ -133,10 +136,11 @@ def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) 
             ),
         ).now()
         await bus.wait_until_idle()
+        return next(event for event in request_events if event.name == "abxbus")
 
-    asyncio.run(run())
+    abxbus_request = asyncio.run(collect_abxbus_request(no_cache=False))
 
-    abxbus_request = next(event for event in request_events if event.name == "abxbus")
+    assert abxbus_request.no_cache is None
     assert abxbus_request.binproviders == "pnpm"
     assert abxbus_request.min_version == "2.5.9"
     assert abxbus_request.min_release_age == 0
@@ -148,6 +152,8 @@ def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) 
             "version": "2.5.9",
         },
     }
+    no_cache_request = asyncio.run(collect_abxbus_request(no_cache=True))
+    assert no_cache_request.no_cache is True
 
 
 def test_install_event_emits_cached_binary_requests_for_persistence(tmp_path: Path) -> None:
