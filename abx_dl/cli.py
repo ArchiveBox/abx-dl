@@ -1514,6 +1514,11 @@ def _run_plugin_install(
         live_cm = Live(_build_install_table([]), console=console, refresh_per_second=8) if live_enabled else nullcontext()
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        selected_plugin_config = {
+            plugin.enabled_key: True for plugin in selected.values() if plugin.enabled_key in plugin.config.properties
+        }
+        if dry_run:
+            selected_plugin_config["DRY_RUN"] = True
         try:
             with live_cm as active_live:
                 live = active_live
@@ -1527,7 +1532,7 @@ def _run_plugin_install(
                             output_dir=Path(temp_dir),
                             emit_jsonl=False,
                             bus=bus,
-                            config_overrides={"DRY_RUN": True} if dry_run else None,
+                            config_overrides=selected_plugin_config,
                             dry_run=dry_run,
                         ),
                     ),
