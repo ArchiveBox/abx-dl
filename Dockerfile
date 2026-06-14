@@ -76,7 +76,7 @@ ENV UV_COMPILE_BYTECODE=false \
 
 ENV HOME=/home/archivebox \
     XDG_CONFIG_HOME=/opt/archivebox \
-    XDG_CACHE_HOME=/home/archivebox/.cache
+    XDG_CACHE_HOME=/opt/archivebox/lib/cache
 
 SHELL ["/bin/bash", "-o", "pipefail", "-o", "errexit", "-o", "errtrace", "-o", "nounset", "-c"]
 WORKDIR "$CODE_DIR"
