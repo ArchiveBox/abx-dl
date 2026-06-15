@@ -141,9 +141,7 @@ def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) 
     request_events = asyncio.run(collect_requests(no_cache=False))
     abxbus_request = next(event for event in request_events if event.name == "abxbus")
     playwright_request = next(event for event in request_events if event.name == "playwright")
-    chromium_index = next(
-        i for i, event in enumerate(request_events) if event.name == "chromium"
-    )
+    chromium_index = next(i for i, event in enumerate(request_events) if event.name == "chromium")
 
     assert request_events.index(playwright_request) < chromium_index
     assert playwright_request.binproviders == "pnpm"
