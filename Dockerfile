@@ -182,7 +182,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && CHROME_BINARY="$ABXPKG_LIB_DIR/playwright/bin/chromium" \
     && export CHROME_BINARY \
     && test -x "$CHROME_BINARY" \
-    && abxpkg load --binproviders=env --min-version=149.0.0 "$CHROME_BINARY" | tee -a /VERSION.txt \
+    && abxpkg load --binproviders=env --abspath="$CHROME_BINARY" --min-version=149.0.0 chromium | tee -a /VERSION.txt \
     && ABXPKG_NO_CACHE=True ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 abx-dl install \
     && mkdir -p "$ABXPKG_LIB_DIR/env/bin" \
     && ln -sf /usr/bin/git "$ABXPKG_LIB_DIR/env/bin/git" \
@@ -216,7 +216,7 @@ RUN (echo -e "\n\n[+] abx-dl runtime versions" \
     && source /tmp/abx-dl-enable-plugins.env \
     && CHROME_BINARY="$ABXPKG_LIB_DIR/playwright/bin/chromium" \
     && export CHROME_BINARY \
-    && abxpkg load --binproviders=env --min-version=149.0.0 "$CHROME_BINARY" \
+    && abxpkg load --binproviders=env --abspath="$CHROME_BINARY" --min-version=149.0.0 chromium \
     && abx-dl plugins \
     && abxpkg load --binproviders=env rg \
     && ! command -v gcc \
