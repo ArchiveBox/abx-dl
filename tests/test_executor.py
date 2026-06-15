@@ -1135,7 +1135,7 @@ def test_snapshot_service_selected_hooks_by_plugin_runs_only_named_hooks(tmp_pat
     assert (marker_dir / "second").exists()
 
 
-def test_snapshot_service_repins_snapshot_chrome_dirs_after_global_config_merge(tmp_path: Path) -> None:
+def test_snapshot_service_repins_snapshot_persona_after_global_config_merge(tmp_path: Path) -> None:
     bus = create_bus(total_timeout=30.0, name=f"snapshot_chrome_env_{tmp_path.name}")
     MachineService(bus, persist_derived=False)
     output_dir = tmp_path / "archive" / "users" / "system" / "snapshots" / "20260603" / "example.com" / "current"
@@ -1227,8 +1227,8 @@ def test_snapshot_service_repins_snapshot_chrome_dirs_after_global_config_merge(
     assert emitted.env["SNAP_DIR"] == str(output_dir)
     assert emitted.env["PERSONAS_DIR"] == str(output_dir / ".persona")
     assert emitted.env["ACTIVE_PERSONA"] == "Default"
-    assert emitted.env["CHROME_USER_DATA_DIR"] == str(stale_dir / ".persona" / "Default" / "chrome_profile")
-    assert emitted.env["CHROME_DOWNLOADS_DIR"] == str(stale_dir / ".persona" / "Default" / "chrome_downloads")
+    assert "CHROME_USER_DATA_DIR" not in emitted.env
+    assert "CHROME_DOWNLOADS_DIR" not in emitted.env
 
 
 def test_snapshot_limit_admission_uses_stable_snapshot_id_across_retries(tmp_path: Path) -> None:

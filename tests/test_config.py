@@ -255,13 +255,10 @@ def test_plugin_env_preserves_user_runtime_dirs_when_derived_config_has_defaults
     assert env["PUPPETEER_CACHE_DIR"] == str(lib_dir / "puppeteer")
 
 
-def test_plugin_env_preserves_arbitrary_chrome_profile_env(
-    monkeypatch,
+def test_plugin_env_ignores_direct_chrome_profile_env(
     tmp_path: Path,
 ) -> None:
-    process_profile = "/data/personas/Default/chrome_profile"
     configured_profile = str(tmp_path / "stale" / "chrome_profile")
-    monkeypatch.setenv("CHROME_USER_DATA_DIR", process_profile)
 
     plugins = discover_plugins()
     bus = create_bus(total_timeout=60.0, name=f"test_config_archivebox_runtime_{tmp_path.name}")
@@ -290,7 +287,9 @@ def test_plugin_env_preserves_arbitrary_chrome_profile_env(
     finally:
         asyncio.run(bus.wait_until_idle())
 
-    assert env["CHROME_USER_DATA_DIR"] == configured_profile
+    assert "CHROME_USER_DATA_DIR" not in env
+    assert env["PERSONAS_DIR"] == str(user_config_path("abx") / "personas")
+    assert env["ACTIVE_PERSONA"] == "Default"
 
 
 def test_plugin_env_omits_none_runtime_overrides(tmp_path: Path) -> None:
