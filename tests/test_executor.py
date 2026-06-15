@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import signal
 import subprocess
@@ -1439,6 +1440,7 @@ def test_snapshot_background_daemon_stays_alive_until_cleanup(tmp_path: Path) ->
                 "set -euo pipefail",
                 'echo $$ > "$SNAP_DIR/daemon.pid"',
                 'echo ready > "$SNAP_DIR/daemon.ready"',
+                "echo ready",
                 "while true; do sleep 1; done",
                 "",
             ],
@@ -1684,6 +1686,7 @@ def test_snapshot_completed_waits_for_cleanup_process_listeners(tmp_path: Path) 
                 "trap 'echo cleaned; exit 0' TERM",
                 "set -euo pipefail",
                 'echo $$ > "$SNAP_DIR/daemon.pid"',
+                "echo ready",
                 "while true; do sleep 1; done",
                 "",
             ],
@@ -2669,6 +2672,81 @@ def test_process_kill_uses_live_subprocess_handle_when_pid_file_validation_fails
     assert completed.status == "succeeded"
     assert "cleaned" in completed.stdout
     assert not list(output_dir.glob("on_Snapshot__10_background.daemon.bg.*.pid"))
+
+
+def test_download_cleanup_sigterm_after_archive_result_is_not_failed_process(tmp_path: Path) -> None:
+    plugins_root = tmp_path / "plugins"
+    plugin_dir = plugins_root / "background_sigterm"
+    plugin_dir.mkdir(parents=True)
+    background_hook = plugin_dir / "on_Snapshot__10_background.daemon.bg.sh"
+    background_hook.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                'trap \'printf \'\\\'\'{"type":"ArchiveResult","status":"succeeded","output_str":"background cleaned"}\\n\'\\\'\'; trap - TERM; kill -TERM $$\' TERM',
+                'echo ready > "$SNAP_DIR/background.ready"',
+                "echo ready",
+                "while true; do sleep 1; done",
+                "",
+            ],
+        ),
+    )
+    foreground_hook = plugin_dir / "on_Snapshot__20_foreground.sh"
+    foreground_hook.write_text(
+        "\n".join(
+            [
+                "#!/usr/bin/env bash",
+                "set -euo pipefail",
+                "for _ in $(seq 1 50); do",
+                '  test -s "$SNAP_DIR/background.ready" && break',
+                "  sleep 0.1",
+                "done",
+                'test -s "$SNAP_DIR/background.ready"',
+                'printf \'%s\\n\' \'{"type":"ArchiveResult","status":"succeeded","output_str":"foreground complete"}\'',
+                "",
+            ],
+        ),
+    )
+    background_hook.chmod(0o755)
+    foreground_hook.chmod(0o755)
+
+    output_dir = tmp_path / "run"
+    plugins = discover_plugins(plugins_dir=plugins_root)
+    assert set(plugins) == {"background_sigterm"}
+
+    _run_download(
+        "https://example.com",
+        plugins=plugins,
+        output_dir=output_dir,
+        selected_plugins=["background_sigterm"],
+        config_overrides={"TIMEOUT": 5},
+        auto_install=False,
+        install_enabled=False,
+        emit_jsonl=False,
+        interactive_tty=False,
+    )
+
+    records = [json.loads(line) for line in (output_dir / "index.jsonl").read_text().splitlines() if line.startswith("{")]
+    failed_records = [record for record in records if record.get("status") == "failed"]
+    process_records = [
+        record
+        for record in records
+        if record.get("type") == "Process" and record.get("hook_name") == "on_Snapshot__10_background.daemon.bg"
+    ]
+    archive_results = [
+        record for record in records if record.get("type") == "ArchiveResult" and record.get("plugin") == "background_sigterm"
+    ]
+
+    assert failed_records == []
+    assert (output_dir / "background.ready").read_text() == "ready\n"
+    assert process_records
+    assert process_records[-1]["status"] == "succeeded"
+    assert process_records[-1]["exit_code"] == 0
+    assert {(result["hook_name"], result["status"], result["output_str"]) for result in archive_results} == {
+        ("on_Snapshot__10_background.daemon.bg", "succeeded", "background cleaned"),
+        ("on_Snapshot__20_foreground", "succeeded", "foreground complete"),
+    }
 
 
 def test_background_process_event_returns_after_start(tmp_path: Path) -> None:

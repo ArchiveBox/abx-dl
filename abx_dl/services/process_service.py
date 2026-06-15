@@ -36,6 +36,12 @@ from .base import BaseService
 ProcessStatus = Literal["succeeded", "failed", "skipped"]
 STDOUT_POLL_INTERVAL = 0.5
 SHELL_SIGNAL_STDERR_RE = re.compile(r"(?:Terminated|Killed):\s*(\d+)")
+POLITE_CLEANUP_SIGNAL_EXIT_CODES = {
+    -signal.SIGINT,
+    -signal.SIGTERM,
+    128 + signal.SIGINT,
+    128 + signal.SIGTERM,
+}
 
 
 @dataclass
@@ -512,6 +518,22 @@ class ProcessService(BaseService):
             returncode = -1
             stderr = f"Hook timed out after {event.timeout} seconds"
 
+        if (
+            event.is_background
+            and not timed_out
+            and returncode in POLITE_CLEANUP_SIGNAL_EXIT_CODES
+            and await self._process_was_stopped_by_cleanup(event, process.pid)
+        ):
+            # Background hooks are long-lived resources owned by the snapshot or
+            # crawl cleanup phase. When abx-dl asks one to stop with SIGTERM and
+            # it exits from that signal, the crawl completed the intended
+            # lifecycle; recording that Process as failed makes successful
+            # archive results look broken in index.jsonl and Docker smoke tests.
+            # SIGKILL escalation and organic nonzero exits still surface as
+            # failures because they do not match this polite cleanup path.
+            returncode = 0
+            stderr = SHELL_SIGNAL_STDERR_RE.sub("", stderr).strip()
+
         action = "skip"
         status = _process_status(returncode)
         if interrupted:
@@ -593,6 +615,34 @@ class ProcessService(BaseService):
                 ),
             ).now()
         return proc
+
+    async def _process_was_stopped_by_cleanup(self, event: ProcessEvent, pid: int) -> bool:
+        kill_events = await self.bus.filter(
+            ProcessKillEvent,
+            past=True,
+            future=False,
+            plugin_name=event.plugin_name,
+            hook_name=event.hook_name,
+            pid=pid,
+        )
+        for kill_event in kill_events:
+            snapshot_cleanup = await self.bus.find(
+                SnapshotCleanupEvent,
+                past=True,
+                future=False,
+                where=lambda candidate, kill_event=kill_event: self.bus.event_is_parent_of(candidate, kill_event),
+            )
+            if snapshot_cleanup is not None:
+                return True
+            crawl_cleanup = await self.bus.find(
+                CrawlCleanupEvent,
+                past=True,
+                future=False,
+                where=lambda candidate, kill_event=kill_event: self.bus.event_is_parent_of(candidate, kill_event),
+            )
+            if crawl_cleanup is not None:
+                return True
+        return False
 
     async def _finish_stream_stdout(self, stream_task: asyncio.Task[list[str]]) -> list[str]:
         """Finish reading hook stdout after the hook process exits."""
