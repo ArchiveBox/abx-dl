@@ -15,3 +15,15 @@ env/
 test/
 tmp/
 .tmp-*/
+
+/.heartbeat.json
+/index.jsonl
+/archivedotorg/
+/chrome/
+/claudechrome/
+/forumdl/
+/gallerydl/
+/git/
+/twocaptcha/
+/wget/
+/ytdlp/
