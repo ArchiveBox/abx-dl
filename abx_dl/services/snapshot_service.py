@@ -47,6 +47,36 @@ async def _run_event_now(event: BaseEvent, timeout: float | None = None) -> Base
     return event
 
 
+async def _wait_for_background_ready(
+    bus: EventBus,
+    process_event: ProcessEvent,
+    timeout: float,
+) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        first_stdout = await bus.find(
+            ProcessStdoutEvent,
+            child_of=process_event,
+            past=True,
+            future=False,
+        )
+        if first_stdout is not None:
+            return
+        completed_process = await bus.find(
+            ProcessCompletedEvent,
+            child_of=process_event,
+            past=True,
+            future=False,
+        )
+        if completed_process is not None:
+            return
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            break
+        await asyncio.sleep(min(0.05, remaining))
+    raise RuntimeError("Background hook did not emit stdout or exit")
+
+
 class SnapshotService(BaseService):
     """Orchestrates the snapshot phase: extraction hooks, cleanup, completion.
 
@@ -221,9 +251,8 @@ class SnapshotService(BaseService):
             env["SNAP_DIR"] = str(self.output_dir)
             if str(env.get("CHROME_ISOLATION") or "").lower() == "snapshot":
                 active_persona = str(env.get("ACTIVE_PERSONA") or "Default")
-                chrome_persona_dir = self.output_dir / ".persona" / active_persona
-                env["CHROME_USER_DATA_DIR"] = str(chrome_persona_dir / "chrome_profile")
-                env["CHROME_DOWNLOADS_DIR"] = str(chrome_persona_dir / "chrome_downloads")
+                env["PERSONAS_DIR"] = str(self.output_dir / ".persona")
+                env["ACTIVE_PERSONA"] = active_persona
             timeout_key = f"{plugin.name.upper()}_TIMEOUT"
             timeout = plugin_config[timeout_key] if timeout_key in plugin.config.properties else plugin_config.TIMEOUT
             self._hook_timeouts[(plugin.name, hook.name)] = timeout
@@ -237,10 +266,12 @@ class SnapshotService(BaseService):
                 handler_timeout: float | None = None
                 handler_slow_timeout: float | None = None
                 started_wait_timeout = 60.0
+                ready_wait_timeout = float(timeout or 0) + 30.0
             else:
                 handler_timeout = float(timeout or 0) + 30.0
                 handler_slow_timeout = slow_warning_timeout(handler_timeout)
                 started_wait_timeout = handler_timeout
+                ready_wait_timeout = handler_timeout
             process_event = ProcessEvent(
                 plugin_name=plugin.name,
                 hook_name=hook.name,
@@ -274,6 +305,7 @@ class SnapshotService(BaseService):
                     return
                 if started_process is None:
                     raise RuntimeError(f"Background hook {hook.name} did not start")
+                await _wait_for_background_ready(self.bus, background_process, ready_wait_timeout)
             else:
                 foreground_process = event.emit(process_event)
                 await _run_event_now(foreground_process, handler_timeout)

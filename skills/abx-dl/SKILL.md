@@ -29,12 +29,26 @@ uv run abx-dl plugins
 
 ## User-Facing Setup
 
+<!--
+```bash
+cd "$(mktemp -d)"
+exec >stdout.log
+```
+-->
+<!--pytest-codeblocks:cont-->
 ```bash
 uvx abx-dl dl 'https://example.com'
 ```
 
 ## Basic Usage
 
+<!--
+```bash
+cd "$(mktemp -d)"
+exec >stdout.log
+```
+-->
+<!--pytest-codeblocks:cont-->
 ```bash
 uv run abx-dl dl 'https://example.com'
 uv run abx-dl dl --plugins=title,wget,screenshot,pdf 'https://example.com'
@@ -46,6 +60,7 @@ uv run abx-dl config --get TIMEOUT
 
 ## Verification
 
+<!--pytest.mark.skip(reason="pytest invocation")-->
 ```bash
 uv run pytest tests/test_cli.py -q
 uv run prek run --all-files
@@ -55,6 +70,7 @@ For live extractor checks:
 
 ```bash
 cd "$(mktemp -d)"
+exec >stdout.log
 uv run --project /path/to/abx-dl abx-dl dl --plugins=title,wget 'https://example.com'
 find . -maxdepth 3 -type f | sort
 ```

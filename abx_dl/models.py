@@ -169,7 +169,13 @@ class PluginEnv(BaseModel):
         from .config import GlobalConfig
 
         config_payload = config.model_dump(mode="json") if isinstance(config, BaseModel) else dict(config)
-        payload = GlobalConfig(**config_payload).model_dump(mode="json")
+        # Run GlobalConfig validators/derivation without re-reading BaseSettings
+        # sources; the plugin config payload has already been resolved upstream.
+        global_config = GlobalConfig.__pydantic_validator__.validate_python(
+            config_payload,
+            self_instance=GlobalConfig.model_construct(),
+        )
+        payload = global_config.model_dump(mode="json")
         payload.pop("UV_RUN_RECURSION_DEPTH", None)
         for key, value in config_payload.items():
             if key == "UV_RUN_RECURSION_DEPTH":

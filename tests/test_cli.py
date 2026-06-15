@@ -850,6 +850,22 @@ def test_readme_dl_command_downloads_example_dot_com_with_real_output(tmp_path: 
     wget_results = [record for record in index_records if record["type"] == "ArchiveResult" and record["plugin"] == "wget"]
     assert any(record["output_str"] == "wget/example.com/index.html" for record in wget_results)
 
+    wget_processes = [
+        record
+        for record in index_records
+        if record["type"] == "Process" and record.get("plugin") == "wget" and record.get("hook_name") == "on_Snapshot__06_wget.finite.bg"
+    ]
+    assert wget_processes
+    reported_results = [
+        json.loads(line)
+        for process in wget_processes
+        for line in process.get("stdout", "").splitlines()
+        if line.startswith("{") and json.loads(line).get("type") == "ArchiveResult"
+    ]
+    assert any(
+        record.get("status") == "succeeded" and record.get("output_str") == "wget/example.com/index.html" for record in reported_results
+    )
+
 
 def test_dl_relative_dir_keeps_shared_hook_paths_in_run_dir(tmp_path: Path) -> None:
     result = _run_cli(

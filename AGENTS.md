@@ -25,18 +25,33 @@ uv run abx-dl plugins
 
 ## User-Facing Setup
 
+<!--
+```bash
+cd "$(mktemp -d)"
+exec >stdout.log
+```
+-->
+<!--pytest-codeblocks:cont-->
 ```bash
 uvx abx-dl dl 'https://example.com'
 ```
 
 Docker:
 
+<!--pytest.mark.skip(reason="requires interactive TTY")-->
 ```bash
 docker run -it -v "$PWD:/out" archivebox/abxdl 'https://example.com'
 ```
 
 ## Basic Usage
 
+<!--
+```bash
+cd "$(mktemp -d)"
+exec >stdout.log
+```
+-->
+<!--pytest-codeblocks:cont-->
 ```bash
 uv run abx-dl dl 'https://example.com'
 uv run abx-dl dl --plugins=title,wget,screenshot,pdf 'https://example.com'
@@ -51,6 +66,7 @@ uv run abx-dl config --get TIMEOUT
 
 Use targeted tests and real user-facing commands:
 
+<!--pytest.mark.skip(reason="pytest invocation")-->
 ```bash
 uv run pytest tests/test_cli.py -q
 uv run prek run --all-files
@@ -60,6 +76,7 @@ For extractor behavior, run in a clean directory and inspect `index.jsonl` plus 
 
 ```bash
 cd "$(mktemp -d)"
+exec >stdout.log
 uv run --project /path/to/abx-dl abx-dl dl --plugins=title,wget 'https://example.com'
 find . -maxdepth 3 -type f | sort
 ```

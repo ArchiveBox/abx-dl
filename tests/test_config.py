@@ -255,15 +255,16 @@ def test_plugin_env_preserves_user_runtime_dirs_when_derived_config_has_defaults
     assert env["PUPPETEER_CACHE_DIR"] == str(lib_dir / "puppeteer")
 
 
-def test_archivebox_runtime_config_overrides_container_plugin_env(
+def test_plugin_env_preserves_arbitrary_chrome_profile_env(
     monkeypatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setenv("CHROME_USER_DATA_DIR", "/data/personas/Default/chrome_profile")
+    process_profile = "/data/personas/Default/chrome_profile"
+    configured_profile = str(tmp_path / "stale" / "chrome_profile")
+    monkeypatch.setenv("CHROME_USER_DATA_DIR", process_profile)
 
     plugins = discover_plugins()
     bus = create_bus(total_timeout=60.0, name=f"test_config_archivebox_runtime_{tmp_path.name}")
-    runtime_profile = tmp_path / "crawl" / ".persona" / "Default" / "chrome_profile"
 
     async def emit_runtime_config() -> None:
         await bus.emit(
@@ -271,7 +272,7 @@ def test_archivebox_runtime_config_overrides_container_plugin_env(
                 config={
                     "ABX_RUNTIME": "archivebox",
                     "DATA_DIR": str(tmp_path / "data"),
-                    "CHROME_USER_DATA_DIR": str(runtime_profile),
+                    "CHROME_USER_DATA_DIR": configured_profile,
                 },
                 config_type="user",
             ),
@@ -289,7 +290,7 @@ def test_archivebox_runtime_config_overrides_container_plugin_env(
     finally:
         asyncio.run(bus.wait_until_idle())
 
-    assert env["CHROME_USER_DATA_DIR"] == str(runtime_profile)
+    assert env["CHROME_USER_DATA_DIR"] == configured_profile
 
 
 def test_plugin_env_omits_none_runtime_overrides(tmp_path: Path) -> None:

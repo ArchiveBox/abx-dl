@@ -1225,10 +1225,10 @@ def test_snapshot_service_repins_snapshot_chrome_dirs_after_global_config_merge(
 
     assert emitted is not None
     assert emitted.env["SNAP_DIR"] == str(output_dir)
-    assert emitted.env["CHROME_USER_DATA_DIR"] == str(output_dir / ".persona" / "Default" / "chrome_profile")
-    assert emitted.env["CHROME_DOWNLOADS_DIR"] == str(output_dir / ".persona" / "Default" / "chrome_downloads")
-    assert str(stale_dir) not in emitted.env["CHROME_USER_DATA_DIR"]
-    assert str(stale_dir) not in emitted.env["CHROME_DOWNLOADS_DIR"]
+    assert emitted.env["PERSONAS_DIR"] == str(output_dir / ".persona")
+    assert emitted.env["ACTIVE_PERSONA"] == "Default"
+    assert emitted.env["CHROME_USER_DATA_DIR"] == str(stale_dir / ".persona" / "Default" / "chrome_profile")
+    assert emitted.env["CHROME_DOWNLOADS_DIR"] == str(stale_dir / ".persona" / "Default" / "chrome_downloads")
 
 
 def test_snapshot_limit_admission_uses_stable_snapshot_id_across_retries(tmp_path: Path) -> None:

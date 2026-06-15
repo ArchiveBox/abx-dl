@@ -18,7 +18,7 @@ from ..events import (
 )
 from ..limits import CrawlLimitState
 from ..models import ArchiveResult, write_jsonl
-from ..output_files import OutputFile, scan_output_files
+from ..output_files import scan_output_files
 from .base import BaseService
 
 
@@ -35,9 +35,8 @@ class ArchiveResultService(BaseService):
        synthetic ArchiveResultEvent when the hook didn't already report one:
        - If exit_code is nonzero and not the skipped sentinel → synthetic
          ``failed`` result (with stderr as error).
-       - If exit_code == 0 and non-metadata output files exist → synthetic
-         ``succeeded`` result.
-       - If exit_code == 0 and no content files → synthetic ``noresult`` result.
+       - If exit_code == 0 → synthetic ``noresult`` result. Hooks must emit a
+         real ArchiveResult record to claim success.
 
        Install, CrawlSetup, and BinaryRequest hooks are excluded — they don't
        produce ArchiveResults.
@@ -184,26 +183,7 @@ class ArchiveResultService(BaseService):
                 output_files=event.output_files,
                 error=event.stderr or None,
             )
-        elif _has_content_files(event.output_files):
-            # Succeeded with real output files but no inline result → synthetic success
-            primary_output = next(
-                (
-                    output_file
-                    for output_file in event.output_files
-                    if output_file.mimetype == "text/html" or output_file.extension in {"html", "htm", "shtml"}
-                ),
-                event.output_files[0],
-            )
-            ar = ArchiveResult(
-                snapshot_id=snapshot_event.snapshot_id,
-                plugin=event.plugin_name,
-                hook_name=event.hook_name,
-                status="succeeded",
-                output_str=f"{event.plugin_name}/{primary_output.path}",
-                output_files=event.output_files,
-            )
         else:
-            # Succeeded but no content files → noresult
             ar = ArchiveResult(
                 snapshot_id=snapshot_event.snapshot_id,
                 plugin=event.plugin_name,
@@ -229,11 +209,3 @@ class ArchiveResultService(BaseService):
                 error=ar.error or "",
             ),
         ).now()
-
-
-# ── Pure helpers ────────────────────────────────────────────────────────────
-
-
-def _has_content_files(output_files: list[OutputFile]) -> bool:
-    """Return True if the hook produced any real output files."""
-    return bool(output_files)

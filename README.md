@@ -2,11 +2,19 @@
 
 > A simple all-in-one CLI tool to auto-detect and download *everything* available from a URL.
 
+<!--
+```bash
+cd "$(mktemp -d)"
+exec >stdout.log
+```
+-->
+<!--pytest-codeblocks:cont-->
 ```bash
 uvx abx-dl 'https://example.com'
+```
 
-# OR
-
+<!--pytest.mark.skip(reason="requires interactive TTY")-->
+```bash
 docker run -it -v "$PWD:/out" archivebox/abxdl 'https://example.com'
 ```
 ---
@@ -27,6 +35,17 @@ It's useful for scraping, downloading, OSINT, digital preservation, and more.
 
 #### 🍜 What does it save?
 
+<!--
+```bash
+cd "$(mktemp -d)"
+exec >stdout.log
+export HOME="$PWD/home"
+export UV_TOOL_DIR="$HOME/.local/share/uv/tools"
+export UV_TOOL_BIN_DIR="$HOME/.local/bin"
+export PATH="$UV_TOOL_BIN_DIR:$PATH"
+```
+-->
+<!--pytest-codeblocks:cont-->
 ```bash
 abx-dl --plugins=wget,title,screenshot,pdf,readability,git 'https://example.com'
 ```
@@ -57,6 +76,13 @@ Plugins are loaded from the installed [`abx-plugins`](https://pypi.org/project/a
 
 Configuration is handled via environment variables plus a user config file under the platformdirs user config path (`<user-config>/abx/config.env`). Runtime-derived cache entries such as resolved binary paths are stored separately in `<user-config>/abx/derived.env`:
 
+<!--
+```bash
+cd "$(mktemp -d)"
+exec >stdout.log
+```
+-->
+<!--pytest-codeblocks:cont-->
 ```bash
 abx-dl config                        # show all config (global + per-plugin)
 abx-dl config --get WGET_TIMEOUT     # get a specific value
@@ -64,7 +90,7 @@ abx-dl config --set TIMEOUT=120      # set persistently (resolves aliases)
 ```
 
 Output is grouped by section:
-```bash
+```text
 # GLOBAL
 TIMEOUT=60
 USER_AGENT="Mozilla/5.0 ..."
@@ -91,11 +117,18 @@ Aliases are automatically resolved (e.g. `--set USE_WGET=false` saves as `WGET_E
 
 One-off config is easy via env vars or CLI args:
 
+<!--
+```bash
+cd "$(mktemp -d)"
+exec >stdout.log
+```
+-->
+<!--pytest-codeblocks:cont-->
 ```bash
 env \
   CHROME_BINARY=/usr/bin/chromium \
   TIMEOUT=120 \
-  abx-dl 'https://example.com'
+  abx-dl --plugins=title,wget 'https://example.com'
 
 # CLI args
 abx-dl \
@@ -114,16 +147,31 @@ abx-dl \
 
 ### 📦 Install
 
+<!--
 ```bash
-pip install abx-dl
-abx-dl 'https://example.com'
-
-# Or run the published CLI without installing it globally
-uvx abx-dl 'https://example.com'
-
-# Check / Install any missing plugin dependencies
+cd "$(mktemp -d)"
+exec >stdout.log
+```
+-->
+<!--pytest-codeblocks:cont-->
+```bash
+uv tool install abx-dl
 abx-dl version
-abx-dl install
+```
+
+<!--
+```bash
+cd "$(mktemp -d)"
+exec >stdout.log
+```
+-->
+<!--pytest-codeblocks:cont-->
+```bash
+uvx abx-dl --plugins=title,wget 'https://example.com'
+```
+
+```bash
+abx-dl install wget title
 ```
 
 <br/>

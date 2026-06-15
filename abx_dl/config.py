@@ -181,6 +181,11 @@ class GlobalConfig(BaseSettings):
         return key in type(self).model_fields or bool(self.__pydantic_extra__ and key in self.__pydantic_extra__)
 
 
+@lru_cache(maxsize=1)
+def _global_config() -> GlobalConfig:
+    return GlobalConfig()
+
+
 @dataclass(frozen=True)
 class RuntimeConfig:
     user: GlobalConfig
@@ -188,18 +193,18 @@ class RuntimeConfig:
 
 
 def _config_file(settings: GlobalConfig | None = None) -> Path:
-    runtime_settings = settings or GlobalConfig()
+    runtime_settings = settings or _global_config()
     return runtime_settings.CONFIG_DIR / "config.env"
 
 
 def _derived_config_file(settings: GlobalConfig | None = None) -> Path:
-    runtime_settings = settings or GlobalConfig()
+    runtime_settings = settings or _global_config()
     return runtime_settings.CONFIG_DIR / "derived.env"
 
 
 def ensure_default_persona_dir() -> Path:
     """Ensure the default persona directory exists and return its path."""
-    default_persona_dir = cast(Path, GlobalConfig().PERSONAS_DIR) / "Default"
+    default_persona_dir = cast(Path, _global_config().PERSONAS_DIR) / "Default"
     default_persona_dir.mkdir(parents=True, exist_ok=True)
     return default_persona_dir
 
@@ -382,7 +387,7 @@ def get_initial_env(*keys: str, plugin_schemas: dict[str, dict[str, Any]] | None
     This is bootstrap-only state from ``config.env``. It intentionally excludes
     ``derived.env`` because derived cache is reconstructed separately at runtime.
     """
-    settings = GlobalConfig()
+    settings = _global_config()
     all_config = dict(settings.model_dump(mode="json"))
     global_config = {key: all_config[key] for key in GLOBAL_DEFAULT_KEYS if key in all_config}
     raw_user_config = _load_env_file(_config_file(settings))
@@ -422,7 +427,7 @@ def get_initial_env(*keys: str, plugin_schemas: dict[str, dict[str, Any]] | None
 
 def set_user_config(plugin_schemas: dict[str, dict[str, Any]] | None = None, **kwargs: Any) -> dict[str, Any]:
     """Validate and persist user-owned config updates into ``config.env``."""
-    settings = GlobalConfig()
+    settings = _global_config()
     config_file = _config_file(settings)
     config_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -463,6 +468,7 @@ def set_user_config(plugin_schemas: dict[str, dict[str, Any]] | None = None, **k
         saved[canonical_key] = validated_value
 
     _write_env_file(config_file, config)
+    _global_config.cache_clear()
 
     return saved
 
@@ -481,12 +487,17 @@ def unset_user_config(*keys: str) -> list[str]:
             config.pop(key, None)
 
     _write_env_file(config_file, config)
+    _global_config.cache_clear()
     return removed
 
 
 def get_derived_config(current_config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Load persisted derived runtime cache from ``derived.env``."""
-    raw = _load_env_file(_derived_config_file(GlobalConfig(**(current_config or {}))))
+    if current_config and current_config.get("CONFIG_DIR"):
+        derived_config_file = Path(str(current_config["CONFIG_DIR"])).expanduser() / "derived.env"
+    else:
+        derived_config_file = _derived_config_file()
+    raw = _load_env_file(derived_config_file)
     if not raw:
         return {}
 
@@ -498,7 +509,10 @@ def get_derived_config(current_config: dict[str, Any] | None = None) -> dict[str
 
 def set_derived_config(current_config: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
     """Persist derived runtime cache values into ``derived.env``."""
-    derived_config_file = _derived_config_file(GlobalConfig(**(current_config or {})))
+    if current_config and current_config.get("CONFIG_DIR"):
+        derived_config_file = Path(str(current_config["CONFIG_DIR"])).expanduser() / "derived.env"
+    else:
+        derived_config_file = _derived_config_file()
     derived_config_file.parent.mkdir(parents=True, exist_ok=True)
     config = _load_env_file(derived_config_file)
 
@@ -518,7 +532,10 @@ def unset_derived_config(*keys: str, current_config: dict[str, Any] | None = Non
     if not keys:
         return []
 
-    derived_config_file = _derived_config_file(GlobalConfig(**(current_config or {})))
+    if current_config and current_config.get("CONFIG_DIR"):
+        derived_config_file = Path(str(current_config["CONFIG_DIR"])).expanduser() / "derived.env"
+    else:
+        derived_config_file = _derived_config_file()
     config = _load_env_file(derived_config_file)
     removed: list[str] = []
     for key in keys:
