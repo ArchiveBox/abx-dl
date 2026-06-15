@@ -1,0 +1,1 @@
+{"type":"ProcessReady","plugin":"chrome","hook":"on_CrawlSetup__90_chrome_launch.daemon.bg","cdp_url":"ws://127.0.0.1:51363/devtools/browser/64373493-d66e-4028-9537-5b6e521e2e1c","pid":40128}

@@ -1,0 +1,34 @@
+Traceback (most recent call last):
+  File "/Users/squash/Local/Code/archiveboxes/new/abx-plugins/abx_plugins/plugins/forumdl/on_Snapshot__04_forumdl.finite.bg.py", line 46, in <module>
+    CONFIG = load_config()
+  File "/Users/squash/Local/Code/archiveboxes/new/abx-plugins/abx_plugins/plugins/base/utils.py", line 917, in load_config
+    model = build_config_model(title, properties)
+  File "/Users/squash/Local/Code/archiveboxes/new/abx-plugins/abx_plugins/plugins/base/utils.py", line 694, in build_config_model
+    return _schema_model(
+        json.dumps(
+    ...<6 lines>...
+        ),
+    )
+  File "/Users/squash/Local/Code/archiveboxes/new/abx-plugins/abx_plugins/plugins/base/utils.py", line 610, in _schema_model
+    from jambo import SchemaConverter
+  File "/Users/squash/Local/Code/archiveboxes/new/.venv/lib/python3.13/site-packages/jambo/__init__.py", line 1, in <module>
+    from .schema_converter import SchemaConverter
+  File "/Users/squash/Local/Code/archiveboxes/new/.venv/lib/python3.13/site-packages/jambo/schema_converter.py", line 2, in <module>
+    from jambo.parser import ObjectTypeParser, RefTypeParser
+  File "/Users/squash/Local/Code/archiveboxes/new/.venv/lib/python3.13/site-packages/jambo/parser/__init__.py", line 1, in <module>
+    from ._type_parser import GenericTypeParser
+  File "/Users/squash/Local/Code/archiveboxes/new/.venv/lib/python3.13/site-packages/jambo/parser/_type_parser.py", line 4, in <module>
+    from pydantic import Field, TypeAdapter
+  File "/Users/squash/Library/Application Support/abx/lib/uv/venv/lib/python3.14/site-packages/pydantic/__init__.py", line 5, in <module>
+    from ._migration import getattr_migration
+  File "/Users/squash/Library/Application Support/abx/lib/uv/venv/lib/python3.14/site-packages/pydantic/_migration.py", line 4, in <module>
+    from pydantic.warnings import PydanticDeprecatedSince20
+  File "/Users/squash/Library/Application Support/abx/lib/uv/venv/lib/python3.14/site-packages/pydantic/warnings.py", line 5, in <module>
+    from .version import version_short
+  File "/Users/squash/Library/Application Support/abx/lib/uv/venv/lib/python3.14/site-packages/pydantic/version.py", line 7, in <module>
+    from pydantic_core import __version__ as __pydantic_core_version__
+  File "/Users/squash/Library/Application Support/abx/lib/uv/venv/lib/python3.14/site-packages/pydantic_core/__init__.py", line 8, in <module>
+    from ._pydantic_core import (
+    ...<21 lines>...
+    )
+ModuleNotFoundError: No module named 'pydantic_core._pydantic_core'

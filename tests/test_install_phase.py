@@ -94,7 +94,7 @@ def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) 
     run_dir = tmp_path / "run"
     managed_lib_dir = tmp_path / "lib"
 
-    async def collect_abxbus_request(*, no_cache: bool) -> BinaryRequestEvent:
+    async def collect_requests(*, no_cache: bool) -> list[BinaryRequestEvent]:
         bus = create_bus(total_timeout=60.0, name=f"install_phase_chrome_abxbus_{tmp_path.name}_{no_cache}")
         PluginBinariesService(
             bus,
@@ -136,10 +136,24 @@ def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) 
             ),
         ).now()
         await bus.wait_until_idle()
-        return next(event for event in request_events if event.name == "abxbus")
+        return request_events
 
-    abxbus_request = asyncio.run(collect_abxbus_request(no_cache=False))
+    request_events = asyncio.run(collect_requests(no_cache=False))
+    abxbus_request = next(event for event in request_events if event.name == "abxbus")
+    playwright_request = next(event for event in request_events if event.name == "playwright")
+    chromium_index = next(
+        i for i, event in enumerate(request_events) if event.name == "chromium"
+    )
 
+    assert request_events.index(playwright_request) < chromium_index
+    assert playwright_request.binproviders == "pnpm"
+    assert playwright_request.postinstall_scripts is True
+    assert playwright_request.overrides == {
+        "pnpm": {
+            "install_root": str(managed_lib_dir / "pnpm" / "packages" / "playwright"),
+            "install_args": ["playwright@next"],
+        },
+    }
     assert abxbus_request.no_cache is None
     assert abxbus_request.binproviders == "pnpm"
     assert abxbus_request.min_version == "2.5.9"
@@ -152,7 +166,7 @@ def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) 
             "version": "2.5.9",
         },
     }
-    no_cache_request = asyncio.run(collect_abxbus_request(no_cache=True))
+    no_cache_request = next(event for event in asyncio.run(collect_requests(no_cache=True)) if event.name == "abxbus")
     assert no_cache_request.no_cache is True
 
 

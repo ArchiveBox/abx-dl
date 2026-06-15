@@ -10,8 +10,17 @@ exec >stdout.log
 -->
 <!--pytest-codeblocks:cont-->
 ```bash
-uvx abx-dl 'https://example.com'
+uvx abx-dl --plugins=title,wget 'https://example.com'
 ```
+
+<!--pytest-codeblocks:cont-->
+<!--
+```bash
+test -s index.jsonl
+test -s title/title.txt
+test -s wget/example.com/index.html
+```
+-->
 
 <!--pytest.mark.skip(reason="requires interactive TTY")-->
 ```bash
@@ -39,16 +48,32 @@ It's useful for scraping, downloading, OSINT, digital preservation, and more.
 ```bash
 cd "$(mktemp -d)"
 exec >stdout.log
-export HOME="$PWD/home"
-export UV_TOOL_DIR="$HOME/.local/share/uv/tools"
-export UV_TOOL_BIN_DIR="$HOME/.local/bin"
-export PATH="$UV_TOOL_BIN_DIR:$PATH"
 ```
 -->
 <!--pytest-codeblocks:cont-->
 ```bash
-abx-dl --plugins=wget,title,screenshot,pdf,readability,git 'https://example.com'
+abx-dl --plugins=wget,title,screenshot,pdf,readability 'https://example.com'
 ```
+
+<!--pytest-codeblocks:cont-->
+<!--
+```bash
+test -s index.jsonl
+test -s title/title.txt
+test -s wget/example.com/index.html
+test -s screenshot/screenshot.png
+test -s pdf/output.pdf
+test -s readability/content.html
+grep -q 'Example Domain' title/title.txt
+grep -q 'Example Domain' wget/example.com/index.html
+grep -q 'Example Domain' readability/content.txt
+grep -q '"plugin": "wget".*"status": "succeeded"' index.jsonl
+grep -q '"plugin": "screenshot".*"status": "succeeded"' index.jsonl
+grep -q '"plugin": "pdf".*"status": "succeeded"' index.jsonl
+grep -q '"plugin": "title".*"status": "succeeded"' index.jsonl
+grep -q '"plugin": "readability".*"status": "succeeded"' index.jsonl
+```
+-->
 
 `abx-dl` runs all plugins by default (and auto installs dependencies). You can specify `--plugins=wget,favicon,title` or filters like `--output=html,pdf,ico,text/` to limit plugin selection.
 - HTML, JS, CSS, images, etc. rendered with a headless browser
@@ -126,18 +151,26 @@ exec >stdout.log
 <!--pytest-codeblocks:cont-->
 ```bash
 env \
-  CHROME_BINARY=/usr/bin/chromium \
   TIMEOUT=120 \
-  abx-dl --plugins=title,wget 'https://example.com'
-
-# CLI args
-abx-dl \
-  --dir=/tmp/test \
-  --plugins=wget,title,favicon \
-  --output=html,txt,css,js,ico,png,pdf \
-  --timeout=90 \
-  'https://example.com'
+  WGET_TIMEOUT=120 \
+  abx-dl \
+    --dir=./config-example \
+    --plugins=title,wget \
+    --timeout=90 \
+    'https://example.com'
 ```
+
+<!--pytest-codeblocks:cont-->
+<!--
+```bash
+test -s config-example/index.jsonl
+test -s config-example/title/title.txt
+test -s config-example/wget/example.com/index.html
+grep -q 'Example Domain' config-example/title/title.txt
+grep -q '"plugin": "wget".*"status": "succeeded"' config-example/index.jsonl
+grep -q '"plugin": "title".*"status": "succeeded"' config-example/index.jsonl
+```
+-->
 
 <br/>
 
@@ -167,7 +200,7 @@ exec >stdout.log
 -->
 <!--pytest-codeblocks:cont-->
 ```bash
-uvx abx-dl --plugins=title,wget 'https://example.com'
+uvx abx-dl version
 ```
 
 ```bash
@@ -178,7 +211,27 @@ abx-dl install wget title
 
 ### 🔠 Usage
 
+<!--
 ```bash
+cd "$(mktemp -d)"
+exec >stdout.log
+```
+-->
+<!--pytest-codeblocks:cont-->
+```bash
+abx-dl --plugins=title,wget --dir=./downloads --timeout=120 'https://example.com'
+```
+
+<!--pytest-codeblocks:cont-->
+<!--
+```bash
+test -s downloads/index.jsonl
+test -s downloads/title/title.txt
+test -s downloads/wget/example.com/index.html
+```
+-->
+
+```text
 # Default command - a bare URL archives with all enabled plugins:
 abx-dl 'https://example.com'
 
@@ -201,7 +254,7 @@ abx-dl --timeout=120 'https://example.com'
 
 #### Commands
 
-```bash
+```text
 abx-dl <url>                              # Download URL (default shorthand)
 abx-dl plugins                            # Check + show info for all plugins
 abx-dl plugins wget ytdlp git             # Check + show info for specific plugins
@@ -218,18 +271,23 @@ Many plugins require external binaries (e.g., `wget`, `chrome`, `yt-dlp`, `singl
 By default, `abx-dl` lazily installs missing dependencies as needed when you download a URL.
 Use `--no-install` to skip plugins with missing dependencies instead. `install` runs only the pre-run dependency pipeline (`required_binaries` → `BinaryRequestEvent` → `BinaryEvent`) without starting crawl setup or snapshot extraction:
 
+<!--
 ```bash
-# Auto-installs missing deps on-the-fly (default behavior)
-abx-dl 'https://example.com'
+cd "$(mktemp -d)"
+exec >stdout.log
+```
+-->
+<!--pytest-codeblocks:cont-->
+```bash
+abx-dl install wget title
+abx-dl plugins wget title
+```
 
-# Skip plugins with missing deps, emit warnings instead
-abx-dl --no-install 'https://example.com'
-
-# Install dependencies for specific plugins only
-abx-dl install wget singlefile ytdlp
-
-# Check which dependencies are available/missing
-abx-dl plugins
+```text
+abx-dl 'https://example.com'              # auto-installs missing deps on-the-fly
+abx-dl --no-install 'https://example.com' # skips plugins with missing deps and emits warnings
+abx-dl install wget singlefile ytdlp      # installs dependencies for specific plugins only
+abx-dl plugins                            # checks which dependencies are available/missing
 ```
 
 Successful preflight installs are cached for 24 hours in `derived.env` under `ABX_INSTALL_CACHE`, keyed by binary name. If a binary was installed successfully recently, `abx-dl` skips re-running the install preflight for that binary. Cached abspaths are still validated at use time, and stale cache entries fall back to `abxpkg` provider resolution.

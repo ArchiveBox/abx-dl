@@ -1,0 +1,4 @@
+[archivedotorg] Submitting to Wayback Machine (timeout=120s)
+[archivedotorg] GET https://web.archive.org/save/https://example.com
+[archivedotorg] HTTP 200 final_url=https://web.archive.org/web/20260615000509/https://example.com/
+[archivedotorg] Redirected to archive page -> https://web.archive.org/web/20260615000509/https://example.com/

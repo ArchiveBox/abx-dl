@@ -1,0 +1,5 @@
+Configuring 2captcha...
+API Key: 60ce5e...8e65
+Extension ID: bmflcffcmamehmnbbkjeiadolmjbokch
+[*] Service-worker verify unavailable (Timed out waiting for extension target bmflcffcmamehmnbbkjeiadolmjbokch); proceeding with options-page configure.
+ERROR: ProtocolError: Protocol error (Runtime.callFunctionOn): Promise was collected

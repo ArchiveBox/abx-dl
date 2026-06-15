@@ -179,10 +179,6 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && sort /tmp/abx-dl-enable-plugins.env | tee -a /VERSION.txt \
     && source /tmp/abx-dl-enable-plugins.env \
     && ABXPKG_NO_CACHE=True ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 abx-dl install chrome \
-    && CHROME_BINARY="$ABXPKG_LIB_DIR/playwright/bin/chromium" \
-    && export CHROME_BINARY \
-    && test -x "$CHROME_BINARY" \
-    && abxpkg load --binproviders=env --abspath="$CHROME_BINARY" --min-version=149.0.0 chromium | tee -a /VERSION.txt \
     && ABXPKG_NO_CACHE=True ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 abx-dl install \
     && mkdir -p "$ABXPKG_LIB_DIR/env/bin" \
     && ln -sf /usr/bin/git "$ABXPKG_LIB_DIR/env/bin/git" \
@@ -201,7 +197,6 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && rm -rf /opt/node/include /opt/node/share/doc /opt/node/share/man \
     && rm -f /opt/node/CHANGELOG.md /opt/node/README.md /opt/node/LICENSE \
     && rm -f /usr/lib/jvm/java-*-openjdk-*/lib/server/classes*.jsa \
-    && strip --strip-unneeded "$CHROME_BINARY" \
     && (find "$ABXPKG_LIB_DIR" -type f \( -name '*.so' -o -name '*.node' \) -exec strip --strip-unneeded {} + 2>/dev/null || true) \
     && apt-get purge -y --auto-remove binutils \
     && rm -f /venv/bin/uv /venv/bin/uvx \
@@ -214,9 +209,6 @@ RUN (echo -e "\n\n[+] abx-dl runtime versions" \
     && abxpkg load --binproviders=env /venv/bin/python3 \
     && python3 -c 'from abx_dl.models import discover_plugins; [print(f"export {plugin.enabled_key}=True") for plugin in discover_plugins(runtime="abx-dl").values() if plugin.enabled_key in plugin.config.properties]' > /tmp/abx-dl-enable-plugins.env \
     && source /tmp/abx-dl-enable-plugins.env \
-    && CHROME_BINARY="$ABXPKG_LIB_DIR/playwright/bin/chromium" \
-    && export CHROME_BINARY \
-    && abxpkg load --binproviders=env --abspath="$CHROME_BINARY" --min-version=149.0.0 chromium \
     && abx-dl plugins \
     && abxpkg load --binproviders=env rg \
     && ! command -v gcc \

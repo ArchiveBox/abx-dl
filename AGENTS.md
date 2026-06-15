@@ -17,10 +17,17 @@
 
 ## Development Setup
 
+<!--
+```bash
+export UV_PROJECT_ENVIRONMENT="$(mktemp -d)/.venv"
+unset VIRTUAL_ENV
+```
+-->
+<!--pytest-codeblocks:cont-->
 ```bash
 uv sync
 uv run abx-dl --help
-uv run abx-dl plugins
+uv run abx-dl plugins wget
 ```
 
 ## User-Facing Setup
@@ -33,8 +40,17 @@ exec >stdout.log
 -->
 <!--pytest-codeblocks:cont-->
 ```bash
-uvx abx-dl dl 'https://example.com'
+uvx abx-dl dl --plugins=title,wget 'https://example.com'
 ```
+
+<!--pytest-codeblocks:cont-->
+<!--
+```bash
+test -s index.jsonl
+test -s title/title.txt
+test -s wget/example.com/index.html
+```
+-->
 
 Docker:
 
@@ -53,10 +69,22 @@ exec >stdout.log
 -->
 <!--pytest-codeblocks:cont-->
 ```bash
-uv run abx-dl dl 'https://example.com'
+uv run abx-dl dl --plugins=title,wget --dir ./downloads 'https://example.com'
+```
+
+<!--pytest-codeblocks:cont-->
+<!--
+```bash
+test -s downloads/index.jsonl
+test -s downloads/title/title.txt
+test -s downloads/wget/example.com/index.html
+grep -q 'Example Domain' downloads/title/title.txt
+```
+-->
+
+```text
 uv run abx-dl dl --plugins=title,wget,screenshot,pdf 'https://example.com'
 uv run abx-dl dl --output=html,json,txt,pdf,image 'https://example.com'
-uv run abx-dl dl --dir ./downloads 'https://example.com'
 uv run abx-dl install wget ytdlp chrome
 uv run abx-dl config
 uv run abx-dl config --get TIMEOUT

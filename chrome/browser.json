@@ -1,0 +1,965 @@
+{
+  "ready": true,
+  "extensions": [
+    {
+      "webstore_id": "fpeoodllldobpkbkabpblcfaogecpndd",
+      "name": "archivewebpage",
+      "webstore_url": "https://chromewebstore.google.com/detail/fpeoodllldobpkbkabpblcfaogecpndd",
+      "crx_url": "https://clients2.google.com/service/update2/crx?response=redirect&prodversion=1230&acceptformat=crx3&x=id%3Dfpeoodllldobpkbkabpblcfaogecpndd%26uc",
+      "crx_path": "/Users/squash/Library/Application Support/abx/lib/chromewebstore/extensions/fpeoodllldobpkbkabpblcfaogecpndd__archivewebpage.crx",
+      "unpacked_path": "/Users/squash/Library/Application Support/abx/lib/chromewebstore/extensions/fpeoodllldobpkbkabpblcfaogecpndd__archivewebpage",
+      "version": "0.16.2",
+      "id": "bmjmgbefgaafihbffkiekmnkeeghgfdm",
+      "target_error": "TimeoutError: Timed out waiting for extension target bmjmgbefgaafihbffkiekmnkeeghgfdm",
+      "manifest": {
+        "update_url": "https://clients2.google.com/service/update2/crx",
+        "name": "Webrecorder ArchiveWeb.page",
+        "description": "Create high-fidelity web archives directly in your browser",
+        "version": "0.16.2",
+        "permissions": [
+          "debugger",
+          "contextMenus",
+          "tabs",
+          "activeTab",
+          "storage",
+          "unlimitedStorage",
+          "webRequest"
+        ],
+        "content_security_policy": {
+          "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+        },
+        "background": {
+          "service_worker": "bg.js"
+        },
+        "icons": {
+          "32": "icon.png",
+          "128": "icon.png"
+        },
+        "action": {
+          "default_icon": {
+            "32": "icon.png"
+          },
+          "default_title": "Webrecorder ArchiveWeb.page",
+          "default_popup": "popup.html"
+        },
+        "web_accessible_resources": [
+          {
+            "resources": [
+              "pdf/*",
+              "ruffle/*"
+            ],
+            "matches": [
+              "*://*/*"
+            ]
+          }
+        ],
+        "host_permissions": [
+          "*://*/*"
+        ],
+        "manifest_version": 3
+      },
+      "manifest_version": 3
+    },
+    {
+      "webstore_id": "fcoeoabgfenejglbffodgkkbkcdhcgfn",
+      "name": "claudechrome",
+      "webstore_url": "https://chromewebstore.google.com/detail/fcoeoabgfenejglbffodgkkbkcdhcgfn",
+      "crx_url": "https://clients2.google.com/service/update2/crx?response=redirect&prodversion=1230&acceptformat=crx3&x=id%3Dfcoeoabgfenejglbffodgkkbkcdhcgfn%26uc",
+      "crx_path": "/Users/squash/Library/Application Support/abx/lib/chromewebstore/extensions/fcoeoabgfenejglbffodgkkbkcdhcgfn__claudechrome.crx",
+      "unpacked_path": "/Users/squash/Library/Application Support/abx/lib/chromewebstore/extensions/fcoeoabgfenejglbffodgkkbkcdhcgfn__claudechrome",
+      "version": "1.0.75",
+      "id": "fcoeoabgfenejglbffodgkkbkcdhcgfn",
+      "target_error": "TimeoutError: Timed out waiting for extension target fcoeoabgfenejglbffodgkkbkcdhcgfn",
+      "manifest": {
+        "update_url": "https://clients2.google.com/service/update2/crx",
+        "manifest_version": 3,
+        "name": "Claude",
+        "version": "1.0.75",
+        "description": "Claude in Chrome (Beta)",
+        "minimum_chrome_version": "116",
+        "icons": {
+          "128": "icon-128.png"
+        },
+        "background": {
+          "service_worker": "service-worker-loader.js",
+          "type": "module"
+        },
+        "action": {
+          "default_title": "Open Claude"
+        },
+        "options_page": "options.html",
+        "permissions": [
+          "sidePanel",
+          "storage",
+          "activeTab",
+          "scripting",
+          "debugger",
+          "tabGroups",
+          "tabs",
+          "alarms",
+          "notifications",
+          "webNavigation",
+          "declarativeNetRequestWithHostAccess",
+          "offscreen",
+          "nativeMessaging",
+          "unlimitedStorage",
+          "downloads",
+          "identity"
+        ],
+        "host_permissions": [
+          "<all_urls>"
+        ],
+        "storage": {
+          "managed_schema": "managed_schema.json"
+        },
+        "content_scripts": [
+          {
+            "js": [
+              "assets/content-script.ts-loader-DKJzsl7H.js"
+            ],
+            "matches": [
+              "https://claude.ai/*",
+              "https://*.claude.ai/*"
+            ],
+            "run_at": "document_end"
+          },
+          {
+            "js": [
+              "assets/accessibility-tree.js-CCweLwU2.js"
+            ],
+            "matches": [
+              "<all_urls>"
+            ],
+            "run_at": "document_start",
+            "all_frames": true
+          },
+          {
+            "js": [
+              "assets/agent-visual-indicator.js-DVYDybPo.js"
+            ],
+            "matches": [
+              "<all_urls>"
+            ],
+            "run_at": "document_idle",
+            "all_frames": false
+          }
+        ],
+        "externally_connectable": {
+          "matches": [
+            "https://claude.ai/*",
+            "https://*.claude.ai/*"
+          ]
+        },
+        "commands": {
+          "toggle-side-panel": {
+            "suggested_key": {
+              "default": "Ctrl+E",
+              "mac": "Command+E"
+            },
+            "description": "Toggle Claude side panel"
+          }
+        },
+        "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAjU1XnLPoasGVmZU42K3h6S+sQhkogfcoLPbIcrWH5Oo8QoInBIugkew/7cWaEFySyQrkaEBe1fjeS/rlAqd3r778dKcTvDZcXmj0VVX0Fi1i8tnkarurceGKGdVxfkL7e30nwfgwoPxj3H8OQbsbxFcBWGVtcFekmdpiyaxwz6o4yXIWColfAxh9K2yToOZkoAS5GvgGvTexiCh1gYy++eFdk6C61mcFsyDdoGQtduhGEaX0zZ9uAW1jX4JTPmHV3kEFrZu/WVBl7Obw+Jk/osoHMdmghVNy6SCB8/6mcgmxkP9buPrNUZgYP6n0x5dqEJ2Ecww/lb1Zd4nQf4XGOwIDAQAB",
+        "content_security_policy": {
+          "extension_pages": "script-src 'self'; object-src 'self'; connect-src 'self' https://api.anthropic.com wss://api.anthropic.com https://claude.ai https://platform.claude.com https://api.segment.io https://*.segment.com https://*.ingest.us.sentry.io https://api.honeycomb.io https://browser-intake-us5-datadoghq.com wss://bridge.claudeusercontent.com wss://bridge-staging.claudeusercontent.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:;"
+        },
+        "web_accessible_resources": [
+          {
+            "matches": [
+              "https://*.claude.ai/*",
+              "https://claude.ai/*"
+            ],
+            "resources": [
+              "assets/onboarding-prompts-CWLEgoC0.js",
+              "assets/content-script.ts-zjy42LA0.js"
+            ],
+            "use_dynamic_url": false
+          },
+          {
+            "matches": [
+              "<all_urls>"
+            ],
+            "resources": [
+              "assets/accessibility-tree.js-CCweLwU2.js",
+              "assets/agent-visual-indicator.js-DVYDybPo.js"
+            ],
+            "use_dynamic_url": false
+          }
+        ]
+      },
+      "manifest_version": 3
+    },
+    {
+      "webstore_id": "edibdbjcniadpccecjdfdjjppcpchdlm",
+      "name": "istilldontcareaboutcookies",
+      "webstore_url": "https://chromewebstore.google.com/detail/edibdbjcniadpccecjdfdjjppcpchdlm",
+      "crx_url": "https://clients2.google.com/service/update2/crx?response=redirect&prodversion=1230&acceptformat=crx3&x=id%3Dedibdbjcniadpccecjdfdjjppcpchdlm%26uc",
+      "crx_path": "/Users/squash/Library/Application Support/abx/lib/chromewebstore/extensions/edibdbjcniadpccecjdfdjjppcpchdlm__istilldontcareaboutcookies.crx",
+      "unpacked_path": "/Users/squash/Library/Application Support/abx/lib/chromewebstore/extensions/edibdbjcniadpccecjdfdjjppcpchdlm__istilldontcareaboutcookies",
+      "version": "1.1.9",
+      "id": "bieabklhggdlmoahiamfkbebpkncbaef",
+      "target_error": "TimeoutError: Timed out waiting for extension target bieabklhggdlmoahiamfkbebpkncbaef",
+      "manifest": {
+        "update_url": "https://clients2.google.com/service/update2/crx",
+        "manifest_version": 3,
+        "name": "__MSG_extensionName__",
+        "description": "__MSG_extensionDescription__",
+        "default_locale": "en",
+        "version": "1.1.9",
+        "icons": {
+          "16": "icons/16.png",
+          "48": "icons/48.png",
+          "128": "icons/128.png"
+        },
+        "author": "OhMyGuus and Community (originally Daniel Kladnik)",
+        "permissions": [
+          "tabs",
+          "storage",
+          "notifications",
+          "webRequest",
+          "declarativeNetRequestWithHostAccess",
+          "webNavigation",
+          "scripting"
+        ],
+        "host_permissions": [
+          "http://*/*",
+          "https://*/*"
+        ],
+        "background": {
+          "service_worker": "data/background.js",
+          "type": "module"
+        },
+        "options_ui": {
+          "page": "data/options.html"
+        },
+        "action": {
+          "default_popup": "data/menu/index.html",
+          "default_icon": {
+            "16": "icons/16.png",
+            "32": "icons/32.png"
+          }
+        },
+        "declarative_net_request": {
+          "rule_resources": [
+            {
+              "id": "ruleset_1",
+              "enabled": true,
+              "path": "rules.json"
+            }
+          ]
+        }
+      },
+      "manifest_version": 3
+    },
+    {
+      "webstore_id": "mpiodijhokgodhhofbcjdecpffjipkle",
+      "name": "singlefile",
+      "webstore_url": "https://chromewebstore.google.com/detail/mpiodijhokgodhhofbcjdecpffjipkle",
+      "crx_url": "https://clients2.google.com/service/update2/crx?response=redirect&prodversion=1230&acceptformat=crx3&x=id%3Dmpiodijhokgodhhofbcjdecpffjipkle%26uc",
+      "crx_path": "/Users/squash/Library/Application Support/abx/lib/chromewebstore/extensions/mpiodijhokgodhhofbcjdecpffjipkle__singlefile.crx",
+      "unpacked_path": "/Users/squash/Library/Application Support/abx/lib/chromewebstore/extensions/mpiodijhokgodhhofbcjdecpffjipkle__singlefile",
+      "version": "1.22.98",
+      "id": "hdflojadpdlcgmbjkpngkekndgkbkkci",
+      "target_error": "TimeoutError: Timed out waiting for extension target hdflojadpdlcgmbjkpngkekndgkbkkci",
+      "manifest": {
+        "update_url": "https://clients2.google.com/service/update2/crx",
+        "name": "SingleFile",
+        "author": "Gildas Lormeau",
+        "homepage_url": "https://www.getsinglefile.com",
+        "icons": {
+          "16": "src/ui/resources/icon_16.png",
+          "32": "src/ui/resources/icon_32.png",
+          "48": "src/ui/resources/icon_48.png",
+          "64": "src/ui/resources/icon_64.png",
+          "128": "src/ui/resources/icon_128.png"
+        },
+        "version": "1.22.98",
+        "description": "__MSG_extensionDescription__",
+        "content_scripts": [
+          {
+            "matches": [
+              "<all_urls>"
+            ],
+            "run_at": "document_start",
+            "js": [
+              "lib/single-file-frames.bundle.js"
+            ],
+            "all_frames": true,
+            "match_about_blank": true,
+            "match_origin_as_fallback": true
+          },
+          {
+            "matches": [
+              "<all_urls>"
+            ],
+            "run_at": "document_start",
+            "js": [
+              "lib/single-file-hooks-frames.js"
+            ],
+            "all_frames": true,
+            "match_about_blank": true,
+            "match_origin_as_fallback": true,
+            "world": "MAIN"
+          },
+          {
+            "matches": [
+              "<all_urls>"
+            ],
+            "run_at": "document_start",
+            "js": [
+              "lib/single-file-bootstrap.bundle.js"
+            ]
+          }
+        ],
+        "background": {
+          "service_worker": "lib/single-file-extension-background.js"
+        },
+        "side_panel": {
+          "default_path": "src/ui/pages/panel.html"
+        },
+        "options_ui": {
+          "browser_style": true,
+          "page": "src/ui/pages/options.html",
+          "open_in_tab": false
+        },
+        "action": {
+          "default_icon": {
+            "16": "src/ui/resources/icon_16.png",
+            "32": "src/ui/resources/icon_32.png",
+            "48": "src/ui/resources/icon_48.png",
+            "64": "src/ui/resources/icon_64.png",
+            "128": "src/ui/resources/icon_128.png"
+          },
+          "default_title": "__MSG_buttonDefaultTooltip__"
+        },
+        "commands": {
+          "save-selected-tabs": {
+            "suggested_key": {
+              "default": "Ctrl+Shift+Y"
+            },
+            "description": "__MSG_commandSaveSelectedTabs__"
+          },
+          "save-all-tabs": {
+            "suggested_key": {
+              "default": "Ctrl+Shift+U"
+            },
+            "description": "__MSG_commandSaveAllTabs__"
+          },
+          "custom-command-0": {
+            "description": "__MSG_commandCustomShortcut0__"
+          },
+          "custom-command-1": {
+            "description": "__MSG_commandCustomShortcut1__"
+          },
+          "custom-command-2": {
+            "description": "__MSG_commandCustomShortcut2__"
+          },
+          "custom-command-3": {
+            "description": "__MSG_commandCustomShortcut3__"
+          },
+          "custom-command-4": {
+            "description": "__MSG_commandCustomShortcut4__"
+          },
+          "custom-command-5": {
+            "description": "__MSG_commandCustomShortcut5__"
+          },
+          "custom-command-6": {
+            "description": "__MSG_commandCustomShortcut6__"
+          },
+          "custom-command-7": {
+            "description": "__MSG_commandCustomShortcut7__"
+          },
+          "custom-command-8": {
+            "description": "__MSG_commandCustomShortcut8__"
+          },
+          "custom-command-9": {
+            "description": "__MSG_commandCustomShortcut9__"
+          }
+        },
+        "web_accessible_resources": [
+          {
+            "matches": [
+              "<all_urls>"
+            ],
+            "resources": [
+              "lib/single-file-infobar.js",
+              "lib/single-file-extension-editor.js",
+              "lib/single-file-extension-editor-helper.js",
+              "lib/single-file-zip.min.js",
+              "lib/single-file-z-worker.js",
+              "src/lib/readability/Readability.js",
+              "src/lib/readability/Readability-readerable.js",
+              "src/ui/pages/editor-note-web.css",
+              "src/ui/pages/editor-mask-web.css",
+              "src/ui/pages/editor-frame-web.css"
+            ]
+          }
+        ],
+        "oauth2": {
+          "client_id": "207618107333-7tjs1im1pighftpoepea2kvkubnfjj44.apps.googleusercontent.com",
+          "scopes": [
+            "https://www.googleapis.com/auth/drive.file"
+          ]
+        },
+        "permissions": [
+          "contextMenus",
+          "downloads",
+          "storage",
+          "tabs",
+          "activeTab",
+          "scripting",
+          "offscreen",
+          "sidePanel",
+          "declarativeNetRequest"
+        ],
+        "optional_permissions": [
+          "identity",
+          "clipboardWrite",
+          "nativeMessaging",
+          "bookmarks"
+        ],
+        "host_permissions": [
+          "<all_urls>"
+        ],
+        "devtools_page": "src/core/devtools/devtools.html",
+        "incognito": "spanning",
+        "manifest_version": 3,
+        "default_locale": "en"
+      },
+      "manifest_version": 3
+    },
+    {
+      "webstore_id": "ifibfemgeogfhoebkmokieepdoobkbpo",
+      "name": "twocaptcha",
+      "webstore_url": "https://chromewebstore.google.com/detail/ifibfemgeogfhoebkmokieepdoobkbpo",
+      "crx_url": "https://clients2.google.com/service/update2/crx?response=redirect&prodversion=1230&acceptformat=crx3&x=id%3Difibfemgeogfhoebkmokieepdoobkbpo%26uc",
+      "crx_path": "/Users/squash/Library/Application Support/abx/lib/chromewebstore/extensions/ifibfemgeogfhoebkmokieepdoobkbpo__twocaptcha.crx",
+      "unpacked_path": "/Users/squash/Library/Application Support/abx/lib/chromewebstore/extensions/ifibfemgeogfhoebkmokieepdoobkbpo__twocaptcha",
+      "version": "3.7.4",
+      "id": "bmflcffcmamehmnbbkjeiadolmjbokch",
+      "target_error": "TimeoutError: Timed out waiting for extension target bmflcffcmamehmnbbkjeiadolmjbokch",
+      "manifest": {
+        "update_url": "https://clients2.google.com/service/update2/crx",
+        "name": "__MSG_extName__",
+        "short_name": "__MSG_extShortName__",
+        "default_locale": "en",
+        "version": "3.7.4",
+        "description": "__MSG_extDescription__",
+        "homepage_url": "https://2captcha.com/",
+        "manifest_version": 3,
+        "background": {
+          "service_worker": "service_worker.js"
+        },
+        "devtools_page": "devtools/devtools.html",
+        "permissions": [
+          "storage",
+          "contextMenus"
+        ],
+        "host_permissions": [
+          "<all_urls>"
+        ],
+        "action": {
+          "default_popup": "popup/popup.html",
+          "default_title": "Captcha Solver: Auto Recognition and Bypass",
+          "default_icon": {
+            "32": "assets/images/icon_32.png",
+            "128": "assets/images/icon_128.png"
+          }
+        },
+        "options_ui": {
+          "page": "options/options.html",
+          "open_in_tab": true
+        },
+        "icons": {
+          "32": "assets/images/icon_32.png",
+          "128": "assets/images/icon_128.png"
+        },
+        "content_scripts": [
+          {
+            "all_frames": true,
+            "run_at": "document_start",
+            "matches": [
+              "<all_urls>"
+            ],
+            "css": [
+              "content/style.css"
+            ],
+            "js": [
+              "vendor/jquery/3.5.1/jquery.min.js",
+              "common/config.js",
+              "content/core_helpers.js",
+              "content/script.js",
+              "content/captcha/geetest/processor.js",
+              "content/captcha/geetest_v4/processor.js",
+              "content/captcha/keycaptcha/processor.js",
+              "content/captcha/recaptcha/processor.js",
+              "content/captcha/recaptcha_audio/processor.js",
+              "content/captcha/recaptcha/clicker.js",
+              "content/captcha/arkoselabs/processor.js",
+              "content/captcha/normal/hunter.js",
+              "content/captcha/normal/processor.js",
+              "content/captcha/lemin/processor.js",
+              "content/captcha/yandex/processor.js",
+              "content/captcha/yandex/hunter.js",
+              "content/captcha/capy/processor.js",
+              "content/captcha/capy/hunter.js",
+              "content/captcha/amazon_waf/processor.js",
+              "content/captcha/turnstile/processor.js",
+              "content/captcha/turnstile/hunter.js",
+              "content/captcha/mt_captcha/processor.js",
+              "content/captcha/captchafox/processor.js"
+            ]
+          }
+        ],
+        "content_security_policy": {
+          "extension_pages": "script-src 'self'; object-src 'self'"
+        },
+        "web_accessible_resources": [
+          {
+            "resources": [
+              "assets/images/*",
+              "content/*"
+            ],
+            "matches": [
+              "<all_urls>"
+            ]
+          }
+        ]
+      },
+      "manifest_version": 3
+    },
+    {
+      "webstore_id": "ddkjiahejlhfcafbddmgiahcphecmpfh",
+      "name": "ublock",
+      "webstore_url": "https://chromewebstore.google.com/detail/ddkjiahejlhfcafbddmgiahcphecmpfh",
+      "crx_url": "https://clients2.google.com/service/update2/crx?response=redirect&prodversion=1230&acceptformat=crx3&x=id%3Dddkjiahejlhfcafbddmgiahcphecmpfh%26uc",
+      "crx_path": "/Users/squash/Library/Application Support/abx/lib/chromewebstore/extensions/ddkjiahejlhfcafbddmgiahcphecmpfh__ublock.crx",
+      "unpacked_path": "/Users/squash/Library/Application Support/abx/lib/chromewebstore/extensions/ddkjiahejlhfcafbddmgiahcphecmpfh__ublock",
+      "version": "2026.607.1724",
+      "id": "mhopcmpajjapnghakngappkdaodggghd",
+      "target_error": "TimeoutError: Timed out waiting for extension target mhopcmpajjapnghakngappkdaodggghd",
+      "manifest": {
+        "update_url": "https://clients2.google.com/service/update2/crx",
+        "action": {
+          "default_icon": {
+            "16": "img/icon_16.png",
+            "32": "img/icon_32.png",
+            "64": "img/icon_64.png"
+          },
+          "default_popup": "popup.html"
+        },
+        "author": "Raymond Hill",
+        "background": {
+          "service_worker": "/js/background.js",
+          "type": "module"
+        },
+        "commands": {
+          "enter-zapper-mode": {
+            "description": "__MSG_zapperTipEnter__"
+          },
+          "enter-picker-mode": {
+            "description": "__MSG_pickerTipEnter__"
+          }
+        },
+        "declarative_net_request": {
+          "rule_resources": [
+            {
+              "id": "ublock-filters",
+              "enabled": true,
+              "path": "/rulesets/main/ublock-filters.json"
+            },
+            {
+              "id": "easylist",
+              "enabled": true,
+              "path": "/rulesets/main/easylist.json"
+            },
+            {
+              "id": "easyprivacy",
+              "enabled": true,
+              "path": "/rulesets/main/easyprivacy.json"
+            },
+            {
+              "id": "pgl",
+              "enabled": true,
+              "path": "/rulesets/main/pgl.json"
+            },
+            {
+              "id": "ublock-badware",
+              "enabled": true,
+              "path": "/rulesets/main/ublock-badware.json"
+            },
+            {
+              "id": "urlhaus-full",
+              "enabled": true,
+              "path": "/rulesets/main/urlhaus-full.json"
+            },
+            {
+              "id": "adguard-mobile",
+              "enabled": false,
+              "path": "/rulesets/main/adguard-mobile.json"
+            },
+            {
+              "id": "block-lan",
+              "enabled": false,
+              "path": "/rulesets/main/block-lan.json"
+            },
+            {
+              "id": "dpollock-0",
+              "enabled": false,
+              "path": "/rulesets/main/dpollock-0.json"
+            },
+            {
+              "id": "adguard-spyware-url",
+              "enabled": false,
+              "path": "/rulesets/main/adguard-spyware-url.json"
+            },
+            {
+              "id": "annoyances-ai",
+              "enabled": false,
+              "path": "/rulesets/main/annoyances-ai.json"
+            },
+            {
+              "id": "annoyances-cookies",
+              "enabled": false,
+              "path": "/rulesets/main/annoyances-cookies.json"
+            },
+            {
+              "id": "annoyances-overlays",
+              "enabled": false,
+              "path": "/rulesets/main/annoyances-overlays.json"
+            },
+            {
+              "id": "annoyances-social",
+              "enabled": false,
+              "path": "/rulesets/main/annoyances-social.json"
+            },
+            {
+              "id": "annoyances-widgets",
+              "enabled": false,
+              "path": "/rulesets/main/annoyances-widgets.json"
+            },
+            {
+              "id": "annoyances-others",
+              "enabled": false,
+              "path": "/rulesets/main/annoyances-others.json"
+            },
+            {
+              "id": "annoyances-notifications",
+              "enabled": false,
+              "path": "/rulesets/main/annoyances-notifications.json"
+            },
+            {
+              "id": "ublock-experimental",
+              "enabled": false,
+              "path": "/rulesets/main/ublock-experimental.json"
+            },
+            {
+              "id": "ubol-tests",
+              "enabled": false,
+              "path": "/rulesets/main/ubol-tests.json"
+            },
+            {
+              "id": "alb-0",
+              "enabled": false,
+              "path": "/rulesets/main/alb-0.json"
+            },
+            {
+              "id": "ara-0",
+              "enabled": false,
+              "path": "/rulesets/main/ara-0.json"
+            },
+            {
+              "id": "bgr-0",
+              "enabled": false,
+              "path": "/rulesets/main/bgr-0.json"
+            },
+            {
+              "id": "chn-0",
+              "enabled": false,
+              "path": "/rulesets/main/chn-0.json"
+            },
+            {
+              "id": "cze-0",
+              "enabled": false,
+              "path": "/rulesets/main/cze-0.json"
+            },
+            {
+              "id": "deu-0",
+              "enabled": false,
+              "path": "/rulesets/main/deu-0.json"
+            },
+            {
+              "id": "est-0",
+              "enabled": false,
+              "path": "/rulesets/main/est-0.json"
+            },
+            {
+              "id": "fin-0",
+              "enabled": false,
+              "path": "/rulesets/main/fin-0.json"
+            },
+            {
+              "id": "fra-0",
+              "enabled": false,
+              "path": "/rulesets/main/fra-0.json"
+            },
+            {
+              "id": "grc-0",
+              "enabled": false,
+              "path": "/rulesets/main/grc-0.json"
+            },
+            {
+              "id": "hrv-0",
+              "enabled": false,
+              "path": "/rulesets/main/hrv-0.json"
+            },
+            {
+              "id": "hun-0",
+              "enabled": false,
+              "path": "/rulesets/main/hun-0.json"
+            },
+            {
+              "id": "idn-0",
+              "enabled": false,
+              "path": "/rulesets/main/idn-0.json"
+            },
+            {
+              "id": "ind-0",
+              "enabled": false,
+              "path": "/rulesets/main/ind-0.json"
+            },
+            {
+              "id": "irn-0",
+              "enabled": false,
+              "path": "/rulesets/main/irn-0.json"
+            },
+            {
+              "id": "isl-0",
+              "enabled": false,
+              "path": "/rulesets/main/isl-0.json"
+            },
+            {
+              "id": "isr-0",
+              "enabled": false,
+              "path": "/rulesets/main/isr-0.json"
+            },
+            {
+              "id": "ita-0",
+              "enabled": false,
+              "path": "/rulesets/main/ita-0.json"
+            },
+            {
+              "id": "jpn-1",
+              "enabled": false,
+              "path": "/rulesets/main/jpn-1.json"
+            },
+            {
+              "id": "kor-1",
+              "enabled": false,
+              "path": "/rulesets/main/kor-1.json"
+            },
+            {
+              "id": "ltu-0",
+              "enabled": false,
+              "path": "/rulesets/main/ltu-0.json"
+            },
+            {
+              "id": "lva-0",
+              "enabled": false,
+              "path": "/rulesets/main/lva-0.json"
+            },
+            {
+              "id": "mkd-0",
+              "enabled": false,
+              "path": "/rulesets/main/mkd-0.json"
+            },
+            {
+              "id": "nld-0",
+              "enabled": false,
+              "path": "/rulesets/main/nld-0.json"
+            },
+            {
+              "id": "nor-0",
+              "enabled": false,
+              "path": "/rulesets/main/nor-0.json"
+            },
+            {
+              "id": "pol-0",
+              "enabled": false,
+              "path": "/rulesets/main/pol-0.json"
+            },
+            {
+              "id": "rou-1",
+              "enabled": false,
+              "path": "/rulesets/main/rou-1.json"
+            },
+            {
+              "id": "rus-0",
+              "enabled": false,
+              "path": "/rulesets/main/rus-0.json"
+            },
+            {
+              "id": "rus-1",
+              "enabled": false,
+              "path": "/rulesets/main/rus-1.json"
+            },
+            {
+              "id": "spa-0",
+              "enabled": false,
+              "path": "/rulesets/main/spa-0.json"
+            },
+            {
+              "id": "spa-1",
+              "enabled": false,
+              "path": "/rulesets/main/spa-1.json"
+            },
+            {
+              "id": "svn-0",
+              "enabled": false,
+              "path": "/rulesets/main/svn-0.json"
+            },
+            {
+              "id": "swe-1",
+              "enabled": false,
+              "path": "/rulesets/main/swe-1.json"
+            },
+            {
+              "id": "tha-0",
+              "enabled": false,
+              "path": "/rulesets/main/tha-0.json"
+            },
+            {
+              "id": "tur-0",
+              "enabled": false,
+              "path": "/rulesets/main/tur-0.json"
+            },
+            {
+              "id": "ukr-0",
+              "enabled": false,
+              "path": "/rulesets/main/ukr-0.json"
+            },
+            {
+              "id": "vie-1",
+              "enabled": false,
+              "path": "/rulesets/main/vie-1.json"
+            }
+          ]
+        },
+        "default_locale": "en",
+        "description": "__MSG_extShortDesc__",
+        "host_permissions": [
+          "<all_urls>"
+        ],
+        "incognito": "split",
+        "icons": {
+          "16": "img/icon_16.png",
+          "32": "img/icon_32.png",
+          "64": "img/icon_64.png",
+          "128": "img/icon_128.png"
+        },
+        "manifest_version": 3,
+        "minimum_chrome_version": "122.0",
+        "name": "__MSG_extName__",
+        "options_page": "dashboard.html",
+        "permissions": [
+          "activeTab",
+          "declarativeNetRequest",
+          "offscreen",
+          "scripting",
+          "storage",
+          "userScripts"
+        ],
+        "short_name": "uBO Lite",
+        "storage": {
+          "managed_schema": "managed_storage.json"
+        },
+        "version": "2026.607.1724",
+        "web_accessible_resources": [
+          {
+            "resources": [
+              "/strictblock.html"
+            ],
+            "matches": [
+              "<all_urls>"
+            ],
+            "use_dynamic_url": true
+          },
+          {
+            "resources": [
+              "/zapper-ui.html"
+            ],
+            "matches": [
+              "<all_urls>"
+            ],
+            "use_dynamic_url": true
+          },
+          {
+            "resources": [
+              "/picker-ui.html"
+            ],
+            "matches": [
+              "<all_urls>"
+            ],
+            "use_dynamic_url": true
+          },
+          {
+            "resources": [
+              "/unpicker-ui.html"
+            ],
+            "matches": [
+              "<all_urls>"
+            ],
+            "use_dynamic_url": true
+          },
+          {
+            "resources": [
+              "web_accessible_resources/noop.js",
+              "web_accessible_resources/amazon_apstag.js",
+              "web_accessible_resources/google-ima.js",
+              "web_accessible_resources/fingerprint2.js",
+              "web_accessible_resources/sensors-analytics.js",
+              "web_accessible_resources/adthrive_abd.js",
+              "web_accessible_resources/noop.txt",
+              "web_accessible_resources/1x1.gif",
+              "web_accessible_resources/noop.css",
+              "web_accessible_resources/32x32.png",
+              "web_accessible_resources/2x2.png",
+              "web_accessible_resources/noop.html",
+              "web_accessible_resources/amazon_ads.js",
+              "web_accessible_resources/googletagservices_gpt.js",
+              "web_accessible_resources/google-analytics_analytics.js",
+              "web_accessible_resources/nofab.js",
+              "web_accessible_resources/hd-main.js",
+              "web_accessible_resources/popads.js",
+              "web_accessible_resources/googlesyndication_adsbygoogle.js",
+              "web_accessible_resources/prebid-ads.js",
+              "web_accessible_resources/doubleclick_instream_ad_status.js",
+              "web_accessible_resources/google-analytics_cx_api.js",
+              "web_accessible_resources/scorecardresearch_beacon.js",
+              "web_accessible_resources/google-analytics_ga.js",
+              "web_accessible_resources/outbrain-widget.js",
+              "web_accessible_resources/fingerprint3.js",
+              "web_accessible_resources/noop-vmap1.xml",
+              "web_accessible_resources/empty",
+              "web_accessible_resources/noop-vast3.xml",
+              "web_accessible_resources/noop-0.1s.mp3",
+              "web_accessible_resources/noop-vast2.xml",
+              "web_accessible_resources/noop-1s.mp4",
+              "web_accessible_resources/nobab2.js",
+              "web_accessible_resources/nitropay_ads.js",
+              "web_accessible_resources/chartbeat.js",
+              "web_accessible_resources/noop.json",
+              "web_accessible_resources/noeval-silent.js",
+              "web_accessible_resources/click2load.html"
+            ],
+            "matches": [
+              "<all_urls>"
+            ],
+            "use_dynamic_url": true
+          }
+        ]
+      },
+      "manifest_version": 3
+    }
+  ]
+}
