@@ -199,6 +199,8 @@ class PluginEnv(BaseModel):
         data_dir = str(Path(payload["DATA_DIR"]).expanduser().resolve())
         crawl_dir = str(Path(payload["CRAWL_DIR"]).expanduser().resolve())
         snap_dir = str(Path(payload["SNAP_DIR"]).expanduser().resolve())
+        personas_dir = str(Path(payload["PERSONAS_DIR"]).expanduser().resolve())
+        default_personas_dir = str(Path(payload["CONFIG_DIR"]).expanduser().resolve() / "personas")
         # Shared defaults point at DATA_DIR. For an actual run, remap those
         # defaults to the run-local output dir unless the caller explicitly
         # configured separate crawl/snapshot dirs.
@@ -206,6 +208,8 @@ class PluginEnv(BaseModel):
             payload["CRAWL_DIR"] = run_dir
         if snap_dir == data_dir:
             payload["SNAP_DIR"] = run_dir
+        if personas_dir == default_personas_dir:
+            payload["PERSONAS_DIR"] = str(Path(run_dir) / ".persona")
 
         return cls(**payload)
 
@@ -228,6 +232,16 @@ class PluginEnv(BaseModel):
         for key, value in payload.items():
             if value is not None:
                 env[key] = dump_to_dotenv_format(value)
+
+        # Python hooks import the same installed abx-dl/abx-plugins deps that
+        # launched the crawl. The managed env provider may also expose a cached
+        # ``python3`` shim for user-facing convenience, but that interpreter is
+        # not guaranteed to have hook deps like rich_click installed. Publish
+        # the active runtime interpreter through abxpkg's normal manual binary
+        # override path so ``abxpkg run --script ... python3`` preserves the
+        # package environment instead of drifting to a bare system Python.
+        env.setdefault("PYTHON3_BINARY", sys.executable)
+
         runtime_bin_dirs: list[str] = []
 
         for key, raw_value in env.items():
@@ -553,29 +567,58 @@ def plugins_matching_output(plugins: dict[str, Plugin], output_prefixes: list[st
     return matched
 
 
-def filter_plugins(plugins: dict[str, Plugin], names: list[str] | None, *, include_providers: bool = True) -> dict[str, Plugin]:
+def filter_plugins(
+    plugins: dict[str, Plugin],
+    names: list[str] | None,
+    *,
+    include_providers: bool = True,
+    disabled_names: list[str] | None = None,
+) -> dict[str, Plugin]:
     """Filter plugins to only include specified names, plus transitive dependencies.
 
     Dependencies are resolved via `required_plugins` in each plugin's
     config.json. `include_providers` is retained only as a caller hint; binary
     provider names are handled by abxpkg providers, not plugin dependencies.
     """
+    disabled = {n.lower() for n in disabled_names or []}
+    explicit_names = names is not None
     if not names:
-        return plugins
+        if not disabled:
+            return plugins
+        names = [name for name in plugins if name.lower() not in disabled]
+    else:
+        names = [name for name in names if name.lower() not in disabled]
+    if not names:
+        return {} if explicit_names else plugins
 
     # walk the required_plugins DAG and add required plugins
     resolved: set[str] = set()
+    blocked: set[str] = set()
     queue = [n.lower() for n in names]
     while queue:
         name = queue.pop()
-        if name in resolved:
+        if name in disabled:
+            blocked.add(name)
+            continue
+        if name in resolved or name in blocked:
+            continue
+        plugin = next((plugin for plugin_name, plugin in plugins.items() if plugin_name.lower() == name), None)
+        required = {dep.lower() for dep in plugin.config.required_plugins} if plugin else set()
+        if required.intersection(disabled | blocked):
+            blocked.add(name)
             continue
         resolved.add(name)
-        plugin = next((plugin for plugin_name, plugin in plugins.items() if plugin_name.lower() == name), None)
-        if plugin:
-            for dep in plugin.config.required_plugins:
-                dep_lower = dep.lower()
-                if dep_lower not in resolved:
-                    queue.append(dep_lower)
+        queue.extend(dep for dep in required if dep not in resolved)
+
+    while True:
+        newly_blocked = {
+            name.lower()
+            for name, plugin in plugins.items()
+            if name.lower() in resolved and any(dep.lower() in blocked for dep in plugin.config.required_plugins)
+        }
+        if not newly_blocked:
+            break
+        resolved.difference_update(newly_blocked)
+        blocked.update(newly_blocked)
 
     return {name: plugin for name, plugin in plugins.items() if name.lower() in resolved}

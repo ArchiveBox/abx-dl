@@ -7,7 +7,6 @@ import json
 import os
 import re
 import signal
-import subprocess
 import sys
 import time
 from collections import defaultdict, deque
@@ -30,16 +29,15 @@ from rich.table import Table
 from rich.text import Text
 from rich import box
 from pydantic import ValidationError
+from abxpkg import Binary as AbxBinary
 from abxpkg.binary_service import BinaryEvent, BinaryRequestEvent
 
 from .config import (
     CONFIG_FILE,
     GlobalConfig,
     _load_plugin_config_model,
-    get_config,
     get_derived_config,
     get_initial_env,
-    get_plugin_env,
     get_required_binary_requests,
     set_user_config,
 )
@@ -158,6 +156,9 @@ def _build_plugin_binary_table(rows: list[dict[str, str]]) -> Table:
     table.add_column("Binary", no_wrap=True, max_width=28)
     table.add_column("Version", no_wrap=True, width=16)
     table.add_column("Provider", no_wrap=True, width=8)
+    table.add_column("Deps", overflow="fold", ratio=1)
+    table.add_column("Outputs", overflow="fold", ratio=1)
+    table.add_column("Info", overflow="fold", ratio=1)
     table.add_column("Path", overflow="fold", ratio=1)
     for row in rows:
         table.add_row(
@@ -167,6 +168,9 @@ def _build_plugin_binary_table(rows: list[dict[str, str]]) -> Table:
             row["binary"],
             row["version"],
             row["provider"],
+            row.get("deps", "-"),
+            row.get("outputs", "-"),
+            row.get("info", "-"),
             row["path"],
             style=row.get("style"),
         )
@@ -182,11 +186,27 @@ def _print_plugin_binary_row(row: dict[str, str]) -> None:
         row["binary"].ljust(28),
         row["version"].ljust(16),
         row["provider"].ljust(8),
+        row.get("deps", "-").ljust(16),
+        row.get("outputs", "-").ljust(24),
+        row.get("info", "-"),
         row["path"],
         style=row.get("style"),
         overflow="ignore",
         crop=False,
     )
+
+
+def _plugin_binary_row_dedupe_key(row: dict[str, str]) -> tuple[str, str, str, str, str] | None:
+    if row["binary"] == "-":
+        return None
+    path = row["path"]
+    if path.startswith("~/"):
+        path = str(Path.home() / path.removeprefix("~/"))
+    try:
+        path = Path(path).expanduser().resolve(strict=False).as_posix()
+    except Exception:
+        pass
+    return (row["state"], row["binary"], row["version"], row["provider"], path)
 
 
 @dataclass
@@ -434,15 +454,21 @@ def _resolve_requested_plugins(plugin_names: tuple[str, ...], all_plugins: Mappi
     return requested
 
 
-def _plugin_enabled_for_install(plugin: Plugin) -> bool:
+def _plugin_enabled_for_install(
+    plugin: Plugin,
+    *,
+    initial_user_env: dict[str, object] | None = None,
+    initial_derived_env: dict[str, object] | None = None,
+) -> bool:
     if plugin.enabled_key not in plugin.config.properties:
         return True
-    initial_user_env = get_initial_env()
+    initial_user_env = initial_user_env or get_initial_env()
     plugin_config = PluginEnv.from_config(
         _load_plugin_config_model(
             plugin,
             user_env=initial_user_env,
-            derived_env=get_derived_config(initial_user_env),
+            derived_env=initial_derived_env if initial_derived_env is not None else get_derived_config(initial_user_env),
+            hydrate_binaries=False,
         ),
         run_output_dir=Path.cwd(),
     )
@@ -454,7 +480,11 @@ def _count_install_requests(plugins: Mapping[str, Plugin]) -> int:
     initial_user_env = get_initial_env()
     initial_derived_env = get_derived_config(initial_user_env)
     for plugin in get_install_plugins(dict(plugins)):
-        if not _plugin_enabled_for_install(plugin):
+        if not _plugin_enabled_for_install(
+            plugin,
+            initial_user_env=initial_user_env,
+            initial_derived_env=initial_derived_env,
+        ):
             continue
         for record in get_required_binary_requests(
             plugin,
@@ -1242,19 +1272,8 @@ def version(ctx, quiet: bool):
         f"[dark_green]abx-dl[/dark_green] [dark_goldenrod]v{LIBRARY_VERSION}[/dark_goldenrod]",
         f"COMMIT_HASH={commit_hash[:7] if commit_hash else 'unknown'}",
     )
-
-    async def _version_env() -> dict[str, str]:
-        runtime_config = await get_config(None)
-        runtime_env = await get_plugin_env(
-            None,
-            plugin=next(iter(ctx.obj["plugins"].values())),
-            run_output_dir=runtime_config.user.DATA_DIR,
-            config=runtime_config,
-        )
-        return runtime_env.to_env()
-
-    env = asyncio.run(_version_env())
-    raise SystemExit(subprocess.run(["abxpkg", "list"], env=env, check=False).returncode)
+    console.print()
+    ctx.invoke(plugins, plugin_names=(), do_install=False, dry_run=False, debug=False)
 
 
 @cli.command()
@@ -1726,7 +1745,17 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
     else:
         all_plugins = discover_plugins()
 
-    enabled_plugin_names = [name for name, plugin in all_plugins.items() if _plugin_enabled_for_install(plugin)]
+    initial_user_env = get_initial_env()
+    initial_derived_env = get_derived_config(initial_user_env)
+    enabled_plugin_names = [
+        name
+        for name, plugin in all_plugins.items()
+        if _plugin_enabled_for_install(
+            plugin,
+            initial_user_env=initial_user_env,
+            initial_derived_env=initial_derived_env,
+        )
+    ]
     enabled_plugins = filter_plugins(all_plugins, enabled_plugin_names, include_providers=True)
     enabled_plugin_set = set(enabled_plugins)
 
@@ -1759,6 +1788,8 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
     else:
         # Check + info mode (default)
         rows: list[dict[str, str]] = []
+        loaded_binaries: dict[str, AbxBinary] = {}
+        seen_binary_rows: set[tuple[str, str, str, str, str]] = set()
         live_enabled = console.is_terminal
         live_cm = Live(_build_plugin_binary_table(rows), console=console, refresh_per_second=8) if live_enabled else nullcontext()
         if not live_enabled:
@@ -1771,6 +1802,9 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
                 "Binary".ljust(28),
                 "Version".ljust(16),
                 "Provider".ljust(8),
+                "Deps".ljust(16),
+                "Outputs".ljust(24),
+                "Info",
                 "Path",
             )
         all_ok = True
@@ -1778,20 +1812,25 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
             for name in sorted(selected.keys()):
                 plugin = selected[name]
                 plugin_enabled = name in enabled_plugin_set
-                initial_user_env = get_initial_env()
                 row_style = "" if plugin_enabled else "dim"
                 enabled_label = "enabled" if plugin_enabled else "disabled"
+                deps_label = _format_plugin_list(plugin.config.required_plugins)
+                outputs_label = _format_plugin_list(plugin.config.output_mimetypes)
+                info_label = plugin.config.description or "-"
 
                 if plugin.config.required_binaries:
                     for hydrated_spec in get_required_binary_requests(
                         plugin,
                         plugin.config.required_binaries,
                         overrides=initial_user_env,
-                        derived_overrides=get_derived_config(initial_user_env),
+                        derived_overrides=initial_derived_env,
                         run_output_dir=Path.cwd(),
                         logical_names=False,
                     ):
-                        binary = load_binary(hydrated_spec)
+                        binary_signature = json.dumps(hydrated_spec, sort_keys=True, default=str)
+                        if binary_signature not in loaded_binaries:
+                            loaded_binaries[binary_signature] = load_binary(hydrated_spec)
+                        binary = loaded_binaries[binary_signature]
                         if binary.is_valid:
                             status = "[green]✓[/green]" if plugin_enabled else "[grey53]-[/grey53]"
                         else:
@@ -1806,9 +1845,17 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
                             "binary": binary.name,
                             "version": str(binary.loaded_version or "-")[:15],
                             "provider": (binary.loaded_binprovider.name if binary.loaded_binprovider else "-")[:8],
+                            "deps": deps_label,
+                            "outputs": outputs_label,
+                            "info": info_label,
                             "path": _binary_display_path(binary.loaded_abspath),
                             "style": row_style,
                         }
+                        row_key = _plugin_binary_row_dedupe_key(row)
+                        if row_key is not None:
+                            if row_key in seen_binary_rows:
+                                continue
+                            seen_binary_rows.add(row_key)
                         rows.append(row)
                         if live is not None:
                             live.update(_build_plugin_binary_table(rows), refresh=True)
@@ -1822,6 +1869,9 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
                         "binary": "-",
                         "version": "-",
                         "provider": "-",
+                        "deps": deps_label,
+                        "outputs": outputs_label,
+                        "info": info_label,
                         "path": "-",
                         "style": row_style,
                     }
@@ -1835,6 +1885,7 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
 
         if not all_ok:
             console.print("[yellow]Some dependencies missing. Run 'abx-dl plugins --install' to install them.[/yellow]")
+            raise SystemExit(1)
 
         detail_plugins = _resolve_requested_plugins(plugin_names, all_plugins) if plugin_names else list(selected.values())
 
@@ -1864,8 +1915,7 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
                     bg = " [dim](background)[/dim]" if hook.is_background else ""
                     console.print(f"  {hook.order:02d}: {hook.name}{bg}")
 
-        if not all_ok:
-            raise SystemExit(1)
+        return
 
 
 @cli.command()

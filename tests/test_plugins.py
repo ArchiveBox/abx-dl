@@ -82,6 +82,17 @@ def test_filter_plugins_includes_required_plugins_without_binary_providers() -> 
     assert "npm" not in selected
 
 
+def test_filter_plugins_prunes_plugins_with_disabled_required_plugins() -> None:
+    plugins = discover_plugins(runtime="archivebox")
+
+    selected = filter_plugins(plugins, ["wget", "accessibility", "ublock"], include_providers=True, disabled_names=["chrome"])
+
+    assert "wget" in selected
+    assert "chrome" not in selected
+    assert "accessibility" not in selected
+    assert "ublock" not in selected
+
+
 def test_required_binary_requests_ignore_nonexistent_derived_binary_paths() -> None:
     plugins = discover_plugins()
     plugin = plugins["ytdlp"]

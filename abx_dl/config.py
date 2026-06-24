@@ -1,10 +1,9 @@
 """Configuration management for abx-dl.
 
 ``config.env`` stores only user-provided values.
-``derived.env`` stores runtime-derived cache entries (e.g. resolved binary paths).
-Only user config participates in ``get_initial_env()``. Runtime code reads user
-and sparse derived state through ``get_config()`` and never blindly merges
-derived cache into user config.
+Runtime-derived binary state is kept in the event bus for the active run and in
+abxpkg's provider caches across runs. It is not projected into a persistent
+``derived.env`` config surface.
 """
 
 import json
@@ -492,59 +491,26 @@ def unset_user_config(*keys: str) -> list[str]:
 
 
 def get_derived_config(current_config: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Load persisted derived runtime cache from ``derived.env``."""
-    if current_config and current_config.get("CONFIG_DIR"):
-        derived_config_file = Path(str(current_config["CONFIG_DIR"])).expanduser() / "derived.env"
-    else:
-        derived_config_file = _derived_config_file()
-    raw = _load_env_file(derived_config_file)
-    if not raw:
-        return {}
+    """Return sparse runtime-derived config.
 
-    parsed: dict[str, Any] = {}
-    for key, value in raw.items():
-        parsed[key] = plugin_utils._parse_config_value(value)
-    return parsed
+    Persistent ``derived.env`` was a binary cache projection. Binaries now use
+    abxpkg's provider caches directly, while active runs replay in-memory
+    ``MachineEvent(config_type="derived")`` records from the bus.
+    """
+    del current_config
+    return {}
 
 
 def set_derived_config(current_config: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
-    """Persist derived runtime cache values into ``derived.env``."""
-    if current_config and current_config.get("CONFIG_DIR"):
-        derived_config_file = Path(str(current_config["CONFIG_DIR"])).expanduser() / "derived.env"
-    else:
-        derived_config_file = _derived_config_file()
-    derived_config_file.parent.mkdir(parents=True, exist_ok=True)
-    config = _load_env_file(derived_config_file)
-
-    saved = {}
-    for key, value in kwargs.items():
-        if value is None:
-            continue
-        config[key] = json.dumps(value)
-        saved[key] = value
-
-    _write_env_file(derived_config_file, config)
-    return saved
+    """Do not persist runtime-derived cache values as config."""
+    del current_config
+    return {key: value for key, value in kwargs.items() if value is not None}
 
 
 def unset_derived_config(*keys: str, current_config: dict[str, Any] | None = None) -> list[str]:
-    """Remove derived cache keys from ``derived.env`` if present."""
-    if not keys:
-        return []
-
-    if current_config and current_config.get("CONFIG_DIR"):
-        derived_config_file = Path(str(current_config["CONFIG_DIR"])).expanduser() / "derived.env"
-    else:
-        derived_config_file = _derived_config_file()
-    config = _load_env_file(derived_config_file)
-    removed: list[str] = []
-    for key in keys:
-        if key in config:
-            removed.append(key)
-            config.pop(key, None)
-
-    _write_env_file(derived_config_file, config)
-    return removed
+    """No-op for the removed persistent derived config projection."""
+    del current_config
+    return list(keys)
 
 
 GLOBAL_DEFAULT_KEYS = (

@@ -8,9 +8,6 @@ from abxpkg import (
     Binary,
     BinaryOverrides,
     BinProvider,
-    EnvProvider,
-    PipProvider,
-    PnpmProvider,
     DEFAULT_PROVIDER_NAMES,
     PROVIDER_CLASS_BY_NAME,
 )  # DO NOT REMOVE UNUSED IMPORT, critical for pydantic circular reference fix
@@ -26,14 +23,10 @@ def get_default_providers(config: GlobalConfig | None = None) -> list[BinProvide
     for provider_name in DEFAULT_PROVIDER_NAMES:
         provider_class = PROVIDER_CLASS_BY_NAME[provider_name]
         try:
-            if provider_name == "env":
-                providers.append(EnvProvider())
-            elif provider_name == "pip":
-                providers.append(PipProvider(install_root=runtime_config.PIP_HOME))
-            elif provider_name == "pnpm":
-                providers.append(PnpmProvider(install_root=runtime_config.PNPM_HOME))
-            else:
-                providers.append(provider_class())
+            kwargs: dict[str, Any] = {}
+            if runtime_config.ABXPKG_LIB_DIR is not None:
+                kwargs["install_root"] = runtime_config.ABXPKG_LIB_DIR / provider_name
+            providers.append(provider_class(**kwargs))
         except Exception:
             pass
     return providers
@@ -41,8 +34,9 @@ def get_default_providers(config: GlobalConfig | None = None) -> list[BinProvide
 
 def _providers_for_spec(spec: dict[str, Any], *, config: GlobalConfig | None = None) -> list[BinProvider]:
     providers_str = spec.get("binproviders", "env")
-    requested_names = providers_str.split(",")
-    return [provider for provider in get_default_providers(config) if provider.name in requested_names]
+    requested_names = [name.strip() for name in providers_str.split(",") if name.strip()]
+    providers_by_name = {provider.name: provider for provider in get_default_providers(config)}
+    return [providers_by_name[name] for name in requested_names if name in providers_by_name]
 
 
 def load_binary(spec: dict[str, Any]) -> Binary:

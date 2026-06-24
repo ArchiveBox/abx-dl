@@ -288,8 +288,19 @@ def test_plugin_env_ignores_direct_chrome_profile_env(
         asyncio.run(bus.wait_until_idle())
 
     assert "CHROME_USER_DATA_DIR" not in env
-    assert env["PERSONAS_DIR"] == str(user_config_path("abx") / "personas")
+    assert env["PERSONAS_DIR"] == str(tmp_path / "crawl" / ".persona")
     assert env["ACTIVE_PERSONA"] == "Default"
+
+
+def test_plugin_env_preserves_explicit_personas_dir(tmp_path: Path) -> None:
+    explicit_personas_dir = tmp_path / "personas"
+
+    env = assemble_env(
+        overrides={"PERSONAS_DIR": str(explicit_personas_dir)},
+        run_output_dir=tmp_path / "crawl",
+    )
+
+    assert env["PERSONAS_DIR"] == str(explicit_personas_dir)
 
 
 def test_plugin_env_omits_none_runtime_overrides(tmp_path: Path) -> None:
