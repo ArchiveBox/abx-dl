@@ -55,7 +55,7 @@ dependencies = [
 dev = [
     # TESTING
     "flask>=3.0",
-    "pytest>=8.3.3,<9",  # pytest-codeblocks 0.17.0 still uses the pre-pytest-9 collect hook signature.
+    "pytest>=8.3.3,<10",  # pytest-codeblocks 0.17.0 still uses the pre-pytest-9 collect hook signature.
     "pytest-codeblocks>=0.17.0",
     "pytest-github-actions-annotate-failures>=0.4.0",
     "pytest-httpserver>=1.1.0",
