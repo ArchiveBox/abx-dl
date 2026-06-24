@@ -28,8 +28,8 @@ from ..events import (
 )
 from ..limits import CrawlLimitState
 from ..models import Snapshot
-from ..models import Hook, Plugin
-from .base import BaseService, plugin_with_required_plugin_names
+from ..models import Hook, Plugin, filter_plugins
+from .base import BaseService
 
 
 async def _wait_for_process_completed(event: ProcessCompletedEvent | None, timeout: float | None) -> ProcessCompletedEvent | None:
@@ -236,7 +236,7 @@ class SnapshotService(BaseService):
             if plugin_config.DRY_RUN:
                 return
             env = plugin_config.to_env()
-            env_plugin_names = set(plugin_with_required_plugin_names(plugin, self.plugins))
+            env_plugin_names = set(filter_plugins(self.plugins, [plugin.name], include_providers=True))
             binary_events = await self.bus.filter(
                 BinaryEvent,
                 past=True,
