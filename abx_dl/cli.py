@@ -196,7 +196,7 @@ def _print_plugin_binary_row(row: dict[str, str]) -> None:
     )
 
 
-def _plugin_binary_row_dedupe_key(row: dict[str, str]) -> tuple[str, str, str, str, str] | None:
+def _plugin_binary_row_dedupe_key(row: dict[str, str]) -> tuple[str, str, str, str, str, str] | None:
     if row["binary"] == "-":
         return None
     path = row["path"]
@@ -206,7 +206,7 @@ def _plugin_binary_row_dedupe_key(row: dict[str, str]) -> tuple[str, str, str, s
         path = Path(path).expanduser().resolve(strict=False).as_posix()
     except Exception:
         pass
-    return (row["state"], row["binary"], row["version"], row["provider"], path)
+    return (row["plugin"], row["state"], row["binary"], row["version"], row["provider"], path)
 
 
 @dataclass
@@ -1789,7 +1789,7 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
         # Check + info mode (default)
         rows: list[dict[str, str]] = []
         loaded_binaries: dict[str, AbxBinary] = {}
-        seen_binary_rows: set[tuple[str, str, str, str, str]] = set()
+        seen_binary_rows: set[tuple[str, str, str, str, str, str]] = set()
         live_enabled = console.is_terminal
         live_cm = Live(_build_plugin_binary_table(rows), console=console, refresh_per_second=8) if live_enabled else nullcontext()
         if not live_enabled:
