@@ -91,7 +91,7 @@ from typing import Any
 from abxbus import EventBus, EventBusMiddleware, EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode
 from abxpkg.binary_service import BinaryCacheBackend, BinaryCacheService, BinaryRequestEvent, BinaryService
 
-from .config import get_initial_env, get_derived_config
+from .config import ensure_default_persona_dir, get_derived_config, get_initial_env
 from .events import (
     CrawlEvent,
     InstallEvent,
@@ -573,6 +573,7 @@ async def download(
     initial_derived_config = get_derived_config(initial_user_config)
     if derived_config_overrides:
         initial_derived_config.update(derived_config_overrides)
+    ensure_default_persona_dir()
     # Hook subprocesses run with cwd set to SNAP_DIR/<plugin>, while hook env
     # carries shared crawl/snapshot paths like SNAP_DIR and CRAWL_DIR. Keeping
     # those paths absolute here prevents JS/Python hooks from resolving the

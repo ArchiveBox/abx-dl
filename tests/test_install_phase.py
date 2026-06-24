@@ -158,9 +158,9 @@ def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) 
     assert abxbus_request.min_release_age == 0
     assert abxbus_request.overrides == {
         "pnpm": {
-            "install_root": str(managed_lib_dir / "pnpm" / "packages" / "chrome"),
+            "install_root": str(managed_lib_dir / "pnpm" / "packages" / "abxbus"),
             "install_args": ["abxbus@2.5.9"],
-            "abspath": str(managed_lib_dir / "pnpm" / "packages" / "chrome" / "node_modules" / "abxbus" / "dist" / "cjs" / "index.js"),
+            "abspath": str(managed_lib_dir / "pnpm" / "packages" / "abxbus" / "node_modules" / "abxbus" / "dist" / "cjs" / "index.js"),
             "version": "2.5.9",
         },
     }
@@ -461,5 +461,10 @@ def test_chromewebstore_install_preflight_uses_shared_cache_without_persona_dupl
 
     asyncio.run(run())
 
-    assert any(event.name == "archivewebpage" and event.abspath == str(manifest_path) for event in binary_events)
+    cache_record_path = extensions_dir / "archivewebpage.extension.json"
+    archivewebpage_events = [event for event in binary_events if event.name == "archivewebpage"]
+    assert archivewebpage_events
+    assert archivewebpage_events[-1].abspath == str(cache_record_path)
+    assert archivewebpage_events[-1].env["CHROMEWEBSTORE_EXTENSIONS_DIR"] == str(extensions_dir)
+    assert manifest_path.exists()
     assert not (personas_dir / "Default" / "chrome_extensions").exists()
