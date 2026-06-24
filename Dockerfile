@@ -148,7 +148,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && /usr/bin/uv pip show abx-dl | tee -a /VERSION.txt \
     && rm -f /venv/bin/uv /venv/bin/uvx \
     && rm -rf /venv/lib/python3.*/site-packages/pip* /venv/lib/python3.*/site-packages/setuptools* /venv/lib/python3.*/site-packages/wheel* /venv/bin/pip /venv/bin/pip3 /venv/bin/pip3.* /venv/bin/wheel \
-    && (which abx-dl && abx-dl version) | tee -a /VERSION.txt
+    && (which abx-dl && abx-dl --version) | tee -a /VERSION.txt
 
 ########################################################################################################
 FROM abx-dl-runtime-base
