@@ -65,6 +65,7 @@ def _cli_env(tmp_path: Path) -> dict[str, str]:
     env["DATA_DIR"] = str(tmp_path / "data")
     env["TMP_DIR"] = str(tmp_path / "tmp")
     env["HOME"] = str(tmp_path / "home")
+    env["CHROME_SANDBOX"] = "false"
     path_entries = [entry for entry in os.environ["PATH"].split(os.pathsep) if entry]
     for common_dir in (
         "/usr/bin",
