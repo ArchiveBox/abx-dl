@@ -84,15 +84,52 @@ def _cli_env(tmp_path: Path) -> dict[str, str]:
 def _run_cli(tmp_path: Path, *args: str, timeout: int = 180) -> subprocess.CompletedProcess[str]:
     cwd = tmp_path / "cwd"
     cwd.mkdir(parents=True, exist_ok=True)
-    return subprocess.run(
-        [sys.executable, "-m", "abx_dl", *args],
-        cwd=cwd,
-        env=_cli_env(tmp_path),
-        text=True,
-        capture_output=True,
-        timeout=timeout,
-        check=False,
-    )
+    try:
+        return subprocess.run(
+            [sys.executable, "-m", "abx_dl", *args],
+            cwd=cwd,
+            env=_cli_env(tmp_path),
+            text=True,
+            capture_output=True,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as err:
+        diagnostics = [
+            f"CLI timed out after {timeout}s: {err.cmd}",
+            f"partial stdout:\n{err.stdout or ''}",
+            f"partial stderr:\n{err.stderr or ''}",
+        ]
+        artifact_suffixes = (
+            ".pid",
+            ".sh",
+            ".stdout.log",
+            ".stderr.log",
+            "index.jsonl",
+        )
+        for artifact in sorted(tmp_path.rglob("*")):
+            if not artifact.is_file() or not artifact.name.endswith(artifact_suffixes):
+                continue
+            try:
+                contents = artifact.read_text(errors="replace")[-16_000:]
+            except OSError as artifact_err:
+                contents = f"<{type(artifact_err).__name__}: {artifact_err}>"
+            diagnostics.append(f"{artifact.relative_to(tmp_path)}:\n{contents}")
+            if artifact.suffix != ".pid":
+                continue
+            try:
+                pid = int(artifact.read_text().strip())
+            except (OSError, ValueError):
+                continue
+            proc_dir = Path("/proc") / str(pid)
+            for proc_name in ("cmdline", "wchan", "status"):
+                proc_path = proc_dir / proc_name
+                try:
+                    proc_contents = proc_path.read_text(errors="replace")[-8_000:]
+                except OSError as proc_err:
+                    proc_contents = f"<{type(proc_err).__name__}: {proc_err}>"
+                diagnostics.append(f"{proc_path}:\n{proc_contents}")
+        raise AssertionError("\n\n".join(diagnostics)) from err
 
 
 def _hook_names(plugin_name: str, event_name: str) -> list[str]:
