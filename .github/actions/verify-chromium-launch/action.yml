@@ -5,12 +5,8 @@ inputs:
     description: Path to Chromium/Chrome binary. Defaults to CHROME_BINARY, then /usr/bin/chromium.
     required: false
     default: ""
-  max-attempts:
-    description: Number of launch attempts before failing.
-    required: false
-    default: "3"
   timeout-ms:
-    description: Milliseconds to wait for DevTools and CDP per attempt.
+    description: Milliseconds to wait for DevTools and CDP.
     required: false
     default: "30000"
   min-major-version:
@@ -27,13 +23,10 @@ runs:
         if [ -z "$chrome_path" ]; then
           chrome_path="${CHROME_BINARY:-/usr/bin/chromium}"
         fi
-        max_attempts="${{ inputs.max-attempts }}"
-        attempt=1
-        while [ "$attempt" -le "$max_attempts" ]; do
-          if [ -n "$chrome_path" ]; then
-            pkill -f "$chrome_path" >/dev/null 2>&1 || true
-          fi
-          if CHROME_VERIFY_PATH="$chrome_path" node - <<'NODE'
+        if [ -n "$chrome_path" ]; then
+          pkill -f "$chrome_path" >/dev/null 2>&1 || true
+        fi
+        CHROME_VERIFY_PATH="$chrome_path" node - <<'NODE'
         const { spawn } = require("node:child_process");
 
         const chrome = process.env.CHROME_VERIFY_PATH || process.env.CHROME_BINARY || "/usr/bin/chromium";
@@ -282,15 +275,3 @@ runs:
           }
         })();
         NODE
-          then
-            if [ "$attempt" -gt 1 ]; then
-              echo "Chromium launch succeeded after ${attempt} attempts; runner is likely resource constrained."
-            fi
-            exit 0
-          fi
-          echo "Chromium launch attempt ${attempt} failed."
-          attempt=$((attempt + 1))
-          sleep 2
-        done
-        echo "Failed to launch Chromium reliably before running chrome-dependent tests."
-        exit 1

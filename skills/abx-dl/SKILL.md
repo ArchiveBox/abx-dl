@@ -88,8 +88,7 @@ uv run abx-dl config --get TIMEOUT
 
 ## Verification
 
-<!--pytest.mark.skip(reason="pytest invocation")-->
-```bash
+```console
 uv run pytest tests/test_cli.py -q
 uv run prek run --all-files
 ```

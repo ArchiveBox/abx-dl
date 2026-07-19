@@ -100,6 +100,11 @@ jobs:
           PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
         run: uv run --no-sync --no-sources pytest -q tests server/tests
 
+      - name: Run documentation code blocks
+        env:
+          PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
+        run: uv run --no-sync --no-sources pytest -vv --tb=long README.md AGENTS.md skills
+
   discover-plugins:
     name: Discover plugins
     runs-on: ubuntu-24.04
@@ -277,32 +282,7 @@ jobs:
       - name: Test plugin - ${{ matrix.plugin.name }}
         run: |
           plugin_tests="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/${{ matrix.plugin.name }}/tests"
-          attempts=0
-          max_attempts=3
-
-          while true; do
-            attempts=$((attempts + 1))
-            set +e
-            uv run --no-sync --no-sources pytest -q "$plugin_tests"
-            status=$?
-            set -e
-
-            if [ "$status" -eq 0 ]; then
-              exit 0
-            fi
-
-            if [ "$status" -eq 5 ]; then
-              echo "No tests collected for ${{ matrix.plugin.name }}; treating as pass."
-              exit 0
-            fi
-
-            if [ "$attempts" -ge "$max_attempts" ]; then
-              exit "$status"
-            fi
-
-            echo "Plugin tests failed for ${{ matrix.plugin.name }} with exit code $status. Retrying ($attempts/$max_attempts)..."
-            sleep 10
-          done
+          uv run --no-sync --no-sources pytest -q "$plugin_tests"
         env:
           CHROME_SANDBOX: "false"
           PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg

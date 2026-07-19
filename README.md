@@ -22,8 +22,7 @@ test -s wget/example.com/index.html
 ```
 -->
 
-<!--pytest.mark.skip(reason="requires interactive TTY")-->
-```bash
+```console
 docker run -it -v "$PWD:/out" archivebox/abxdl 'https://example.com'
 ```
 ---

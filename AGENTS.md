@@ -54,8 +54,7 @@ test -s wget/example.com/index.html
 
 Docker:
 
-<!--pytest.mark.skip(reason="requires interactive TTY")-->
-```bash
+```console
 docker run -it -v "$PWD:/out" archivebox/abxdl 'https://example.com'
 ```
 
@@ -94,8 +93,7 @@ uv run abx-dl config --get TIMEOUT
 
 Use targeted tests and real user-facing commands:
 
-<!--pytest.mark.skip(reason="pytest invocation")-->
-```bash
+```console
 uv run pytest tests/test_cli.py -q
 uv run prek run --all-files
 ```
