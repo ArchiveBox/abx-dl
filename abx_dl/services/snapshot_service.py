@@ -59,6 +59,7 @@ async def _wait_for_background_ready(
             child_of=process_event,
             past=True,
             future=False,
+            where=_is_background_ready_stdout,
         )
         if first_stdout is not None:
             return
@@ -74,7 +75,16 @@ async def _wait_for_background_ready(
         if remaining <= 0:
             break
         await asyncio.sleep(min(0.05, remaining))
-    raise RuntimeError("Background hook did not emit stdout or exit")
+    raise RuntimeError("Background hook did not emit a readiness record or exit")
+
+
+def _is_background_ready_stdout(event: ProcessStdoutEvent) -> bool:
+    """Accept only hook protocol records as background readiness signals."""
+    try:
+        record = json.loads(event.line)
+    except (json.JSONDecodeError, ValueError):
+        return False
+    return isinstance(record, dict) and record.get("type") in {"ArchiveResult", "ProcessReady"}
 
 
 class SnapshotService(BaseService):
