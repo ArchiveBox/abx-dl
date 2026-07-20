@@ -19,7 +19,7 @@ runs:
         if [ -z "$chrome_path" ]; then
           chrome_path="${CHROME_BINARY:?CHROME_BINARY must point to the abxpkg-resolved binary}"
         fi
-        CHROME_VERIFY_PATH="$chrome_path" node - <<'NODE'
+        CHROME_VERIFY_PATH="$chrome_path" "${NODE_BINARY:?NODE_BINARY must point to the abxpkg-resolved binary}" - <<'NODE'
         const { spawn } = require("node:child_process");
         const { mkdtempSync, readFileSync, watch } = require("node:fs");
         const { tmpdir } = require("node:os");
