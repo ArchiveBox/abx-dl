@@ -6,11 +6,8 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, Self
 from uuid import uuid4
 
-from abxpkg import Binary as AbxBinary
-from abxpkg.base_types import BinProviderName
 from abxpkg.binary_service import BinaryCacheService, BinaryEvent, BinaryRequestEvent, BinaryService
 
 from abx_dl.config import get_initial_env
@@ -498,64 +495,49 @@ def test_binary_service_stops_after_successful_provider_result(tmp_path: Path) -
     assert Path(python_events[-1].abspath).name == "python3"
 
 
-def test_binary_service_serializes_provider_installs(tmp_path: Path) -> None:
-    async def run() -> int:
+def test_binary_service_concurrent_real_requests_preserve_env_projection(tmp_path: Path) -> None:
+    async def run() -> list[BinaryEvent]:
         bus = create_bus(total_timeout=10.0, name=f"binary_install_lock_{tmp_path.name}")
         MachineService(bus)
-        active_installs = 0
-        max_active_installs = 0
+        BinaryService(bus, auto_install=True)
+        binary_events: list[BinaryEvent] = []
 
-        class InstrumentedBinary(AbxBinary):
-            def install(
-                self,
-                binproviders: list[BinProviderName] | None = None,
-                no_cache: bool = False,
-                dry_run: bool | None = None,
-                postinstall_scripts: bool | None = None,
-                min_release_age: float | None = None,
-                **extra_overrides: Any,
-            ) -> Self:
-                nonlocal active_installs, max_active_installs
-                active_installs += 1
-                max_active_installs = max(max_active_installs, active_installs)
-                time.sleep(0.05)
-                active_installs -= 1
-                return type(self).model_validate(
-                    {
-                        "name": self.name,
-                        "loaded_abspath": f"/tmp/{self.name}",
-                    },
-                )
+        async def on_BinaryEvent(event: BinaryEvent) -> None:
+            binary_events.append(event)
 
-        class LockedBinaryService(BinaryService):
-            def _load(self, event: BinaryRequestEvent) -> AbxBinary:
-                return AbxBinary.model_validate({"name": event.name})
-
-            def _binary_for_event(self, event: BinaryRequestEvent) -> AbxBinary:
-                return InstrumentedBinary(name=event.name)
-
-        LockedBinaryService(bus, auto_install=True)
-        await bus.emit(MachineEvent(config=get_initial_env(), config_type="user")).now()
+        bus.on(BinaryEvent, on_BinaryEvent)
+        lib_dir = tmp_path / "lib"
+        await bus.emit(MachineEvent(config={**get_initial_env(), "ABXPKG_LIB_DIR": str(lib_dir)}, config_type="user")).now()
         await asyncio.gather(
             bus.emit(
                 BinaryRequestEvent(
-                    name="first-test-binary",
+                    name="wget",
                     binproviders="env",
-                    extra_context=_binary_extra_context(plugin_name="env", output_dir=str(tmp_path / "first")),
+                    lib_dir=lib_dir,
+                    extra_context=_binary_extra_context(plugin_name="wget", output_dir=str(tmp_path / "wget")),
                 ),
             ).now(),
             bus.emit(
                 BinaryRequestEvent(
-                    name="second-test-binary",
+                    name="node",
                     binproviders="env",
-                    extra_context=_binary_extra_context(plugin_name="env", output_dir=str(tmp_path / "second")),
+                    lib_dir=lib_dir,
+                    extra_context=_binary_extra_context(plugin_name="node", output_dir=str(tmp_path / "node")),
                 ),
             ).now(),
         )
         await bus.wait_until_idle()
-        return max_active_installs
+        return binary_events
 
-    assert asyncio.run(run()) == 1
+    binary_events = asyncio.run(run())
+    resolved = {event.name: event for event in binary_events if event.name in {"wget", "node"}}
+    assert set(resolved) == {"wget", "node"}
+    for name, event in resolved.items():
+        binary_path = Path(event.abspath)
+        assert event.binprovider == "env"
+        assert event.version
+        assert binary_path == tmp_path / "lib" / "env" / "bin" / name
+        assert binary_path.is_symlink()
 
 
 def test_binary_event_ignores_unknown_request_plugin_when_persisting_config(tmp_path: Path) -> None:
@@ -615,7 +597,7 @@ def test_binary_event_ignores_unknown_request_plugin_when_persisting_config(tmp_
     assert installed_events[-1].extra_context.get("plugin_name") == "archivebox"
 
 
-def test_binary_event_falls_back_from_stale_cached_config_binary_to_abxpkg_resolution(tmp_path: Path) -> None:
+def test_binary_event_delegates_stale_cached_config_binary_to_abxpkg_resolution(tmp_path: Path) -> None:
     managed_lib_dir = tmp_path / "lib"
     stale_binary = managed_lib_dir / "pip" / "venv" / "bin" / "wget"
     plugins = discover_plugins()
@@ -675,7 +657,7 @@ def test_binary_event_falls_back_from_stale_cached_config_binary_to_abxpkg_resol
     assert Path(str(derived_update.value)).name == "wget"
 
 
-def test_binary_event_falls_back_from_missing_user_binary_abspath_override_via_abxpkg(tmp_path: Path) -> None:
+def test_binary_event_delegates_missing_user_binary_abspath_override_to_abxpkg(tmp_path: Path) -> None:
     broken_binary = tmp_path / "broken" / "wget"
     plugins = discover_plugins()
     selected = {"wget": plugins["wget"]}
@@ -728,35 +710,52 @@ def test_binary_installed_event_updates_lib_bin_command(tmp_path: Path) -> None:
             bus,
             backend=AbxDlEnvConfigFileBinaryCacheBackend(bus, plugins={}),
         )
+        BinaryService(bus, auto_install=True)
+        resolved_events: list[BinaryEvent] = []
 
-        first_target = tmp_path / "targets" / "first-demo"
-        second_target = tmp_path / "targets" / "second-demo"
-        first_target.parent.mkdir(parents=True, exist_ok=True)
-        first_target.write_text("#!/bin/sh\nprintf first\n")
-        first_target.chmod(0o755)
-        second_target.write_text("#!/bin/sh\nprintf second\n")
-        second_target.chmod(0o755)
+        async def on_BinaryEvent(event: BinaryEvent) -> None:
+            if event.name in {"node", "wget"}:
+                resolved_events.append(event)
+
+        bus.on(BinaryEvent, on_BinaryEvent)
 
         try:
-            await bus.emit(MachineEvent(config={"ABXPKG_LIB_DIR": str(tmp_path / "lib")}, config_type="user")).now()
+            lib_dir = tmp_path / "lib"
+            await bus.emit(MachineEvent(config={"ABXPKG_LIB_DIR": str(lib_dir)}, config_type="user")).now()
+            for binary_name in ("node", "wget"):
+                await bus.emit(
+                    BinaryRequestEvent(
+                        name=binary_name,
+                        binproviders="env",
+                        lib_dir=lib_dir,
+                        extra_context=_binary_extra_context(plugin_name=binary_name, hook_name="install"),
+                    ),
+                ).now()
+            await bus.wait_until_idle()
+            resolved = {event.name: event for event in resolved_events}
+            assert set(resolved) == {"node", "wget"}
+
             await bus.emit(
                 BinaryEvent(
                     name="demo",
-                    abspath=str(first_target),
+                    abspath=resolved["node"].abspath,
                     extra_context=_binary_extra_context(plugin_name="demo", hook_name="install"),
                 ),
             ).now()
             link_path = tmp_path / "lib" / "bin" / "demo"
-            assert subprocess.run([str(link_path)], check=True, capture_output=True, text=True).stdout == "first"
+            node_version = subprocess.run([str(link_path), "--version"], check=True, capture_output=True, text=True).stdout
+            assert node_version.startswith("v")
 
             await bus.emit(
                 BinaryEvent(
                     name="demo",
-                    abspath=str(second_target),
+                    abspath=resolved["wget"].abspath,
                     extra_context=_binary_extra_context(plugin_name="demo", hook_name="install"),
                 ),
             ).now()
-            assert subprocess.run([str(link_path)], check=True, capture_output=True, text=True).stdout == "second"
+            wget_version = subprocess.run([str(link_path), "--version"], check=True, capture_output=True, text=True).stdout
+            assert "Wget" in wget_version
+            assert wget_version != node_version
         finally:
             await bus.wait_until_idle()
 

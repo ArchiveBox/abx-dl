@@ -61,8 +61,7 @@ def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     personas_dir.mkdir(parents=True, exist_ok=True)
     tmp_dir.mkdir(parents=True, exist_ok=True)
     lib_dir = config_dir / "lib"
-    lib_bin_dir = lib_dir / "bin"
-    lib_bin_dir.mkdir(parents=True, exist_ok=True)
+    lib_dir.mkdir(parents=True, exist_ok=True)
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("CONFIG_DIR", str(config_dir))

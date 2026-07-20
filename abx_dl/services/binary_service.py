@@ -276,7 +276,7 @@ class AbxDlEnvConfigFileBinaryCacheBackend:
 
     async def get(self, request: BinaryRequestEvent) -> AbxBinary | None:
         current_config = await get_config(self.bus)
-        candidates, stale_config_keys = await self._iter_cached_binary_candidates(request, config=current_config)
+        registered_value, stale_config_keys = await self._cached_binary_registration(request, config=current_config)
         for config_key in stale_config_keys:
             await request.emit(
                 MachineEvent(
@@ -285,24 +285,22 @@ class AbxDlEnvConfigFileBinaryCacheBackend:
                     config_type="derived",
                 ),
             ).now()
-        for _config_keys, registered_value, _authoritative in candidates:
-            registered_path = Path(registered_value).expanduser()
-            if not registered_path.exists():
-                continue
-            return AbxBinary.model_validate(
-                {
-                    "name": request.name,
-                    "description": request.description,
-                    "binproviders": _providers_for_names(_provider_names(request.binproviders)),
-                    "overrides": request.overrides or {},
-                    "loaded_abspath": str(registered_path),
-                    "loaded_version": None,
-                    "loaded_sha256": None,
-                    "loaded_binprovider": None,
-                    "env": {},
-                },
-            )
-        return None
+        if registered_value is None:
+            return None
+        registered_path = Path(registered_value).expanduser()
+        return AbxBinary.model_validate(
+            {
+                "name": request.name,
+                "description": request.description,
+                "binproviders": _providers_for_names(_provider_names(request.binproviders)),
+                "overrides": request.overrides or {},
+                "loaded_abspath": str(registered_path),
+                "loaded_version": None,
+                "loaded_sha256": None,
+                "loaded_binprovider": None,
+                "env": {},
+            },
+        )
 
     async def set(self, request: BinaryRequestEvent | None, binary: AbxBinary) -> None:
         current_config = await get_config(self.bus)
@@ -388,20 +386,22 @@ class AbxDlEnvConfigFileBinaryCacheBackend:
                 matching_keys.append(key)
         return list(dict.fromkeys(matching_keys))
 
-    async def _iter_cached_binary_candidates(
+    async def _cached_binary_registration(
         self,
         request: BinaryRequestEvent,
         *,
         config: RuntimeConfig | None = None,
-    ) -> tuple[list[tuple[tuple[str, ...], str, bool]], builtins.set[str]]:
+    ) -> tuple[str | None, builtins.set[str]]:
         request_name = request.name
         current_config = config or await get_config(self.bus)
         current_derived_config = current_config.derived
 
+        # Explicit path requests are provider inputs, not cache registrations.
+        # EnvProvider must validate them and project host paths into env/bin.
         if is_path_like_env_value(request_name):
-            return [(tuple(await self._config_keys_for_binary_request(request, config=current_config)), request_name, True)], set()
+            return None, set()
 
-        values: list[tuple[tuple[str, ...], str, bool]] = []
+        values: list[str] = []
         stale_config_keys: set[str] = set()
         for config_key in await self._config_keys_for_binary_request(request, config=current_config):
             if config_key not in current_derived_config:
@@ -419,16 +419,14 @@ class AbxDlEnvConfigFileBinaryCacheBackend:
             if derived_path.name != request_name:
                 stale_config_keys.add(config_key)
                 continue
-            values.append(((config_key,), derived_value, False))
+            values.append(derived_value)
 
-        deduped: list[tuple[tuple[str, ...], str, bool]] = []
-        seen_values: set[str] = set()
-        for keys, value, authoritative in values:
-            if value in seen_values:
-                continue
-            seen_values.add(value)
-            deduped.append((keys, value, authoritative))
-        return deduped, stale_config_keys
+        unique_values = list(dict.fromkeys(values))
+        if len(unique_values) != 1:
+            # No ordered fallback across competing registrations. A canonical
+            # abxpkg provider resolution will refresh all matching derived keys.
+            return None, stale_config_keys
+        return unique_values[0], stale_config_keys
 
     async def _persist_binary_abspath_in_config(
         self,

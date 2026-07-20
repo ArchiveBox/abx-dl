@@ -2,11 +2,11 @@ import asyncio
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from abxpkg.binary_service import BinaryCacheService, BinaryEvent, BinaryRequestEvent
+from abxpkg.binary_service import BinaryCacheService, BinaryEvent, BinaryRequestEvent, BinaryService
 
 from abx_dl.config import get_initial_env
 from abx_dl.events import InstallEvent, MachineEvent
-from abx_dl.models import Plugin, PluginConfig, RequiredBinary, Snapshot, discover_plugins
+from abx_dl.models import Plugin, PluginConfig, Snapshot, discover_plugins
 from abx_dl.orchestrator import create_bus
 from abx_dl.services.binary_service import AbxDlEnvConfigFileBinaryCacheBackend, PluginBinariesService
 
@@ -233,45 +233,21 @@ def test_install_event_includes_opencode_when_route_is_disabled(tmp_path: Path) 
 
 
 def test_install_event_emits_cached_binary_requests_for_persistence(tmp_path: Path) -> None:
-    plugin_dir = tmp_path / "myplugin"
-    plugin_dir.mkdir()
-    (plugin_dir / "config.json").write_text(
-        """
-        {
-          "properties": {
-            "MYTOOL_BINARY": {"type": "string", "default": "mytool"}
-          },
-          "required_binaries": [
-            {"name": "mytool", "binproviders": "env"}
-          ]
-        }
-        """,
-    )
-    plugin = Plugin(
-        name="myplugin",
-        path=plugin_dir,
-        config=PluginConfig(
-            properties={"MYTOOL_BINARY": {"type": "string", "default": "mytool"}},
-            required_binaries=[RequiredBinary(name="mytool", binproviders="env")],
-        ),
-    )
+    plugin = discover_plugins()["wget"]
     snapshot = Snapshot(url="")
     run_dir = tmp_path / "run"
     managed_lib_dir = tmp_path / "lib"
-    cached_binary = managed_lib_dir / "env" / "bin" / "mytool"
-    cached_binary.parent.mkdir(parents=True)
-    cached_binary.write_text("#!/bin/sh\n")
-    cached_binary.chmod(0o755)
     bus = create_bus(total_timeout=60.0, name=f"install_phase_cached_persist_{tmp_path.name}")
     PluginBinariesService(
         bus,
-        plugins={"myplugin": plugin},
+        plugins={"wget": plugin},
         auto_install=False,
         install_plugins=[plugin],
         output_dir=run_dir,
         snapshot=snapshot,
     )
-    BinaryCacheService(bus, backend=AbxDlEnvConfigFileBinaryCacheBackend(bus, plugins={"myplugin": plugin}))
+    BinaryCacheService(bus, backend=AbxDlEnvConfigFileBinaryCacheBackend(bus, plugins={"wget": plugin}))
+    BinaryService(bus, auto_install=True)
     request_events: list[BinaryRequestEvent] = []
     binary_events: list[BinaryEvent] = []
 
@@ -295,16 +271,21 @@ def test_install_event_emits_cached_binary_requests_for_persistence(tmp_path: Pa
             ),
         ).now()
         await bus.emit(
-            MachineEvent(
-                config={
-                    "ABX_INSTALL_CACHE": {
-                        "mytool": datetime.now(timezone.utc).isoformat(),
-                    },
-                    "MYTOOL_BINARY": str(cached_binary),
+            BinaryRequestEvent(
+                name="wget",
+                binproviders="env,apt,brew",
+                extra_context={
+                    "plugin_name": "wget",
+                    "hook_name": "",
+                    "output_dir": str(run_dir / "wget"),
+                    "binary_id": "initial-wget-resolution",
+                    "machine_id": "",
                 },
-                config_type="derived",
             ),
         ).now()
+        await bus.wait_until_idle()
+        resolved_wget = next(event for event in reversed(binary_events) if event.name == "wget")
+        assert Path(resolved_wget.abspath).is_file()
         await bus.emit(
             InstallEvent(
                 url="",
@@ -316,8 +297,11 @@ def test_install_event_emits_cached_binary_requests_for_persistence(tmp_path: Pa
 
     asyncio.run(run())
 
-    assert any(event.extra_context.get("plugin_name") == "myplugin" and event.name == "mytool" for event in request_events)
-    assert any(event.name == "mytool" and event.abspath == str(cached_binary) for event in binary_events)
+    wget_requests = [event for event in request_events if event.extra_context.get("plugin_name") == "wget" and event.name == "wget"]
+    wget_events = [event for event in binary_events if event.name == "wget"]
+    assert len(wget_requests) >= 2
+    assert len(wget_events) >= 2
+    assert wget_events[-1].abspath == wget_events[0].abspath
 
 
 def test_install_event_moves_plugin_override_metadata_to_extra_context(tmp_path: Path) -> None:
