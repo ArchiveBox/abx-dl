@@ -17,8 +17,6 @@ runs:
   using: composite
   steps:
     - shell: bash
-      run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-    - shell: bash
       run: |
         set -euo pipefail
         chrome_path="${{ inputs.chrome-path }}"
@@ -211,6 +209,7 @@ runs:
               "--disable-prompt-on-repost",
               "--disable-search-engine-choice-screen",
               "--disable-session-crashed-bubble",
+              "--disable-setuid-sandbox",
               "--disable-site-isolation-trials",
               "--disable-speech-api",
               "--disable-speech-synthesis-api",
@@ -222,6 +221,7 @@ runs:
               "--no-default-browser-check",
               "--no-first-run",
               "--no-pings",
+              "--no-sandbox",
               "--no-zygote",
               "--noerrdialogs",
               "--password-store=basic",

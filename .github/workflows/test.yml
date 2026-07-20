@@ -88,9 +88,6 @@ jobs:
           packages: wget curl git ripgrep
           version: 1.0
 
-      - name: Enable the Chromium user namespace sandbox
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-
       - name: Install Python dependencies
         env:
           PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
