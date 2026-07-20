@@ -22,8 +22,8 @@ test -s wget/example.com/index.html
 ```
 -->
 
-```console
-docker run -it -v "$PWD:/out" archivebox/abxdl 'https://example.com'
+```bash
+docker run --rm -v "$PWD:/out" archivebox/abxdl --no-install --max-urls=1 'https://example.com'
 ```
 ---
 

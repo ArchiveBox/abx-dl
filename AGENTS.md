@@ -54,8 +54,8 @@ test -s wget/example.com/index.html
 
 Docker:
 
-```console
-docker run -it -v "$PWD:/out" archivebox/abxdl 'https://example.com'
+```bash
+docker run --rm -v "$PWD:/out" archivebox/abxdl --no-install --max-urls=1 'https://example.com'
 ```
 
 ## Basic Usage
@@ -93,7 +93,7 @@ uv run abx-dl config --get TIMEOUT
 
 Use targeted tests and real user-facing commands:
 
-```console
+```bash
 uv run pytest tests/test_cli.py -q
 uv run prek run --all-files
 ```
