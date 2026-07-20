@@ -109,16 +109,11 @@ runs:
                   throw new Error(`Chromium ${product || "unknown"} is too old; Extensions.loadUnpacked requires Chromium >=${minMajorVersion}`);
                 }
 
-                const targets = await send("Target.getTargets");
-                const pageTarget = (targets.targetInfos || []).find(
-                  (target) => target.type === "page" && target.url === "about:blank",
-                );
-                if (!pageTarget) {
-                  throw new Error("No about:blank page target available after Chromium launch");
-                }
+                const createdTarget = await send("Target.createTarget", { url: "about:blank" });
+                if (!createdTarget.targetId) throw new Error("CDP did not create a blank page target");
 
                 const attached = await send("Target.attachToTarget", {
-                  targetId: pageTarget.targetId,
+                  targetId: createdTarget.targetId,
                   flatten: true,
                 });
                 const sessionId = attached.sessionId;
