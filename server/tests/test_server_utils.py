@@ -103,7 +103,6 @@ def test_resolve_public_session_download_rejects_traversal_and_internal_files(tm
     )
 
 
-flask = pytest.importorskip("flask")
 server_module = importlib.import_module("server.server")
 
 
