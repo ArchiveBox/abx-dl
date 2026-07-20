@@ -40,9 +40,9 @@ classifiers = [
 dependencies = [
     "rich-click>=1.8.0",
     "rich>=13.0.0",
-    "abxbus==2.5.10",
-    "abxpkg>=1.11.224",
-    "abx-plugins>=1.11.224",
+    "abxbus==2.5.28",
+    "abxpkg>=1.11.268",
+    "abx-plugins>=1.11.287",
     "jambo>=0.1.7",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
