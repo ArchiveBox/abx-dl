@@ -24,6 +24,7 @@ test -s wget/example.com/index.html
 
 <!--pytest.mark.docker_required-->
 ```bash
+set -Eeuo pipefail
 output_dir="$(mktemp -d)"
 trap 'rm -rf "$output_dir"' EXIT
 docker run --rm -v "$output_dir:/out" "${ABXDL_IMAGE:-archivebox/abx-dl:latest}" --no-install --max-urls=1 --plugins=title,wget 'https://example.com'

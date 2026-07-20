@@ -29,55 +29,32 @@ unset VIRTUAL_ENV
 -->
 <!--pytest-codeblocks:cont-->
 ```bash
+set -Eeuo pipefail
 uv sync
-uv run abx-dl --help
-uv run abx-dl plugins wget
+version_output="$(uv run abx-dl version)"
+grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' <<<"$version_output"
 ```
 
-## User-Facing Setup
+## Configuration Inspection
 
-<!--
 ```bash
-cd "$(mktemp -d)"
-exec >stdout.log
+set -Eeuo pipefail
+timeout_config="$(uv run abx-dl config --get TIMEOUT)"
+grep -Eq '^TIMEOUT=[0-9]+$' <<<"$timeout_config"
 ```
--->
-<!--pytest-codeblocks:cont-->
-```bash
-uvx abx-dl dl --plugins=title,wget 'https://example.com'
-```
-
-<!--pytest-codeblocks:cont-->
-<!--
-```bash
-test -s index.jsonl
-test -s title/title.txt
-test -s wget/example.com/index.html
-```
--->
 
 ## Basic Usage
 
-<!--
 ```bash
-cd "$(mktemp -d)"
-exec >stdout.log
+set -Eeuo pipefail
+output_dir="$(mktemp -d)"
+trap 'rm -rf "$output_dir"' EXIT
+uv run abx-dl dl --plugins=wget --dir "$output_dir" 'https://example.com'
+test -s "$output_dir/index.jsonl"
+test -s "$output_dir/wget/example.com/index.html"
+grep -q 'Example Domain' "$output_dir/wget/example.com/index.html"
+grep -q '"plugin": "wget".*"status": "succeeded"' "$output_dir/index.jsonl"
 ```
--->
-<!--pytest-codeblocks:cont-->
-```bash
-uv run abx-dl dl --plugins=title,wget --dir ./downloads 'https://example.com'
-```
-
-<!--pytest-codeblocks:cont-->
-<!--
-```bash
-test -s downloads/index.jsonl
-test -s downloads/title/title.txt
-test -s downloads/wget/example.com/index.html
-grep -q 'Example Domain' downloads/title/title.txt
-```
--->
 
 ```text
 uv run abx-dl dl --plugins=title,wget,screenshot,pdf 'https://example.com'
@@ -89,16 +66,10 @@ uv run abx-dl config --get TIMEOUT
 ## Verification
 
 ```bash
-uv run pytest tests/test_cli.py -q
-uv run prek run --all-files
+set -Eeuo pipefail
+uv run pytest tests/test_plugins.py::test_filter_plugins_does_not_add_binary_providers_for_wget -q
 ```
 
-For live extractor checks:
-
-```bash
-repo="$(pwd)"
-cd "$(mktemp -d)"
-exec >stdout.log
-uv run --project "$repo" abx-dl dl --plugins=title,wget 'https://example.com'
-find . -maxdepth 3 -type f | sort
-```
+The basic-usage check above performs the live extractor run and verifies its
+manifest and downloaded HTML. Read `README.md` for install and multi-extractor
+examples.

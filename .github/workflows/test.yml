@@ -103,7 +103,7 @@ jobs:
       - name: Run documentation code blocks
         env:
           PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
-        run: uv run --no-sync --no-sources pytest -vv --tb=long -m "not docker_required" README.md AGENTS.md skills
+        run: uv run --no-sync --no-sources pytest -vv --tb=long --durations=0 -m "not docker_required" README.md AGENTS.md skills
 
   discover-plugins:
     name: Discover plugins

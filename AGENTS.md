@@ -25,37 +25,26 @@ unset VIRTUAL_ENV
 -->
 <!--pytest-codeblocks:cont-->
 ```bash
+set -Eeuo pipefail
 uv sync
-uv run abx-dl --help
-uv run abx-dl plugins wget
+help_output="$(uv run abx-dl --help)"
+grep -q 'Usage:' <<<"$help_output"
 ```
 
-## User-Facing Setup
+## Plugin Inspection
 
-<!--
 ```bash
-cd "$(mktemp -d)"
-exec >stdout.log
+set -Eeuo pipefail
+plugin_info="$(uv run abx-dl plugins wget)"
+grep -q 'WGET_BINARY=wget' <<<"$plugin_info"
+grep -q 'on_Snapshot__06_wget' <<<"$plugin_info"
 ```
--->
-<!--pytest-codeblocks:cont-->
-```bash
-uvx abx-dl dl --plugins=title,wget 'https://example.com'
-```
-
-<!--pytest-codeblocks:cont-->
-<!--
-```bash
-test -s index.jsonl
-test -s title/title.txt
-test -s wget/example.com/index.html
-```
--->
 
 Docker:
 
 <!--pytest.mark.docker_required-->
 ```bash
+set -Eeuo pipefail
 output_dir="$(mktemp -d)"
 trap 'rm -rf "$output_dir"' EXIT
 docker run --rm -v "$output_dir:/out" "${ABXDL_IMAGE:-archivebox/abx-dl:latest}" --no-install --max-urls=1 --plugins=title,wget 'https://example.com'
@@ -67,27 +56,6 @@ grep -q 'Example Domain' "$output_dir/wget/example.com/index.html"
 ```
 
 ## Basic Usage
-
-<!--
-```bash
-cd "$(mktemp -d)"
-exec >stdout.log
-```
--->
-<!--pytest-codeblocks:cont-->
-```bash
-uv run abx-dl dl --plugins=title,wget --dir ./downloads 'https://example.com'
-```
-
-<!--pytest-codeblocks:cont-->
-<!--
-```bash
-test -s downloads/index.jsonl
-test -s downloads/title/title.txt
-test -s downloads/wget/example.com/index.html
-grep -q 'Example Domain' downloads/title/title.txt
-```
--->
 
 ```text
 uv run abx-dl dl --plugins=title,wget,screenshot,pdf 'https://example.com'
@@ -102,15 +70,9 @@ uv run abx-dl config --get TIMEOUT
 Use targeted tests and real user-facing commands:
 
 ```bash
-uv run pytest tests/test_cli.py -q
-uv run prek run --all-files
+set -Eeuo pipefail
+uv run pytest tests/test_cli.py::test_readme_install_command_runs_real_install_pipeline -q
 ```
 
-For extractor behavior, run in a clean directory and inspect `index.jsonl` plus plugin output files:
-
-```bash
-cd "$(mktemp -d)"
-exec >stdout.log
-uv run --project /path/to/abx-dl abx-dl dl --plugins=title,wget 'https://example.com'
-find . -maxdepth 3 -type f | sort
-```
+The skill's live wget check covers extractor output. The main test workflow runs
+the exhaustive repository suite and the separate Prek job runs every hook.
