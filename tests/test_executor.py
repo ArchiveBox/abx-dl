@@ -839,7 +839,7 @@ def test_snapshot_service_emits_background_process_without_extra_wait(tmp_path: 
                 "#!/usr/bin/env bash",
                 "trap 'echo cleaned; exit 0' TERM",
                 "set -euo pipefail",
-                "printf '%s\\n' '{\"type\":\"ProcessReady\"}'",
+                "echo ready",
                 "while true; do sleep 1; done",
                 "",
             ],
@@ -914,7 +914,7 @@ def test_snapshot_service_emits_background_process_without_extra_wait(tmp_path: 
                 child_of=started_process,
                 past=True,
                 future=5.0,
-                where=lambda candidate: json.loads(candidate.line).get("type") == "ProcessReady",
+                where=lambda candidate: candidate.line == "ready",
             )
             completed_process = await bus.find(
                 ProcessCompletedEvent,
@@ -945,7 +945,7 @@ def test_snapshot_service_emits_background_process_without_extra_wait(tmp_path: 
     assert completed is not None
     assert completed.status == "succeeded"
     assert completed.exit_code == 0
-    assert '"type":"ProcessReady"' in completed.stdout
+    assert "ready" in completed.stdout
     assert "cleaned" in completed.stdout
     assert not list((tmp_path / "run" / "background_start").glob("*.pid"))
 
@@ -1441,10 +1441,7 @@ def test_snapshot_background_daemon_stays_alive_until_cleanup(tmp_path: Path) ->
                 "set -euo pipefail",
                 'echo $$ > "$SNAP_DIR/daemon.pid"',
                 'echo ready > "$SNAP_DIR/daemon.ready"',
-                "echo initializing",
-                "sleep 0.2",
-                'echo ready > "$SNAP_DIR/protocol.ready"',
-                "printf '%s\\n' '{\"type\":\"ProcessReady\"}'",
+                "echo ready",
                 "while true; do sleep 1; done",
                 "",
             ],
@@ -1455,7 +1452,6 @@ def test_snapshot_background_daemon_stays_alive_until_cleanup(tmp_path: Path) ->
             [
                 "#!/usr/bin/env bash",
                 "set -euo pipefail",
-                'test -s "$SNAP_DIR/protocol.ready"',
                 "for _ in $(seq 1 50); do",
                 '    test -s "$SNAP_DIR/daemon.pid" && break',
                 "    sleep 0.1",
@@ -1691,7 +1687,7 @@ def test_snapshot_completed_waits_for_cleanup_process_listeners(tmp_path: Path) 
                 "trap 'echo cleaned; exit 0' TERM",
                 "set -euo pipefail",
                 'echo $$ > "$SNAP_DIR/daemon.pid"',
-                "printf '%s\\n' '{\"type\":\"ProcessReady\"}'",
+                "echo ready",
                 "while true; do sleep 1; done",
                 "",
             ],
@@ -1777,7 +1773,6 @@ def test_crawl_setup_background_daemon_survives_until_explicit_cleanup(tmp_path:
                 'crawl_dir="${CRAWL_DIR:-$(dirname "$PWD")}"',
                 'echo $$ > "$crawl_dir/daemon.pid"',
                 'echo ready > "$crawl_dir/daemon.ready"',
-                "printf '%s\\n' '{\"type\":\"ProcessReady\"}'",
                 "while true; do sleep 1; done",
                 "",
             ],
@@ -1875,7 +1870,6 @@ def test_crawl_completed_waits_for_cleanup_process_listeners(tmp_path: Path) -> 
                 'crawl_dir="${CRAWL_DIR:-$(dirname "$PWD")}"',
                 'echo $$ > "$crawl_dir/daemon.pid"',
                 'echo ready > "$crawl_dir/daemon.ready"',
-                "printf '%s\\n' '{\"type\":\"ProcessReady\"}'",
                 "while true; do sleep 1; done",
                 "",
             ],
@@ -1959,7 +1953,6 @@ def test_crawl_abort_during_setup_cleans_background_daemon(tmp_path: Path) -> No
                 'crawl_dir="${CRAWL_DIR:-$(dirname "$PWD")}"',
                 'echo $$ > "$crawl_dir/daemon.pid"',
                 'echo ready > "$crawl_dir/daemon.ready"',
-                "printf '%s\\n' '{\"type\":\"ProcessReady\"}'",
                 "while true; do sleep 1; done",
                 "",
             ],
@@ -2052,7 +2045,6 @@ def test_download_cancellation_kills_background_setup_process_group(tmp_path: Pa
                 'echo $! > "$crawl_dir/daemon-child.pid"',
                 'echo ready > "$crawl_dir/daemon.ready"',
                 "trap 'echo cleaned > \"$crawl_dir/daemon.cleaned\"; exit 0' TERM INT",
-                "printf '%s\\n' '{\"type\":\"ProcessReady\"}'",
                 "wait",
                 "",
             ],
@@ -2165,7 +2157,6 @@ def test_crawl_abort_during_foreground_setup_interrupts_hook_and_stops_later_set
                 'crawl_dir="${CRAWL_DIR:-$(dirname "$PWD")}"',
                 'echo $$ > "$crawl_dir/daemon.pid"',
                 "trap 'echo daemon-cleaned; exit 0' TERM",
-                "printf '%s\\n' '{\"type\":\"ProcessReady\"}'",
                 "while true; do sleep 1; done",
                 "",
             ],
@@ -2459,7 +2450,6 @@ def test_crawl_background_daemon_stays_alive_through_snapshot_until_cleanup(tmp_
                 'crawl_dir="${CRAWL_DIR:-$(dirname "$PWD")}"',
                 'echo $$ > "$crawl_dir/daemon.pid"',
                 'echo ready > "$crawl_dir/daemon.ready"',
-                "printf '%s\\n' '{\"type\":\"ProcessReady\"}'",
                 "while true; do sleep 1; done",
                 "",
             ],
@@ -2697,7 +2687,7 @@ def test_download_cleanup_sigterm_after_archive_result_is_not_failed_process(tmp
                 "set -euo pipefail",
                 'trap \'printf \'\\\'\'{"type":"ArchiveResult","status":"succeeded","output_str":"background cleaned"}\\n\'\\\'\'; trap - TERM; kill -TERM $$\' TERM',
                 'echo ready > "$SNAP_DIR/background.ready"',
-                "printf '%s\\n' '{\"type\":\"ProcessReady\"}'",
+                "echo ready",
                 "while true; do sleep 1; done",
                 "",
             ],

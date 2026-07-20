@@ -29,7 +29,7 @@ from ..events import (
 from ..limits import CrawlLimitState
 from ..models import Snapshot
 from ..models import Hook, Plugin, filter_plugins
-from .base import BaseService, wait_for_background_ready
+from .base import BaseService
 
 
 async def _wait_for_process_completed(event: ProcessCompletedEvent | None, timeout: float | None) -> ProcessCompletedEvent | None:
@@ -45,6 +45,36 @@ async def _run_event_now(event: BaseEvent, timeout: float | None = None) -> Base
     await event.wait(timeout=timeout)
     await event.event_results_list()
     return event
+
+
+async def _wait_for_background_ready(
+    bus: EventBus,
+    process_event: ProcessEvent,
+    timeout: float,
+) -> None:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        first_stdout = await bus.find(
+            ProcessStdoutEvent,
+            child_of=process_event,
+            past=True,
+            future=False,
+        )
+        if first_stdout is not None:
+            return
+        completed_process = await bus.find(
+            ProcessCompletedEvent,
+            child_of=process_event,
+            past=True,
+            future=False,
+        )
+        if completed_process is not None:
+            return
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            break
+        await asyncio.sleep(min(0.05, remaining))
+    raise RuntimeError("Background hook did not emit stdout or exit")
 
 
 class SnapshotService(BaseService):
@@ -275,7 +305,7 @@ class SnapshotService(BaseService):
                     return
                 if started_process is None:
                     raise RuntimeError(f"Background hook {hook.name} did not start")
-                await wait_for_background_ready(self.bus, background_process, ready_wait_timeout)
+                await _wait_for_background_ready(self.bus, background_process, ready_wait_timeout)
             else:
                 foreground_process = event.emit(process_event)
                 await _run_event_now(foreground_process, handler_timeout)
