@@ -111,6 +111,9 @@ ignore = ["E731", "E303", "E266", "E241", "E222"]
 [tool.pytest.ini_options]
 testpaths = [ "tests", "server/tests", "README.md", "AGENTS.md", "skills" ]
 addopts = ["--codeblocks"]
+markers = [
+    "docker_required: documentation commands that require the current abx-dl Docker image",
+]
 timeout = 600
 timeout_method = "thread"
 

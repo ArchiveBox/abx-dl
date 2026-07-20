@@ -54,8 +54,16 @@ test -s wget/example.com/index.html
 
 Docker:
 
+<!--pytest.mark.docker_required-->
 ```bash
-docker run --rm -v "$PWD:/out" archivebox/abxdl --no-install --max-urls=1 'https://example.com'
+output_dir="$(mktemp -d)"
+trap 'rm -rf "$output_dir"' EXIT
+docker run --rm -v "$output_dir:/out" "${ABXDL_IMAGE:-archivebox/abx-dl:latest}" --no-install --max-urls=1 --plugins=title,wget 'https://example.com'
+test -s "$output_dir/index.jsonl"
+test -s "$output_dir/title/title.txt"
+test -s "$output_dir/wget/example.com/index.html"
+grep -q 'Example Domain' "$output_dir/title/title.txt"
+grep -q 'Example Domain' "$output_dir/wget/example.com/index.html"
 ```
 
 ## Basic Usage

@@ -56,6 +56,19 @@ jobs:
           git clone --depth=1 https://github.com/ArchiveBox/abxpkg.git "${{ runner.temp }}/abxpkg"
           git clone --depth=1 https://github.com/ArchiveBox/abx-plugins.git "${{ runner.temp }}/abx-plugins"
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Install documentation test dependencies
+        run: UV_NO_SOURCES=1 uv sync --group dev
+
       - name: Set up Docker Buildx
         id: buildx
         uses: docker/setup-buildx-action@v3
@@ -70,7 +83,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          VERSION="$(python3 - <<'PY'
+          VERSION="$(uv run --no-sync python - <<'PY'
           import tomllib
 
           with open("pyproject.toml", "rb") as f:
@@ -114,6 +127,11 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.cache_scope }}
           platforms: ${{ matrix.platform }}
 
+      - name: Test Docker documentation commands
+        env:
+          ABXDL_IMAGE: ${{ matrix.local_tag }}
+        run: uv run --no-sync --no-sources pytest -vv --tb=long -m docker_required README.md AGENTS.md skills
+
       - name: Validate real crawl inside Docker image
         shell: bash
         run: |
@@ -131,7 +149,7 @@ jobs:
             "docker run --rm -it --platform '${{ matrix.platform }}' --volume '$OUT_DIR:/out' --volume '$PERSONAS_DIR:/data/personas' --entrypoint bash '${{ matrix.local_tag }}' -lc 'set -Eeuo pipefail; test \"\$PWD\" = /out; test -d /data/personas; test ! -e /out/personas; ! command -v rg; ! command -v sonic; ! command -v cargo; ! command -v gcc; ! command -v g++; ! command -v make'" \
             /dev/null
 
-          python3 - "$OUT_DIR/index.jsonl" <<'PY'
+          uv run --no-sync python - "$OUT_DIR/index.jsonl" <<'PY'
           import json
           import sys
           from pathlib import Path
@@ -208,7 +226,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          python3 - "${DOCKERHUB_IMAGE}@${{ steps.docker_build.outputs.digest }}" <<'PY'
+          uv run --no-sync python - "${DOCKERHUB_IMAGE}@${{ steps.docker_build.outputs.digest }}" <<'PY'
           import json
           import subprocess
           import sys
@@ -254,6 +272,16 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
         with:
@@ -284,7 +312,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          VERSION="$(python3 - <<'PY'
+          VERSION="$(uv run --no-project python - <<'PY'
           import tomllib
 
           with open("pyproject.toml", "rb") as f:
