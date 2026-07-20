@@ -141,11 +141,17 @@ def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) 
     request_events = asyncio.run(collect_requests(no_cache=False))
     abxbus_request = next(event for event in request_events if event.name == "abxbus")
     playwright_request = next(event for event in request_events if event.name == "playwright")
+    playwright_requirement = next(
+        requirement for requirement in plugin.config.required_binaries if requirement.name == "playwright"
+    ).model_dump(
+        mode="json",
+    )
     chromium_index = next(i for i, event in enumerate(request_events) if event.name == "chromium")
 
     assert request_events.index(playwright_request) < chromium_index
     assert playwright_request.binproviders == "pnpm"
-    assert playwright_request.postinstall_scripts is True
+    assert playwright_requirement["postinstall_scripts"] is False
+    assert playwright_request.postinstall_scripts is playwright_requirement["postinstall_scripts"]
     assert playwright_request.overrides == {
         "pnpm": {
             "install_root": str(managed_lib_dir / "pnpm" / "packages" / "playwright"),
