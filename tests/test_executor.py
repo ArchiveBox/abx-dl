@@ -29,6 +29,7 @@ from abx_dl.events import (
     ProcessKillEvent,
     ProcessStartedEvent,
     ProcessStdoutEvent,
+    SnapshotCleanupEvent,
     SnapshotCompletedEvent,
     SnapshotEvent,
 )
@@ -3010,6 +3011,107 @@ def test_process_event_does_not_wait_for_stdout_inherited_by_child_process(tmp_p
     assert completed_event.status == "succeeded"
     assert "parent-started" in completed_event.stdout
     assert "parent-done" in completed_event.stdout
+
+
+def test_process_completion_waits_for_stdout_consumers(tmp_path: Path) -> None:
+    script = tmp_path / "stdout-order.sh"
+    script.write_text(
+        "#!/usr/bin/env bash\nset -euo pipefail\ntrap 'exit 0' TERM\necho result\nsleep 30\n",
+    )
+    script.chmod(0o755)
+
+    output_dir = tmp_path / "run" / "stdout_order"
+    bus = create_bus(total_timeout=10.0, name=f"process_stdout_order_{tmp_path.name}")
+    ProcessService(bus, emit_jsonl=False, interactive_tty=False)
+    consumed_stdout = asyncio.Event()
+    event_order: list[str] = []
+
+    async def on_ProcessStdoutEvent(event: ProcessStdoutEvent) -> None:
+        if event.plugin_name != "stdout_order":
+            return
+        await asyncio.sleep(1.0)
+        event_order.append("stdout")
+        consumed_stdout.set()
+
+    async def on_ProcessCompletedEvent(event: ProcessCompletedEvent) -> None:
+        if event.plugin_name != "stdout_order":
+            return
+        event_order.append("completed")
+
+    bus.on(ProcessStdoutEvent, on_ProcessStdoutEvent)
+    bus.on(ProcessCompletedEvent, on_ProcessCompletedEvent)
+
+    async def run() -> None:
+        async def on_SnapshotEvent(snapshot_event: SnapshotEvent) -> None:
+            process_event = snapshot_event.emit(
+                ProcessEvent(
+                    plugin_name="stdout_order",
+                    hook_name="on_Snapshot__10_stdout_order.sh",
+                    hook_path=str(script),
+                    hook_args=[],
+                    is_background=True,
+                    output_dir=str(output_dir),
+                    env={},
+                    timeout=5,
+                    event_timeout=10.0,
+                    event_handler_timeout=10.0,
+                ),
+            )
+            await (await process_event.now()).event_results_list()
+            started = await bus.find(
+                ProcessStartedEvent,
+                child_of=process_event,
+                past=True,
+                future=2.0,
+            )
+            assert isinstance(started, ProcessStartedEvent)
+            stdout = await bus.find(
+                ProcessStdoutEvent,
+                child_of=process_event,
+                past=True,
+                future=2.0,
+            )
+            assert isinstance(stdout, ProcessStdoutEvent)
+            cleanup_event = snapshot_event.emit(
+                SnapshotCleanupEvent(
+                    url="https://example.com",
+                    snapshot_id="stdout-order",
+                    output_dir=str(tmp_path / "run"),
+                ),
+            )
+            await cleanup_event.now()
+            kill_event = cleanup_event.emit(
+                ProcessKillEvent(
+                    plugin_name="stdout_order",
+                    hook_name="on_Snapshot__10_stdout_order.sh",
+                    pid=started.pid,
+                    grace_period=2.0,
+                ),
+            )
+            await (await kill_event.now()).event_results_list()
+            completed = await bus.find(
+                ProcessCompletedEvent,
+                child_of=process_event,
+                past=True,
+                future=2.0,
+            )
+            assert isinstance(completed, ProcessCompletedEvent)
+
+        bus.on(SnapshotEvent, on_SnapshotEvent)
+        snapshot_event = bus.emit(
+            SnapshotEvent(
+                url="https://example.com",
+                snapshot_id="stdout-order",
+                output_dir=str(tmp_path / "run"),
+            ),
+        )
+        await (await snapshot_event.now()).event_results_list()
+        await bus.wait_until_idle()
+
+    asyncio.run(run())
+
+    assert consumed_stdout.is_set()
+    assert event_order == ["stdout", "completed"]
 
 
 def test_crawl_abort_interrupts_noninteractive_foreground_process(tmp_path: Path) -> None:

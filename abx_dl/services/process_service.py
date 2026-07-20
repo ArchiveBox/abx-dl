@@ -49,6 +49,7 @@ class _StdoutStreamState:
     stdout_lines: list[str] = field(default_factory=list)
     pending_line: str = ""
     offset: int = 0
+    stop_requested: bool = False
 
 
 def _process_status(exit_code: int) -> ProcessStatus:
@@ -478,7 +479,11 @@ class ProcessService(BaseService):
                     ).now()
                     await wait_task
                     break
-            stream_task.cancel()
+            # Let an in-flight ProcessStdoutEvent finish before emitting
+            # ProcessCompletedEvent. Cancelling here could advance the file
+            # offset, cancel ArchiveResult consumers, and then lose the line
+            # before the final drain below.
+            stdout_state.stop_requested = True
             await self._finish_stream_stdout(stream_task)
             await self._emit_new_stdout_lines(
                 event=started_event,
@@ -749,7 +754,7 @@ class ProcessService(BaseService):
         completion from inherited descriptors.
         """
         try:
-            while True:
+            while not state.stop_requested:
                 await self._emit_new_stdout_lines(
                     event=event,
                     proc=proc,
@@ -757,6 +762,8 @@ class ProcessService(BaseService):
                     state=state,
                     emit_partial=False,
                 )
+                if state.stop_requested:
+                    break
                 await asyncio.sleep(STDOUT_POLL_INTERVAL)
         except asyncio.CancelledError:
             return state.stdout_lines
