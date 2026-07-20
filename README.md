@@ -161,7 +161,14 @@ Aliases are automatically resolved (e.g. `--set USE_WGET=false` saves as `WGET_E
 
 One-off config is easy via env vars or CLI args:
 
-```text
+<!--
+```bash
+cd "$(mktemp -d)"
+exec >stdout.log
+```
+-->
+<!--pytest-codeblocks:cont-->
+```bash
 env \
   TIMEOUT=120 \
   WGET_TIMEOUT=120 \
@@ -172,12 +179,15 @@ env \
     'https://example.com'
 ```
 
+<!--pytest-codeblocks:cont-->
 <!--
 ```bash
-set -Eeuo pipefail
-config_output="$(env TIMEOUT=120 WGET_TIMEOUT=120 abx-dl config)"
-grep -q '^TIMEOUT=120$' <<<"$config_output"
-grep -q '^WGET_TIMEOUT=120$' <<<"$config_output"
+test -s config-example/index.jsonl
+test -s config-example/title/title.txt
+test -s config-example/wget/example.com/index.html
+grep -q 'Example Domain' config-example/title/title.txt
+grep -q '"plugin": "wget".*"status": "succeeded"' config-example/index.jsonl
+grep -q '"plugin": "title".*"status": "succeeded"' config-example/index.jsonl
 ```
 -->
 
@@ -220,9 +230,25 @@ abx-dl install wget title
 
 ### 🔠 Usage
 
-```text
+<!--
+```bash
+cd "$(mktemp -d)"
+exec >stdout.log
+```
+-->
+<!--pytest-codeblocks:cont-->
+```bash
 abx-dl --plugins=title,wget --dir=./downloads --timeout=120 'https://example.com'
 ```
+
+<!--pytest-codeblocks:cont-->
+<!--
+```bash
+test -s downloads/index.jsonl
+test -s downloads/title/title.txt
+test -s downloads/wget/example.com/index.html
+```
+-->
 
 ```text
 # Default command - a bare URL archives with all enabled plugins:
@@ -315,7 +341,7 @@ You can override the install location with `ABXPKG_LIB_DIR=/path/to/lib abx-dl i
 
 By default, `abx-dl` writes results into the current working directory. Each run creates an `index.jsonl` manifest plus one subdirectory per plugin that produced output. If you want to keep runs isolated, `cd` into a scratch directory first or pass `--dir=/path/to/run`.
 
-```text
+```bash
 mkdir -p /tmp/abx-run && cd /tmp/abx-run
 uvx --from abx-dl abx-dl --plugins=title,wget 'https://example.com'
 ```
