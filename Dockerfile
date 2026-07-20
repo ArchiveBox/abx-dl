@@ -180,8 +180,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && source /tmp/abx-dl-enable-plugins.env \
     && ABXPKG_NO_CACHE=True ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 abx-dl install chrome \
     && ABXPKG_NO_CACHE=True ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 abx-dl install \
-    && mkdir -p "$ABXPKG_LIB_DIR/env/bin" \
-    && ln -sf /usr/bin/git "$ABXPKG_LIB_DIR/env/bin/git" \
+    && abxpkg env --install --binproviders=env --lib="$ABXPKG_LIB_DIR" git >/dev/null \
     && rm -rf "$ABXPKG_LIB_DIR"/playwright/cache/ffmpeg-* \
     && find "$ABXPKG_LIB_DIR"/chromewebstore -type f -name '*.crx' -delete \
     && find "$ABXPKG_LIB_DIR"/playwright/cache -path '*/chrome-linux*/locales/*' ! -name 'en-US.pak' -delete \

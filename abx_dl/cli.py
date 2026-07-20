@@ -29,8 +29,7 @@ from rich.table import Table
 from rich.text import Text
 from rich import box
 from pydantic import ValidationError
-from abxpkg import Binary as AbxBinary
-from abxpkg.binary_service import BinaryEvent, BinaryRequestEvent
+from abxpkg.binary_service import BinaryEvent, BinaryRequestEvent, BinaryService
 
 from .config import (
     CONFIG_FILE,
@@ -41,7 +40,7 @@ from .config import (
     get_required_binary_requests,
     set_user_config,
 )
-from .dependencies import load_binary
+from .dependencies import resolve_binary_requests
 from .events import (
     ArchiveResultEvent,
     CrawlAbortEvent,
@@ -1788,7 +1787,36 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
     else:
         # Check + info mode (default)
         rows: list[dict[str, str]] = []
-        loaded_binaries: dict[str, AbxBinary] = {}
+        declared_binary_specs: dict[str, dict[str, object]] = {}
+        for plugin in selected.values():
+            for hydrated_spec in get_required_binary_requests(
+                plugin,
+                plugin.config.required_binaries,
+                overrides=initial_user_env,
+                derived_overrides=initial_derived_env,
+                run_output_dir=Path.cwd(),
+                logical_names=False,
+            ):
+                binary_signature = json.dumps(hydrated_spec, sort_keys=True, default=str)
+                declared_binary_specs.setdefault(binary_signature, hydrated_spec)
+
+        binary_bus = create_bus(name="AbxDlPluginBinaryCheck")
+        configured_lib_dir = initial_user_env.get("ABXPKG_LIB_DIR")
+        BinaryService(
+            binary_bus,
+            auto_install=False,
+            lib_dir=Path(str(configured_lib_dir)).expanduser() if configured_lib_dir else None,
+            no_cache=bool(initial_user_env.get("ABXPKG_NO_CACHE", False)),
+        )
+
+        async def resolve_declared_binaries() -> dict[str, BinaryEvent | None]:
+            try:
+                return await resolve_binary_requests(binary_bus, declared_binary_specs)
+            finally:
+                await binary_bus.wait_until_idle()
+                await binary_bus.destroy(clear=False)
+
+        loaded_binaries = asyncio.run(resolve_declared_binaries())
         seen_binary_rows: set[tuple[str, str, str, str, str, str]] = set()
         live_enabled = console.is_terminal
         live_cm = Live(_build_plugin_binary_table(rows), console=console, refresh_per_second=8) if live_enabled else nullcontext()
@@ -1828,10 +1856,8 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
                         logical_names=False,
                     ):
                         binary_signature = json.dumps(hydrated_spec, sort_keys=True, default=str)
-                        if binary_signature not in loaded_binaries:
-                            loaded_binaries[binary_signature] = load_binary(hydrated_spec)
                         binary = loaded_binaries[binary_signature]
-                        if binary.is_valid:
+                        if binary is not None:
                             status = "[green]✓[/green]" if plugin_enabled else "[grey53]-[/grey53]"
                         else:
                             status = "[red]X[/red]" if plugin_enabled else "[grey53]-[/grey53]"
@@ -1842,13 +1868,13 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
                             "plugin": name,
                             "state": enabled_label,
                             "status": status,
-                            "binary": binary.name,
-                            "version": str(binary.loaded_version or "-")[:15],
-                            "provider": (binary.loaded_binprovider.name if binary.loaded_binprovider else "-")[:8],
+                            "binary": binary.name if binary is not None else str(hydrated_spec["name"]),
+                            "version": str(binary.version or "-")[:15] if binary is not None else "-",
+                            "provider": str(binary.binprovider or "-")[:8] if binary is not None else "-",
                             "deps": deps_label,
                             "outputs": outputs_label,
                             "info": info_label,
-                            "path": _binary_display_path(binary.loaded_abspath),
+                            "path": _binary_display_path(binary.abspath) if binary is not None else "-",
                             "style": row_style,
                         }
                         row_key = _plugin_binary_row_dedupe_key(row)

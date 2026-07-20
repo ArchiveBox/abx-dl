@@ -1,18 +1,14 @@
 name: Verify Chromium launch
-description: Validate that Chromium can start, expose CDP, and supports extension loading.
+description: Validate that resolved Chromium can start and execute CDP target operations.
 inputs:
   chrome-path:
-    description: Path to Chromium/Chrome binary. Defaults to CHROME_BINARY, then /usr/bin/chromium.
+    description: Path to the abxpkg-resolved Chromium binary. Defaults to CHROME_BINARY.
     required: false
     default: ""
   timeout-ms:
     description: Milliseconds to wait for DevTools and CDP.
     required: false
     default: "30000"
-  min-major-version:
-    description: Minimum Chromium major version required for CDP Extensions.loadUnpacked.
-    required: false
-    default: "149"
 runs:
   using: composite
   steps:
@@ -21,39 +17,62 @@ runs:
         set -euo pipefail
         chrome_path="${{ inputs.chrome-path }}"
         if [ -z "$chrome_path" ]; then
-          chrome_path="${CHROME_BINARY:-/usr/bin/chromium}"
-        fi
-        if [ -n "$chrome_path" ]; then
-          pkill -f "$chrome_path" >/dev/null 2>&1 || true
+          chrome_path="${CHROME_BINARY:?CHROME_BINARY must point to the abxpkg-resolved binary}"
         fi
         CHROME_VERIFY_PATH="$chrome_path" node - <<'NODE'
         const { spawn } = require("node:child_process");
-        const { mkdtempSync } = require("node:fs");
+        const { mkdtempSync, readFileSync, watch } = require("node:fs");
         const { tmpdir } = require("node:os");
         const { join } = require("node:path");
 
-        const chrome = process.env.CHROME_VERIFY_PATH || process.env.CHROME_BINARY || "/usr/bin/chromium";
+        const chrome = process.env.CHROME_VERIFY_PATH;
+        if (!chrome) throw new Error("CHROME_VERIFY_PATH is required");
         const timeoutMs = Number("${{ inputs.timeout-ms }}");
-        const minMajorVersion = Number("${{ inputs.min-major-version }}");
         const userDataDir = mkdtempSync(join(tmpdir(), "abx-chromium-verify-"));
-        const wsPrefix = "DevTools listening on ";
-        const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const activePortPath = join(userDataDir, "DevToolsActivePort");
 
         let proc;
         let wsUrl;
         let ws;
         let closed = false;
 
-        const waitForWsUrl = async () => {
-          const deadline = Date.now() + timeoutMs;
-          while (!wsUrl) {
-            if (Date.now() > deadline) {
-              throw new Error(`Chromium did not expose a CDP websocket URL within ${timeoutMs}ms`);
-            }
-            await sleep(250);
-          }
-          return wsUrl;
-        };
+        const waitForWsUrl = () =>
+          new Promise((resolve, reject) => {
+            let settled = false;
+            const finish = (error, url) => {
+              if (settled) return;
+              settled = true;
+              clearTimeout(timer);
+              watcher.close();
+              proc.off("exit", onExit);
+              if (error) reject(error);
+              else resolve(url);
+            };
+            const readActivePort = () => {
+              let lines;
+              try {
+                lines = readFileSync(activePortPath, "utf8").trim().split(/\r?\n/);
+              } catch {
+                return;
+              }
+              const port = Number(lines[0]);
+              const browserPath = String(lines[1] || "").trim();
+              if (!Number.isInteger(port) || port <= 0 || !browserPath.startsWith("/")) return;
+              wsUrl = `ws://127.0.0.1:${port}${browserPath}`;
+              finish(null, wsUrl);
+            };
+            const onExit = (code, signal) => {
+              finish(new Error(`Chromium exited before exposing CDP (code=${code}, signal=${signal})`));
+            };
+            const watcher = watch(userDataDir, (_eventType, filename) => {
+              if (String(filename || "") === "DevToolsActivePort") readActivePort();
+            });
+            const timer = setTimeout(() => {
+              finish(new Error(`Chromium did not create DevToolsActivePort within ${timeoutMs}ms`));
+            }, timeoutMs);
+            proc.once("exit", onExit);
+            readActivePort();
+          });
 
         const cleanup = () => {
           if (ws && !closed) {
@@ -101,14 +120,6 @@ runs:
 
             ws.addEventListener("open", async () => {
               try {
-                const version = await send("Browser.getVersion");
-                const product = String(version.product || "");
-                const match = product.match(/\/(\d+)\./);
-                const major = match ? Number(match[1]) : 0;
-                if (minMajorVersion && (!major || major < minMajorVersion)) {
-                  throw new Error(`Chromium ${product || "unknown"} is too old; Extensions.loadUnpacked requires Chromium >=${minMajorVersion}`);
-                }
-
                 const createdTarget = await send("Target.createTarget", { url: "about:blank" });
                 if (!createdTarget.targetId) throw new Error("CDP did not create a blank page target");
 
@@ -232,33 +243,8 @@ runs:
             ];
 
             proc = spawn(chrome, args, { stdio: ["ignore", "pipe", "pipe"] });
-            const lineBuffers = { stdout: "", stderr: "" };
-            const onData = (stream) => (data) => {
-              const text = data.toString();
-              if (stream === "stderr") process.stderr.write(text);
-              else process.stdout.write(text);
-              lineBuffers[stream] += text;
-              const lines = lineBuffers[stream].split(/\r?\n/);
-              lineBuffers[stream] = lines.pop() ?? "";
-              for (const line of lines) {
-                const idx = line.indexOf(wsPrefix);
-                if (idx === -1) continue;
-                const candidate = line.slice(idx + wsPrefix.length).trim().split(/\s+/)[0];
-                if (candidate.startsWith("ws://") || candidate.startsWith("wss://")) {
-                  wsUrl = candidate;
-                }
-              }
-            };
-
-            proc.stdout.on("data", onData("stdout"));
-            proc.stderr.on("data", onData("stderr"));
-            proc.on("exit", (code, signal) => {
-              if (!closed && !wsUrl) {
-                closed = true;
-                console.error(`Chromium exited before exposing CDP (code=${code}, signal=${signal})`);
-                process.exitCode = 1;
-              }
-            });
+            proc.stdout.pipe(process.stdout);
+            proc.stderr.pipe(process.stderr);
 
             const url = await waitForWsUrl();
             const wsFoundMs = Date.now() - startTime;

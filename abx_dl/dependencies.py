@@ -1,83 +1,40 @@
-"""
-Dependency management for abx-dl using abxpkg.
-"""
+"""Canonical abxpkg binary request helpers for abx-dl callers."""
 
-from typing import Any, cast
+from __future__ import annotations
 
-from abxpkg import (
-    Binary,
-    BinaryOverrides,
-    BinProvider,
-    DEFAULT_PROVIDER_NAMES,
-    PROVIDER_CLASS_BY_NAME,
-)  # DO NOT REMOVE UNUSED IMPORT, critical for pydantic circular reference fix
-from abxpkg.binprovider import env_flag_is_true
+from collections.abc import Mapping
+from typing import Any
 
-from .config import GlobalConfig
+from abxbus import EventBus
+from abxpkg.binary_service import BinaryEvent, BinaryRequestEvent
 
 
-def get_default_providers(config: GlobalConfig | None = None) -> list[BinProvider]:
-    """Build providers from the current runtime config."""
-    runtime_config = config or GlobalConfig()
-    providers: list[BinProvider] = []
-    for provider_name in DEFAULT_PROVIDER_NAMES:
-        provider_class = PROVIDER_CLASS_BY_NAME[provider_name]
-        try:
-            kwargs: dict[str, Any] = {}
-            if runtime_config.ABXPKG_LIB_DIR is not None:
-                kwargs["install_root"] = runtime_config.ABXPKG_LIB_DIR / provider_name
-            providers.append(provider_class(**kwargs))
-        except Exception:
-            pass
-    return providers
+async def resolve_binary_requests(
+    bus: EventBus,
+    specs: Mapping[str, Mapping[str, Any]],
+) -> dict[str, BinaryEvent | None]:
+    """Declare load-only requests and consume abxpkg's resolved BinaryEvents."""
 
-
-def _providers_for_spec(spec: dict[str, Any], *, config: GlobalConfig | None = None) -> list[BinProvider]:
-    providers_str = spec.get("binproviders", "env")
-    requested_names = [name.strip() for name in providers_str.split(",") if name.strip()]
-    providers_by_name = {provider.name: provider for provider in get_default_providers(config)}
-    return [providers_by_name[name] for name in requested_names if name in providers_by_name]
-
-
-def load_binary(spec: dict[str, Any]) -> Binary:
-    """Load a binary from a spec dict."""
-    providers = _providers_for_spec(spec)
-    overrides = spec.get("overrides", {})
-    if isinstance(overrides, dict):
-        overrides = {provider: ({"install_args": value} if isinstance(value, list) else value) for provider, value in overrides.items()}
-    overrides = cast(BinaryOverrides, overrides)
-    min_version = spec.get("min_version") or None
-
-    binary = Binary(
-        name=spec["name"],
-        min_version=min_version,
-        binproviders=providers,
-        overrides=overrides,
-    )
-
-    try:
-        return binary.load()
-    except Exception:
-        return binary
-
-
-def install_binary(spec: dict[str, Any]) -> Binary:
-    """Load or install a binary from a spec dict."""
-    providers = _providers_for_spec(spec)
-    overrides = spec.get("overrides", {})
-    if isinstance(overrides, dict):
-        overrides = {provider: ({"install_args": value} if isinstance(value, list) else value) for provider, value in overrides.items()}
-    overrides = cast(BinaryOverrides, overrides)
-    min_version = spec.get("min_version") or None
-
-    binary = Binary(
-        name=spec["name"],
-        min_version=min_version,
-        binproviders=providers,
-        overrides=overrides,
-    )
-
-    try:
-        return binary.install(no_cache=env_flag_is_true("ABXPKG_NO_CACHE"))
-    except Exception:
-        return binary
+    resolved: dict[str, BinaryEvent | None] = {}
+    for key, spec in specs.items():
+        request_payload = {
+            field: value
+            for field, value in spec.items()
+            if field in BinaryRequestEvent.model_fields and field not in {"auto_install", "extra_context"}
+        }
+        request = BinaryRequestEvent(
+            **request_payload,
+            auto_install=False,
+            extra_context={"request_key": key},
+        )
+        await bus.emit(request).now()
+        event = await bus.find(
+            BinaryEvent,
+            child_of=request,
+            past=True,
+            future=False,
+            name=request.name,
+            where=lambda candidate: bool(candidate.abspath),
+        )
+        resolved[key] = event if isinstance(event, BinaryEvent) else None
+    return resolved

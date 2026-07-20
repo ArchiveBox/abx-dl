@@ -7,11 +7,11 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer = "2026-07-15T17:06:09.412666Z"
 exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
-abxbus = { timestamp = "0001-01-01T00:00:00Z", span = "PT1S" }
+abxbus = { timestamp = "2026-07-20T17:06:08.41268Z", span = "PT1S" }
 abx-dl = "2100-01-01T00:00:00Z"
 abx-plugins = "2100-01-01T00:00:00Z"
 abxpkg = "2100-01-01T00:00:00Z"
@@ -121,7 +121,7 @@ wheels = [
 
 [[package]]
 name = "abxpkg"
-version = "1.11.259"
+version = "1.11.260"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pip" },
@@ -130,9 +130,9 @@ dependencies = [
     { name = "rich-click" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3e/9e/3201f7d2e15e7b9a9b5e989d3aa09770450552ab9dc8c874ffab59cd243c/abxpkg-1.11.259.tar.gz", hash = "sha256:cc42b767e6b7d361139a987e42979c8d61e27e31b748de5f33e5c4274deb79e7", size = 207919, upload-time = "2026-07-20T08:31:40.305Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/42/5e/cc5cee44f1b44f87360806939870f2291a01ad9abc0925ee8cfc10de3f67/abxpkg-1.11.260.tar.gz", hash = "sha256:3e370c99096e23722cb19aeb0596902a6064f36c3e86270aca8d9c02d65a44d3", size = 208249, upload-time = "2026-07-20T16:57:18.299Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/43/4e/ccc7b4d0b5fd0994064c6eb7e06383e2955ef20cf92881aad0bf0a35981d/abxpkg-1.11.259-py3-none-any.whl", hash = "sha256:7f3de1c3c0d21d8f4438db444081395c4d27b9f2dd789b1415057dde24a85001", size = 223523, upload-time = "2026-07-20T08:31:39.007Z" },
+    { url = "https://files.pythonhosted.org/packages/4f/97/e521cb66005928577b6d60d8469f47a3c866267959788b1abe6e473678f3/abxpkg-1.11.260-py3-none-any.whl", hash = "sha256:96e878a9e9dc898e3d00f78e1ef0f2ccbadf56f8d05fe48feb3638d3b8275e1f", size = 223879, upload-time = "2026-07-20T16:57:16.962Z" },
 ]
 
 [[package]]

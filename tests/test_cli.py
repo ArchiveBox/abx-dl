@@ -821,11 +821,21 @@ def test_readme_config_commands_round_trip_in_isolated_config_dir(tmp_path: Path
 def test_readme_plugins_command_lists_real_wget_hooks(tmp_path: Path) -> None:
     result = _run_cli(tmp_path, "plugins", "wget")
     expected_hook_names = _hook_names("wget", "Crawl") + _hook_names("wget", "Snapshot")
+    resolved_wget = tmp_path / "config" / "lib" / "env" / "bin" / "wget"
     assert result.returncode == 0
     assert "wget" in result.stdout
+    assert "env/bin/wget" in result.stdout
     assert "Archive pages and their requisites with wget" in result.stdout
     assert "Outputs:" in result.stdout
     assert "text/html" in result.stdout
+    assert resolved_wget.is_symlink()
+    version_result = subprocess.run(
+        [resolved_wget, "--version"],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert version_result.stdout.startswith("GNU Wget")
     for hook_name in expected_hook_names:
         assert hook_name in result.stdout
 
