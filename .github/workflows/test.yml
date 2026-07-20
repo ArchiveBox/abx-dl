@@ -88,6 +88,9 @@ jobs:
           packages: wget curl git ripgrep
           version: 1.0
 
+      - name: Enable the Chromium user namespace sandbox
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+
       - name: Install Python dependencies
         env:
           PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
@@ -284,7 +287,6 @@ jobs:
           plugin_tests="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/${{ matrix.plugin.name }}/tests"
           uv run --no-sync --no-sources pytest -q "$plugin_tests"
         env:
-          CHROME_SANDBOX: "false"
           PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg
           TIMEOUT: "120"
 
@@ -409,7 +411,6 @@ jobs:
           grep '^{' ./test-output/index.jsonl | jq -s '.'
         env:
           ABX_PLUGINS_DIR: ${{ runner.temp }}/abx-plugins/abx_plugins/plugins
-          CHROME_SANDBOX: "false"
           PERSONAS_DIR: ${{ runner.temp }}/abx-personas
           CHROME_USER_DATA_DIR: ${{ runner.temp }}/abx-personas/Default/chrome_profile
           PYTHONPATH: ${{ runner.temp }}/abx-plugins:${{ runner.temp }}/abxpkg

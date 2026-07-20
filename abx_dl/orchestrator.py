@@ -419,21 +419,27 @@ async def install_plugins(
 
 
 def get_plugin_timeout(plugin: Plugin, config: dict[str, Any] | None = None) -> int:
-    """Resolve a plugin's timeout from config overrides and schema defaults.
+    """Resolve a plugin's timeout from runtime config and schema defaults.
 
     Checks (in priority order):
     1. ``{PLUGIN_NAME}_TIMEOUT`` in *config*
-    2. ``TIMEOUT`` in *config*
-    3. ``{PLUGIN_NAME}_TIMEOUT`` default from the plugin's config properties
-    4. Global default (60s)
+    2. ``{PLUGIN_NAME}_TIMEOUT`` in the process environment
+    3. ``TIMEOUT`` in *config*
+    4. ``TIMEOUT`` in the process environment
+    5. ``{PLUGIN_NAME}_TIMEOUT`` default from the plugin's config properties
+    6. Global default (60s)
     """
     name_upper = plugin.name.upper()
     cfg = config or {}
     # Check config overrides first
     if f"{name_upper}_TIMEOUT" in cfg:
         return int(cfg[f"{name_upper}_TIMEOUT"])
+    if f"{name_upper}_TIMEOUT" in os.environ:
+        return int(os.environ[f"{name_upper}_TIMEOUT"])
     if "TIMEOUT" in cfg:
         return int(cfg["TIMEOUT"])
+    if "TIMEOUT" in os.environ:
+        return int(os.environ["TIMEOUT"])
     # Check plugin schema defaults
     schema_key = f"{name_upper}_TIMEOUT"
     schema_def = plugin.config.properties[schema_key] if schema_key in plugin.config.properties else {}
