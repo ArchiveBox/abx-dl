@@ -7,18 +7,18 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-07-15T17:06:09.412666Z"
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
-abxbus = { timestamp = "2026-07-20T17:06:08.41268Z", span = "PT1S" }
+abxbus = { timestamp = "0001-01-01T00:00:00Z", span = "PT1S" }
 abx-dl = "2100-01-01T00:00:00Z"
 abx-plugins = "2100-01-01T00:00:00Z"
 abxpkg = "2100-01-01T00:00:00Z"
 
 [[package]]
 name = "abx-dl"
-version = "1.11.252"
+version = "1.11.253"
 source = { editable = "." }
 dependencies = [
     { name = "abx-plugins" },
@@ -89,7 +89,7 @@ dev = [
 
 [[package]]
 name = "abx-plugins"
-version = "1.11.276"
+version = "1.11.277"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "abxbus" },
@@ -100,9 +100,9 @@ dependencies = [
     { name = "rich-click" },
     { name = "uv" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f9/8b/16f594a31ff4a738350bef862bfe80eea6ed5c9d4b443ff36004e2b8d345/abx_plugins-1.11.276.tar.gz", hash = "sha256:327c29f9bff32c56b51d3e707e1af4a125435a19ae31e2e6d9c363e236f24097", size = 259336, upload-time = "2026-07-20T16:18:28.981Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2a/f2/2ebae38fe216361bc64ac98c2520eafc43ce94d4bd5f671c664394d43c20/abx_plugins-1.11.277.tar.gz", hash = "sha256:d339fde0ba9340be6a376d5e17ec53af36ad84670c36b05056ddf8e803ec4bf8", size = 259340, upload-time = "2026-07-20T16:22:16.345Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/37/f8/de34f9b2f60c91072d5f4ab29760e239df9cf96107826e884ea15240bd63/abx_plugins-1.11.276-py3-none-any.whl", hash = "sha256:3caf9cc7c373aeb0d1248f306f03c2deee0734f0180097cf7838e26ed3c1bdb1", size = 408226, upload-time = "2026-07-20T16:18:27.73Z" },
+    { url = "https://files.pythonhosted.org/packages/e3/68/7c8148c3f9838a43c802b954bc7e25bf665f3dbc042e0fae32241dd7117f/abx_plugins-1.11.277-py3-none-any.whl", hash = "sha256:5236d56de8453498e8572b259e82d4fdcef20a87d3d09f7f20b8096e411036cc", size = 408225, upload-time = "2026-07-20T16:22:14.812Z" },
 ]
 
 [[package]]
