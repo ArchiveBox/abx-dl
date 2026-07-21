@@ -103,7 +103,10 @@ jobs:
             --json \
             --binproviders=env,apt,brew \
             --lib="$ABXPKG_LIB_DIR" \
-            wget curl git rg \
+            --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/wget/config.json:required_binaries" \
+            --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/git/config.json:required_binaries" \
+            --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/search_backend_ripgrep/config.json:required_binaries" \
+            curl \
             | jq -r 'to_entries[] | "\(.key)=\(.value)"' \
             >> "$GITHUB_ENV"
 
@@ -215,7 +218,10 @@ jobs:
             --json \
             --binproviders=env,apt \
             --lib="$ABXPKG_LIB_DIR" \
-            wget curl git rg \
+            --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/wget/config.json:required_binaries" \
+            --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/git/config.json:required_binaries" \
+            --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/search_backend_ripgrep/config.json:required_binaries" \
+            curl \
             | jq -r 'to_entries[] | "\(.key)=\(.value)"' \
             >> "$GITHUB_ENV"
 
@@ -294,7 +300,10 @@ jobs:
             --json \
             --binproviders=env,apt \
             --lib="$ABXPKG_LIB_DIR" \
-            wget curl git rg \
+            --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/wget/config.json:required_binaries" \
+            --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/git/config.json:required_binaries" \
+            --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/search_backend_ripgrep/config.json:required_binaries" \
+            curl \
             | jq -r 'to_entries[] | "\(.key)=\(.value)"' \
             >> "$GITHUB_ENV"
 
