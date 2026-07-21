@@ -22,6 +22,10 @@ def test_resolve_binary_requests_uses_real_abxpkg_env_projection(tmp_path: Path)
                         "name": "python3",
                         "binproviders": "env",
                     },
+                    "sh": {
+                        "name": "sh",
+                        "binproviders": "env",
+                    },
                 },
             )
         finally:
@@ -30,6 +34,7 @@ def test_resolve_binary_requests_uses_real_abxpkg_env_projection(tmp_path: Path)
 
     resolved = asyncio.run(run())
     python_event = resolved["python3"]
+    shell_event = resolved["sh"]
 
     assert python_event is not None
     assert python_event.name == "python3"
@@ -43,3 +48,8 @@ def test_resolve_binary_requests_uses_real_abxpkg_env_projection(tmp_path: Path)
         text=True,
     )
     assert result.stdout == "canonical-abxpkg\n"
+    assert shell_event is not None
+    assert shell_event.name == "sh"
+    assert shell_event.binprovider == "env"
+    assert Path(shell_event.abspath) == lib_dir / "env" / "bin" / "sh"
+    assert Path(shell_event.abspath).is_symlink()

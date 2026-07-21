@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from typing import Any
 
@@ -15,19 +16,24 @@ async def resolve_binary_requests(
 ) -> dict[str, BinaryEvent | None]:
     """Declare load-only requests and consume abxpkg's resolved BinaryEvents."""
 
-    resolved: dict[str, BinaryEvent | None] = {}
+    requests: dict[str, BinaryRequestEvent] = {}
     for key, spec in specs.items():
         request_payload = {
             field: value
             for field, value in spec.items()
             if field in BinaryRequestEvent.model_fields and field not in {"auto_install", "extra_context"}
         }
-        request = BinaryRequestEvent(
+        requests[key] = BinaryRequestEvent(
             **request_payload,
             auto_install=False,
             extra_context={"request_key": key},
         )
-        await bus.emit(request).now()
+
+    emitted = {key: bus.emit(request) for key, request in requests.items()}
+    await asyncio.gather(*(event.now() for event in emitted.values()))
+
+    resolved: dict[str, BinaryEvent | None] = {}
+    for key, request in emitted.items():
         event = await bus.find(
             BinaryEvent,
             child_of=request,

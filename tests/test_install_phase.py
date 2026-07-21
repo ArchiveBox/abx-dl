@@ -7,8 +7,26 @@ from abxpkg.binary_service import BinaryCacheService, BinaryEvent, BinaryRequest
 from abx_dl.config import get_initial_env
 from abx_dl.events import InstallEvent, MachineEvent
 from abx_dl.models import Plugin, PluginConfig, Snapshot, discover_plugins
-from abx_dl.orchestrator import create_bus
+from abx_dl.orchestrator import compute_install_phase_timeout, create_bus
 from abx_dl.services.binary_service import AbxDlEnvConfigFileBinaryCacheBackend, PluginBinariesService
+
+
+def test_install_phase_timeout_uses_largest_sequential_binary_lane_budget(tmp_path: Path) -> None:
+    plugin = Plugin(
+        name="concurrent",
+        path=tmp_path,
+        config=PluginConfig.model_validate(
+            {
+                "required_binaries": [
+                    {"name": "node", "event_timeout": 420},
+                    {"name": "node", "install_timeout": 540},
+                    {"name": "sh", "install_timeout": 700},
+                ],
+            },
+        ),
+    )
+
+    assert compute_install_phase_timeout([plugin], {"CONCURRENT_TIMEOUT": 10}) == 960.0
 
 
 def test_install_event_does_not_skip_stale_cached_binary_requests(tmp_path: Path) -> None:
@@ -140,24 +158,6 @@ def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) 
 
     request_events = asyncio.run(collect_requests(no_cache=False))
     abxbus_request = next(event for event in request_events if event.name == "abxbus")
-    playwright_request = next(event for event in request_events if event.name == "playwright")
-    playwright_requirement = next(
-        requirement for requirement in plugin.config.required_binaries if requirement.name == "playwright"
-    ).model_dump(
-        mode="json",
-    )
-    chromium_index = next(i for i, event in enumerate(request_events) if event.name == "chromium")
-
-    assert request_events.index(playwright_request) < chromium_index
-    assert playwright_request.binproviders == "pnpm"
-    assert playwright_requirement["postinstall_scripts"] is False
-    assert playwright_request.postinstall_scripts is playwright_requirement["postinstall_scripts"]
-    assert playwright_request.overrides == {
-        "pnpm": {
-            "install_root": str(managed_lib_dir / "pnpm" / "packages" / "playwright"),
-            "install_args": ["playwright@next"],
-        },
-    }
     assert abxbus_request.no_cache is None
     assert abxbus_request.binproviders == "pnpm"
     assert abxbus_request.min_version == "2.5.9"

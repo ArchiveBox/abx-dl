@@ -7,6 +7,14 @@ GITHUB_BASE="${GITHUB_BASE:-https://github.com/ArchiveBox}"
 MONOREPO_REMOTE="${MONOREPO_REMOTE:-$GITHUB_BASE/monorepo.git}"
 REPO_NAMES=(abxbus abxpkg abx-plugins abx-dl archivebox)
 
+repo_branch() {
+    if [[ "$1" == "archivebox" ]]; then
+        printf '%s\n' dev
+    else
+        printf '%s\n' main
+    fi
+}
+
 is_member_repo() {
     local repo_root="$1"
     local repo_name
@@ -33,10 +41,6 @@ monorepo_remote_matches() {
     esac
 }
 
-warn() {
-    printf 'Warning: %s\n' "$1" >&2
-}
-
 have_ldap_build_deps() {
     if command -v dpkg-query >/dev/null 2>&1; then
         dpkg-query -W -f='${Status}' libldap2-dev 2>/dev/null | grep -q 'install ok installed' && return 0
@@ -54,7 +58,7 @@ ensure_ldap_build_deps() {
         return
     fi
 
-    printf 'Ensuring LDAP build dependencies (best effort)\n'
+    printf 'Ensuring LDAP build dependencies\n'
 
     if command -v apt >/dev/null 2>&1 && sudo -n apt install -y libldap2-dev >/dev/null 2>&1; then
         return
@@ -64,16 +68,12 @@ ensure_ldap_build_deps() {
         return
     fi
 
-    warn "Could not auto-install LDAP build dependencies; continuing. If you need archivebox[ldap], run: sudo apt install libldap2-dev || brew install openldap"
+    printf 'Could not install LDAP build dependencies. Install libldap2-dev with apt or openldap with Homebrew.\n' >&2
+    return 1
 }
 
 sync_workspace() {
-    if uv sync --all-packages --all-extras --no-cache --active; then
-        return
-    fi
-
-    warn "'uv sync --all-packages --all-extras --no-cache --active' failed; retrying without --all-extras"
-    uv sync --all-packages --no-cache --active
+    uv sync --locked --all-packages --all-extras --no-cache --active
 }
 
 ensure_setup_link() {
@@ -102,7 +102,9 @@ bootstrap_monorepo_root() {
     local origin_url=""
 
     if [[ -d "$monorepo_root/.git" ]]; then
-        origin_url="$(git -C "$monorepo_root" remote get-url origin 2>/dev/null || true)"
+        if git -C "$monorepo_root" remote get-url origin >/dev/null 2>&1; then
+            origin_url="$(git -C "$monorepo_root" remote get-url origin)"
+        fi
 
         if [[ -n "$origin_url" ]] && ! monorepo_remote_matches "$origin_url"; then
             printf 'Refusing to reuse existing git repo at %s (origin: %s)\n' "$monorepo_root" "$origin_url" >&2
@@ -114,11 +116,9 @@ bootstrap_monorepo_root() {
         fi
 
         printf 'Updating monorepo root: %s\n' "$monorepo_root"
-        if git -C "$monorepo_root" -c pull.rebase=false pull --ff-only --quiet >/dev/null 2>&1; then
-            printf 'Updated monorepo root\n'
-        else
-            printf 'Skipping monorepo pull (local changes, divergent branch, detached HEAD, or no upstream)\n' >&2
-        fi
+        git -C "$monorepo_root" fetch --quiet origin main
+        git -C "$monorepo_root" merge --ff-only --quiet origin/main
+        printf 'Updated monorepo root\n'
         return
     fi
 
@@ -148,14 +148,18 @@ fi
 ensure_member_repo() {
     local repo_name="$1"
     local repo_dir="$ROOT_DIR/$repo_name"
+    local branch
+    branch="$(repo_branch "$repo_name")"
 
     if [[ -d "$repo_dir/.git" ]]; then
         printf 'Updating existing checkout: %s\n' "$repo_name"
-        if git -C "$repo_dir" -c pull.rebase=false pull --ff-only --quiet >/dev/null 2>&1; then
-            printf 'Updated: %s\n' "$repo_name"
-        else
-            printf 'Skipping pull for %s (local changes, divergent branch, detached HEAD, or no upstream)\n' "$repo_name" >&2
-        fi
+        [[ "$(git -C "$repo_dir" branch --show-current)" == "$branch" ]] || {
+            printf '%s must be checked out on %s\n' "$repo_name" "$branch" >&2
+            return 1
+        }
+        git -C "$repo_dir" fetch --quiet origin "$branch"
+        git -C "$repo_dir" merge --ff-only --quiet "origin/$branch"
+        printf 'Updated: %s\n' "$repo_name"
         return
     fi
 
@@ -165,7 +169,7 @@ ensure_member_repo() {
     fi
 
     printf 'Cloning %s/%s.git -> %s\n' "$GITHUB_BASE" "$repo_name" "$repo_name"
-    git clone "$GITHUB_BASE/$repo_name.git" "$repo_dir"
+    git clone --branch "$branch" --single-branch "$GITHUB_BASE/$repo_name.git" "$repo_dir"
 }
 
 for repo_name in "${REPO_NAMES[@]}"; do
@@ -177,7 +181,9 @@ for repo_name in "${REPO_NAMES[@]}"; do
 done
 
 cd "$ROOT_DIR"
-deactivate || true
+if declare -F deactivate >/dev/null; then
+    deactivate
+fi
 rm -Rf ./*/.venv   # delete all sub-repo venvs, the monorepo venv needs to take precedence
 
 uv venv --allow-existing "$ROOT_DIR/.venv"

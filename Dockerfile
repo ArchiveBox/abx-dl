@@ -12,10 +12,13 @@
 #       --build-context abx-plugins=./abx-plugins \
 #       -t archivebox/abx-dl:dev
 
-ARG NODE_VERSION=24
+ARG NODE_VERSION=24.18.0
+ARG UV_VERSION=0.10.6
 
 FROM --platform=$TARGETPLATFORM node:${NODE_VERSION}-trixie-slim AS node-runtime
 FROM --platform=$TARGETPLATFORM debian:trixie-slim AS abx-dl-runtime-base
+
+ARG UV_VERSION
 
 LABEL name="abx-dl" \
     maintainer="Nick Sweeting <dockerfile@archivebox.io>" \
@@ -46,8 +49,8 @@ ENV TZ=UTC \
     PIP_ONLY_BINARY=aiohttp \
     npm_config_loglevel=error
 
-ENV PYTHON_VERSION=3.13 \
-    NODE_VERSION=24
+ENV PYTHON_VERSION=3.13.12 \
+    NODE_VERSION=24.18.0
 
 ENV ARCHIVEBOX_USER=archivebox \
     DEFAULT_ARCHIVEBOX_UID=911 \
@@ -104,7 +107,7 @@ COPY --from=node-runtime /usr/local /opt/node
 RUN export PATH="/opt/node/bin:$PATH" \
     && (which node && which npm) | tee -a /VERSION.txt
 
-RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/bin sh
+RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | env UV_INSTALL_DIR=/bin sh
 
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
     echo "[+] UV Creating /venv using python ${PYTHON_VERSION} for ${TARGETPLATFORM}..." \
@@ -178,9 +181,9 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && python3 -c 'from abx_dl.models import discover_plugins; [print(f"export {plugin.enabled_key}=True") for plugin in discover_plugins(runtime="abx-dl").values() if plugin.enabled_key in plugin.config.properties]' > /tmp/abx-dl-enable-plugins.env \
     && sort /tmp/abx-dl-enable-plugins.env | tee -a /VERSION.txt \
     && source /tmp/abx-dl-enable-plugins.env \
+    && ABXPKG_NO_CACHE=True abxpkg env --install --binproviders=env,apt --lib="$ABXPKG_LIB_DIR" git >/dev/null \
     && ABXPKG_NO_CACHE=True ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 abx-dl install chrome \
     && ABXPKG_NO_CACHE=True ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 abx-dl install \
-    && abxpkg env --install --binproviders=env --lib="$ABXPKG_LIB_DIR" git >/dev/null \
     && rm -rf "$ABXPKG_LIB_DIR"/playwright/cache/ffmpeg-* \
     && find "$ABXPKG_LIB_DIR"/chromewebstore -type f -name '*.crx' -delete \
     && find "$ABXPKG_LIB_DIR"/playwright/cache -path '*/chrome-linux*/locales/*' ! -name 'en-US.pak' -delete \

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import builtins
 import copy
 import json
@@ -204,6 +205,7 @@ class PluginBinariesService(BaseService):
         install_cache_changed = pruned_install_cache != install_cache
 
         seen: set[str] = set()
+        request_events: list[BinaryRequestEvent] = []
         for plugin in self.install_plugins:
             if await self.should_abort():
                 break
@@ -250,12 +252,21 @@ class PluginBinariesService(BaseService):
                         **override_extra_context,
                     },
                 )
-                emitted_request = event.emit(request_event)
-                await (await emitted_request.now()).event_results_list(raise_if_none=False)
-                if await self.should_abort():
-                    break
+                request_events.append(request_event)
             if await self.should_abort():
                 break
+
+        requests_by_binary: dict[str, list[BinaryRequestEvent]] = {}
+        for request_event in request_events:
+            requests_by_binary.setdefault(request_event.name, []).append(request_event)
+
+        async def resolve_binary_requests(binary_requests: list[BinaryRequestEvent]) -> None:
+            for request_event in binary_requests:
+                emitted_request: BaseEvent = event.emit(request_event)
+                completed_request = await emitted_request.now()
+                await completed_request.event_results_list(raise_if_none=False)
+
+        await asyncio.gather(*(resolve_binary_requests(binary_requests) for binary_requests in requests_by_binary.values()))
         if install_cache_changed:
             await event.emit(
                 MachineEvent(

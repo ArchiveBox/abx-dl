@@ -2156,6 +2156,7 @@ def test_crawl_abort_during_foreground_setup_interrupts_hook_and_stops_later_set
                 'crawl_dir="${CRAWL_DIR:-$(dirname "$PWD")}"',
                 'echo $$ > "$crawl_dir/daemon.pid"',
                 "trap 'echo daemon-cleaned; exit 0' TERM",
+                "echo daemon-ready",
                 "while true; do sleep 1; done",
                 "",
             ],
@@ -2236,15 +2237,32 @@ def test_crawl_abort_during_foreground_setup_interrupts_hook_and_stops_later_set
         crawl_cleanup_phase_timeout=5.0,
     )
     abort_emitted = False
+    daemon_ready = False
+    foreground_started = False
 
-    async def abort_after_foreground_starts(event: ProcessStartedEvent) -> None:
+    async def emit_abort_after_both_hooks_started(event: ProcessStartedEvent | ProcessStdoutEvent) -> None:
         nonlocal abort_emitted
-        if event.hook_name != foreground_hook.name or abort_emitted:
+        if abort_emitted or not daemon_ready or not foreground_started:
             return
         abort_emitted = True
         await event.emit(CrawlAbortEvent()).now()
 
-    bus.on(ProcessStartedEvent, abort_after_foreground_starts)
+    async def track_foreground_start(event: ProcessStartedEvent) -> None:
+        nonlocal foreground_started
+        if event.hook_name != foreground_hook.name:
+            return
+        foreground_started = True
+        await emit_abort_after_both_hooks_started(event)
+
+    async def track_daemon_readiness(event: ProcessStdoutEvent) -> None:
+        nonlocal daemon_ready
+        if event.hook_name != daemon_hook.name or event.line != "daemon-ready":
+            return
+        daemon_ready = True
+        await emit_abort_after_both_hooks_started(event)
+
+    bus.on(ProcessStartedEvent, track_foreground_start)
+    bus.on(ProcessStdoutEvent, track_daemon_readiness)
 
     async def run() -> tuple[ProcessCompletedEvent | None, ProcessCompletedEvent | None, list[ProcessStartedEvent]]:
         await bus.emit(
@@ -2282,6 +2300,8 @@ def test_crawl_abort_during_foreground_setup_interrupts_hook_and_stops_later_set
     daemon_completed, foreground_completed, later_started = asyncio.run(run())
 
     assert abort_emitted
+    assert daemon_ready
+    assert foreground_started
     assert daemon_completed is not None
     assert daemon_completed.status == "succeeded"
     assert "daemon-cleaned" in daemon_completed.stdout

@@ -299,13 +299,14 @@ def get_binary_request_install_timeout(record: RequiredBinary | dict[str, Any], 
 
 
 def compute_install_phase_timeout(plugins: list[Plugin], config: dict[str, Any] | None = None) -> float:
-    """Sum timeout budgets across binary requests emitted during install."""
-    total = 0
+    """Return the largest timeout budget among concurrent per-binary lanes."""
+    lane_budgets: dict[str, int] = {}
     for plugin in plugins:
         plugin_timeout = get_plugin_timeout(plugin, config)
         for record in plugin.config.required_binaries:
-            total += max(plugin_timeout, get_binary_request_install_timeout(record, config))
-    return max(float(total), 60.0)
+            request_budget = max(plugin_timeout, get_binary_request_install_timeout(record, config))
+            lane_budgets[record.name] = lane_budgets.get(record.name, 0) + request_budget
+    return max(float(max(lane_budgets.values(), default=0)), 60.0)
 
 
 async def install_plugins(

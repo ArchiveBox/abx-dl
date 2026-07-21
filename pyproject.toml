@@ -1,6 +1,6 @@
 [project]
 name = "abx-dl"
-version = "1.11.262"
+version = "1.11.263"
 requires-python = ">=3.12"
 description = "All-in-one CLI tool to download and extract content from URLs"
 authors = [{name = "Nick Sweeting"}, {name = "ArchiveBox"}]
@@ -40,9 +40,9 @@ classifiers = [
 dependencies = [
     "rich-click>=1.8.0",
     "rich>=13.0.0",
-    "abxbus==2.5.28",
-    "abxpkg>=1.11.271",
-    "abx-plugins>=1.11.288",
+    "abxbus==2.5.38",
+    "abxpkg==1.11.279",
+    "abx-plugins==1.11.293",
     "jambo>=0.1.7",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
@@ -126,12 +126,6 @@ exclude-newer-package = { abx-dl = "2100-01-01T00:00:00Z", abxpkg = "2100-01-01T
 mypy_path = "abx_dl,tests,server,abx_dl/typings"
 namespace_packages = true
 explicit_package_bases = true
-# follow_imports = "silent"
-# ignore_missing_imports = true
-# disallow_incomplete_defs = true
-# disallow_untyped_defs = true
-# disallow_untyped_decorators = true
-# exclude = "tests/.*"
 plugins = ["mypy_django_plugin.main"]
 
 [tool.pyright]
@@ -160,8 +154,6 @@ exclude = [
 stubPath = "./abx_dl/typings"
 venvPath = "."
 venv = ".venv"
-# ignore = ["src/oldstuff"]
-# defineConstant = { DEBUG = true }
 reportMissingImports = true
 reportMissingTypeStubs = false
 pythonVersion = "3.12"

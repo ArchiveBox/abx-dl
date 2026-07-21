@@ -68,7 +68,6 @@ repos:
       - id: end-of-file-fixer
       # best practices enforcement
       - id: detect-private-key
-      # - id: check-docstring-first
       - id: debug-statements
       - id: forbid-submodules
       - id: check-added-large-files

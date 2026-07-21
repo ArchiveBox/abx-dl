@@ -5,23 +5,134 @@ on:
   pull_request:
   push:
     branches:
-      - "**"
+      - main
 
 env:
   DOCKERHUB_IMAGE: archivebox/abx-dl
   GHCR_IMAGE: ghcr.io/archivebox/abx-dl
 
 permissions:
+  actions: read
   contents: read
   packages: write
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  release-gate:
+    name: wait for exact-SHA CI
+    runs-on: ubuntu-24.04
+    outputs:
+      release_pending: ${{ steps.gate.outputs.release_pending }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Wait for required workflows
+        id: gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "release_pending=false" >> "$GITHUB_OUTPUT"
+          if [[ "${GITHUB_REF_NAME}" != "main" || "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            exit 0
+          fi
+
+          WORKFLOW="test.yml"
+          WORKFLOW_NAME="Parallel Plugin Tests"
+          attempts=0
+          while :; do
+            RUNS="$(env -u GH_FORCE_TTY GH_PROMPT_DISABLED=1 GH_PAGER=cat NO_COLOR=1 gh run list \
+              --repo "$GITHUB_REPOSITORY" --workflow "$WORKFLOW" --event push --commit "$GITHUB_SHA" --limit 10 \
+              --json databaseId,workflowName,headSha,status,conclusion,event)"
+            STATE="$(jq -r --arg name "$WORKFLOW_NAME" --arg sha "$GITHUB_SHA" '[.[] | select(.workflowName == $name and .headSha == $sha and .event == "push")] | if length == 1 then (.[0] | [.databaseId,.status,(.conclusion // "")] | @tsv) elif length == 0 then "missing" else "ambiguous" end' <<<"$RUNS")"
+            [[ "$STATE" != ambiguous ]] || { echo "Multiple ${WORKFLOW_NAME} runs found for ${GITHUB_SHA}" >&2; exit 1; }
+            if [[ "$STATE" != missing ]]; then
+              IFS=$'\t' read -r RUN_ID _ _ <<<"$STATE"
+              break
+            fi
+            attempts=$((attempts + 1))
+            if [[ "$attempts" -ge 12 ]]; then
+              echo "Required workflow ${WORKFLOW} did not start for ${GITHUB_SHA}" >&2
+              exit 1
+            fi
+            sleep 5
+          done
+          env -u GH_FORCE_TTY GH_PROMPT_DISABLED=1 GH_PAGER=cat NO_COLOR=1 \
+            gh run watch "$RUN_ID" --repo "$GITHUB_REPOSITORY" --exit-status
+          env -u GH_FORCE_TTY GH_PROMPT_DISABLED=1 GH_PAGER=cat NO_COLOR=1 \
+            gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
+              --json workflowName,headSha,event,status,conclusion \
+            | jq -e --arg name "$WORKFLOW_NAME" --arg sha "$GITHUB_SHA" \
+                '.workflowName == $name and .headSha == $sha and .event == "push" and .status == "completed" and .conclusion == "success"' \
+                >/dev/null
+          VERSION="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' pyproject.toml | head -n 1)"
+          test -n "$VERSION"
+          TAG="v${VERSION}"
+          tag_target() {
+            local target
+            target="$(git ls-remote origin "refs/tags/${TAG}^{}" | awk 'NR == 1 {print $1}')"
+            if [[ -z "$target" ]]; then
+              target="$(git ls-remote origin "refs/tags/${TAG}" | awk 'NR == 1 {print $1}')"
+            fi
+            printf '%s\n' "$target"
+          }
+
+          TARGET="$(tag_target)"
+          if [[ -n "$TARGET" && "$TARGET" != "$GITHUB_SHA" ]]; then
+            echo "${TAG} already belongs to ${TARGET}; this SHA will not publish the version tag"
+            exit 0
+          fi
+
+          if [[ -z "$TARGET" ]]; then
+            RELEASE_WORKFLOW="release.yml"
+            RELEASE_WORKFLOW_NAME="Release State"
+            attempts=0
+            while :; do
+              RELEASE_RUNS="$(env -u GH_FORCE_TTY GH_PROMPT_DISABLED=1 GH_PAGER=cat NO_COLOR=1 gh run list \
+                --repo "$GITHUB_REPOSITORY" --workflow "$RELEASE_WORKFLOW" --event push --commit "$GITHUB_SHA" --limit 10 \
+                --json databaseId,workflowName,headSha,status,conclusion,event)"
+              RELEASE_STATE="$(jq -r --arg name "$RELEASE_WORKFLOW_NAME" --arg sha "$GITHUB_SHA" '[.[] | select(.workflowName == $name and .headSha == $sha and .event == "push")] | if length == 1 then (.[0] | [.databaseId,.status,(.conclusion // "")] | @tsv) elif length == 0 then "missing" else "ambiguous" end' <<<"$RELEASE_RUNS")"
+              [[ "$RELEASE_STATE" != ambiguous ]] || { echo "Multiple ${RELEASE_WORKFLOW_NAME} runs found for ${GITHUB_SHA}" >&2; exit 1; }
+              if [[ "$RELEASE_STATE" != missing ]]; then
+                IFS=$'\t' read -r RELEASE_RUN_ID _ _ <<<"$RELEASE_STATE"
+                break
+              fi
+              attempts=$((attempts + 1))
+              if [[ "$attempts" -ge 12 ]]; then
+                echo "Required workflow ${RELEASE_WORKFLOW} did not start for ${GITHUB_SHA}" >&2
+                exit 1
+              fi
+              sleep 5
+            done
+
+            while [[ -z "$TARGET" ]]; do
+              IFS=$'\t' read -r RELEASE_STATUS RELEASE_CONCLUSION < <(
+                env -u GH_FORCE_TTY GH_PROMPT_DISABLED=1 GH_PAGER=cat NO_COLOR=1 \
+                  gh run view "$RELEASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --json status,conclusion \
+                    --jq '[.status, (.conclusion // "")] | @tsv'
+              )
+              if [[ "$RELEASE_STATUS" == completed ]]; then
+                echo "${RELEASE_WORKFLOW_NAME} completed with ${RELEASE_CONCLUSION} before creating ${TAG}" >&2
+                exit 1
+              fi
+              sleep 5
+              TARGET="$(tag_target)"
+            done
+          fi
+
+          [[ "$TARGET" == "$GITHUB_SHA" ]] || { echo "${TAG} points to ${TARGET}, not ${GITHUB_SHA}" >&2; exit 1; }
+          echo "release_pending=true" >> "$GITHUB_OUTPUT"
+
   build:
     name: build and test ${{ matrix.platform }}
+    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -44,7 +155,7 @@ jobs:
 
     steps:
       - name: Checkout abx-dl
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 1
 
@@ -52,28 +163,29 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          git clone --depth=1 https://github.com/ArchiveBox/abxbus.git "${{ runner.temp }}/abxbus"
-          git clone --depth=1 https://github.com/ArchiveBox/abxpkg.git "${{ runner.temp }}/abxpkg"
-          git clone --depth=1 https://github.com/ArchiveBox/abx-plugins.git "${{ runner.temp }}/abx-plugins"
+          git clone --depth=1 --branch 2.5.38 https://github.com/ArchiveBox/abxbus.git "${{ runner.temp }}/abxbus"
+          git clone --depth=1 --branch v1.11.279 https://github.com/ArchiveBox/abxpkg.git "${{ runner.temp }}/abxpkg"
+          git clone --depth=1 --branch v1.11.293 https://github.com/ArchiveBox/abx-plugins.git "${{ runner.temp }}/abx-plugins"
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
-          python-version: "3.12"
+          python-version: "3.12.13"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
-          version: "latest"
+          version: "0.10.6"
 
       - name: Install documentation test dependencies
-        run: UV_NO_SOURCES=1 uv sync --group dev
+        run: uv sync --locked --group dev --no-sources
 
       - name: Set up Docker Buildx
         id: buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
         with:
-          version: latest
+          version: v0.35.0
+          driver-opts: image=moby/buildkit:v0.31.2
 
       - name: Available platforms
         run: echo '${{ steps.buildx.outputs.platforms }}'
@@ -111,7 +223,7 @@ jobs:
           echo "[+] Building ${{ matrix.platform }} for abx-dl ${VERSION} branch=${BRANCH_TAG} sha=${SHORT_SHA}"
 
       - name: Build local image for smoke test
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: ./Dockerfile
@@ -185,14 +297,14 @@ jobs:
             'set -Eeuo pipefail; grep -Fx "COMMIT_HASH='"${GITHUB_SHA}"'" /VERSION.txt'
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         if: github.event_name != 'pull_request'
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         if: github.event_name != 'pull_request'
         with:
           registry: ghcr.io
@@ -202,7 +314,7 @@ jobs:
       - name: Build and push digest
         id: docker_build
         if: github.event_name != 'pull_request'
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: ./Dockerfile
@@ -252,7 +364,7 @@ jobs:
 
       - name: Upload digest
         if: github.event_name != 'pull_request'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ matrix.artifact_name }}
           path: /tmp/digests/*
@@ -263,45 +375,47 @@ jobs:
     name: publish multiarch tags
     runs-on: ubuntu-24.04
     needs:
+      - release-gate
       - build
     if: github.event_name != 'pull_request'
 
     steps:
       - name: Checkout abx-dl
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 1
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
-          python-version: "3.12"
+          python-version: "3.12.13"
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v4
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
-          version: "latest"
+          version: "0.10.6"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
         with:
-          version: latest
+          version: v0.35.0
+          driver-opts: image=moby/buildkit:v0.31.2
 
       - name: Login to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Download digests
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: /tmp/digests
           pattern: digest-*
@@ -331,7 +445,7 @@ jobs:
             fi
             echo "${DOCKERHUB_IMAGE}:${BRANCH_TAG}"
             echo "${DOCKERHUB_IMAGE}:sha-${SHORT_SHA}"
-            if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
+            if [[ "${GITHUB_REF_NAME}" == "main" && "${{ needs.release-gate.outputs.release_pending }}" == "true" ]]; then
               echo "${DOCKERHUB_IMAGE}:${VERSION}"
             fi
             echo 'EOF'
@@ -341,7 +455,7 @@ jobs:
             fi
             echo "${GHCR_IMAGE}:${BRANCH_TAG}"
             echo "${GHCR_IMAGE}:sha-${SHORT_SHA}"
-            if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
+            if [[ "${GITHUB_REF_NAME}" == "main" && "${{ needs.release-gate.outputs.release_pending }}" == "true" ]]; then
               echo "${GHCR_IMAGE}:${VERSION}"
             fi
             echo 'EOF'
@@ -355,7 +469,7 @@ jobs:
             printf '%s\n' "${DOCKERHUB_IMAGE}:latest"
           fi
           printf '%s\n' "${DOCKERHUB_IMAGE}:${BRANCH_TAG}" "${DOCKERHUB_IMAGE}:sha-${SHORT_SHA}"
-          if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
+          if [[ "${GITHUB_REF_NAME}" == "main" && "${{ needs.release-gate.outputs.release_pending }}" == "true" ]]; then
             printf '%s\n' "${DOCKERHUB_IMAGE}:${VERSION}"
           fi
           echo "[+] Publishing GHCR tags:"
@@ -363,7 +477,7 @@ jobs:
             printf '%s\n' "${GHCR_IMAGE}:latest"
           fi
           printf '%s\n' "${GHCR_IMAGE}:${BRANCH_TAG}" "${GHCR_IMAGE}:sha-${SHORT_SHA}"
-          if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
+          if [[ "${GITHUB_REF_NAME}" == "main" && "${{ needs.release-gate.outputs.release_pending }}" == "true" ]]; then
             printf '%s\n' "${GHCR_IMAGE}:${VERSION}"
           fi
 

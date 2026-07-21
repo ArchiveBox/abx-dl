@@ -312,18 +312,6 @@ class Process(BaseModel):
         return json.dumps(d, default=str)
 
 
-# PROVIDED BY ABXPKG:
-# class Binary:
-#     name: str
-#     id: str = Field(default_factory=uuid7)
-#     version: str | None = None
-#     abspath: Path | None = None
-#     min_version: SemVer | str | None = None
-#     binprovider
-#     overrides
-#     ...
-
-
 class Snapshot(BaseModel):
     """A URL being archived — one per download() call."""
 
