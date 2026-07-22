@@ -142,7 +142,9 @@ jobs:
 
           {
             echo 'dockerhub_tags<<EOF'
-            echo "${DOCKERHUB_IMAGE}:latest"
+            if [[ "$VERSION" != *rc* ]]; then
+              echo "${DOCKERHUB_IMAGE}:latest"
+            fi
             echo "${DOCKERHUB_IMAGE}:main"
             echo "${DOCKERHUB_IMAGE}:sha-${SHORT_SHA}"
             if [[ "$tag_target" == "$RELEASE_SHA" ]]; then
@@ -150,7 +152,9 @@ jobs:
             fi
             echo 'EOF'
             echo 'ghcr_tags<<EOF'
-            echo "${GHCR_IMAGE}:latest"
+            if [[ "$VERSION" != *rc* ]]; then
+              echo "${GHCR_IMAGE}:latest"
+            fi
             echo "${GHCR_IMAGE}:main"
             echo "${GHCR_IMAGE}:sha-${SHORT_SHA}"
             if [[ "$tag_target" == "$RELEASE_SHA" ]]; then
@@ -198,14 +202,3 @@ jobs:
             REFS+=("${GHCR_IMAGE}@sha256:${digest}")
           done
           "${DOCKER_BINARY}" buildx imagetools create "${TAG_ARGS[@]}" "${REFS[@]}"
-
-      - name: Inspect published images
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          while IFS= read -r tag; do
-            [[ -n "$tag" ]] && "${DOCKER_BINARY}" buildx imagetools inspect "$tag"
-          done <<< "${{ steps.docker_meta.outputs.dockerhub_tags }}"
-          while IFS= read -r tag; do
-            [[ -n "$tag" ]] && "${DOCKER_BINARY}" buildx imagetools inspect "$tag"
-          done <<< "${{ steps.docker_meta.outputs.ghcr_tags }}"
