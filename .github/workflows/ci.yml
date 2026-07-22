@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+  packages: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+jobs:
+  tests:
+    name: Full test suite
+    uses: ./.github/workflows/test.yml
+    secrets: inherit
+
+  docker:
+    name: Docker build and test
+    uses: ./.github/workflows/docker.yml
+    with:
+      push_digests: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    secrets: inherit

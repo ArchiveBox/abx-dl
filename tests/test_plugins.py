@@ -1,4 +1,8 @@
+import json
 import os
+import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 from abx_dl.config import get_initial_env, get_required_binary_requests
@@ -34,24 +38,33 @@ def test_discover_plugins_extension_plugins_declare_required_binaries() -> None:
 def test_discover_plugins_extends_packaged_plugins_with_runtime_plugin_dir(tmp_path: Path) -> None:
     plugin_dir = tmp_path / "runtime_only"
     plugin_dir.mkdir()
-    hook = plugin_dir / "on_Snapshot__10_runtime.sh"
-    hook.write_text("#!/usr/bin/env bash\nexit 0\n")
-    hook.chmod(0o755)
+    title_hook = discover_plugins()["title"].hooks[0]
+    hook = plugin_dir / title_hook.path.name
+    shutil.copy2(title_hook.path, hook)
 
-    previous = os.environ.get("ABX_PLUGINS_DIR")
-    os.environ["ABX_PLUGINS_DIR"] = str(tmp_path)
-    try:
-        plugins = discover_plugins(runtime="archivebox")
-    finally:
-        if previous is None:
-            os.environ.pop("ABX_PLUGINS_DIR", None)
-        else:
-            os.environ["ABX_PLUGINS_DIR"] = previous
+    env = os.environ.copy()
+    env["ABX_PLUGINS_DIR"] = str(tmp_path)
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import json; "
+                "from abx_dl.models import discover_plugins; "
+                "plugins = discover_plugins(runtime='archivebox'); "
+                "print(json.dumps({name: [hook.name for hook in plugin.hooks] for name, plugin in plugins.items()}))"
+            ),
+        ],
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    discovered_hooks = json.loads(result.stdout)
 
-    assert "wget" in plugins
-    assert "parse_html_urls" in plugins
-    assert "runtime_only" in plugins
-    assert [hook.name for hook in plugins["runtime_only"].hooks] == ["on_Snapshot__10_runtime"]
+    assert "wget" in discovered_hooks
+    assert "parse_html_urls" in discovered_hooks
+    assert discovered_hooks["runtime_only"] == [title_hook.name]
 
 
 def test_filter_plugins_does_not_add_binary_providers_for_wget() -> None:

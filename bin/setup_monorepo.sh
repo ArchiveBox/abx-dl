@@ -41,35 +41,131 @@ monorepo_remote_matches() {
     esac
 }
 
-have_ldap_build_deps() {
-    if command -v dpkg-query >/dev/null 2>&1; then
-        dpkg-query -W -f='${Status}' libldap2-dev 2>/dev/null | grep -q 'install ok installed' && return 0
-    fi
+bootstrap_build_dependencies() {
+    export ABXPKG_LIB_DIR="$ROOT_DIR/.venv/abxpkg"
+    mkdir -p "$ABXPKG_LIB_DIR/env/bin"
+    export PATH="$ABXPKG_LIB_DIR/env/bin:$PATH"
 
-    if command -v brew >/dev/null 2>&1; then
-        brew --prefix openldap >/dev/null 2>&1 && return 0
-    fi
+    case "$OSTYPE" in
+        linux*)
+            uv run --no-sync abxpkg env \
+                --install \
+                --no-cache \
+                --json \
+                --lib="$ABXPKG_LIB_DIR" \
+                --binproviders=env,apt \
+                --overrides='{"apt":{"install_args":["build-essential"]}}' \
+                cc >/dev/null
+            uv run --no-sync abxpkg env \
+                --install \
+                --no-cache \
+                --json \
+                --lib="$ABXPKG_LIB_DIR" \
+                --binproviders=env,apt \
+                --overrides='{"env":{"version":["ldapsearch","-VV"]},"apt":{"install_args":["ldap-utils","python3-dev","python3-setuptools","libssl-dev","libldap2-dev","libsasl2-dev","zlib1g-dev","libatomic1"],"version":["ldapsearch","-VV"]}}' \
+                ldapsearch >/dev/null
 
-    return 1
-}
+            uv run --no-sync abxpkg env \
+                --install \
+                --no-cache \
+                --json \
+                --lib="$ABXPKG_LIB_DIR" \
+                --binproviders=env \
+                cc >/dev/null
+            uv run --no-sync abxpkg env \
+                --install \
+                --no-cache \
+                --json \
+                --lib="$ABXPKG_LIB_DIR" \
+                --binproviders=env \
+                --overrides='{"env":{"version":["ldapsearch","-VV"]}}' \
+                ldapsearch >/dev/null
 
-ensure_ldap_build_deps() {
-    if have_ldap_build_deps; then
-        return
-    fi
+            test -L "$ABXPKG_LIB_DIR/env/bin/cc"
+            test -x "$ABXPKG_LIB_DIR/env/bin/cc"
+            test -L "$ABXPKG_LIB_DIR/env/bin/ldapsearch"
+            test -x "$ABXPKG_LIB_DIR/env/bin/ldapsearch"
+            ;;
+        darwin*)
+            uv run --no-sync abxpkg env \
+                --install \
+                --json \
+                --lib="$ABXPKG_LIB_DIR" \
+                --binproviders=env \
+                brew >/dev/null
 
-    printf 'Ensuring LDAP build dependencies\n'
+            local brew_binary="$ABXPKG_LIB_DIR/env/bin/brew"
+            local brew_target
+            local brew_root
+            brew_target="$(readlink "$brew_binary")"
+            test -x "$brew_target"
+            brew_root="$(dirname "$(dirname "$brew_target")")"
+            export ABXPKG_BREW_ROOT="$brew_root"
 
-    if command -v apt >/dev/null 2>&1 && sudo -n apt install -y libldap2-dev >/dev/null 2>&1; then
-        return
-    fi
+            uv run --no-sync abxpkg env \
+                --install \
+                --no-cache \
+                --json \
+                --lib="$ABXPKG_LIB_DIR" \
+                --binproviders=env,brew \
+                --overrides='{"brew":{"install_args":["llvm"]}}' \
+                clang >/dev/null
+            uv run --no-sync abxpkg env \
+                --install \
+                --no-cache \
+                --json \
+                --lib="$ABXPKG_LIB_DIR" \
+                --binproviders=env,brew \
+                --overrides='{"env":{"version":["ldapvc","-VV"]},"brew":{"install_args":["openldap"],"postinstall_scripts":true,"version":["ldapvc","-VV"]}}' \
+                ldapvc >/dev/null
 
-    if command -v brew >/dev/null 2>&1 && brew install openldap >/dev/null 2>&1; then
-        return
-    fi
+            PATH="$PATH:$brew_root/opt/llvm/bin" \
+                uv run --no-sync abxpkg env \
+                    --install \
+                    --no-cache \
+                    --json \
+                    --lib="$ABXPKG_LIB_DIR" \
+                    --binproviders=env \
+                    clang >/dev/null
+            PATH="$PATH:$brew_root/opt/openldap/bin" \
+                uv run --no-sync abxpkg env \
+                    --install \
+                    --no-cache \
+                    --json \
+                    --lib="$ABXPKG_LIB_DIR" \
+                    --binproviders=env \
+                    --overrides='{"env":{"version":["ldapvc","-VV"]}}' \
+                    ldapvc >/dev/null
 
-    printf 'Could not install LDAP build dependencies. Install libldap2-dev with apt or openldap with Homebrew.\n' >&2
-    return 1
+            test -L "$ABXPKG_LIB_DIR/env/bin/clang"
+            test -x "$ABXPKG_LIB_DIR/env/bin/clang"
+            test -L "$ABXPKG_LIB_DIR/env/bin/ldapvc"
+
+            local ldapvc_target
+            local next_ldapvc_target
+            local openldap_prefix
+            ldapvc_target="$(readlink "$ABXPKG_LIB_DIR/env/bin/ldapvc")"
+            while [[ -L "$ldapvc_target" ]]; do
+                next_ldapvc_target="$(readlink "$ldapvc_target")"
+                if [[ "$next_ldapvc_target" == /* ]]; then
+                    ldapvc_target="$next_ldapvc_target"
+                else
+                    ldapvc_target="$(dirname "$ldapvc_target")/$next_ldapvc_target"
+                fi
+            done
+            test -x "$ldapvc_target"
+            openldap_prefix="$(dirname "$(dirname "$ldapvc_target")")"
+            test -f "$openldap_prefix/include/ldap.h"
+            test -f "$openldap_prefix/lib/libldap.dylib"
+            export CPPFLAGS="-I$openldap_prefix/include${CPPFLAGS:+ $CPPFLAGS}"
+            export LDFLAGS="-L$openldap_prefix/lib${LDFLAGS:+ $LDFLAGS}"
+            export PKG_CONFIG_PATH="$openldap_prefix/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+            ;;
+        *)
+            printf 'Unsupported monorepo setup platform: %s\n' "$OSTYPE" >&2
+            exit 1
+            ;;
+    esac
 }
 
 sync_workspace() {
@@ -189,7 +285,8 @@ rm -Rf ./*/.venv   # delete all sub-repo venvs, the monorepo venv needs to take 
 uv venv --allow-existing "$ROOT_DIR/.venv"
 # shellcheck disable=SC1091
 source "$ROOT_DIR/.venv/bin/activate"
-ensure_ldap_build_deps
+uv sync --package abxpkg --no-dev --no-cache --active
+bootstrap_build_dependencies
 sync_workspace
 echo
 echo
@@ -197,7 +294,6 @@ echo "[√] Monorepo setup complete, cloned and pulled: ${REPO_NAMES[*]}"
 echo "    MONOREPO_ROOT=$ROOT_DIR"
 echo "    VIRTUAL_ENV=$VIRTUAL_ENV"
 echo "    PYTHON_BIN=$VIRTUAL_ENV/bin/python"
-echo "    NODE_BIN=$(which node)"
 echo
 echo "TIPS:"
 echo " - Always use 'uv run ...' within each subrepo, never in the root & never run 'python ...' directly"

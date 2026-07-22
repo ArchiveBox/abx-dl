@@ -1,14 +1,7 @@
-name: Parallel Plugin Tests
+name: Full test suite
 
 on:
-  pull_request:
-    branches: [main]
-  push:
-    branches: [main]
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  workflow_call:
 
 env:
   PYTHONIOENCODING: utf-8
@@ -25,10 +18,6 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Clone ArchiveBox plugins
-        run: |
-          git clone --depth=1 --branch v1.11.293 https://github.com/ArchiveBox/abx-plugins.git "${{ runner.temp }}/abx-plugins"
-
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
@@ -39,13 +28,22 @@ jobs:
         with:
           version: "0.10.6"
 
+      - name: Project host CI tools through abxpkg
+        env:
+          ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
+        run: uv run --no-project python bin/ci_project_tools.py orchestration_binaries --lib "$ABXPKG_LIB_DIR"
+
+      - name: Clone ArchiveBox plugins
+        run: |
+          "${GIT_BINARY}" clone --depth=1 --branch v1.11.294 https://github.com/ArchiveBox/abx-plugins.git "${{ runner.temp }}/abx-plugins"
+
       - name: Install Python dependencies
         run: |
-          uv sync --locked --dev --no-sources
-          uv pip install --no-deps -e "${{ runner.temp }}/abx-plugins"
+          "${UV_BINARY}" sync --locked --dev --no-sources
+          "${UV_BINARY}" pip install --no-deps -e "${{ runner.temp }}/abx-plugins"
 
       - name: Run prek
-        run: uv run --no-sync --no-sources prek run --all-files
+        run: $UV_BINARY run --no-sync --no-sources prek run --all-files
 
   unit-tests:
     name: Unit tests (${{ matrix.os }}, Python ${{ matrix.python }})
@@ -55,26 +53,22 @@ jobs:
       matrix:
         include:
           - os: ubuntu-24.04
-            python: "3.12.13"
+            python: "3.12"
           - os: ubuntu-24.04
-            python: "3.13.14"
+            python: "3.13"
           - os: ubuntu-24.04
-            python: "3.14.6"
+            python: "3.14"
           - os: macos-15
-            python: "3.12.10"
+            python: "3.12"
           - os: macos-15
-            python: "3.13.13"
+            python: "3.13"
           - os: macos-15
-            python: "3.14.6"
+            python: "3.14"
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 1
-
-      - name: Clone ArchiveBox plugins
-        run: |
-          git clone --depth=1 --branch v1.11.293 https://github.com/ArchiveBox/abx-plugins.git "${{ runner.temp }}/abx-plugins"
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
@@ -86,10 +80,19 @@ jobs:
         with:
           version: "0.10.6"
 
+      - name: Project host CI tools through abxpkg
+        env:
+          ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
+        run: uv run --no-project python bin/ci_project_tools.py orchestration_binaries --lib "$ABXPKG_LIB_DIR"
+
+      - name: Clone ArchiveBox plugins
+        run: |
+          "${GIT_BINARY}" clone --depth=1 --branch v1.11.294 https://github.com/ArchiveBox/abx-plugins.git "${{ runner.temp }}/abx-plugins"
+
       - name: Install Python dependencies
         run: |
-          uv sync --locked --dev --no-sources
-          uv pip install --no-deps -e "${{ runner.temp }}/abx-plugins"
+          "${UV_BINARY}" sync --locked --dev --no-sources
+          "${UV_BINARY}" pip install --no-deps -e "${{ runner.temp }}/abx-plugins"
 
       - name: Select system dependencies
         shell: bash
@@ -97,8 +100,8 @@ jobs:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
         run: |
           set -Eeuo pipefail
-          mkdir -p "$ABXPKG_LIB_DIR"
-          uv run --no-sync --no-sources abxpkg env \
+          export PATH="$ABXPKG_LIB_DIR/env/bin:$PATH"
+          "${UV_BINARY}" run --no-sync --no-sources abxpkg env \
             --install \
             --json \
             --binproviders=env,apt,brew \
@@ -107,14 +110,14 @@ jobs:
             --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/git/config.json:required_binaries" \
             --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/search_backend_ripgrep/config.json:required_binaries" \
             curl \
-            | jq -r 'to_entries[] | "\(.key)=\(.value)"' \
+            | "${JQ_BINARY}" -r 'to_entries[] | "\(.key)=\(.value)"' \
             >> "$GITHUB_ENV"
 
       - name: Run repo test suite
-        run: uv run --no-sync --no-sources pytest -q tests server/tests
+        run: $UV_BINARY run --no-sync --no-sources pytest -q tests server/tests
 
       - name: Run documentation code blocks
-        run: uv run --no-sync --no-sources pytest -vv --tb=long --durations=0 -m "not docker_required" README.md AGENTS.md skills
+        run: $UV_BINARY run --no-sync --no-sources pytest -vv --tb=long --durations=0 -m "not docker_required" README.md AGENTS.md CLAUDE.md skills
 
   discover-plugins:
     name: Discover plugins
@@ -127,38 +130,61 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.10.6"
+
+      - name: Project host CI tools through abxpkg
+        env:
+          ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
+        run: uv run --no-project python bin/ci_project_tools.py orchestration_binaries --lib "$ABXPKG_LIB_DIR"
+
       - name: Clone ArchiveBox plugins
         run: |
-          git clone --depth=1 --branch v1.11.293 https://github.com/ArchiveBox/abx-plugins.git "${{ runner.temp }}/abx-plugins"
+          "${GIT_BINARY}" clone --depth=1 --branch v1.11.294 https://github.com/ArchiveBox/abx-plugins.git "${{ runner.temp }}/abx-plugins"
 
       - name: Discover plugins
         id: set-matrix
         run: |
           set -Eeuo pipefail
-          plugins_json="$(
-            find "${{ runner.temp }}/abx-plugins/abx_plugins/plugins" -maxdepth 1 -mindepth 1 -type d ! -name '__*' ! -name '.*' -print0 \
-              | sort -z \
-              | while IFS= read -r -d '' plugin_dir; do
-                  [[ -d "$plugin_dir/tests" ]] || continue
-                  plugin_name="$(basename "$plugin_dir")"
-                  needs_chromium=false
-                  if grep -Riq "chrom" "$plugin_dir"; then
-                    needs_chromium=true
-                  fi
-                  jq -cn \
-                    --arg name "$plugin_name" \
-                    --arg path "$plugin_dir" \
-                    --argjson needs_chromium "$needs_chromium" \
-                    '{name: $name, path: $path, needs_chromium: $needs_chromium}'
-                done \
-              | jq -sc .
-          )"
+          PLUGINS_DIR="${{ runner.temp }}/abx-plugins/abx_plugins/plugins" \
+            "$UV_BINARY" run --no-project python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
 
-          test "$plugins_json" != "[]"
-
-          echo "plugins=$plugins_json" >> "$GITHUB_OUTPUT"
-          echo "Found plugins:"
-          echo "$plugins_json" | jq '.'
+          plugins_dir = Path(os.environ["PLUGINS_DIR"])
+          plugins = []
+          for plugin_dir in sorted(plugins_dir.iterdir()):
+              if not plugin_dir.is_dir() or plugin_dir.name.startswith((".", "__")):
+                  continue
+              if not (plugin_dir / "tests").is_dir():
+                  continue
+              needs_chromium = any(
+                  "chrom" in path.read_text(errors="ignore").lower()
+                  for path in plugin_dir.rglob("*")
+                  if path.is_file()
+              )
+              plugins.append(
+                  {
+                      "name": plugin_dir.name,
+                      "path": str(plugin_dir),
+                      "needs_chromium": needs_chromium,
+                  },
+              )
+          if not plugins:
+              raise SystemExit("No plugin test directories discovered")
+          plugins_json = json.dumps(plugins, separators=(",", ":"))
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+              output.write(f"plugins={plugins_json}\n")
+          print(json.dumps(plugins, indent=2))
+          PY
 
   test-plugin:
     name: ${{ matrix.plugin.name }}
@@ -167,9 +193,6 @@ jobs:
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-      CLAUDECODEEXTRACT_MODEL: sonnet
-      CLAUDECODEEXTRACT_MAX_TURNS: "10"
-      CLAUDECODEEXTRACT_TIMEOUT: "120"
       TWOCAPTCHA_API_KEY: ${{ secrets.TWOCAPTCHA_API_KEY }}
 
     strategy:
@@ -183,10 +206,6 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Clone ArchiveBox plugins
-        run: |
-          git clone --depth=1 --branch v1.11.293 https://github.com/ArchiveBox/abx-plugins.git "${{ runner.temp }}/abx-plugins"
-
       - name: Set up Python 3.12
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
@@ -197,23 +216,50 @@ jobs:
         with:
           version: "0.10.6"
 
-      - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: "22.23.1"
+      - name: Project host CI tools through abxpkg
+        env:
+          ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
+        run: uv run --no-project python bin/ci_project_tools.py orchestration_binaries --lib "$ABXPKG_LIB_DIR"
+
+      - name: Clone ArchiveBox plugins
+        run: |
+          "${GIT_BINARY}" clone --depth=1 --branch v1.11.294 https://github.com/ArchiveBox/abx-plugins.git "${{ runner.temp }}/abx-plugins"
 
       - name: Install Python dependencies
         run: |
-          uv sync --locked --dev --no-sources
-          uv pip install --no-deps -e "${{ runner.temp }}/abx-plugins"
+          "${UV_BINARY}" sync --locked --dev --no-sources
+          "${UV_BINARY}" pip install --no-deps -e "${{ runner.temp }}/abx-plugins"
+
+      - name: Resolve Node.js through abxpkg
+        env:
+          ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
+        run: |
+          set -Eeuo pipefail
+          export PATH="$ABXPKG_LIB_DIR/env/bin:$PATH"
+
+          tooling_env="$(
+            "${UV_BINARY}" run --no-sync --no-sources abxpkg env \
+              --install \
+              --json \
+              --lib="$ABXPKG_LIB_DIR" \
+              --deps-from="$GITHUB_WORKSPACE/.github/configs/ci-tooling.json:node_binaries"
+          )"
+          "${JQ_BINARY}" -r 'to_entries[] | "\(.key)=\(.value)"' \
+            <<< "$tooling_env" >> "$GITHUB_ENV"
+
+          node_binary="$ABXPKG_LIB_DIR/env/bin/node"
+          echo "NODE_BINARY=$node_binary" >> "$GITHUB_ENV"
+          test -L "$node_binary"
+          test -x "$node_binary"
+          "$node_binary" --version
 
       - name: Select system dependencies
         env:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
         run: |
           set -Eeuo pipefail
-          mkdir -p "$ABXPKG_LIB_DIR"
-          uv run --no-sync --no-sources abxpkg env \
+          export PATH="$ABXPKG_LIB_DIR/env/bin:$PATH"
+          "${UV_BINARY}" run --no-sync --no-sources abxpkg env \
             --install \
             --json \
             --binproviders=env,apt \
@@ -222,28 +268,30 @@ jobs:
             --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/git/config.json:required_binaries" \
             --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/search_backend_ripgrep/config.json:required_binaries" \
             curl \
-            | jq -r 'to_entries[] | "\(.key)=\(.value)"' \
+            | "${JQ_BINARY}" -r 'to_entries[] | "\(.key)=\(.value)"' \
             >> "$GITHUB_ENV"
 
       - name: Select Chromium for extension-capable CDP
         if: ${{ matrix.plugin.needs_chromium }}
         env:
-          LIB_DIR: ${{ runner.temp }}/abx-lib
           ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
         run: |
           set -euo pipefail
-          mkdir -p "$LIB_DIR"
-          {
-            echo "LIB_DIR=$LIB_DIR"
-            echo "ABXPKG_LIB_DIR=$ABXPKG_LIB_DIR"
-            uv run --no-sync --no-sources abxpkg env \
+          chromium_env="$(
+            "${UV_BINARY}" run --no-sync --no-sources abxpkg env \
               --install \
               --json \
-              --lib="$LIB_DIR" \
+              --lib="$ABXPKG_LIB_DIR" \
               --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/chrome/config.json:required_binaries" \
               --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/${{ matrix.plugin.name }}/config.json:required_binaries" \
-              | jq -r 'to_entries[] | "\(.key)=\(.value)"'
-          } >> "$GITHUB_ENV"
+          )"
+          "${JQ_BINARY}" -r 'to_entries[] | "\(.key)=\(.value)"' \
+            <<< "$chromium_env" >> "$GITHUB_ENV"
+
+          chrome_binary="$ABXPKG_LIB_DIR/env/bin/chromium"
+          echo "CHROME_BINARY=$chrome_binary" >> "$GITHUB_ENV"
+          test -L "$chrome_binary"
+          test -x "$chrome_binary"
 
       - name: Verify Chromium launch
         if: ${{ matrix.plugin.needs_chromium }}
@@ -252,22 +300,20 @@ jobs:
       - name: Test plugin - ${{ matrix.plugin.name }}
         run: |
           plugin_tests="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/${{ matrix.plugin.name }}/tests"
-          uv run --no-sync --no-sources pytest -q "$plugin_tests"
-        env:
-          TIMEOUT: "120"
+          "${UV_BINARY}" run --no-sync --no-sources pytest -q "$plugin_tests"
 
   test-all:
     name: All plugins
     runs-on: ubuntu-24.04
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      TWOCAPTCHA_API_KEY: ${{ secrets.TWOCAPTCHA_API_KEY }}
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 1
-
-      - name: Clone ArchiveBox plugins
-        run: |
-          git clone --depth=1 --branch v1.11.293 https://github.com/ArchiveBox/abx-plugins.git "${{ runner.temp }}/abx-plugins"
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
@@ -279,69 +325,91 @@ jobs:
         with:
           version: "0.10.6"
 
-      - name: Set up Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        with:
-          node-version: "22.23.1"
+      - name: Project host CI tools through abxpkg
+        env:
+          ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
+        run: uv run --no-project python bin/ci_project_tools.py orchestration_binaries --lib "$ABXPKG_LIB_DIR"
+
+      - name: Clone ArchiveBox plugins
+        run: |
+          "${GIT_BINARY}" clone --depth=1 --branch v1.11.294 https://github.com/ArchiveBox/abx-plugins.git "${{ runner.temp }}/abx-plugins"
 
       - name: Install Python dependencies
         run: |
-          uv sync --locked --dev --no-sources
-          uv pip install --no-deps -e "${{ runner.temp }}/abx-plugins"
+          "${UV_BINARY}" sync --locked --dev --no-sources
+          "${UV_BINARY}" pip install --no-deps -e "${{ runner.temp }}/abx-plugins"
 
-      - name: Select system dependencies
+      - name: Enable every Snapshot plugin and resolve all dependencies through abxpkg
         env:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
+          ABX_PLUGINS_DIR: ${{ runner.temp }}/abx-plugins/abx_plugins/plugins
         run: |
           set -Eeuo pipefail
-          mkdir -p "$ABXPKG_LIB_DIR"
-          uv run --no-sync --no-sources abxpkg env \
-            --install \
-            --json \
-            --binproviders=env,apt \
-            --lib="$ABXPKG_LIB_DIR" \
-            --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/wget/config.json:required_binaries" \
-            --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/git/config.json:required_binaries" \
-            --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/search_backend_ripgrep/config.json:required_binaries" \
-            curl \
-            | jq -r 'to_entries[] | "\(.key)=\(.value)"' \
-            >> "$GITHUB_ENV"
+          export PATH="$ABXPKG_LIB_DIR/env/bin:$PATH"
+          mapfile -t SNAPSHOT_CONFIGS < <(
+            "$UV_BINARY" run --no-sync --no-sources python - <<'PY'
+          import os
+          from pathlib import Path
+          from abx_dl.models import discover_plugins
 
-      - name: Select Chromium for extension-capable CDP
-        env:
-          LIB_DIR: ${{ runner.temp }}/abx-lib
-          ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
-        run: |
-          set -euo pipefail
-          mkdir -p "$LIB_DIR"
-          {
-            echo "LIB_DIR=$LIB_DIR"
-            echo "ABXPKG_LIB_DIR=$ABXPKG_LIB_DIR"
-            uv run --no-sync --no-sources abxpkg env \
+          plugins = discover_plugins(Path(os.environ["ABX_PLUGINS_DIR"]), runtime="abx-dl")
+          for plugin in plugins.values():
+              if plugin.filter_hooks("Snapshot"):
+                  print(f"{plugin.path / 'config.json'}:required_binaries")
+          PY
+          )
+          test "${#SNAPSHOT_CONFIGS[@]}" -gt 0
+          DEPS_FROM_ARGS=()
+          for config in "${SNAPSHOT_CONFIGS[@]}"; do
+            DEPS_FROM_ARGS+=("--deps-from=$config")
+          done
+          snapshot_env="$(
+            "${UV_BINARY}" run --no-sync --no-sources abxpkg env \
               --install \
               --json \
-              --lib="$LIB_DIR" \
-              --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/chrome/config.json:required_binaries" \
-              | jq -r 'to_entries[] | "\(.key)=\(.value)"'
-          } >> "$GITHUB_ENV"
+              --lib="$ABXPKG_LIB_DIR" \
+              "${DEPS_FROM_ARGS[@]}"
+          )"
+          "${JQ_BINARY}" -r 'to_entries[] | "\(.key)=\(.value)"' \
+            <<< "$snapshot_env" >> "$GITHUB_ENV"
+
+          "$UV_BINARY" run --no-sync --no-sources python - <<'PY'
+          import os
+          from pathlib import Path
+          from abx_dl.models import discover_plugins
+
+          plugins = discover_plugins(Path(os.environ["ABX_PLUGINS_DIR"]), runtime="abx-dl")
+          enabled_keys = sorted(
+              plugin.enabled_key
+              for plugin in plugins.values()
+              if plugin.filter_hooks("Snapshot") and plugin.enabled_key in plugin.config.properties
+          )
+          with Path(os.environ["GITHUB_ENV"]).open("a") as output:
+              for enabled_key in enabled_keys:
+                  output.write(f"{enabled_key}=True\n")
+          print(f"Enabled {len(enabled_keys)} Snapshot plugins: {enabled_keys}")
+          PY
+
+          for binary in chromium node java opendataloader-pdf; do
+            test -L "$ABXPKG_LIB_DIR/env/bin/$binary"
+            test -x "$ABXPKG_LIB_DIR/env/bin/$binary"
+          done
 
       - name: Verify Chromium launch
         uses: ./.github/actions/verify-chromium-launch
 
       - name: Test all plugins
         run: |
-          uv run --no-sync --no-sources abx-dl dl 'https://example.com' --dir=./test-output --timeout=120 --max-urls=2 --plugins=wget,parse_html_urls
-
-          echo "=== Output structure ==="
-          find ./test-output -type f | head -50
-
-          echo "=== Results ==="
-          grep '^{' ./test-output/index.jsonl | jq -s '.'
+          set -Eeuo pipefail
+          "${UV_BINARY}" run --no-sync --no-sources abx-dl dl 'https://example.com' --dir=./test-output --max-urls=2
+          "${UV_BINARY}" run --no-sync --no-sources python bin/validate_crawl.py \
+            ./test-output/index.jsonl \
+            --output-dir=./test-output \
+            --plugins-dir="${{ runner.temp }}/abx-plugins/abx_plugins/plugins"
         env:
           ABX_PLUGINS_DIR: ${{ runner.temp }}/abx-plugins/abx_plugins/plugins
           PERSONAS_DIR: ${{ runner.temp }}/abx-personas
           CHROME_USER_DATA_DIR: ${{ runner.temp }}/abx-personas/Default/chrome_profile
-          TIMEOUT: "120"
 
       - name: Upload test output
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -350,3 +418,69 @@ jobs:
           name: test-output
           path: ./test-output/
           retention-days: 7
+
+  package-artifacts:
+    name: Build and test release artifacts
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.10.6"
+
+      - name: Project host CI tools through abxpkg
+        env:
+          ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
+        run: uv run --no-project python bin/ci_project_tools.py orchestration_binaries --lib "$ABXPKG_LIB_DIR"
+
+      - name: Install build and test dependencies
+        run: $UV_BINARY sync --locked --dev --no-sources
+
+      - name: Build wheel and source distribution once
+        run: |
+          set -Eeuo pipefail
+          "${UV_BINARY}" build --out-dir=dist
+          "${UV_BINARY}" run --no-sync --no-sources python - <<'PY'
+          import hashlib
+          from pathlib import Path
+
+          artifacts = sorted(Path("dist").iterdir())
+          wheels = [path for path in artifacts if path.suffix == ".whl"]
+          sdists = [path for path in artifacts if path.name.endswith(".tar.gz")]
+          if len(wheels) != 1 or len(sdists) != 1:
+              raise SystemExit(f"Expected one wheel and one sdist, got: {artifacts}")
+          checksums = [f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}" for path in (*wheels, *sdists)]
+          Path("dist/SHA256SUMS").write_text("\n".join(checksums) + "\n")
+          print("\n".join(checksums))
+          PY
+
+      - name: Install and smoke-test the exact wheel and sdist
+        run: |
+          set -Eeuo pipefail
+          VERSION="$("${UV_BINARY}" run --no-sync --no-sources python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          for artifact in dist/*.whl dist/*.tar.gz; do
+            artifact_name="${artifact##*/}"
+            artifact_venv="${{ runner.temp }}/artifact-${artifact_name//[^A-Za-z0-9_.-]/-}"
+            "${UV_BINARY}" venv --python=3.12 "$artifact_venv"
+            "${UV_BINARY}" pip install --python="$artifact_venv/bin/python" "$artifact"
+            test "$("$artifact_venv/bin/abx-dl" version)" = "$VERSION"
+            "$artifact_venv/bin/abx-dl" --help > /dev/null
+          done
+
+      - name: Upload the exact tested distributions
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: python-dist-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 90

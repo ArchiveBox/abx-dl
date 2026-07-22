@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,7 @@ def assemble_env(*, overrides: dict[str, Any] | None = None, run_output_dir: Pat
     return PluginEnv.from_config(config, run_output_dir=run_output_dir).to_env()
 
 
-def test_plugin_env_sets_run_dirs_and_node_path(monkeypatch, tmp_path: Path) -> None:
+def test_plugin_env_sets_run_dirs_and_node_path(tmp_path: Path) -> None:
     for key in (
         "CRAWL_DIR",
         "SNAP_DIR",
@@ -31,7 +32,7 @@ def test_plugin_env_sets_run_dirs_and_node_path(monkeypatch, tmp_path: Path) -> 
         "PIP_BIN_DIR",
         "VIRTUAL_ENV",
     ):
-        monkeypatch.delenv(key, raising=False)
+        os.environ.pop(key, None)
 
     env = assemble_env(run_output_dir=tmp_path)
     expected_config_dir = user_config_path("abx")
@@ -70,10 +71,9 @@ def test_machine_event_config_rebuild_applies_events_oldest_to_newest(tmp_path: 
 
 
 def test_plugin_env_exports_shared_runtime_paths_after_real_install_phase(
-    monkeypatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.delenv("VIRTUAL_ENV", raising=False)
+    os.environ.pop("VIRTUAL_ENV", None)
     run_output_dir = tmp_path / "run"
     plugins = discover_plugins()
     bus = create_bus(total_timeout=300.0, name=f"test_config_shared_runtime_{tmp_path.name}")
@@ -114,9 +114,7 @@ def test_plugin_env_exports_shared_runtime_paths_after_real_install_phase(
     assert ytdlp_env["NPM_BIN_DIR"] in ytdlp_env["PATH"].split(":")
 
 
-def test_plugin_env_derives_puppeteer_cache_from_effective_lib_dir(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.delenv("PUPPETEER_CACHE_DIR", raising=False)
-
+def test_plugin_env_derives_puppeteer_cache_from_effective_lib_dir(tmp_path: Path) -> None:
     env = assemble_env(overrides={"ABXPKG_LIB_DIR": str(tmp_path / "lib")}, run_output_dir=tmp_path)
 
     assert env["PUPPETEER_CACHE_DIR"] == str(tmp_path / "lib" / "puppeteer")
@@ -149,18 +147,18 @@ def test_plugin_env_treats_empty_optional_node_paths_as_unset(tmp_path: Path) ->
     assert env["NODE_MODULES_DIR"] in env["NODE_PATH"].split(":")
 
 
-def test_plugin_env_keeps_chrome_sandbox_enabled_by_default(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.delenv("CHROME_SANDBOX", raising=False)
-
+def test_plugin_env_keeps_chrome_sandbox_enabled_by_default(tmp_path: Path) -> None:
     env = assemble_env(run_output_dir=tmp_path)
 
     assert env["CHROME_SANDBOX"] == "true"
 
 
-def test_plugin_env_strips_uv_recursion_depth_from_env_and_overrides(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("UV_RUN_RECURSION_DEPTH", "1")
-
-    env = assemble_env(overrides={"UV_RUN_RECURSION_DEPTH": True}, run_output_dir=tmp_path)
+def test_plugin_env_strips_uv_recursion_depth_from_env_and_overrides(tmp_path: Path) -> None:
+    os.environ["UV_RUN_RECURSION_DEPTH"] = "1"
+    try:
+        env = assemble_env(overrides={"UV_RUN_RECURSION_DEPTH": True}, run_output_dir=tmp_path)
+    finally:
+        os.environ.pop("UV_RUN_RECURSION_DEPTH")
 
     assert "UV_RUN_RECURSION_DEPTH" not in env
 
@@ -195,7 +193,6 @@ def test_plugin_env_preserves_explicit_shared_snap_dir_override(tmp_path: Path) 
 
 
 def test_plugin_env_preserves_user_runtime_dirs_when_derived_config_has_defaults(
-    monkeypatch,
     tmp_path: Path,
 ) -> None:
     for key in (
@@ -208,7 +205,7 @@ def test_plugin_env_preserves_user_runtime_dirs_when_derived_config_has_defaults
         "NPM_BIN_DIR",
         "PUPPETEER_CACHE_DIR",
     ):
-        monkeypatch.delenv(key, raising=False)
+        os.environ.pop(key, None)
 
     plugins = discover_plugins()
     bus = create_bus(total_timeout=60.0, name=f"test_config_derived_runtime_dirs_{tmp_path.name}")

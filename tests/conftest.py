@@ -40,18 +40,20 @@ _TEST_CONFIG_KEYS = frozenset(
 
 
 @pytest.fixture(autouse=True)
-def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def isolated_config(tmp_path: Path):
     """Point config.env and derived.env at a temp dir so tests don't share state."""
+    original_cwd = Path.cwd()
+    original_env = os.environ.copy()
     # Remove any env vars leaked from prior tests before setting the isolated values.
     for key in _TEST_CONFIG_KEYS:
-        monkeypatch.delenv(key, raising=False)
+        os.environ.pop(key, None)
     for key in list(os.environ):
         if key.endswith("_BINARY"):
-            monkeypatch.delenv(key, raising=False)
+            os.environ.pop(key, None)
 
     home_dir = tmp_path / "home"
-    monkeypatch.setenv("HOME", str(home_dir))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(home_dir / ".config"))
+    os.environ["HOME"] = str(home_dir)
+    os.environ["XDG_CONFIG_HOME"] = str(home_dir / ".config")
     config_dir = user_config_path("abx")
     data_dir = tmp_path / "data"
     personas_dir = config_dir / "personas"
@@ -63,12 +65,12 @@ def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     lib_dir = config_dir / "lib"
     lib_dir.mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("CONFIG_DIR", str(config_dir))
-    monkeypatch.setenv("DATA_DIR", str(data_dir))
-    monkeypatch.setenv("ABXPKG_LIB_DIR", str(lib_dir))
-    monkeypatch.setenv("PERSONAS_DIR", str(personas_dir))
-    monkeypatch.setenv("TMP_DIR", str(tmp_dir))
+    os.chdir(tmp_path)
+    os.environ["CONFIG_DIR"] = str(config_dir)
+    os.environ["DATA_DIR"] = str(data_dir)
+    os.environ["ABXPKG_LIB_DIR"] = str(lib_dir)
+    os.environ["PERSONAS_DIR"] = str(personas_dir)
+    os.environ["TMP_DIR"] = str(tmp_dir)
 
     import abx_dl.config as config_mod
     import abx_dl.dependencies as dependencies_mod
@@ -76,4 +78,11 @@ def isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     importlib.reload(config_mod)
     importlib.reload(dependencies_mod)
 
-    yield
+    try:
+        yield
+    finally:
+        os.chdir(original_cwd)
+        os.environ.clear()
+        os.environ.update(original_env)
+        importlib.reload(config_mod)
+        importlib.reload(dependencies_mod)

@@ -40,9 +40,9 @@ classifiers = [
 dependencies = [
     "rich-click>=1.8.0",
     "rich>=13.0.0",
-    "abxbus==2.5.38",
-    "abxpkg==1.11.279",
-    "abx-plugins==1.11.293",
+    "abxbus==2.5.39",
+    "abxpkg==1.11.284",
+    "abx-plugins==1.11.296",
     "jambo>=0.1.7",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
@@ -109,7 +109,7 @@ exclude = ["*.pyi", "typings/", "migrations/", "vendor/"]
 ignore = ["E731", "E303", "E266", "E241", "E222"]
 
 [tool.pytest.ini_options]
-testpaths = [ "tests", "server/tests", "README.md", "AGENTS.md", "skills" ]
+testpaths = [ "tests", "server/tests", "README.md", "AGENTS.md", "CLAUDE.md", "skills" ]
 addopts = ["--codeblocks"]
 markers = [
     "docker_required: documentation commands that require the current abx-dl Docker image",

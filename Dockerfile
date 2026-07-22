@@ -175,34 +175,35 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     --mount=type=cache,target=/root/.cache/ms-playwright,sharing=locked,id=browsers-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=abxpkg-tmp-$TARGETARCH$TARGETVARIANT \
     echo "[+] Installing Chrome and plugin dependencies..." \
-    && apt-get update -qq \
-    && apt-get install -qq -y --no-install-recommends binutils \
     && export HOME=/var/tmp/abxpkg-cache ABXPKG_TMP_CACHE_DIR=/var/tmp/abxpkg-cache \
     && python3 -c 'from abx_dl.models import discover_plugins; [print(f"export {plugin.enabled_key}=True") for plugin in discover_plugins(runtime="abx-dl").values() if plugin.enabled_key in plugin.config.properties]' > /tmp/abx-dl-enable-plugins.env \
     && sort /tmp/abx-dl-enable-plugins.env | tee -a /VERSION.txt \
     && source /tmp/abx-dl-enable-plugins.env \
     && ABXPKG_NO_CACHE=True abxpkg env --install --binproviders=env,apt --lib="$ABXPKG_LIB_DIR" git >/dev/null \
-    && ABXPKG_NO_CACHE=True ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 abx-dl install chrome \
-    && ABXPKG_NO_CACHE=True ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 abx-dl install \
+    && ABXPKG_NO_CACHE=True abxpkg env --install --binproviders=env,apt --lib="$ABXPKG_LIB_DIR" --overrides='{"apt":{"install_args":["findutils"]}}' find >/dev/null \
+    && ABXPKG_NO_CACHE=True abxpkg env --install --binproviders=env,apt --lib="$ABXPKG_LIB_DIR" --overrides='{"apt":{"install_args":["binutils"]}}' strip >/dev/null \
+    && ABXPKG_NO_CACHE=True abx-dl install chrome \
+    && ABXPKG_NO_CACHE=True abx-dl install \
     && rm -rf "$ABXPKG_LIB_DIR"/playwright/cache/ffmpeg-* \
-    && find "$ABXPKG_LIB_DIR"/chromewebstore -type f -name '*.crx' -delete \
-    && find "$ABXPKG_LIB_DIR"/playwright/cache -path '*/chrome-linux*/locales/*' ! -name 'en-US.pak' -delete \
-    && find "$ABXPKG_LIB_DIR"/playwright/cache -path '*/chrome-linux*/*.pak.info' -delete \
+    && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR"/chromewebstore -type f -name '*.crx' -delete \
+    && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR"/playwright/cache -path '*/chrome-linux*/locales/*' ! -name 'en-US.pak' -delete \
+    && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR"/playwright/cache -path '*/chrome-linux*/*.pak.info' -delete \
     && rm -f "$ABXPKG_LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/libvk_swiftshader.so "$ABXPKG_LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/libGLESv2.so \
     && rm -f "$ABXPKG_LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/chrome_200_percent.pak \
     && rm -rf "$ABXPKG_LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/MEIPreload "$ABXPKG_LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/PrivacySandboxAttestationsPreloaded "$ABXPKG_LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/WidevineCdm \
     && rm -rf "$ABXPKG_LIB_DIR"/pnpm/packages/singlefile/node_modules/.pnpm/selenium-webdriver@*/node_modules/selenium-webdriver/bin/macos "$ABXPKG_LIB_DIR"/pnpm/packages/singlefile/node_modules/.pnpm/selenium-webdriver@*/node_modules/selenium-webdriver/bin/windows \
     && if [[ "$TARGETARCH" == "arm64" ]]; then rm -f "$ABXPKG_LIB_DIR"/pnpm/packages/liteparse/node_modules/.pnpm/@llamaindex+liteparse@*/node_modules/@llamaindex/liteparse/liteparse.linux-x64-gnu.node "$ABXPKG_LIB_DIR"/pnpm/packages/liteparse/node_modules/.pnpm/@llamaindex+liteparse@*/node_modules/@llamaindex/liteparse/libpdfium.so; fi \
-    && find "$ABXPKG_LIB_DIR"/pnpm /opt/node -type f -name '*.map' -delete \
+    && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR"/pnpm /opt/node -type f -name '*.map' -delete \
     && rm -rf /usr/lib/*-linux-gnu/dri /usr/lib/*-linux-gnu/libLLVM*.so* /usr/lib/*-linux-gnu/libz3.so.* \
     && rm -rf /usr/share/icons /usr/share/doc /usr/share/man /usr/share/bash-completion /usr/share/zsh /usr/share/info /usr/share/lintian /usr/share/bug \
     && rm -rf /opt/node/include /opt/node/share/doc /opt/node/share/man \
     && rm -f /opt/node/CHANGELOG.md /opt/node/README.md /opt/node/LICENSE \
     && rm -f /usr/lib/jvm/java-*-openjdk-*/lib/server/classes*.jsa \
-    && (find "$ABXPKG_LIB_DIR" -type f \( -name '*.so' -o -name '*.node' \) -exec strip --strip-unneeded {} + 2>/dev/null || true) \
-    && apt-get purge -y --auto-remove binutils \
+    && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR" -type f \( -name '*.so' -o -name '*.node' \) -exec "$ABXPKG_LIB_DIR/env/bin/strip" --strip-unneeded {} + \
+    && abxpkg run --binproviders=env --lib="$ABXPKG_LIB_DIR" apt-get purge -y --auto-remove binutils \
+    && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR/env/bin" -maxdepth 1 -type l -name strip -delete \
     && rm -f /venv/bin/uv /venv/bin/uvx \
-    && find "$ABXPKG_LIB_DIR" \( ! -user "$DEFAULT_ARCHIVEBOX_UID" -o ! -group "$DEFAULT_ARCHIVEBOX_GID" \) -exec chown "$DEFAULT_ARCHIVEBOX_UID:$DEFAULT_ARCHIVEBOX_GID" {} + \
+    && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR" \( ! -user "$DEFAULT_ARCHIVEBOX_UID" -o ! -group "$DEFAULT_ARCHIVEBOX_GID" \) -exec chown "$DEFAULT_ARCHIVEBOX_UID:$DEFAULT_ARCHIVEBOX_GID" {} + \
     && rm -rf /var/lib/apt/lists/* /tmp/*
 
 RUN (echo -e "\n\n[+] abx-dl runtime versions" \

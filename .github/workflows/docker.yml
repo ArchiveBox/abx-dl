@@ -1,11 +1,13 @@
 name: Build Docker image
 
 on:
-  workflow_dispatch:
-  pull_request:
-  push:
-    branches:
-      - main
+  workflow_call:
+    inputs:
+      push_digests:
+        description: Push the tested single-platform images by digest for release
+        required: false
+        default: false
+        type: boolean
 
 env:
   DOCKERHUB_IMAGE: archivebox/abx-dl
@@ -16,123 +18,9 @@ permissions:
   contents: read
   packages: write
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 jobs:
-  release-gate:
-    name: wait for exact-SHA CI
-    runs-on: ubuntu-24.04
-    outputs:
-      release_pending: ${{ steps.gate.outputs.release_pending }}
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 1
-
-      - name: Wait for required workflows
-        id: gate
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          echo "release_pending=false" >> "$GITHUB_OUTPUT"
-          if [[ "${GITHUB_REF_NAME}" != "main" || "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
-            exit 0
-          fi
-
-          WORKFLOW="test.yml"
-          WORKFLOW_NAME="Parallel Plugin Tests"
-          attempts=0
-          while :; do
-            RUNS="$(env -u GH_FORCE_TTY GH_PROMPT_DISABLED=1 GH_PAGER=cat NO_COLOR=1 gh run list \
-              --repo "$GITHUB_REPOSITORY" --workflow "$WORKFLOW" --event push --commit "$GITHUB_SHA" --limit 10 \
-              --json databaseId,workflowName,headSha,status,conclusion,event)"
-            STATE="$(jq -r --arg name "$WORKFLOW_NAME" --arg sha "$GITHUB_SHA" '[.[] | select(.workflowName == $name and .headSha == $sha and .event == "push")] | if length == 1 then (.[0] | [.databaseId,.status,(.conclusion // "")] | @tsv) elif length == 0 then "missing" else "ambiguous" end' <<<"$RUNS")"
-            [[ "$STATE" != ambiguous ]] || { echo "Multiple ${WORKFLOW_NAME} runs found for ${GITHUB_SHA}" >&2; exit 1; }
-            if [[ "$STATE" != missing ]]; then
-              IFS=$'\t' read -r RUN_ID _ _ <<<"$STATE"
-              break
-            fi
-            attempts=$((attempts + 1))
-            if [[ "$attempts" -ge 12 ]]; then
-              echo "Required workflow ${WORKFLOW} did not start for ${GITHUB_SHA}" >&2
-              exit 1
-            fi
-            sleep 5
-          done
-          env -u GH_FORCE_TTY GH_PROMPT_DISABLED=1 GH_PAGER=cat NO_COLOR=1 \
-            gh run watch "$RUN_ID" --repo "$GITHUB_REPOSITORY" --exit-status
-          env -u GH_FORCE_TTY GH_PROMPT_DISABLED=1 GH_PAGER=cat NO_COLOR=1 \
-            gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" \
-              --json workflowName,headSha,event,status,conclusion \
-            | jq -e --arg name "$WORKFLOW_NAME" --arg sha "$GITHUB_SHA" \
-                '.workflowName == $name and .headSha == $sha and .event == "push" and .status == "completed" and .conclusion == "success"' \
-                >/dev/null
-          VERSION="$(sed -n 's/^version = "\([^"]*\)"$/\1/p' pyproject.toml | head -n 1)"
-          test -n "$VERSION"
-          TAG="v${VERSION}"
-          tag_target() {
-            local target
-            target="$(git ls-remote origin "refs/tags/${TAG}^{}" | awk 'NR == 1 {print $1}')"
-            if [[ -z "$target" ]]; then
-              target="$(git ls-remote origin "refs/tags/${TAG}" | awk 'NR == 1 {print $1}')"
-            fi
-            printf '%s\n' "$target"
-          }
-
-          TARGET="$(tag_target)"
-          if [[ -n "$TARGET" && "$TARGET" != "$GITHUB_SHA" ]]; then
-            echo "${TAG} already belongs to ${TARGET}; this SHA will not publish the version tag"
-            exit 0
-          fi
-
-          if [[ -z "$TARGET" ]]; then
-            RELEASE_WORKFLOW="release.yml"
-            RELEASE_WORKFLOW_NAME="Release State"
-            attempts=0
-            while :; do
-              RELEASE_RUNS="$(env -u GH_FORCE_TTY GH_PROMPT_DISABLED=1 GH_PAGER=cat NO_COLOR=1 gh run list \
-                --repo "$GITHUB_REPOSITORY" --workflow "$RELEASE_WORKFLOW" --event push --commit "$GITHUB_SHA" --limit 10 \
-                --json databaseId,workflowName,headSha,status,conclusion,event)"
-              RELEASE_STATE="$(jq -r --arg name "$RELEASE_WORKFLOW_NAME" --arg sha "$GITHUB_SHA" '[.[] | select(.workflowName == $name and .headSha == $sha and .event == "push")] | if length == 1 then (.[0] | [.databaseId,.status,(.conclusion // "")] | @tsv) elif length == 0 then "missing" else "ambiguous" end' <<<"$RELEASE_RUNS")"
-              [[ "$RELEASE_STATE" != ambiguous ]] || { echo "Multiple ${RELEASE_WORKFLOW_NAME} runs found for ${GITHUB_SHA}" >&2; exit 1; }
-              if [[ "$RELEASE_STATE" != missing ]]; then
-                IFS=$'\t' read -r RELEASE_RUN_ID _ _ <<<"$RELEASE_STATE"
-                break
-              fi
-              attempts=$((attempts + 1))
-              if [[ "$attempts" -ge 12 ]]; then
-                echo "Required workflow ${RELEASE_WORKFLOW} did not start for ${GITHUB_SHA}" >&2
-                exit 1
-              fi
-              sleep 5
-            done
-
-            while [[ -z "$TARGET" ]]; do
-              IFS=$'\t' read -r RELEASE_STATUS RELEASE_CONCLUSION < <(
-                env -u GH_FORCE_TTY GH_PROMPT_DISABLED=1 GH_PAGER=cat NO_COLOR=1 \
-                  gh run view "$RELEASE_RUN_ID" --repo "$GITHUB_REPOSITORY" --json status,conclusion \
-                    --jq '[.status, (.conclusion // "")] | @tsv'
-              )
-              if [[ "$RELEASE_STATUS" == completed ]]; then
-                echo "${RELEASE_WORKFLOW_NAME} completed with ${RELEASE_CONCLUSION} before creating ${TAG}" >&2
-                exit 1
-              fi
-              sleep 5
-              TARGET="$(tag_target)"
-            done
-          fi
-
-          [[ "$TARGET" == "$GITHUB_SHA" ]] || { echo "${TAG} points to ${TARGET}, not ${GITHUB_SHA}" >&2; exit 1; }
-          echo "release_pending=true" >> "$GITHUB_OUTPUT"
-
   build:
     name: build and test ${{ matrix.platform }}
-    if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -143,29 +31,17 @@ jobs:
             cache_scope: docker-amd64
             artifact_name: digest-linux-amd64
             local_tag: archivebox/abx-dl:test-amd64
-            smoke_timeout: 180
-            crawl_timeout: 240
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
             cache_scope: docker-arm64
             artifact_name: digest-linux-arm64
             local_tag: archivebox/abx-dl:test-arm64
-            smoke_timeout: 900
-            crawl_timeout: 1200
 
     steps:
       - name: Checkout abx-dl
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 1
-
-      - name: Clone build contexts
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          git clone --depth=1 --branch 2.5.38 https://github.com/ArchiveBox/abxbus.git "${{ runner.temp }}/abxbus"
-          git clone --depth=1 --branch v1.11.279 https://github.com/ArchiveBox/abxpkg.git "${{ runner.temp }}/abxpkg"
-          git clone --depth=1 --branch v1.11.293 https://github.com/ArchiveBox/abx-plugins.git "${{ runner.temp }}/abx-plugins"
 
       - name: Set up Python
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
@@ -177,8 +53,32 @@ jobs:
         with:
           version: "0.10.6"
 
+      - name: Project host CI tools through abxpkg
+        env:
+          ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
+        run: uv run --no-project python bin/ci_project_tools.py orchestration_binaries --lib "$ABXPKG_LIB_DIR"
+
+      - name: Clone build contexts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          "${GIT_BINARY}" clone --depth=1 --branch 2.5.38 https://github.com/ArchiveBox/abxbus.git "${{ runner.temp }}/abxbus"
+          "${GIT_BINARY}" clone --depth=1 --branch v1.11.280 https://github.com/ArchiveBox/abxpkg.git "${{ runner.temp }}/abxpkg"
+          "${GIT_BINARY}" clone --depth=1 --branch v1.11.294 https://github.com/ArchiveBox/abx-plugins.git "${{ runner.temp }}/abx-plugins"
+
       - name: Install documentation test dependencies
-        run: uv sync --locked --group dev --no-sources
+        run: $UV_BINARY sync --locked --group dev --no-sources
+
+      - name: Resolve Docker through abxpkg
+        env:
+          ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
+        run: |
+          set -Eeuo pipefail
+          "${UV_BINARY}" run --no-project python bin/ci_project_tools.py docker_binaries --lib "$ABXPKG_LIB_DIR"
+          docker_binary="$ABXPKG_LIB_DIR/env/bin/docker"
+          test -L "$docker_binary"
+          test -x "$docker_binary"
+          "$docker_binary" --version
 
       - name: Set up Docker Buildx
         id: buildx
@@ -195,14 +95,20 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          VERSION="$(uv run --no-sync python - <<'PY'
+          VERSION="$("${UV_BINARY}" run --no-sync python - <<'PY'
           import tomllib
 
           with open("pyproject.toml", "rb") as f:
               print(tomllib.load(f)["project"]["version"])
           PY
           )"
-          BRANCH_TAG="$(printf '%s' "${GITHUB_REF_NAME}" | tr -c 'A-Za-z0-9_.-' '-' | sed -E 's/^-+//; s/-+$//; s/-+/-/g' | cut -c1-128)"
+          BRANCH_TAG="$(GITHUB_REF_NAME="$GITHUB_REF_NAME" "$UV_BINARY" run --no-project python - <<'PY'
+          import os
+          import re
+
+          print(re.sub(r"-+", "-", re.sub(r"[^A-Za-z0-9_.-]", "-", os.environ["GITHUB_REF_NAME"])).strip("-")[:128])
+          PY
+          )"
           SHORT_SHA="${GITHUB_SHA::12}"
           test -n "$BRANCH_TAG"
           test -n "$SHORT_SHA"
@@ -242,110 +148,146 @@ jobs:
       - name: Test Docker documentation commands
         env:
           ABXDL_IMAGE: ${{ matrix.local_tag }}
-        run: uv run --no-sync --no-sources pytest -vv --tb=long -m docker_required README.md AGENTS.md skills
+        run: $UV_BINARY run --no-sync --no-sources pytest -vv --tb=long -m docker_required README.md AGENTS.md CLAUDE.md skills
 
       - name: Validate real crawl inside Docker image
         shell: bash
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          TWOCAPTCHA_API_KEY: ${{ secrets.TWOCAPTCHA_API_KEY }}
         run: |
           set -Eeuo pipefail
           OUT_DIR="${{ runner.temp }}/abx-dl-smoke-${{ matrix.artifact_name }}"
           PERSONAS_DIR="${{ runner.temp }}/abx-dl-personas-${{ matrix.artifact_name }}"
-          rm -rf "$OUT_DIR" "$PERSONAS_DIR"
-          mkdir -p "$OUT_DIR" "$PERSONAS_DIR"
-
-          script -q -e -c \
-            "docker run --rm -it --platform '${{ matrix.platform }}' --volume '$OUT_DIR:/out' --volume '$PERSONAS_DIR:/data/personas' '${{ matrix.local_tag }}' --no-install --timeout='${{ matrix.smoke_timeout }}' --crawl-timeout='${{ matrix.crawl_timeout }}' --max-urls=1 https://example.com" \
-            /dev/null 2>&1 | tee "$OUT_DIR/crawl.log"
-
-          script -q -e -c \
-            "docker run --rm -it --platform '${{ matrix.platform }}' --volume '$OUT_DIR:/out' --volume '$PERSONAS_DIR:/data/personas' --entrypoint bash '${{ matrix.local_tag }}' -lc 'set -Eeuo pipefail; test \"\$PWD\" = /out; test -d /data/personas; test ! -e /out/personas; ! command -v sonic; ! command -v cargo; ! command -v gcc; ! command -v g++; ! command -v make'" \
-            /dev/null
-
-          uv run --no-sync python - "$OUT_DIR/index.jsonl" <<'PY'
-          import json
-          import sys
+          ALL_PLUGINS_ENV="${{ runner.temp }}/abx-dl-all-plugins-${{ matrix.artifact_name }}.env"
+          OUT_DIR="$OUT_DIR" PERSONAS_DIR="$PERSONAS_DIR" "$UV_BINARY" run --no-project python - <<'PY'
+          import os
+          import shutil
           from pathlib import Path
 
-          log_path = Path(sys.argv[1])
-          failed_hooks = set()
-          for line in log_path.read_text(errors="replace").splitlines():
-              try:
-                  record = json.loads(line)
-              except json.JSONDecodeError:
-                  continue
-              if record.get("status") == "failed" and record.get("hook_name"):
-                  failed_hooks.add(record["hook_name"])
-
-          print(f"failed_hooks={sorted(failed_hooks)}")
-          if failed_hooks:
-              raise SystemExit(f"Hook failures are not allowed: {sorted(failed_hooks)}")
+          for name in ("OUT_DIR", "PERSONAS_DIR"):
+              path = Path(os.environ[name])
+              shutil.rmtree(path, ignore_errors=True)
+              path.mkdir(parents=True)
           PY
 
+          ABX_PLUGINS_DIR="${{ runner.temp }}/abx-plugins/abx_plugins/plugins" \
+            ALL_PLUGINS_ENV="$ALL_PLUGINS_ENV" \
+            "$UV_BINARY" run --no-sync --no-sources python - <<'PY'
+          import os
+          from pathlib import Path
+          from abx_dl.models import discover_plugins
+
+          plugins = discover_plugins(Path(os.environ["ABX_PLUGINS_DIR"]), runtime="abx-dl")
+          enabled_keys = sorted(
+              plugin.enabled_key
+              for plugin in plugins.values()
+              if plugin.filter_hooks("Snapshot") and plugin.enabled_key in plugin.config.properties
+          )
+          Path(os.environ["ALL_PLUGINS_ENV"]).write_text(
+              "".join(f"{enabled_key}=True\n" for enabled_key in enabled_keys),
+          )
+          print(f"Enabled {len(enabled_keys)} Snapshot plugins: {enabled_keys}")
+          PY
+
+          "$SCRIPT_BINARY" -q -e -c \
+            "\"${DOCKER_BINARY}\" run --rm -it --platform '${{ matrix.platform }}' --env-file '$ALL_PLUGINS_ENV' --env ANTHROPIC_API_KEY --env CLAUDE_CODE_OAUTH_TOKEN --env TWOCAPTCHA_API_KEY --volume '$OUT_DIR:/out' --volume '$PERSONAS_DIR:/data/personas' '${{ matrix.local_tag }}' --no-install --max-urls=1 https://example.com" \
+            /dev/null 2>&1 | "$TEE_BINARY" "$OUT_DIR/crawl.log"
+
+          "$SCRIPT_BINARY" -q -e -c \
+            "\"${DOCKER_BINARY}\" run --rm -it --platform '${{ matrix.platform }}' --volume '$OUT_DIR:/out' --volume '$PERSONAS_DIR:/data/personas' --entrypoint bash '${{ matrix.local_tag }}' -lc 'set -Eeuo pipefail; test \"\$PWD\" = /out; test -d /data/personas; test ! -e /out/personas; ! command -v sonic; ! command -v cargo; ! command -v gcc; ! command -v g++; ! command -v make'" \
+            /dev/null
+
+          "${UV_BINARY}" run --no-sync --no-sources python bin/validate_crawl.py \
+            "$OUT_DIR/index.jsonl" \
+            --output-dir="$OUT_DIR" \
+            --plugins-dir="${{ runner.temp }}/abx-plugins/abx_plugins/plugins"
+
           test -s "$OUT_DIR/wget/example.com/index.html"
-          grep -R --fixed-strings 'Example Domain' "$OUT_DIR"
-          grep -R --fixed-strings 'This domain is for use' "$OUT_DIR"
+          OUT_DIR="$OUT_DIR" "$UV_BINARY" run --no-project python - <<'PY'
+          import os
+          from pathlib import Path
+
+          text = "\n".join(
+              path.read_text(errors="ignore")
+              for path in Path(os.environ["OUT_DIR"]).rglob("*")
+              if path.is_file()
+          )
+          for expected in ("Example Domain", "This domain is for use"):
+              if expected not in text:
+                  raise SystemExit(f"Crawl output is missing {expected!r}")
+          PY
 
       - name: Validate image version and commit
         shell: bash
         run: |
           set -Eeuo pipefail
-          VERSION_OUTPUT="$(docker run --rm --platform '${{ matrix.platform }}' --entrypoint abx-dl '${{ matrix.local_tag }}' --version)"
+          VERSION_OUTPUT="$("${DOCKER_BINARY}" run --rm --platform '${{ matrix.platform }}' --entrypoint abx-dl '${{ matrix.local_tag }}' --version)"
           printf '%s\n' "$VERSION_OUTPUT"
           test "$VERSION_OUTPUT" = "${{ steps.docker_meta.outputs.version }}"
 
-          docker run --rm --platform '${{ matrix.platform }}' --entrypoint bash '${{ matrix.local_tag }}' -lc \
-            'set -Eeuo pipefail; grep -Fx "COMMIT_HASH='"${GITHUB_SHA}"'" /VERSION.txt'
+          "${DOCKER_BINARY}" run --rm --platform '${{ matrix.platform }}' --entrypoint bash '${{ matrix.local_tag }}' -lc \
+            '/venv/bin/python -c '\''import pathlib, sys; expected = "COMMIT_HASH='"${GITHUB_SHA}"'"; sys.exit(expected not in pathlib.Path("/VERSION.txt").read_text().splitlines())'\'''
 
       - name: Login to Docker Hub
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
-        if: github.event_name != 'pull_request'
+        if: inputs.push_digests
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
       - name: Login to GitHub Container Registry
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
-        if: github.event_name != 'pull_request'
+        if: inputs.push_digests
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push digest
-        id: docker_build
-        if: github.event_name != 'pull_request'
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
-        with:
-          context: .
-          file: ./Dockerfile
-          builder: ${{ steps.buildx.outputs.name }}
-          push: true
-          tags: |
-            ${{ env.DOCKERHUB_IMAGE }}
-            ${{ env.GHCR_IMAGE }}
-          labels: ${{ steps.docker_meta.outputs.labels }}
-          build-contexts: |
-            abxbus=${{ runner.temp }}/abxbus
-            abxpkg=${{ runner.temp }}/abxpkg
-            abx-plugins=${{ runner.temp }}/abx-plugins
-          cache-from: type=gha,scope=${{ matrix.cache_scope }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.cache_scope }}
-          platforms: ${{ matrix.platform }}
-          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
-
-      - name: Validate pushed image size
-        if: github.event_name != 'pull_request'
+      - name: Push the exact tested image by digest
+        id: push_tested
+        if: inputs.push_digests
         shell: bash
         run: |
           set -Eeuo pipefail
-          uv run --no-sync python - "${DOCKERHUB_IMAGE}@${{ steps.docker_build.outputs.digest }}" <<'PY'
+          TEMP_TAG="sha-${{ steps.docker_meta.outputs.short_sha }}-${{ matrix.artifact_name }}"
+          DOCKERHUB_REF="${DOCKERHUB_IMAGE}:${TEMP_TAG}"
+          GHCR_REF="${GHCR_IMAGE}:${TEMP_TAG}"
+
+          "${DOCKER_BINARY}" image tag "${{ matrix.local_tag }}" "$DOCKERHUB_REF"
+          "${DOCKER_BINARY}" image tag "${{ matrix.local_tag }}" "$GHCR_REF"
+          "${DOCKER_BINARY}" image push "$DOCKERHUB_REF"
+          "${DOCKER_BINARY}" image push "$GHCR_REF"
+
+          # shellcheck disable=SC2016
+          DOCKERHUB_DIGEST="$(
+            "${DOCKER_BINARY}" image inspect "$DOCKERHUB_REF" --format '{{json .RepoDigests}}' \
+              | "${JQ_BINARY}" -er --arg prefix "${DOCKERHUB_IMAGE}@" '[.[] | select(startswith($prefix)) | split("@")[1]] | if length == 1 then .[0] else error("expected exactly one Docker Hub digest") end'
+          )"
+          # shellcheck disable=SC2016
+          GHCR_DIGEST="$(
+            "${DOCKER_BINARY}" image inspect "$GHCR_REF" --format '{{json .RepoDigests}}' \
+              | "${JQ_BINARY}" -er --arg prefix "${GHCR_IMAGE}@" '[.[] | select(startswith($prefix)) | split("@")[1]] | if length == 1 then .[0] else error("expected exactly one GHCR digest") end'
+          )"
+          [[ "$DOCKERHUB_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          test "$DOCKERHUB_DIGEST" = "$GHCR_DIGEST"
+          echo "digest=$DOCKERHUB_DIGEST" >> "$GITHUB_OUTPUT"
+
+      - name: Validate pushed image size
+        if: inputs.push_digests
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          "${UV_BINARY}" run --no-sync python - "${DOCKERHUB_IMAGE}@${{ steps.push_tested.outputs.digest }}" <<'PY'
           import json
+          import os
           import subprocess
           import sys
 
           image = sys.argv[1]
           limit = 750 * 1024 * 1024
-          manifest = json.loads(subprocess.check_output(["docker", "manifest", "inspect", image]))
+          manifest = json.loads(subprocess.check_output([os.environ["DOCKER_BINARY"], "manifest", "inspect", image]))
           total = manifest.get("config", {}).get("size", 0) + sum(layer.get("size", 0) for layer in manifest.get("layers", []))
           print(f"{image} compressed_size={total / 1024 / 1024:.2f} MiB limit={limit / 1024 / 1024:.2f} MiB")
           if total > limit:
@@ -353,179 +295,26 @@ jobs:
           PY
 
       - name: Export digest
-        if: github.event_name != 'pull_request'
+        if: inputs.push_digests
         shell: bash
         run: |
           set -Eeuo pipefail
-          mkdir -p /tmp/digests
-          digest="${{ steps.docker_build.outputs.digest }}"
+          digest="${{ steps.push_tested.outputs.digest }}"
           test -n "$digest"
-          touch "/tmp/digests/${digest#sha256:}"
+          DIGEST="${digest#sha256:}" "$UV_BINARY" run --no-project python - <<'PY'
+          import os
+          from pathlib import Path
+
+          digest_dir = Path("/tmp/digests")
+          digest_dir.mkdir(parents=True, exist_ok=True)
+          (digest_dir / os.environ["DIGEST"]).touch()
+          PY
 
       - name: Upload digest
-        if: github.event_name != 'pull_request'
+        if: inputs.push_digests
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ matrix.artifact_name }}
           path: /tmp/digests/*
           if-no-files-found: error
-          retention-days: 1
-
-  publish:
-    name: publish multiarch tags
-    runs-on: ubuntu-24.04
-    needs:
-      - release-gate
-      - build
-    if: github.event_name != 'pull_request'
-
-    steps:
-      - name: Checkout abx-dl
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          fetch-depth: 1
-
-      - name: Set up Python
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
-        with:
-          python-version: "3.12.13"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
-        with:
-          version: "0.10.6"
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
-        with:
-          version: v0.35.0
-          driver-opts: image=moby/buildkit:v0.31.2
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Download digests
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          path: /tmp/digests
-          pattern: digest-*
-          merge-multiple: true
-
-      - name: Collect Docker tags
-        id: docker_meta
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          VERSION="$(uv run --no-project python - <<'PY'
-          import tomllib
-
-          with open("pyproject.toml", "rb") as f:
-              print(tomllib.load(f)["project"]["version"])
-          PY
-          )"
-          BRANCH_TAG="$(printf '%s' "${GITHUB_REF_NAME}" | tr -c 'A-Za-z0-9_.-' '-' | sed -E 's/^-+//; s/-+$//; s/-+/-/g' | cut -c1-128)"
-          SHORT_SHA="${GITHUB_SHA::12}"
-          test -n "$BRANCH_TAG"
-          test -n "$SHORT_SHA"
-
-          {
-            echo 'dockerhub_tags<<EOF'
-            if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
-              echo "${DOCKERHUB_IMAGE}:latest"
-            fi
-            echo "${DOCKERHUB_IMAGE}:${BRANCH_TAG}"
-            echo "${DOCKERHUB_IMAGE}:sha-${SHORT_SHA}"
-            if [[ "${GITHUB_REF_NAME}" == "main" && "${{ needs.release-gate.outputs.release_pending }}" == "true" ]]; then
-              echo "${DOCKERHUB_IMAGE}:${VERSION}"
-            fi
-            echo 'EOF'
-            echo 'ghcr_tags<<EOF'
-            if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
-              echo "${GHCR_IMAGE}:latest"
-            fi
-            echo "${GHCR_IMAGE}:${BRANCH_TAG}"
-            echo "${GHCR_IMAGE}:sha-${SHORT_SHA}"
-            if [[ "${GITHUB_REF_NAME}" == "main" && "${{ needs.release-gate.outputs.release_pending }}" == "true" ]]; then
-              echo "${GHCR_IMAGE}:${VERSION}"
-            fi
-            echo 'EOF'
-            echo "version=${VERSION}"
-            echo "branch_tag=${BRANCH_TAG}"
-            echo "short_sha=${SHORT_SHA}"
-          } >> "$GITHUB_OUTPUT"
-
-          echo "[+] Publishing Docker Hub tags:"
-          if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
-            printf '%s\n' "${DOCKERHUB_IMAGE}:latest"
-          fi
-          printf '%s\n' "${DOCKERHUB_IMAGE}:${BRANCH_TAG}" "${DOCKERHUB_IMAGE}:sha-${SHORT_SHA}"
-          if [[ "${GITHUB_REF_NAME}" == "main" && "${{ needs.release-gate.outputs.release_pending }}" == "true" ]]; then
-            printf '%s\n' "${DOCKERHUB_IMAGE}:${VERSION}"
-          fi
-          echo "[+] Publishing GHCR tags:"
-          if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
-            printf '%s\n' "${GHCR_IMAGE}:latest"
-          fi
-          printf '%s\n' "${GHCR_IMAGE}:${BRANCH_TAG}" "${GHCR_IMAGE}:sha-${SHORT_SHA}"
-          if [[ "${GITHUB_REF_NAME}" == "main" && "${{ needs.release-gate.outputs.release_pending }}" == "true" ]]; then
-            printf '%s\n' "${GHCR_IMAGE}:${VERSION}"
-          fi
-
-      - name: Create Docker Hub manifest
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          mapfile -t DIGESTS < <(find /tmp/digests -maxdepth 1 -type f -printf '%f\n' | sort)
-          [[ "${#DIGESTS[@]}" -eq 2 ]]
-
-          TAG_ARGS=()
-          while IFS= read -r tag; do
-            [[ -n "$tag" ]] && TAG_ARGS+=(--tag "$tag")
-          done <<< "${{ steps.docker_meta.outputs.dockerhub_tags }}"
-
-          REFS=()
-          for digest in "${DIGESTS[@]}"; do
-            REFS+=("${DOCKERHUB_IMAGE}@sha256:${digest}")
-          done
-
-          docker buildx imagetools create "${TAG_ARGS[@]}" "${REFS[@]}"
-
-      - name: Create GHCR manifest
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          mapfile -t DIGESTS < <(find /tmp/digests -maxdepth 1 -type f -printf '%f\n' | sort)
-          [[ "${#DIGESTS[@]}" -eq 2 ]]
-
-          TAG_ARGS=()
-          while IFS= read -r tag; do
-            [[ -n "$tag" ]] && TAG_ARGS+=(--tag "$tag")
-          done <<< "${{ steps.docker_meta.outputs.ghcr_tags }}"
-
-          REFS=()
-          for digest in "${DIGESTS[@]}"; do
-            REFS+=("${GHCR_IMAGE}@sha256:${digest}")
-          done
-
-          docker buildx imagetools create "${TAG_ARGS[@]}" "${REFS[@]}"
-
-      - name: Inspect published images
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          while IFS= read -r tag; do
-            [[ -n "$tag" ]] && docker buildx imagetools inspect "$tag"
-          done <<< "${{ steps.docker_meta.outputs.dockerhub_tags }}"
-          while IFS= read -r tag; do
-            [[ -n "$tag" ]] && docker buildx imagetools inspect "$tag"
-          done <<< "${{ steps.docker_meta.outputs.ghcr_tags }}"
+          retention-days: 90

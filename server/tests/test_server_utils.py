@@ -3,7 +3,6 @@ from __future__ import annotations
 import importlib
 import json
 import threading
-import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from datetime import datetime, timezone
 from pathlib import Path
@@ -141,9 +140,11 @@ def server_client(tmp_path: Path):
 
 @pytest.fixture()
 def slow_http_url():
+    release_response = threading.Event()
+
     class SlowHandler(BaseHTTPRequestHandler):
         def do_GET(self):
-            time.sleep(30)
+            release_response.wait()
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"<html><title>slow</title><body>slow</body></html>")
@@ -158,6 +159,7 @@ def slow_http_url():
     try:
         yield f"http://127.0.0.1:{server.server_address[1]}/slow"
     finally:
+        release_response.set()
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
@@ -210,23 +212,22 @@ def test_session_page_and_download_only_expose_safe_public_outputs(server_client
 
 def test_run_download_reaps_timed_out_child(server_client, slow_http_url: str) -> None:
     server_module.app.config["TIMEOUT_GRACE"] = 0
+    existing_threads = set(threading.enumerate())
     info = server_module.create_session(slow_http_url, ["wget"], timeout=5)
     sid = info["id"]
     session_root = Path(server_module.app.config["DATA_DIR"]) / sid
 
-    deadline = time.monotonic() + 12
-    while time.monotonic() < deadline:
-        with server_module.sessions_lock:
-            current_status = server_module.sessions[sid]["status"]
-            pid = server_module.sessions[sid]["pid"]
-        if current_status == "timeout":
-            break
-        time.sleep(0.05)
-    else:
-        raise AssertionError(f"download session did not time out: {server_module.sessions[sid]}")
+    download_thread = next(
+        thread
+        for thread in set(threading.enumerate()) - existing_threads
+        if getattr(thread, "_target", None) is server_module._run_download
+    )
+    download_thread.join(timeout=12)
+    assert not download_thread.is_alive()
 
     with server_module.sessions_lock:
         info = dict(server_module.sessions[sid])
+        pid = info["pid"]
 
     assert pid is not None
     assert info["status"] == "timeout"

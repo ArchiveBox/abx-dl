@@ -6,27 +6,30 @@ from abxpkg.binary_service import BinaryCacheService, BinaryEvent, BinaryRequest
 
 from abx_dl.config import get_initial_env
 from abx_dl.events import InstallEvent, MachineEvent
-from abx_dl.models import Plugin, PluginConfig, Snapshot, discover_plugins
+from abx_dl.models import Snapshot, discover_plugins
 from abx_dl.orchestrator import compute_install_phase_timeout, create_bus
-from abx_dl.services.binary_service import AbxDlEnvConfigFileBinaryCacheBackend, PluginBinariesService
+from abx_dl.services.binary_service import (
+    AbxDlEnvConfigFileBinaryCacheBackend,
+    PluginBinariesService,
+    split_abxpkg_binary_request_overrides,
+)
 
 
-def test_install_phase_timeout_uses_largest_sequential_binary_lane_budget(tmp_path: Path) -> None:
-    plugin = Plugin(
-        name="concurrent",
-        path=tmp_path,
-        config=PluginConfig.model_validate(
+def test_install_phase_timeout_uses_largest_sequential_binary_lane_budget() -> None:
+    plugins = discover_plugins()
+    selected = [plugins["chrome"], plugins["claudecode"], plugins["ytdlp"]]
+
+    assert (
+        compute_install_phase_timeout(
+            selected,
             {
-                "required_binaries": [
-                    {"name": "node", "event_timeout": 420},
-                    {"name": "node", "install_timeout": 540},
-                    {"name": "sh", "install_timeout": 700},
-                ],
+                "CHROME_TIMEOUT": 420,
+                "CLAUDECODE_TIMEOUT": 540,
+                "YTDLP_TIMEOUT": 700,
             },
-        ),
+        )
+        == 1660.0
     )
-
-    assert compute_install_phase_timeout([plugin], {"CONCURRENT_TIMEOUT": 10}) == 960.0
 
 
 def test_install_event_does_not_skip_stale_cached_binary_requests(tmp_path: Path) -> None:
@@ -304,38 +307,15 @@ def test_install_event_emits_cached_binary_requests_for_persistence(tmp_path: Pa
     assert wget_events[-1].abspath == wget_events[0].abspath
 
 
-def test_install_event_moves_plugin_override_metadata_to_extra_context(tmp_path: Path) -> None:
-    plugin_dir = tmp_path / "feedplugin"
-    plugin_dir.mkdir()
-    raw_overrides = {
-        "pip": {
-            "install_args": ["feedparser"],
-            "module_name": "feedparser",
-        },
-    }
-    plugin = Plugin(
-        name="feedplugin",
-        path=plugin_dir,
-        config=PluginConfig.model_validate(
-            {
-                "properties": {},
-                "required_binaries": [
-                    {
-                        "name": "feedparser",
-                        "binproviders": "pip",
-                        "overrides": raw_overrides,
-                    },
-                ],
-            },
-        ),
-    )
+def test_install_event_resolves_real_plugin_override_paths(tmp_path: Path) -> None:
+    plugin = discover_plugins()["parse_rss_urls"]
     snapshot = Snapshot(url="")
     run_dir = tmp_path / "run"
     managed_lib_dir = tmp_path / "lib"
     bus = create_bus(total_timeout=60.0, name=f"install_phase_override_metadata_{tmp_path.name}")
     PluginBinariesService(
         bus,
-        plugins={"feedplugin": plugin},
+        plugins={plugin.name: plugin},
         auto_install=False,
         install_plugins=[plugin],
         output_dir=run_dir,
@@ -370,9 +350,39 @@ def test_install_event_moves_plugin_override_metadata_to_extra_context(tmp_path:
     asyncio.run(run())
 
     request = next(event for event in request_events if event.name == "feedparser")
-    assert request.overrides == {"pip": {"install_args": ["feedparser"]}}
-    assert request.extra_context["provider_metadata"] == {"pip": {"module_name": "feedparser"}}
-    assert request.extra_context["raw_overrides"] == raw_overrides
+    assert request.overrides == {
+        "uv": {
+            "install_root": str(managed_lib_dir / "uv" / "packages" / "parse_rss_urls"),
+            "install_args": ["feedparser"],
+        },
+    }
+    assert "provider_metadata" not in request.extra_context
+    assert "raw_overrides" not in request.extra_context
+
+
+def test_plugin_owned_override_metadata_is_kept_out_of_abxpkg_request(tmp_path: Path) -> None:
+    install_root = tmp_path / "lib" / "uv" / "packages" / "feedparser"
+    install_root.mkdir(parents=True)
+    raw_overrides = {
+        "uv": {
+            "install_root": str(install_root),
+            "install_args": ["feedparser"],
+            "module_name": "feedparser",
+        },
+    }
+
+    native_overrides, extra_context = split_abxpkg_binary_request_overrides(raw_overrides)
+
+    assert native_overrides == {
+        "uv": {
+            "install_root": str(install_root),
+            "install_args": ["feedparser"],
+        },
+    }
+    assert extra_context == {
+        "provider_metadata": {"uv": {"module_name": "feedparser"}},
+        "raw_overrides": raw_overrides,
+    }
 
 
 def test_chromewebstore_install_preflight_uses_shared_cache_without_persona_duplicate(tmp_path: Path) -> None:
@@ -383,44 +393,18 @@ def test_chromewebstore_install_preflight_uses_shared_cache_without_persona_dupl
     managed_lib_dir = tmp_path / "lib"
     personas_dir = tmp_path / "personas"
     extensions_dir = managed_lib_dir / "chromewebstore" / "extensions"
-    unpacked_dir = extensions_dir / "fpeoodllldobpkbkabpblcfaogecpndd__archivewebpage"
-    unpacked_dir.mkdir(parents=True)
-    manifest_path = unpacked_dir / "manifest.json"
-    manifest_path.write_text(
-        """
-        {
-          "manifest_version": 3,
-          "name": "archivewebpage",
-          "version": "1.0.0",
-          "background": {"service_worker": "service_worker.js"}
-        }
-        """,
-    )
-    (unpacked_dir / "service_worker.js").write_text("chrome.runtime.onInstalled.addListener(() => {});\n")
-    (extensions_dir / "archivewebpage.extension.json").write_text(
-        f"""
-        {{
-          "name": "archivewebpage",
-          "webstore_id": "fpeoodllldobpkbkabpblcfaogecpndd",
-          "unpacked_path": {json.dumps(str(unpacked_dir))},
-          "version": "1.0.0"
-        }}
-        """,
-    )
 
     bus = create_bus(total_timeout=60.0, name=f"chromewebstore_shared_cache_{tmp_path.name}")
     PluginBinariesService(
         bus,
         plugins={"archivewebpage": plugin},
-        auto_install=False,
+        auto_install=True,
         install_plugins=[plugin],
         output_dir=run_dir,
         snapshot=snapshot,
     )
     BinaryCacheService(bus, backend=AbxDlEnvConfigFileBinaryCacheBackend(bus, plugins={"archivewebpage": plugin}))
-    from abxpkg.binary_service import BinaryService
-
-    BinaryService(bus)
+    BinaryService(bus, auto_install=True)
     binary_events: list[BinaryEvent] = []
 
     async def on_BinaryEvent(event: BinaryEvent) -> None:
@@ -456,5 +440,9 @@ def test_chromewebstore_install_preflight_uses_shared_cache_without_persona_dupl
     assert archivewebpage_events
     assert archivewebpage_events[-1].abspath == str(cache_record_path)
     assert archivewebpage_events[-1].env["CHROMEWEBSTORE_EXTENSIONS_DIR"] == str(extensions_dir)
+    metadata = json.loads(cache_record_path.read_text())
+    assert metadata["webstore_id"] == "fpeoodllldobpkbkabpblcfaogecpndd"
+    manifest_path = Path(metadata["unpacked_path"]) / "manifest.json"
     assert manifest_path.exists()
+    assert json.loads(manifest_path.read_text())["version"] == archivewebpage_events[-1].version
     assert not (personas_dir / "Default" / "chrome_extensions").exists()

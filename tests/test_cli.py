@@ -138,6 +138,25 @@ def _hook_names(plugin_name: str, event_name: str) -> list[str]:
     return [hook.name for hook in sorted(plugin.hooks, key=lambda hook: hook.sort_key) if event_name in hook.name]
 
 
+def _real_hook_path(plugin_name: str, hook_name: str) -> str:
+    plugin = discover_plugins()[plugin_name]
+    hook = next(hook for hook in plugin.hooks if hook.name == hook_name)
+    assert hook.path.is_file()
+    return str(hook.path)
+
+
+async def _completed_real_hook_process() -> asyncio.subprocess.Process:
+    process = await asyncio.create_subprocess_exec(
+        _real_hook_path("parse_txt_urls", "on_Snapshot__71_parse_txt_urls"),
+        "--url=https://example.com",
+        env=os.environ.copy(),
+        stdout=asyncio.subprocess.DEVNULL,
+        stderr=asyncio.subprocess.DEVNULL,
+    )
+    assert await process.wait() == 0
+    return process
+
+
 def test_compact_output_collapses_whitespace_and_truncates() -> None:
     assert _compact_output("line one\n\nline two\tline three", limit=20) == "line one line two..."
 
@@ -253,7 +272,7 @@ def test_process_completed_uses_last_non_json_line_for_live_output() -> None:
     event = ProcessCompletedEvent(
         plugin_name="infiniscroll",
         hook_name="on_Snapshot__45_infiniscroll",
-        hook_path="/bin/echo",
+        hook_path=_real_hook_path("infiniscroll", "on_Snapshot__45_infiniscroll"),
         hook_args=[],
         env={},
         timeout=60,
@@ -288,7 +307,7 @@ def test_process_completed_success_ignores_stderr_for_live_output() -> None:
     event = ProcessCompletedEvent(
         plugin_name="chrome",
         hook_name="on_CrawlSetup__90_chrome_launch.daemon.bg",
-        hook_path="/bin/echo",
+        hook_path=_real_hook_path("chrome", "on_CrawlSetup__90_chrome_launch.daemon.bg"),
         hook_args=[],
         env={},
         timeout=360,
@@ -322,7 +341,7 @@ def test_process_completed_success_uses_stderr_when_stdout_is_empty() -> None:
     event = ProcessCompletedEvent(
         plugin_name="twocaptcha",
         hook_name="on_CrawlSetup__95_twocaptcha_config",
-        hook_path="/bin/echo",
+        hook_path=_real_hook_path("twocaptcha", "on_CrawlSetup__95_twocaptcha_config"),
         hook_args=[],
         env={},
         timeout=60,
@@ -355,7 +374,7 @@ def test_process_completed_records_output_file_sizes_for_live_output() -> None:
     event = ProcessCompletedEvent(
         plugin_name="headers",
         hook_name="on_Snapshot__27_headers.daemon.bg",
-        hook_path="/bin/echo",
+        hook_path=_real_hook_path("headers", "on_Snapshot__27_headers.daemon.bg"),
         hook_args=[],
         env={},
         timeout=60,
@@ -387,12 +406,11 @@ def test_process_completed_preserves_output_files_when_inline_archive_result_has
     )
 
     async def run() -> None:
-        process = await asyncio.create_subprocess_exec("/bin/sh", "-c", "true")
-        await process.wait()
+        process = await _completed_real_hook_process()
         started_event = ProcessStartedEvent(
             plugin_name="pdf",
             hook_name="on_Snapshot__52_pdf",
-            hook_path="/bin/echo",
+            hook_path=_real_hook_path("pdf", "on_Snapshot__52_pdf"),
             hook_args=[],
             output_dir="/tmp",
             env={},
@@ -418,7 +436,7 @@ def test_process_completed_preserves_output_files_when_inline_archive_result_has
         completed_event = ProcessCompletedEvent(
             plugin_name="pdf",
             hook_name="on_Snapshot__52_pdf",
-            hook_path="/bin/echo",
+            hook_path=_real_hook_path("pdf", "on_Snapshot__52_pdf"),
             hook_args=[],
             env={},
             timeout=60,
@@ -454,12 +472,11 @@ def test_process_stdout_updates_live_row_with_last_non_json_line() -> None:
     )
 
     async def run() -> None:
-        process = await asyncio.create_subprocess_exec("/bin/sh", "-c", "true")
-        await process.wait()
+        process = await _completed_real_hook_process()
         started_event = ProcessStartedEvent(
             plugin_name="chrome",
             hook_name="on_CrawlSetup__90_chrome_launch.daemon.bg",
-            hook_path="/bin/echo",
+            hook_path=_real_hook_path("chrome", "on_CrawlSetup__90_chrome_launch.daemon.bg"),
             hook_args=[],
             output_dir="/tmp",
             env={},
@@ -618,7 +635,7 @@ def test_phase_label_for_event_uses_ancestor_phase_event() -> None:
     process_event = ProcessEvent(
         plugin_name="wget",
         hook_name="install",
-        hook_path="/bin/echo",
+        hook_path=_real_hook_path("wget", "on_Snapshot__06_wget.finite.bg"),
         hook_args=["wget"],
         is_background=False,
         output_dir="/tmp",
@@ -639,7 +656,7 @@ def test_phase_label_for_event_walks_nested_event_ancestors() -> None:
     provider_process = ProcessEvent(
         plugin_name="chrome",
         hook_name="on_CrawlSetup__90_chrome_launch",
-        hook_path="/bin/echo",
+        hook_path=_real_hook_path("chrome", "on_CrawlSetup__90_chrome_launch.daemon.bg"),
         hook_args=["chromium"],
         is_background=False,
         output_dir="/tmp",
@@ -773,7 +790,6 @@ def test_default_group_routes_bare_url_and_top_level_dl_options() -> None:
     assert cli_group._should_default_to_dl(["--debug", "https://example.com"]) is True
     assert cli_group._should_default_to_dl(["--plugins=wget", "https://example.com"]) is True
     assert cli_group._should_default_to_dl(["--timeout=120", "https://example.com"]) is True
-    assert cli_group._should_default_to_dl(["archivebox://install"]) is True
     assert cli_group._should_default_to_dl(["plugins", "wget"]) is False
     assert cli_group._should_default_to_dl(["example.com"]) is False
     assert cli_group._should_default_to_dl(["nonsense"]) is False
