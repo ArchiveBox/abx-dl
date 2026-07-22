@@ -64,8 +64,8 @@ jobs:
           set -Eeuo pipefail
           for context in \
             "abxbus|2.5.40|71df800033f35a7e319b63a3520990454d78bd7e|https://github.com/ArchiveBox/abxbus.git" \
-            "abxpkg|v1.11.286|6e6f3b1ed866aa59efe9aac525b19f1994d8ee56|https://github.com/ArchiveBox/abxpkg.git" \
-            "abx-plugins|v1.11.299|ee8afc0a4329b33ed8569884a6e6f27256efac83|https://github.com/ArchiveBox/abx-plugins.git"
+            "abxpkg|v1.11.287|254c802222bd286864ba39522a747be2b8be63a7|https://github.com/ArchiveBox/abxpkg.git" \
+            "abx-plugins|v1.11.300|d0284d963dd988a17d639f6a61bbe77aa572f346|https://github.com/ArchiveBox/abx-plugins.git"
           do
             IFS='|' read -r name tag expected_sha url <<< "$context"
             remote_ref="$("${GIT_BINARY}" ls-remote "$url" "refs/tags/$tag")"

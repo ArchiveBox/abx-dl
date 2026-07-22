@@ -7,7 +7,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import ClassVar, Literal
+from typing import ClassVar, Literal, TextIO
 
 from abxbus import BaseEvent, EventBus
 import click
@@ -290,10 +290,18 @@ class ProcessService(BaseService):
 
         process: asyncio.subprocess.Process | None = None
         started_event: ProcessStartedEvent | None = None
+        stdout_reader: TextIO | None = None
+        stderr_reader: TextIO | None = None
         completion_owns_process = False
         try:
             try:
                 with open(stdout_file, "wb") as out_fh, open(stderr_file, "w") as err_fh:
+                    # Open independent readers before awaiting spawn. Snapshot
+                    # hooks may mutate their output tree while background hooks
+                    # are still running, so there must never be a window where
+                    # the only durable reference to these inodes is a pathname.
+                    stdout_reader = open(stdout_file, errors="replace")
+                    stderr_reader = open(stderr_file, errors="replace")
                     process = await asyncio.create_subprocess_exec(
                         *cmd,
                         cwd=str(plugin_output_dir),
@@ -382,18 +390,30 @@ class ProcessService(BaseService):
                 plugin=event.plugin_name,
                 hook_name=event.hook_name,
             )
-            completion = self._complete_process_event(
-                event=event,
-                started_event=started_event,
-                proc=proc,
-                process=process,
-                plugin_output_dir=plugin_output_dir,
-                stdout_file=stdout_file,
-                stderr_file=stderr_file,
-                pid_file=pid_file,
-                files_before=files_before,
-                foreground_interrupts=foreground_interrupts,
-            )
+            assert stdout_reader is not None
+            assert stderr_reader is not None
+
+            async def complete_and_close_readers() -> Process | None:
+                try:
+                    return await self._complete_process_event(
+                        event=event,
+                        started_event=started_event,
+                        proc=proc,
+                        process=process,
+                        plugin_output_dir=plugin_output_dir,
+                        stdout_file=stdout_file,
+                        stderr_file=stderr_file,
+                        stdout_reader=stdout_reader,
+                        stderr_reader=stderr_reader,
+                        pid_file=pid_file,
+                        files_before=files_before,
+                        foreground_interrupts=foreground_interrupts,
+                    )
+                finally:
+                    stdout_reader.close()
+                    stderr_reader.close()
+
+            completion = complete_and_close_readers()
             if event.is_background:
                 completion_task = asyncio.create_task(completion)
                 self._background_completion_tasks.add(completion_task)
@@ -415,6 +435,11 @@ class ProcessService(BaseService):
                 await graceful_kill_process(process)
             raise
         finally:
+            if not completion_owns_process:
+                if stdout_reader is not None:
+                    stdout_reader.close()
+                if stderr_reader is not None:
+                    stderr_reader.close()
             self.pause_requested.clear()
 
     async def _complete_process_event(
@@ -427,6 +452,8 @@ class ProcessService(BaseService):
         plugin_output_dir: Path,
         stdout_file: Path,
         stderr_file: Path,
+        stdout_reader: TextIO,
+        stderr_reader: TextIO,
         pid_file: Path,
         files_before: set[Path],
         foreground_interrupts: bool,
@@ -436,7 +463,7 @@ class ProcessService(BaseService):
             self._stream_stdout(
                 event=started_event,
                 proc=proc,
-                stdout_file=stdout_file,
+                stdout_reader=stdout_reader,
                 state=stdout_state,
             ),
         )
@@ -488,7 +515,7 @@ class ProcessService(BaseService):
             await self._emit_new_stdout_lines(
                 event=started_event,
                 proc=proc,
-                stdout_file=stdout_file,
+                stdout_reader=stdout_reader,
                 state=stdout_state,
                 emit_partial=True,
             )
@@ -505,17 +532,18 @@ class ProcessService(BaseService):
             raise
 
         returncode = process.returncode if process.returncode is not None else 0
-        stdout = stdout_file.read_text() if stdout_file.exists() else ""
-        stderr = stderr_file.read_text() if stderr_file.exists() else ""
+        stdout_reader.seek(0)
+        stdout = stdout_reader.read()
+        stderr_reader.seek(0)
+        stderr = stderr_reader.read()
+        stdout_reader.close()
+        stderr_reader.close()
 
         files_after = set(plugin_output_dir.rglob("*")) if plugin_output_dir.exists() else set()
         new_files = scan_output_files(
             plugin_output_dir,
             file_paths=files_after - files_before,
         )
-        if not stderr and stderr_file.exists():
-            stderr = stderr_file.read_text()
-
         if returncode == 0 and not stdout.strip() and (signal_match := SHELL_SIGNAL_STDERR_RE.search(stderr)):
             returncode = 128 + int(signal_match.group(1))
 
@@ -565,14 +593,14 @@ class ProcessService(BaseService):
         proc.stderr = stderr
         proc.ended_at = now_iso()
 
+        index_path = plugin_output_dir.parent / "index.jsonl"
+        write_jsonl(index_path, proc, also_print=self.emit_jsonl)
+
         pid_file.unlink(missing_ok=True)
 
         if returncode == 0:
             stdout_file.unlink(missing_ok=True)
             stderr_file.unlink(missing_ok=True)
-
-        index_path = plugin_output_dir.parent / "index.jsonl"
-        write_jsonl(index_path, proc, also_print=self.emit_jsonl)
 
         await started_event.emit(
             ProcessCompletedEvent(
@@ -742,7 +770,7 @@ class ProcessService(BaseService):
         *,
         event: ProcessStartedEvent,
         proc: Process,
-        stdout_file: Path,
+        stdout_reader: TextIO,
         state: _StdoutStreamState,
     ) -> list[str]:
         """Stream hook stdout from its log file and emit ProcessStdoutEvent lines.
@@ -758,7 +786,7 @@ class ProcessService(BaseService):
                 await self._emit_new_stdout_lines(
                     event=event,
                     proc=proc,
-                    stdout_file=stdout_file,
+                    stdout_reader=stdout_reader,
                     state=state,
                     emit_partial=False,
                 )
@@ -774,17 +802,13 @@ class ProcessService(BaseService):
         *,
         event: ProcessStartedEvent,
         proc: Process,
-        stdout_file: Path,
+        stdout_reader: TextIO,
         state: _StdoutStreamState,
         emit_partial: bool,
     ) -> None:
-        if not stdout_file.exists():
-            return
-
-        with open(stdout_file, errors="replace") as out_fh:
-            out_fh.seek(state.offset)
-            chunk = out_fh.read()
-            state.offset = out_fh.tell()
+        stdout_reader.seek(state.offset)
+        chunk = stdout_reader.read()
+        state.offset = stdout_reader.tell()
 
         if not chunk and not (emit_partial and state.pending_line):
             return

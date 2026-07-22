@@ -37,8 +37,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           plugin_url=https://github.com/ArchiveBox/abx-plugins.git
-          plugin_tag=v1.11.299
-          expected_sha=ee8afc0a4329b33ed8569884a6e6f27256efac83
+          plugin_tag=v1.11.300
+          expected_sha=d0284d963dd988a17d639f6a61bbe77aa572f346
           remote_ref="$("${GIT_BINARY}" ls-remote "$plugin_url" "refs/tags/$plugin_tag")"
           remote_sha="${remote_ref%%[[:space:]]*}"
           [[ "$expected_sha" =~ ^[0-9a-f]{40}$ ]]
@@ -98,8 +98,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           plugin_url=https://github.com/ArchiveBox/abx-plugins.git
-          plugin_tag=v1.11.299
-          expected_sha=ee8afc0a4329b33ed8569884a6e6f27256efac83
+          plugin_tag=v1.11.300
+          expected_sha=d0284d963dd988a17d639f6a61bbe77aa572f346
           remote_ref="$("${GIT_BINARY}" ls-remote "$plugin_url" "refs/tags/$plugin_tag")"
           remote_sha="${remote_ref%%[[:space:]]*}"
           [[ "$expected_sha" =~ ^[0-9a-f]{40}$ ]]
@@ -167,8 +167,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           plugin_url=https://github.com/ArchiveBox/abx-plugins.git
-          plugin_tag=v1.11.299
-          expected_sha=ee8afc0a4329b33ed8569884a6e6f27256efac83
+          plugin_tag=v1.11.300
+          expected_sha=d0284d963dd988a17d639f6a61bbe77aa572f346
           remote_ref="$("${GIT_BINARY}" ls-remote "$plugin_url" "refs/tags/$plugin_tag")"
           remote_sha="${remote_ref%%[[:space:]]*}"
           [[ "$expected_sha" =~ ^[0-9a-f]{40}$ ]]
@@ -252,8 +252,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           plugin_url=https://github.com/ArchiveBox/abx-plugins.git
-          plugin_tag=v1.11.299
-          expected_sha=ee8afc0a4329b33ed8569884a6e6f27256efac83
+          plugin_tag=v1.11.300
+          expected_sha=d0284d963dd988a17d639f6a61bbe77aa572f346
           remote_ref="$("${GIT_BINARY}" ls-remote "$plugin_url" "refs/tags/$plugin_tag")"
           remote_sha="${remote_ref%%[[:space:]]*}"
           [[ "$expected_sha" =~ ^[0-9a-f]{40}$ ]]
@@ -377,8 +377,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           plugin_url=https://github.com/ArchiveBox/abx-plugins.git
-          plugin_tag=v1.11.299
-          expected_sha=ee8afc0a4329b33ed8569884a6e6f27256efac83
+          plugin_tag=v1.11.300
+          expected_sha=d0284d963dd988a17d639f6a61bbe77aa572f346
           remote_ref="$("${GIT_BINARY}" ls-remote "$plugin_url" "refs/tags/$plugin_tag")"
           remote_sha="${remote_ref%%[[:space:]]*}"
           [[ "$expected_sha" =~ ^[0-9a-f]{40}$ ]]

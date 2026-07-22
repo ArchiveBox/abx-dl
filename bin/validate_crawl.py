@@ -12,8 +12,8 @@ from abx_dl.models import discover_plugins
 
 SUCCESS_STATUSES = {"succeeded", "noresult", "noresults"}
 CHROME_SNAPSHOT_OWNER = ("chrome", "on_Snapshot__09_chrome_launch.daemon.bg")
-CHROME_CRAWL_SETUP_LOG = "chrome/on_CrawlSetup__90_chrome_launch.daemon.bg.stdout.log"
-CHROME_CRAWL_WAIT_LOG = "chrome/on_CrawlSetup__91_chrome_wait.stdout.log"
+CHROME_CRAWL_SETUP_HOOK = "on_CrawlSetup__90_chrome_launch.daemon.bg"
+CHROME_CRAWL_WAIT_HOOK = "on_CrawlSetup__91_chrome_wait"
 
 
 def load_records(index_path: Path) -> list[dict[str, object]]:
@@ -84,12 +84,26 @@ def main() -> None:
             f"got {len(chrome_owner_skips)} skips for {len(snapshots)} Snapshots",
         )
 
-    setup_log = output_dir / CHROME_CRAWL_SETUP_LOG
-    wait_log = output_dir / CHROME_CRAWL_WAIT_LOG
-    if not setup_log.is_file() or not wait_log.is_file():
-        raise SystemExit(f"Crawl-owned Chrome setup logs are missing: {setup_log}, {wait_log}")
+    processes = [record for record in records if record.get("type") == "Process"]
+
+    def require_chrome_process(hook_name: str) -> dict[str, object]:
+        matches = [record for record in processes if record.get("plugin") == "chrome" and record.get("hook_name") == hook_name]
+        if len(matches) != 1:
+            raise SystemExit(
+                f"Expected exactly one successful Chrome process for {hook_name}, got {len(matches)}",
+            )
+        process = matches[0]
+        if process.get("status") != "succeeded" or process.get("exit_code") != 0:
+            raise SystemExit(
+                f"Chrome process did not succeed: {hook_name}: "
+                f"status={process.get('status')} exit_code={process.get('exit_code')} "
+                f"stderr={process.get('stderr')}",
+            )
+        return process
+
+    setup_process = require_chrome_process(CHROME_CRAWL_SETUP_HOOK)
     setup_records = []
-    for line in setup_log.read_text(errors="replace").splitlines():
+    for line in str(setup_process.get("stdout", "")).splitlines():
         try:
             record = json.loads(line)
         except json.JSONDecodeError:
@@ -97,8 +111,11 @@ def main() -> None:
         if isinstance(record, dict):
             setup_records.append(record)
     if {"succeeded": True, "skipped": False} not in setup_records:
-        raise SystemExit("Crawl-owned Chrome daemon did not report successful non-skipped cleanup")
-    if " ready pid=" not in wait_log.read_text(errors="replace"):
+        raise SystemExit(
+            "Crawl-owned Chrome daemon did not report successful non-skipped cleanup",
+        )
+    wait_process = require_chrome_process(CHROME_CRAWL_WAIT_HOOK)
+    if " ready pid=" not in str(wait_process.get("stdout", "")):
         raise SystemExit("Crawl-owned Chrome readiness hook did not observe a ready CDP session")
 
     for plugin_name, relative_paths in required_plugin_outputs.items():

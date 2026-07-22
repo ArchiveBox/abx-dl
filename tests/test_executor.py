@@ -1304,6 +1304,8 @@ def test_crawl_setup_background_daemon_survives_until_explicit_cleanup(tmp_path:
         started = await bus.find(ProcessStartedEvent, past=True, future=False, hook_name=daemon_hook_name)
         assert isinstance(started, ProcessStartedEvent)
         os.kill(started.pid, 0)
+        assert started.stdout_file.is_file()
+        started.stdout_file.unlink()
         crawl_event = await bus.find(CrawlEvent, past=True, future=False)
         assert isinstance(crawl_event, CrawlEvent)
         await bus.emit(
@@ -1327,6 +1329,16 @@ def test_crawl_setup_background_daemon_survives_until_explicit_cleanup(tmp_path:
 
     assert daemon_completed is not None
     assert daemon_completed.status == "succeeded"
+    assert daemon_completed.exit_code == 0
+    cleanup_records = []
+    for line in daemon_completed.stdout.splitlines():
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict):
+            cleanup_records.append(record)
+    assert {"succeeded": True, "skipped": False} in cleanup_records
 
 
 def test_crawl_completed_waits_for_cleanup_process_listeners(tmp_path: Path) -> None:
