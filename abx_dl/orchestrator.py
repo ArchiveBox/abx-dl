@@ -91,7 +91,7 @@ from typing import Any
 from abxbus import EventBus, EventBusMiddleware, EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode
 from abxpkg.binary_service import BinaryCacheBackend, BinaryCacheService, BinaryRequestEvent, BinaryService
 
-from .config import ensure_default_persona_dir, get_derived_config, get_initial_env
+from .config import ensure_default_persona_dir, get_derived_config, get_explicit_user_env, get_initial_env
 from .events import (
     CrawlEvent,
     InstallEvent,
@@ -158,11 +158,14 @@ def setup_services(
         interactive_tty = sys.stdout.isatty() or sys.stderr.isatty()
 
     initial_user_config = None
+    explicit_user_config = None
     initial_derived_config = None
     if config_overrides is not None or derived_config_overrides is not None:
         initial_user_config = get_initial_env()
+        explicit_user_config = get_explicit_user_env()
         if config_overrides:
             initial_user_config.update(config_overrides)
+            explicit_user_config.update(config_overrides)
         initial_derived_config = get_derived_config(initial_user_config)
         if derived_config_overrides:
             initial_derived_config.update(derived_config_overrides)
@@ -170,7 +173,7 @@ def setup_services(
     if MachineService is not None:
         MachineService(bus, persist_derived=persist_derived)
 
-    if initial_user_config is not None:
+    if explicit_user_config is not None:
         try:
             asyncio.get_running_loop()
         except RuntimeError:
@@ -178,7 +181,7 @@ def setup_services(
         else:
             bus.emit(
                 MachineEvent(
-                    config=initial_user_config,
+                    config=explicit_user_config,
                     config_type="user",
                 ),
             )
@@ -346,6 +349,8 @@ async def install_plugins(
         merged_config["DRY_RUN"] = True
     initial_user_config = get_initial_env()
     initial_user_config.update(merged_config)
+    explicit_user_config = get_explicit_user_env()
+    explicit_user_config.update(merged_config)
     initial_derived_config = get_derived_config(initial_user_config)
     if derived_config_overrides:
         initial_derived_config.update(derived_config_overrides)
@@ -390,7 +395,7 @@ async def install_plugins(
         )
         await bus.emit(
             MachineEvent(
-                config=initial_user_config,
+                config=explicit_user_config,
                 config_type="user",
             ),
         ).now()
@@ -577,6 +582,8 @@ async def download(
         config_overrides["DRY_RUN"] = True
     initial_user_config = get_initial_env()
     initial_user_config.update(config_overrides)
+    explicit_user_config = get_explicit_user_env()
+    explicit_user_config.update(config_overrides)
     initial_derived_config = get_derived_config(initial_user_config)
     if derived_config_overrides:
         initial_derived_config.update(derived_config_overrides)
@@ -681,7 +688,7 @@ async def download(
     )
     await bus.emit(
         MachineEvent(
-            config=initial_user_config,
+            config=explicit_user_config,
             config_type="user",
         ),
     ).now()

@@ -65,7 +65,7 @@ jobs:
           for context in \
             "abxbus|2.5.40|71df800033f35a7e319b63a3520990454d78bd7e|https://github.com/ArchiveBox/abxbus.git" \
             "abxpkg|v1.11.286|6e6f3b1ed866aa59efe9aac525b19f1994d8ee56|https://github.com/ArchiveBox/abxpkg.git" \
-            "abx-plugins|v1.11.296|9d15b4e9125fbbc19d712c405b966fea6aa60cc3|https://github.com/ArchiveBox/abx-plugins.git"
+            "abx-plugins|v1.11.299|ee8afc0a4329b33ed8569884a6e6f27256efac83|https://github.com/ArchiveBox/abx-plugins.git"
           do
             IFS='|' read -r name tag expected_sha url <<< "$context"
             remote_ref="$("${GIT_BINARY}" ls-remote "$url" "refs/tags/$tag")"

@@ -271,7 +271,21 @@ def _load_plugin_config_model(
     ``x-fallback`` should see the same effective values hooks see, so derived
     ``*_BINARY`` cache is overlaid here before schema resolution.
     """
-    global_config = user_env.model_dump(mode="json") if isinstance(user_env, BaseSettings) else dict(user_env or get_initial_env())
+    if isinstance(user_env, BaseSettings):
+        global_config = user_env.model_dump(mode="json")
+        explicit_config_keys = set(user_env.model_fields_set)
+    elif user_env is None:
+        settings = GlobalConfig()
+        global_config = settings.model_dump(mode="json")
+        explicit_config_keys = set(settings.model_fields_set)
+    else:
+        global_config = dict(user_env)
+        default_config = GlobalConfig.__pydantic_validator__.validate_python({}).model_dump(mode="json")
+        explicit_config_keys = {
+            key for key, value in global_config.items() if key not in GlobalConfig.model_fields or value != default_config.get(key)
+        }
+        config_dir = Path(global_config.get("CONFIG_DIR") or BOOTSTRAP_CONFIG.CONFIG_DIR)
+        explicit_config_keys.update(_load_env_file(config_dir / "config.env"))
     for key, value in list(global_config.items()):
         if key in GlobalConfig.model_fields:
             continue
@@ -285,6 +299,7 @@ def _load_plugin_config_model(
             effective_derived_env = {key: value for key, value in derived_env.model_dump(mode="json").items() if key in derived_keys}
         else:
             effective_derived_env = dict(derived_env)
+        explicit_config_keys.update(effective_derived_env)
         for key, value in effective_derived_env.items():
             if key in os.environ:
                 continue
@@ -308,9 +323,10 @@ def _load_plugin_config_model(
                 if configured_value and derived_path.name != configured_value:
                     continue
             global_config[key] = value
-    serialized_user_config = {key: dump_to_dotenv_format(value) for key, value in global_config.items() if value is not None}
-    user_config = {**os.environ, **serialized_user_config}
-    environ: dict[str, str] = {}
+    explicit_user_config = {
+        key: dump_to_dotenv_format(value) for key, value in global_config.items() if key in explicit_config_keys and value is not None
+    }
+    user_config = {**os.environ, **explicit_user_config}
     config_path = plugin.path / "config.json"
     if not config_path.exists():
         return PluginEnv()
@@ -318,10 +334,21 @@ def _load_plugin_config_model(
         config_path,
         global_config=global_config,
         user_config=user_config,
-        environ=environ,
+        environ={},
         hydrate_binaries=hydrate_binaries,
     )
     return resolved_config
+
+
+def get_explicit_user_env() -> dict[str, Any]:
+    """Load only user-owned values from config.env.
+
+    Runtime defaults remain available through ``GlobalConfig`` but must not be
+    replayed as explicit inputs, because explicit inputs propagate through
+    plugin ``x-fallback`` chains.
+    """
+    settings = _global_config()
+    return {key: plugin_utils._parse_config_value(value) for key, value in _load_env_file(_config_file(settings)).items()}
 
 
 async def get_config(bus: EventBus | None = None, *, include_derived: bool = True) -> RuntimeConfig:
@@ -332,26 +359,30 @@ async def get_config(bus: EventBus | None = None, *, include_derived: bool = Tru
     sparse: it only contains runtime-emitted cache values like resolved binaries,
     never default-filled ``GlobalConfig`` paths.
     """
-    current_user_config: dict[str, Any] = {} if bus is not None else get_initial_env()
-    current_derived_config: dict[str, Any] = {} if bus is not None else get_derived_config(current_user_config)
-    if bus is not None:
-        for candidate in reversed(await bus.filter(MachineEvent, past=True)):
-            target_config = current_derived_config if candidate.config_type == "derived" else current_user_config
-            if candidate.config is not None:
-                if candidate.config_type == "derived" and not include_derived:
-                    continue
-                target_config.update(candidate.config)
-                continue
-            key = candidate.key.removeprefix("config/")
-            if not key:
-                continue
+    if bus is None:
+        user_config = GlobalConfig()
+        derived_config = get_derived_config(user_config.model_dump(mode="json")) if include_derived else {}
+        return RuntimeConfig(user=user_config, derived=derived_config)
+
+    current_user_config: dict[str, Any] = {}
+    current_derived_config: dict[str, Any] = {}
+    for candidate in reversed(await bus.filter(MachineEvent, past=True)):
+        target_config = current_derived_config if candidate.config_type == "derived" else current_user_config
+        if candidate.config is not None:
             if candidate.config_type == "derived" and not include_derived:
                 continue
-            if candidate.method == "update":
-                target_config[key] = candidate.value
-                continue
-            if candidate.method == "unset":
-                target_config.pop(key, None)
+            target_config.update(candidate.config)
+            continue
+        key = candidate.key.removeprefix("config/")
+        if not key:
+            continue
+        if candidate.config_type == "derived" and not include_derived:
+            continue
+        if candidate.method == "update":
+            target_config[key] = candidate.value
+            continue
+        if candidate.method == "unset":
+            target_config.pop(key, None)
     if not include_derived:
         current_derived_config = {}
     return RuntimeConfig(user=GlobalConfig(**current_user_config), derived=current_derived_config)

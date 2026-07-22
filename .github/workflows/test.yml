@@ -37,8 +37,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           plugin_url=https://github.com/ArchiveBox/abx-plugins.git
-          plugin_tag=v1.11.296
-          expected_sha=9d15b4e9125fbbc19d712c405b966fea6aa60cc3
+          plugin_tag=v1.11.299
+          expected_sha=ee8afc0a4329b33ed8569884a6e6f27256efac83
           remote_ref="$("${GIT_BINARY}" ls-remote "$plugin_url" "refs/tags/$plugin_tag")"
           remote_sha="${remote_ref%%[[:space:]]*}"
           [[ "$expected_sha" =~ ^[0-9a-f]{40}$ ]]
@@ -98,8 +98,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           plugin_url=https://github.com/ArchiveBox/abx-plugins.git
-          plugin_tag=v1.11.296
-          expected_sha=9d15b4e9125fbbc19d712c405b966fea6aa60cc3
+          plugin_tag=v1.11.299
+          expected_sha=ee8afc0a4329b33ed8569884a6e6f27256efac83
           remote_ref="$("${GIT_BINARY}" ls-remote "$plugin_url" "refs/tags/$plugin_tag")"
           remote_sha="${remote_ref%%[[:space:]]*}"
           [[ "$expected_sha" =~ ^[0-9a-f]{40}$ ]]
@@ -167,8 +167,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           plugin_url=https://github.com/ArchiveBox/abx-plugins.git
-          plugin_tag=v1.11.296
-          expected_sha=9d15b4e9125fbbc19d712c405b966fea6aa60cc3
+          plugin_tag=v1.11.299
+          expected_sha=ee8afc0a4329b33ed8569884a6e6f27256efac83
           remote_ref="$("${GIT_BINARY}" ls-remote "$plugin_url" "refs/tags/$plugin_tag")"
           remote_sha="${remote_ref%%[[:space:]]*}"
           [[ "$expected_sha" =~ ^[0-9a-f]{40}$ ]]
@@ -252,8 +252,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           plugin_url=https://github.com/ArchiveBox/abx-plugins.git
-          plugin_tag=v1.11.296
-          expected_sha=9d15b4e9125fbbc19d712c405b966fea6aa60cc3
+          plugin_tag=v1.11.299
+          expected_sha=ee8afc0a4329b33ed8569884a6e6f27256efac83
           remote_ref="$("${GIT_BINARY}" ls-remote "$plugin_url" "refs/tags/$plugin_tag")"
           remote_sha="${remote_ref%%[[:space:]]*}"
           [[ "$expected_sha" =~ ^[0-9a-f]{40}$ ]]
@@ -263,7 +263,10 @@ jobs:
 
       - name: Install Python dependencies
         run: |
+          set -Eeuo pipefail
           "${UV_BINARY}" sync --locked --dev --no-sources
+          "${UV_BINARY}" export --project "${{ runner.temp }}/abx-plugins" --locked --group dev --no-emit-project --no-hashes \
+            | "${UV_BINARY}" pip install --requirements -
           "${UV_BINARY}" pip install --no-deps -e "${{ runner.temp }}/abx-plugins"
 
       - name: Resolve Node.js through abxpkg
@@ -334,9 +337,13 @@ jobs:
         uses: ./.github/actions/verify-chromium-launch
 
       - name: Test plugin - ${{ matrix.plugin.name }}
+        env:
+          PYTHONPATH: ${{ runner.temp }}/abx-plugins
         run: |
           plugin_tests="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/${{ matrix.plugin.name }}/tests"
-          "${UV_BINARY}" run --no-sync --no-sources pytest -q "$plugin_tests"
+          "${UV_BINARY}" run --no-sync --no-sources pytest \
+            -c "${{ runner.temp }}/abx-plugins/pyproject.toml" \
+            -q "$plugin_tests"
 
   test-all:
     name: All plugins
@@ -370,8 +377,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           plugin_url=https://github.com/ArchiveBox/abx-plugins.git
-          plugin_tag=v1.11.296
-          expected_sha=9d15b4e9125fbbc19d712c405b966fea6aa60cc3
+          plugin_tag=v1.11.299
+          expected_sha=ee8afc0a4329b33ed8569884a6e6f27256efac83
           remote_ref="$("${GIT_BINARY}" ls-remote "$plugin_url" "refs/tags/$plugin_tag")"
           remote_sha="${remote_ref%%[[:space:]]*}"
           [[ "$expected_sha" =~ ^[0-9a-f]{40}$ ]]
@@ -557,6 +564,6 @@ jobs:
           set -Eeuo pipefail
           VERSION="$("${UV_BINARY}" run --no-project python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
           for artifact in dist/*.whl dist/*.tar.gz; do
-            test "$("${UV_BINARY}" run --isolated --no-project --python '${{ matrix.python }}' --with "$artifact" abx-dl version)" = "$VERSION"
+            test "$("${UV_BINARY}" run --isolated --no-project --python '${{ matrix.python }}' --with "$artifact" abx-dl version --quiet)" = "$VERSION"
             "${UV_BINARY}" run --isolated --no-project --python '${{ matrix.python }}' --with "$artifact" abx-dl --help > /dev/null
           done

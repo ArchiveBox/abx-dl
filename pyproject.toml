@@ -42,7 +42,7 @@ dependencies = [
     "rich>=13.0.0",
     "abxbus==2.5.40",
     "abxpkg==1.11.286",
-    "abx-plugins==1.11.296",
+    "abx-plugins==1.11.299",
     "jambo>=0.1.7",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",

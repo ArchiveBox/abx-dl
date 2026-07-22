@@ -181,9 +181,9 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && source /tmp/abx-dl-enable-plugins.env \
     && ABXPKG_NO_CACHE=True abxpkg env --install --binproviders=env,apt --lib="$ABXPKG_LIB_DIR" git >/dev/null \
     && ABXPKG_NO_CACHE=True abxpkg env --install --binproviders=env,apt --lib="$ABXPKG_LIB_DIR" --overrides='{"apt":{"install_args":["findutils"]}}' find >/dev/null \
-    && ABXPKG_NO_CACHE=True abxpkg env --install --binproviders=env,apt --lib="$ABXPKG_LIB_DIR" --overrides='{"apt":{"install_args":["binutils"]}}' strip >/dev/null \
     && ABXPKG_NO_CACHE=True abx-dl install chrome \
     && ABXPKG_NO_CACHE=True abx-dl install \
+    && ABXPKG_NO_CACHE=True abxpkg env --install --binproviders=env,apt --lib="$ABXPKG_LIB_DIR" --overrides='{"apt":{"install_args":["binutils"]}}' strip >/dev/null \
     && rm -rf "$ABXPKG_LIB_DIR"/playwright/cache/ffmpeg-* \
     && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR"/chromewebstore -type f -name '*.crx' -delete \
     && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR"/playwright/cache -path '*/chrome-linux*/locales/*' ! -name 'en-US.pak' -delete \

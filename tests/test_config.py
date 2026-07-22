@@ -49,6 +49,52 @@ def test_plugin_env_sets_run_dirs_and_node_path(tmp_path: Path) -> None:
     assert "VIRTUAL_ENV" not in env
 
 
+def test_plugin_timeout_defaults_only_yield_to_explicit_global_timeout(tmp_path: Path) -> None:
+    plugin = discover_plugins()["claudecodecleanup"]
+    default_user = GlobalConfig.__pydantic_validator__.validate_python({})
+    override_user = GlobalConfig.__pydantic_validator__.validate_python({"TIMEOUT": 90})
+
+    default_env = asyncio.run(
+        get_plugin_env(
+            None,
+            plugin=plugin,
+            run_output_dir=tmp_path,
+            config=RuntimeConfig(user=default_user, derived={}),
+        ),
+    )
+    override_env = asyncio.run(
+        get_plugin_env(
+            None,
+            plugin=plugin,
+            run_output_dir=tmp_path,
+            config=RuntimeConfig(user=override_user, derived={}),
+        ),
+    )
+
+    assert default_env.TIMEOUT == 60
+    assert default_env["CLAUDECODE_TIMEOUT"] == 120
+    assert default_env["CLAUDECODECLEANUP_TIMEOUT"] == 180
+    assert override_env.TIMEOUT == 90
+    assert override_env["CLAUDECODE_TIMEOUT"] == 90
+    assert override_env["CLAUDECODECLEANUP_TIMEOUT"] == 90
+
+
+def test_plugin_timeout_defaults_without_event_bus(tmp_path: Path) -> None:
+    plugin = discover_plugins()["claudecodecleanup"]
+
+    env = asyncio.run(
+        get_plugin_env(
+            None,
+            plugin=plugin,
+            run_output_dir=tmp_path,
+        ),
+    )
+
+    assert env.TIMEOUT == 60
+    assert env["CLAUDECODE_TIMEOUT"] == 120
+    assert env["CLAUDECODECLEANUP_TIMEOUT"] == 180
+
+
 def test_machine_event_config_rebuild_applies_events_oldest_to_newest(tmp_path: Path) -> None:
     bus = create_bus(total_timeout=10.0, name=f"test_config_machine_event_order_{tmp_path.name}")
 
