@@ -1,0 +1,42 @@
+tests/test_config.py
+  s_f8414d52051f83::t_20a41fb78d3a24 75-76,78-79
+  s_f8414d52051f83::t_b1630423a23f0c 52-74,77,80-81
+  s_f8414d52051f83::t_d7eb31e3910da9 82-97
+.github/workflows/docker.yml
+  s_f8414d52051f83::t_6e98d48d150115 68
+abx_dl/config.py
+  s_f8414d52051f83::t_d7eb31e3910da9 285,327,351-353,362-371,374-385
+  s_f8414d52051f83::t_05708fb54e6202 326,329,337
+  s_f8414d52051f83::t_97768c763ff5a0 274-284,286-288,302,328,343-350
+Dockerfile
+  s_f8414d52051f83::t_f43ca1a087bca9 186
+pyproject.toml
+  s_f8414d52051f83::t_707c673711d4b9 45
+tests/test_dependencies.py
+  s_f8414d52051f83::t_9e826b34a05629 25-26,37,52,54
+.github/workflows/test.yml
+  s_f8414d52051f83::t_3ba97b6537ae34 266,268-269
+  s_f8414d52051f83::t_f43ca1a087bca9 340-341,344-346,567
+  s_f8414d52051f83::t_6e98d48d150115 41,102,171,256,381
+  s_f8414d52051f83::t_707c673711d4b9 40,101,170,255,380
+abx_dl/orchestrator.py
+  s_f8414d52051f83::t_97768c763ff5a0 94,161,165,168,176,184,352-353,398,585-586,691
+uv.lock
+  s_f8414d52051f83::t_1db674c0ff0cc7 10,14,58,92,103,105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "f9d4af2dba694e9db188135c72f16a4140f8446c",
+  "prompts": {},
+  "sessions": {
+    "s_f8414d52051f83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f73c1-cded-7c63-bb8b-3b3c3e5de67d",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
