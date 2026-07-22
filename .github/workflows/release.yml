@@ -142,23 +142,23 @@ jobs:
 
           {
             echo 'dockerhub_tags<<EOF'
-            if [[ "$VERSION" != *rc* ]]; then
-              echo "${DOCKERHUB_IMAGE}:latest"
-            fi
             echo "${DOCKERHUB_IMAGE}:main"
             echo "${DOCKERHUB_IMAGE}:sha-${SHORT_SHA}"
             if [[ "$tag_target" == "$RELEASE_SHA" ]]; then
               echo "${DOCKERHUB_IMAGE}:${VERSION}"
+              if [[ "$VERSION" != *rc* ]]; then
+                echo "${DOCKERHUB_IMAGE}:latest"
+              fi
             fi
             echo 'EOF'
             echo 'ghcr_tags<<EOF'
-            if [[ "$VERSION" != *rc* ]]; then
-              echo "${GHCR_IMAGE}:latest"
-            fi
             echo "${GHCR_IMAGE}:main"
             echo "${GHCR_IMAGE}:sha-${SHORT_SHA}"
             if [[ "$tag_target" == "$RELEASE_SHA" ]]; then
               echo "${GHCR_IMAGE}:${VERSION}"
+              if [[ "$VERSION" != *rc* ]]; then
+                echo "${GHCR_IMAGE}:latest"
+              fi
             fi
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
