@@ -873,6 +873,32 @@ def test_snapshot_service_emits_background_process_without_extra_wait(tmp_path: 
     assert process_events[0].event_handler_timeout is None
 
 
+def test_download_preserves_plugin_timeout_when_global_timeout_is_only_a_default(tmp_path: Path) -> None:
+    plugin = discover_plugins()["claudecodecleanup"]
+    bus = create_bus(total_timeout=300.0, name=f"plugin_default_timeout_{tmp_path.name}")
+    process_events: list[ProcessEvent] = []
+
+    async def on_ProcessEvent(event: ProcessEvent) -> None:
+        if event.plugin_name == plugin.name:
+            process_events.append(event)
+
+    bus.on(ProcessEvent, on_ProcessEvent)
+    _run_download(
+        "https://example.com",
+        discover_plugins(),
+        tmp_path / "run",
+        selected_plugins=[plugin.name],
+        config_overrides={"CLAUDECODECLEANUP_ENABLED": False},
+        auto_install=False,
+        emit_jsonl=False,
+        bus=bus,
+    )
+
+    assert len(process_events) == 1
+    assert process_events[0].timeout == 180
+    assert process_events[0].event_handler_timeout == 210.0
+
+
 def test_snapshot_service_selected_hooks_by_plugin_runs_only_named_hooks(tmp_path: Path) -> None:
     plugin = discover_plugins()["chrome"]
     selected_hook = next(hook for hook in plugin.hooks if hook.name == "on_Snapshot__11_chrome_wait")

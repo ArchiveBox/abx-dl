@@ -668,7 +668,11 @@ async def download(
         snapshot=snapshot,
         output_dir=output_dir,
         runtime_config=RuntimeConfig(
-            user=GlobalConfig(**initial_user_config),
+            # Preserve which values the user actually supplied. Passing the
+            # default-filled bootstrap mapping here marks every global default
+            # as explicit, causing TIMEOUT=60 to override plugin-specific
+            # defaults such as CLAUDECODECLEANUP_TIMEOUT=180.
+            user=GlobalConfig(**explicit_user_config),
             derived=initial_derived_config,
         ),
         install_enabled=install_enabled,
