@@ -199,7 +199,13 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && rm -rf /opt/node/include /opt/node/share/doc /opt/node/share/man \
     && rm -f /opt/node/CHANGELOG.md /opt/node/README.md /opt/node/LICENSE \
     && rm -f /usr/lib/jvm/java-*-openjdk-*/lib/server/classes*.jsa \
-    && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR" -type f \( -name '*.so' -o -name '*.node' \) -exec "$ABXPKG_LIB_DIR/env/bin/strip" --strip-unneeded {} + \
+    && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR" -type f \( -name '*.so' -o -name '*.node' \) -print0 > /tmp/native-libraries \
+    && while IFS= read -r -d '' native_library; do \
+        magic=''; \
+        if IFS= read -r -N 4 magic < "$native_library" && [[ "$magic" == $'\x7fELF' ]]; then \
+            "$ABXPKG_LIB_DIR/env/bin/strip" --strip-unneeded "$native_library" || exit $?; \
+        fi; \
+    done < /tmp/native-libraries \
     && abxpkg run --binproviders=env --lib="$ABXPKG_LIB_DIR" apt-get purge -y --auto-remove binutils \
     && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR/env/bin" -maxdepth 1 -type l -name strip -delete \
     && rm -f /venv/bin/uv /venv/bin/uvx \
