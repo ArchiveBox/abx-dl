@@ -11,7 +11,7 @@ from abxpkg.binary_service import BinaryCacheService, BinaryEvent, BinaryRequest
 from pytest_httpserver import HTTPServer
 from werkzeug import Response
 
-from abx_dl.config import get_initial_env
+from abx_dl.config import GlobalConfig, RuntimeConfig, get_initial_env
 from abx_dl.config import get_required_binary_requests
 from abx_dl.events import (
     ArchiveResultEvent,
@@ -142,6 +142,10 @@ def _real_hook_path(plugin_name: str, hook_name: str) -> str:
     hook = next(hook for hook in plugin.hooks if hook.name == hook_name)
     assert hook.path.is_file()
     return str(hook.path)
+
+
+def _runtime_config(**user_config) -> RuntimeConfig:
+    return RuntimeConfig(user=GlobalConfig(**user_config), derived={})
 
 
 def test_binary_installed_event_preserves_child_provider_metadata(tmp_path: Path) -> None:
@@ -882,6 +886,7 @@ def test_snapshot_service_selected_hooks_by_plugin_runs_only_named_hooks(tmp_pat
         snapshot=snapshot,
         output_dir=tmp_path / "run",
         plugins={plugin.name: plugin},
+        config=_runtime_config(CHROME_TIMEOUT=5),
         snapshot_phase_timeout=5.0,
         selected_hooks_by_plugin={plugin.name: {selected_hook.name}},
     )
@@ -921,6 +926,14 @@ def test_snapshot_service_repins_snapshot_persona_after_global_config_merge(tmp_
         snapshot=snapshot,
         output_dir=output_dir,
         plugins={plugin.name: plugin},
+        config=_runtime_config(
+            ABX_RUNTIME="archivebox",
+            CHROME_ISOLATION="snapshot",
+            CHROME_TIMEOUT=10,
+            ACTIVE_PERSONA="Default",
+            CHROME_USER_DATA_DIR=stale_dir / ".persona" / "Default" / "chrome_profile",
+            CHROME_DOWNLOADS_DIR=stale_dir / ".persona" / "Default" / "chrome_downloads",
+        ),
         snapshot_phase_timeout=10.0,
         selected_hooks_by_plugin={plugin.name: {real_hook.name}},
     )
@@ -975,6 +988,87 @@ def test_snapshot_service_repins_snapshot_persona_after_global_config_merge(tmp_
     assert "CHROME_DOWNLOADS_DIR" not in emitted.env
 
 
+def test_concurrent_snapshot_services_use_their_injected_runtime_config(tmp_path: Path) -> None:
+    bus = create_bus(total_timeout=30.0, name=f"snapshot_config_isolation_{tmp_path.name}")
+    MachineService(bus, persist_derived=False)
+    ProcessService(bus, emit_jsonl=False, interactive_tty=False)
+    plugin = discover_plugins()["parse_txt_urls"]
+    snapshots = [
+        Snapshot(url="https://example.com/first", id="snap-config-first"),
+        Snapshot(url="https://example.com/second", id="snap-config-second"),
+    ]
+    output_dirs = [tmp_path / "first", tmp_path / "second"]
+    crawl_dir = tmp_path / "crawl"
+
+    for snapshot, output_dir in zip(snapshots, output_dirs, strict=True):
+        SnapshotService(
+            bus,
+            url=snapshot.url,
+            snapshot=snapshot,
+            output_dir=output_dir,
+            plugins={plugin.name: plugin},
+            config=_runtime_config(
+                CRAWL_DIR=crawl_dir,
+                EXTRA_CONTEXT=json.dumps({"snapshot_url": snapshot.url}),
+                TIMEOUT=10,
+            ),
+            snapshot_phase_timeout=10.0,
+        )
+
+    async def run() -> list[ProcessEvent]:
+        # Shared-bus history deliberately ends with a conflicting snapshot URL,
+        # matching the state that raced in concurrent ArchiveBox runs.
+        await bus.emit(
+            MachineEvent(
+                config={
+                    "CRAWL_DIR": str(crawl_dir),
+                    "EXTRA_CONTEXT": json.dumps({"snapshot_url": "https://example.com/conflicting"}),
+                    "TIMEOUT": 10,
+                },
+                config_type="user",
+            ),
+        ).now()
+        crawl_start_events = [
+            CrawlStartEvent(url=snapshot.url, snapshot_id=snapshot.id, output_dir=str(output_dir))
+            for snapshot, output_dir in zip(snapshots, output_dirs, strict=True)
+        ]
+        for crawl_start_event in crawl_start_events:
+            await bus.emit(crawl_start_event).now()
+        snapshot_events = [
+            SnapshotEvent(
+                url=snapshot.url,
+                snapshot_id=snapshot.id,
+                output_dir=str(output_dir),
+                event_parent_id=crawl_start_event.event_id,
+            )
+            for snapshot, output_dir, crawl_start_event in zip(
+                snapshots,
+                output_dirs,
+                crawl_start_events,
+                strict=True,
+            )
+        ]
+        await asyncio.gather(*(bus.emit(event).now() for event in snapshot_events))
+        await bus.wait_until_idle()
+        process_events = []
+        for snapshot_event in snapshot_events:
+            process_event = await bus.find(
+                ProcessEvent,
+                child_of=snapshot_event,
+                past=True,
+                future=False,
+                plugin_name=plugin.name,
+            )
+            assert isinstance(process_event, ProcessEvent)
+            process_events.append(process_event)
+        return process_events
+
+    process_events = asyncio.run(run())
+
+    assert [event.env["CRAWL_DIR"] for event in process_events] == [str(crawl_dir), str(crawl_dir)]
+    assert [json.loads(event.env["EXTRA_CONTEXT"])["snapshot_url"] for event in process_events] == [snapshot.url for snapshot in snapshots]
+
+
 def test_snapshot_limit_admission_uses_stable_snapshot_id_across_retries(tmp_path: Path) -> None:
     output_dir = tmp_path / "run"
     snapshot = Snapshot(url="https://example.com", id="snap-limit-retry")
@@ -989,6 +1083,12 @@ def test_snapshot_limit_admission_uses_stable_snapshot_id_across_retries(tmp_pat
         snapshot=snapshot,
         output_dir=output_dir,
         plugins={},
+        config=_runtime_config(
+            CRAWL_DIR=output_dir,
+            CRAWL_MAX_URLS=1,
+            CRAWL_MAX_SIZE=0,
+            SNAPSHOT_MAX_SIZE=0,
+        ),
         snapshot_phase_timeout=2.0,
         snapshot_cleanup_phase_timeout=2.0,
     )
@@ -1037,6 +1137,7 @@ def test_snapshot_hook_binary_event_env_replay_applies_newest_last(tmp_path: Pat
         snapshot=snapshot,
         output_dir=output_dir,
         plugins={plugin.name: plugin},
+        config=_runtime_config(CRAWL_DIR=output_dir),
         snapshot_phase_timeout=10.0,
     )
     wget_binary = _resolve_real_wget_binary(tmp_path)
@@ -1238,6 +1339,7 @@ def test_snapshot_completed_waits_for_cleanup_process_listeners(tmp_path: Path) 
         snapshot=Snapshot(url="https://example.com", id="snap-cleanup-wait"),
         output_dir=output_dir,
         plugins={plugin.name: plugin},
+        config=_runtime_config(CRAWL_DIR=output_dir),
         snapshot_phase_timeout=10.0,
         snapshot_cleanup_phase_timeout=5.0,
     )
@@ -2071,6 +2173,7 @@ def test_nested_snapshot_events_are_emitted_but_ignored_by_snapshot_hooks(tmp_pa
         snapshot=snapshot,
         output_dir=tmp_path / "run",
         plugins={},
+        config=_runtime_config(CRAWL_DIR=tmp_path / "run"),
         snapshot_phase_timeout=60.0,
         snapshot_cleanup_phase_timeout=60.0,
     )
@@ -2135,6 +2238,7 @@ def test_discovered_snapshot_depth_increments_from_parent_snapshot(tmp_path: Pat
         snapshot=snapshot,
         output_dir=tmp_path / "run",
         plugins={},
+        config=_runtime_config(CRAWL_DIR=tmp_path / "run"),
         snapshot_phase_timeout=60.0,
         snapshot_cleanup_phase_timeout=60.0,
     )

@@ -12,7 +12,7 @@ from abxpkg import BinProvider
 from abxpkg.binary_service import BinaryEvent
 from pydantic import ValidationError
 
-from ..config import RuntimeConfig, get_config, get_plugin_env
+from ..config import RuntimeConfig, get_plugin_env
 from ..events import (
     CrawlAbortEvent,
     CrawlStartEvent,
@@ -116,7 +116,9 @@ class SnapshotService(BaseService):
     snapshot hooks. SnapshotEvents emitted from hook stdout are discovery
     records for higher-level consumers such as ArchiveBox.
 
-    plugin_config state is kept on the bus or on disk, not in service-local toggles:
+    RuntimeConfig is injected for this snapshot so shared-bus MachineEvent
+    history from another snapshot cannot change its hook environment or limits.
+    Lifecycle state remains event- or disk-backed:
     - discovered snapshot flow is derived from ProcessStdoutEvent ancestry
     - background hook cleanup is driven by ProcessStartedEvent / ProcessCompletedEvent
     - crawl limit admission is persisted by CrawlLimitState in ``CRAWL_DIR/.abx-dl``
@@ -144,6 +146,7 @@ class SnapshotService(BaseService):
         snapshot: Snapshot,
         output_dir: Path,
         plugins: dict[str, Plugin],
+        config: RuntimeConfig,
         snapshot_phase_timeout: float = 300.0,
         snapshot_cleanup_enabled: bool = True,
         snapshot_cleanup_phase_timeout: float = 300.0,
@@ -174,7 +177,7 @@ class SnapshotService(BaseService):
         self.abort_requested = False
         self.abort_requested_callback = abort_requested
         self.limit_state: CrawlLimitState | None = None
-        self._config: RuntimeConfig | None = None
+        self.config: RuntimeConfig = config
         self._hook_timeouts: dict[tuple[str, str], int] = {}
         self._active_snapshot_event_ids: set[str] = set()
         self._completed_snapshot_event_ids: set[str] = set()
@@ -231,7 +234,7 @@ class SnapshotService(BaseService):
                     "plugin": plugin.name,
                     "hook_name": hook.name,
                 },
-                config=self._config,
+                config=self.config,
             )
             if plugin_config.DRY_RUN:
                 return
@@ -331,8 +334,7 @@ class SnapshotService(BaseService):
         if event.output_dir != str(self.output_dir) or event.snapshot_id != self.snapshot.id:
             return
         if self.limit_state is None:
-            self._config = self._config or await get_config(self.bus)
-            self.limit_state = CrawlLimitState.from_config(self._config.user.model_dump(mode="json"))
+            self.limit_state = CrawlLimitState.from_config(self.config.user.model_dump(mode="json"))
         parent_event = await self.bus.find(
             CrawlStartEvent,
             past=True,
@@ -352,8 +354,7 @@ class SnapshotService(BaseService):
         """
         if Path(event.output_dir).parent != self.output_dir:
             return
-        self._config = self._config or await get_config(self.bus)
-        if str(self._config.user.ABX_RUNTIME).lower() == "archivebox":
+        if str(self.config.user.ABX_RUNTIME).lower() == "archivebox":
             return
         try:
             record = json.loads(event.line)
@@ -368,8 +369,7 @@ class SnapshotService(BaseService):
         except ValidationError:
             return
         if self.limit_state is None:
-            self._config = self._config or await get_config(self.bus)
-            self.limit_state = CrawlLimitState.from_config(self._config.user.model_dump(mode="json"))
+            self.limit_state = CrawlLimitState.from_config(self.config.user.model_dump(mode="json"))
         if not self.limit_state.should_emit_discovered_snapshots():
             return
         parent_snapshot = await self.bus.find(
@@ -429,9 +429,8 @@ class SnapshotService(BaseService):
         )
         if completed_event is not None:
             return
-        self._config = self._config or await get_config(self.bus)
         if self.limit_state is None:
-            self.limit_state = CrawlLimitState.from_config(self._config.user.model_dump(mode="json"))
+            self.limit_state = CrawlLimitState.from_config(self.config.user.model_dump(mode="json"))
         admission = self.limit_state.admit_snapshot(event.snapshot_id) if self.limit_state.has_limits() else None
         if admission is not None and not admission.allowed:
             raise RuntimeError(f"Snapshot {event.snapshot_id} denied by crawl limits: {admission.stop_reason}")

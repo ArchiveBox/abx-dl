@@ -91,7 +91,7 @@ from typing import Any
 from abxbus import EventBus, EventBusMiddleware, EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode
 from abxpkg.binary_service import BinaryCacheBackend, BinaryCacheService, BinaryRequestEvent, BinaryService
 
-from .config import ensure_default_persona_dir, get_derived_config, get_explicit_user_env, get_initial_env
+from .config import GlobalConfig, RuntimeConfig, ensure_default_persona_dir, get_derived_config, get_explicit_user_env, get_initial_env
 from .events import (
     CrawlEvent,
     InstallEvent,
@@ -122,6 +122,7 @@ def setup_services(
     output_dir: Path | None = None,
     config_overrides: dict[str, Any] | None = None,
     derived_config_overrides: dict[str, Any] | None = None,
+    runtime_config: RuntimeConfig | None = None,
     install_enabled: bool = True,
     crawl_setup_enabled: bool = True,
     crawl_start_enabled: bool = True,
@@ -152,7 +153,8 @@ def setup_services(
     """Attach the shared abx-dl services to an existing bus.
 
     This is the public entrypoint for embedding abx-dl as an event-driven
-    runtime without immediately starting a crawl via ``download()``.
+    runtime without immediately starting a crawl via ``download()``. Callers
+    that attach SnapshotService must provide the snapshot-owned RuntimeConfig.
     """
     if interactive_tty is None:
         interactive_tty = sys.stdout.isatty() or sys.stderr.isatty()
@@ -258,12 +260,17 @@ def setup_services(
             abort_requested=abort_requested,
         )
         if SnapshotService is not None and (crawl_start_enabled or snapshot_cleanup_enabled):
+            if runtime_config is None:
+                raise TypeError(
+                    "runtime_config is required when setup_services attaches SnapshotService",
+                )
             SnapshotService(
                 bus,
                 url=url,
                 snapshot=snapshot,
                 output_dir=output_dir,
                 plugins=plugins,
+                config=runtime_config,
                 snapshot_phase_timeout=snapshot_phase_timeout,
                 snapshot_cleanup_enabled=snapshot_cleanup_enabled,
                 snapshot_cleanup_phase_timeout=snapshot_cleanup_phase_timeout,
@@ -660,6 +667,10 @@ async def download(
         url=url,
         snapshot=snapshot,
         output_dir=output_dir,
+        runtime_config=RuntimeConfig(
+            user=GlobalConfig(**initial_user_config),
+            derived=initial_derived_config,
+        ),
         install_enabled=install_enabled,
         crawl_setup_enabled=crawl_setup_enabled,
         crawl_start_enabled=crawl_start_enabled,
