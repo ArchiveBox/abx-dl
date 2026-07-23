@@ -7,18 +7,18 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-07-18T11:48:45.783129Z"
+exclude-newer = "2026-07-18T16:05:19.42167Z"
 exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
-abxbus = { timestamp = "2026-07-23T11:48:44.783146Z", span = "PT1S" }
+abxbus = { timestamp = "2026-07-23T16:05:18.421684Z", span = "PT1S" }
 abx-dl = "2100-01-01T00:00:00Z"
 abx-plugins = "2100-01-01T00:00:00Z"
 abxpkg = "2100-01-01T00:00:00Z"
 
 [[package]]
 name = "abx-dl"
-version = "1.11.268"
+version = "1.11.269"
 source = { editable = "." }
 dependencies = [
     { name = "abx-plugins" },
@@ -55,9 +55,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "abx-plugins", specifier = "==1.11.311" },
+    { name = "abx-plugins", specifier = "==1.11.312" },
     { name = "abxbus", specifier = "==2.5.40" },
-    { name = "abxpkg", specifier = "==1.11.288" },
+    { name = "abxpkg", specifier = "==1.11.289" },
     { name = "jambo", specifier = ">=0.1.7" },
     { name = "platformdirs", specifier = ">=4.0.0" },
     { name = "psutil", specifier = ">=7.2.1" },
@@ -89,7 +89,7 @@ dev = [
 
 [[package]]
 name = "abx-plugins"
-version = "1.11.311"
+version = "1.11.312"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "abxbus" },
@@ -100,9 +100,9 @@ dependencies = [
     { name = "rich-click" },
     { name = "uv" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/49/f8/ad69bed9751ccbdc892ac3fd6a63b9eace0bd7b0bbb254b855fd8351bc58/abx_plugins-1.11.311.tar.gz", hash = "sha256:acf3ad909f63f610b8981cf9796ff758d713585a380dd9404f42c8419f1ef020", size = 266481, upload-time = "2026-07-23T11:32:48.583Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/49/b9/7a803aff1f498a066cdd6d613e1ec0f44db9990b700fc30a5d7ade65e8e6/abx_plugins-1.11.312.tar.gz", hash = "sha256:ad38272b0b7da42f0cf349ae8e2aa2d2f8001e5c0e2a6323d812ac674aac2d00", size = 266483, upload-time = "2026-07-23T16:03:47.502Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/31/43/27f1582e2d6800cec0dd9f98957d5a02088072b0e48932c3405277c91f29/abx_plugins-1.11.311-py3-none-any.whl", hash = "sha256:67b289c4f2ed4eced783c5a86cf8065f517cbfe42202f54554f33b24411e53c9", size = 415643, upload-time = "2026-07-23T11:32:49.84Z" },
+    { url = "https://files.pythonhosted.org/packages/27/84/e5537184ff930e4f014056227abb5f32b2dd1969c24bc9edfe8ec0f55c70/abx_plugins-1.11.312-py3-none-any.whl", hash = "sha256:8580a372a1c82b5565aabe3b0d136b3d3c9827e29860f6fa7abf013f34ebfad4", size = 415641, upload-time = "2026-07-23T16:03:48.623Z" },
 ]
 
 [[package]]
@@ -121,7 +121,7 @@ wheels = [
 
 [[package]]
 name = "abxpkg"
-version = "1.11.288"
+version = "1.11.289"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pip" },
@@ -130,9 +130,9 @@ dependencies = [
     { name = "rich-click" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8d/e0/f98aab6246c6d328ee289ced80e95befd46d8046abbbfc317ccf696582b1/abxpkg-1.11.288.tar.gz", hash = "sha256:d802c34ee655cc17930572b07a4ed9f62c18022fe98f380b38fb043dc7ba26b1", size = 212909, upload-time = "2026-07-23T03:30:24.528Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/49/43/40eb370f6616b70d531ec6a8da2ee9cbd58eb16cc055de2a518f6ed89aad/abxpkg-1.11.289.tar.gz", hash = "sha256:d26c54ce0270ce3015c0804967492417a14218d903bd99688bc298cc355f3587", size = 213548, upload-time = "2026-07-23T15:09:48.197Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f8/c5/21478d9a246cacd51dc7d700bd0bce3ea08ac14b34ce09496640dea27d71/abxpkg-1.11.288-py3-none-any.whl", hash = "sha256:de7b0ed66a4d7ef06764634a1dae1b28f27d17c40f824159df4c2d2d89e3efa9", size = 227472, upload-time = "2026-07-23T03:30:22.856Z" },
+    { url = "https://files.pythonhosted.org/packages/e5/76/5f7823d37d6c0361f88c027a520721e51f598b81921661c5c6096f2bc17e/abxpkg-1.11.289-py3-none-any.whl", hash = "sha256:edc82c990955d061848e618cf225fa8b50c4e903d1b66b4253f89094a1f17c2e", size = 228018, upload-time = "2026-07-23T15:09:46.586Z" },
 ]
 
 [[package]]

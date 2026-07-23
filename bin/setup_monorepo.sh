@@ -6,7 +6,7 @@ SCRIPT_REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 GITHUB_BASE="${GITHUB_BASE:-https://github.com/ArchiveBox}"
 MONOREPO_REMOTE="${MONOREPO_REMOTE:-$GITHUB_BASE/monorepo.git}"
 REPO_NAMES=(abxbus abxpkg abx-plugins abx-dl archivebox)
-ABXPKG_BOOTSTRAP_VERSION="${ABXPKG_BOOTSTRAP_VERSION:-1.11.288}"
+ABXPKG_BOOTSTRAP_VERSION="${ABXPKG_BOOTSTRAP_VERSION:-1.11.289}"
 
 repo_branch() {
     if [[ "$1" == "archivebox" ]]; then
