@@ -353,7 +353,7 @@ jobs:
           test -x "$node_binary"
           "$node_binary" --version
 
-      - name: Select system dependencies
+      - name: Resolve declared plugin dependencies through abxpkg
         env:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
         run: |
@@ -362,12 +362,8 @@ jobs:
           "${UV_BINARY}" run --no-sync --no-sources abxpkg env \
             --install \
             --json \
-            --binproviders=env,apt \
             --lib="$ABXPKG_LIB_DIR" \
-            --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/wget/config.json:required_binaries" \
-            --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/git/config.json:required_binaries" \
-            --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/search_backend_ripgrep/config.json:required_binaries" \
-            curl \
+            --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/${{ matrix.plugin.name }}/config.json:required_binaries" \
             | "${JQ_BINARY}" -r 'to_entries[] | "\(.key)=\(.value)"' \
             >> "$GITHUB_ENV"
 
@@ -382,8 +378,7 @@ jobs:
               --install \
               --json \
               --lib="$ABXPKG_LIB_DIR" \
-              --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/chrome/config.json:required_binaries" \
-              --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/${{ matrix.plugin.name }}/config.json:required_binaries" \
+              --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/chrome/config.json:required_binaries"
           )"
           "${JQ_BINARY}" -r 'to_entries[] | "\(.key)=\(.value)"' \
             <<< "$chromium_env" >> "$GITHUB_ENV"
