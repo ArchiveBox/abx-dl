@@ -7,18 +7,18 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-07-18T08:45:41.99353Z"
+exclude-newer = "2026-07-18T09:04:53.309156Z"
 exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
-abxbus = { timestamp = "2026-07-23T08:45:40.993542Z", span = "PT1S" }
+abxbus = { timestamp = "2026-07-23T09:04:52.309171Z", span = "PT1S" }
 abx-dl = "2100-01-01T00:00:00Z"
 abx-plugins = "2100-01-01T00:00:00Z"
 abxpkg = "2100-01-01T00:00:00Z"
 
 [[package]]
 name = "abx-dl"
-version = "1.11.265"
+version = "1.11.266"
 source = { editable = "." }
 dependencies = [
     { name = "abx-plugins" },

@@ -215,19 +215,20 @@ jobs:
             --output-dir="$OUT_DIR" \
             --plugins-dir="${{ runner.temp }}/abx-plugins/abx_plugins/plugins"
 
+          test -s "$OUT_DIR/title/title.txt"
           test -s "$OUT_DIR/wget/example.com/index.html"
           OUT_DIR="$OUT_DIR" "$UV_BINARY" run --no-project python - <<'PY'
           import os
           from pathlib import Path
 
-          text = "\n".join(
-              path.read_text(errors="ignore")
-              for path in Path(os.environ["OUT_DIR"]).rglob("*")
-              if path.is_file()
-          )
+          output_dir = Path(os.environ["OUT_DIR"])
+          title = (output_dir / "title" / "title.txt").read_text()
+          downloaded_html = (output_dir / "wget" / "example.com" / "index.html").read_text()
+          if title.strip() != "Example Domain":
+              raise SystemExit(f"Unexpected title output: {title!r}")
           for expected in ("Example Domain", "This domain is for use"):
-              if expected not in text:
-                  raise SystemExit(f"Crawl output is missing {expected!r}")
+              if expected not in downloaded_html:
+                  raise SystemExit(f"Downloaded HTML is missing {expected!r}")
           PY
 
       - name: Validate image version and commit
