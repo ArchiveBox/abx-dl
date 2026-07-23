@@ -37,8 +37,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           plugin_url=https://github.com/ArchiveBox/abx-plugins.git
-          plugin_tag=v1.11.300
-          expected_sha=d0284d963dd988a17d639f6a61bbe77aa572f346
+          plugin_tag=v1.11.302
+          expected_sha=9ab0602d575f758da4ac3d9588adf36ffcf9f37f
           remote_ref="$("${GIT_BINARY}" ls-remote "$plugin_url" "refs/tags/$plugin_tag")"
           remote_sha="${remote_ref%%[[:space:]]*}"
           [[ "$expected_sha" =~ ^[0-9a-f]{40}$ ]]
@@ -98,8 +98,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           plugin_url=https://github.com/ArchiveBox/abx-plugins.git
-          plugin_tag=v1.11.300
-          expected_sha=d0284d963dd988a17d639f6a61bbe77aa572f346
+          plugin_tag=v1.11.302
+          expected_sha=9ab0602d575f758da4ac3d9588adf36ffcf9f37f
           remote_ref="$("${GIT_BINARY}" ls-remote "$plugin_url" "refs/tags/$plugin_tag")"
           remote_sha="${remote_ref%%[[:space:]]*}"
           [[ "$expected_sha" =~ ^[0-9a-f]{40}$ ]]
@@ -134,6 +134,67 @@ jobs:
       - name: Run repo test suite
         run: $UV_BINARY run --no-sync --no-sources pytest -q tests server/tests
 
+  documentation:
+    name: Documentation code blocks
+    runs-on: ubuntu-24.04
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 1
+
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.10.6"
+
+      - name: Project host CI tools through abxpkg
+        env:
+          ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
+        run: uv run --no-project python bin/ci_project_tools.py orchestration_binaries --lib "$ABXPKG_LIB_DIR"
+
+      - name: Clone ArchiveBox plugins
+        run: |
+          set -Eeuo pipefail
+          plugin_url=https://github.com/ArchiveBox/abx-plugins.git
+          plugin_tag=v1.11.302
+          expected_sha=9ab0602d575f758da4ac3d9588adf36ffcf9f37f
+          remote_ref="$("${GIT_BINARY}" ls-remote "$plugin_url" "refs/tags/$plugin_tag")"
+          remote_sha="${remote_ref%%[[:space:]]*}"
+          [[ "$expected_sha" =~ ^[0-9a-f]{40}$ ]]
+          test "$remote_sha" = "$expected_sha"
+          "${GIT_BINARY}" clone --depth=1 --branch "$plugin_tag" "$plugin_url" "${{ runner.temp }}/abx-plugins"
+          test "$("${GIT_BINARY}" -C "${{ runner.temp }}/abx-plugins" rev-parse HEAD)" = "$expected_sha"
+
+      - name: Install Python dependencies
+        run: |
+          "${UV_BINARY}" sync --locked --dev --no-sources
+          "${UV_BINARY}" pip install --no-deps -e "${{ runner.temp }}/abx-plugins"
+
+      - name: Select system dependencies
+        shell: bash
+        env:
+          ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
+        run: |
+          set -Eeuo pipefail
+          export PATH="$ABXPKG_LIB_DIR/env/bin:$PATH"
+          "${UV_BINARY}" run --no-sync --no-sources abxpkg env \
+            --install \
+            --json \
+            --binproviders=env,apt \
+            --lib="$ABXPKG_LIB_DIR" \
+            --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/wget/config.json:required_binaries" \
+            --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/git/config.json:required_binaries" \
+            --deps-from="${{ runner.temp }}/abx-plugins/abx_plugins/plugins/search_backend_ripgrep/config.json:required_binaries" \
+            curl \
+            | "${JQ_BINARY}" -r 'to_entries[] | "\(.key)=\(.value)"' \
+            >> "$GITHUB_ENV"
+
       - name: Run documentation code blocks
         run: $UV_BINARY run --no-sync --no-sources pytest -vv --tb=long --durations=0 -m "not docker_required" README.md AGENTS.md CLAUDE.md skills
 
@@ -167,8 +228,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           plugin_url=https://github.com/ArchiveBox/abx-plugins.git
-          plugin_tag=v1.11.300
-          expected_sha=d0284d963dd988a17d639f6a61bbe77aa572f346
+          plugin_tag=v1.11.302
+          expected_sha=9ab0602d575f758da4ac3d9588adf36ffcf9f37f
           remote_ref="$("${GIT_BINARY}" ls-remote "$plugin_url" "refs/tags/$plugin_tag")"
           remote_sha="${remote_ref%%[[:space:]]*}"
           [[ "$expected_sha" =~ ^[0-9a-f]{40}$ ]]
@@ -252,8 +313,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           plugin_url=https://github.com/ArchiveBox/abx-plugins.git
-          plugin_tag=v1.11.300
-          expected_sha=d0284d963dd988a17d639f6a61bbe77aa572f346
+          plugin_tag=v1.11.302
+          expected_sha=9ab0602d575f758da4ac3d9588adf36ffcf9f37f
           remote_ref="$("${GIT_BINARY}" ls-remote "$plugin_url" "refs/tags/$plugin_tag")"
           remote_sha="${remote_ref%%[[:space:]]*}"
           [[ "$expected_sha" =~ ^[0-9a-f]{40}$ ]]
@@ -377,8 +438,8 @@ jobs:
         run: |
           set -Eeuo pipefail
           plugin_url=https://github.com/ArchiveBox/abx-plugins.git
-          plugin_tag=v1.11.300
-          expected_sha=d0284d963dd988a17d639f6a61bbe77aa572f346
+          plugin_tag=v1.11.302
+          expected_sha=9ab0602d575f758da4ac3d9588adf36ffcf9f37f
           remote_ref="$("${GIT_BINARY}" ls-remote "$plugin_url" "refs/tags/$plugin_tag")"
           remote_sha="${remote_ref%%[[:space:]]*}"
           [[ "$expected_sha" =~ ^[0-9a-f]{40}$ ]]

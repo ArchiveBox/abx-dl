@@ -3,21 +3,18 @@
 from __future__ import annotations
 
 import asyncio
-import builtins
 import copy
 import json
 import re
 import shlex
 import shutil
 from collections.abc import Awaitable, Callable, Mapping
-from datetime import datetime, timedelta, timezone
 from inspect import isawaitable
 from pathlib import Path
 from typing import Any, ClassVar
 
 from abxbus import BaseEvent, EventBus
 from abxpkg import Binary as AbxBinary
-from abxpkg import BinProvider, PROVIDER_CLASS_BY_NAME
 from abxpkg.binary_service import BinaryRequestEvent
 
 from ..config import RuntimeConfig, get_config, get_plugin_env, get_required_binary_requests, is_path_like_env_value
@@ -42,29 +39,6 @@ def _write_binary_wrapper(wrapper_path: Path, target: Path) -> None:
     target_abspath = target.expanduser().resolve(strict=False)
     wrapper_path.write_text(f'#!/bin/sh\nexec {shlex.quote(str(target_abspath))} "$@"\n')
     wrapper_path.chmod(0o755)
-
-
-def _provider_names(binproviders: str | list[str] | None) -> list[str]:
-    if isinstance(binproviders, str):
-        raw_names = [part.strip() for part in binproviders.split(",")]
-    elif binproviders:
-        raw_names = [str(part).strip() for part in binproviders]
-    else:
-        raw_names = ["env"]
-    names: list[str] = []
-    for name in raw_names:
-        if name and name not in names:
-            names.append(name)
-    return names or ["env"]
-
-
-def _providers_for_names(names: list[str]) -> list[BinProvider]:
-    providers: list[BinProvider] = []
-    for name in names:
-        provider_class = PROVIDER_CLASS_BY_NAME.get(name)
-        if provider_class is not None:
-            providers.append(provider_class())
-    return providers
 
 
 def _config_bool(value: Any) -> bool:
@@ -200,10 +174,6 @@ class PluginBinariesService(BaseService):
         current_config = await get_config(self.bus)
         current_user_config = current_config.user
         current_derived_config = current_config.derived
-        install_cache = _install_cache_from_config(current_config)
-        pruned_install_cache = _prune_install_cache(install_cache)
-        install_cache_changed = pruned_install_cache != install_cache
-
         seen: set[str] = set()
         request_events: list[BinaryRequestEvent] = []
         for plugin in self.install_plugins:
@@ -225,7 +195,6 @@ class PluginBinariesService(BaseService):
                 if signature in seen:
                     continue
                 seen.add(signature)
-                install_cache_key = f"binary_request/{signature}"
                 request_payload = {
                     key: value for key, value in record.items() if key in BinaryRequestEvent.model_fields and key != "extra_context"
                 }
@@ -247,8 +216,6 @@ class PluginBinariesService(BaseService):
                         "output_dir": str(plugin_output_dir),
                         "binary_id": uuid7(),
                         "machine_id": "",
-                        "install_cache_key": install_cache_key,
-                        "install_cache_hit": install_cache_key in pruned_install_cache,
                         **override_extra_context,
                     },
                 )
@@ -267,15 +234,6 @@ class PluginBinariesService(BaseService):
                 await completed_request.event_results_list(raise_if_none=False)
 
         await asyncio.gather(*(resolve_binary_requests(binary_requests) for binary_requests in requests_by_binary.values()))
-        if install_cache_changed:
-            await event.emit(
-                MachineEvent(
-                    method="update",
-                    key="config/ABX_INSTALL_CACHE",
-                    value=pruned_install_cache,
-                    config_type="derived",
-                ),
-            ).now()
 
 
 class AbxDlEnvConfigFileBinaryCacheBackend:
@@ -285,49 +243,11 @@ class AbxDlEnvConfigFileBinaryCacheBackend:
         self.bus = bus
         self.plugins = plugins
 
-    async def get(self, request: BinaryRequestEvent) -> AbxBinary | None:
-        current_config = await get_config(self.bus)
-        registered_value, stale_config_keys = await self._cached_binary_registration(request, config=current_config)
-        for config_key in stale_config_keys:
-            await request.emit(
-                MachineEvent(
-                    method="unset",
-                    key=f"config/{config_key}",
-                    config_type="derived",
-                ),
-            ).now()
-        if registered_value is None:
-            return None
-        registered_path = Path(registered_value).expanduser()
-        return AbxBinary.model_validate(
-            {
-                "name": request.name,
-                "description": request.description,
-                "binproviders": _providers_for_names(_provider_names(request.binproviders)),
-                "overrides": request.overrides or {},
-                "loaded_abspath": str(registered_path),
-                "loaded_version": None,
-                "loaded_sha256": None,
-                "loaded_binprovider": None,
-                "env": {},
-            },
-        )
+    def get(self, request: BinaryRequestEvent) -> AbxBinary | None:
+        return None
 
     async def set(self, request: BinaryRequestEvent | None, binary: AbxBinary) -> None:
         current_config = await get_config(self.bus)
-        install_cache = _install_cache_from_config(current_config)
-        request_context = request.extra_context if request is not None else {}
-        install_cache_key = str(request_context.get("install_cache_key") or binary.name)
-        install_cache[install_cache_key] = datetime.now(timezone.utc).isoformat()
-        if request is not None:
-            await request.emit(
-                MachineEvent(
-                    method="update",
-                    key="config/ABX_INSTALL_CACHE",
-                    value=install_cache,
-                    config_type="derived",
-                ),
-            ).now()
         if binary.loaded_abspath:
             await self._link_installed_binary(binary.name, str(binary.loaded_abspath), config=current_config)
             if request is not None:
@@ -397,48 +317,6 @@ class AbxDlEnvConfigFileBinaryCacheBackend:
                 matching_keys.append(key)
         return list(dict.fromkeys(matching_keys))
 
-    async def _cached_binary_registration(
-        self,
-        request: BinaryRequestEvent,
-        *,
-        config: RuntimeConfig | None = None,
-    ) -> tuple[str | None, builtins.set[str]]:
-        request_name = request.name
-        current_config = config or await get_config(self.bus)
-        current_derived_config = current_config.derived
-
-        # Explicit path requests are provider inputs, not cache registrations.
-        # EnvProvider must validate them and project host paths into env/bin.
-        if is_path_like_env_value(request_name):
-            return None, set()
-
-        values: list[str] = []
-        stale_config_keys: set[str] = set()
-        for config_key in await self._config_keys_for_binary_request(request, config=current_config):
-            if config_key not in current_derived_config:
-                continue
-            derived_value = str(current_derived_config[config_key]).strip()
-            if not derived_value:
-                continue
-            if not is_path_like_env_value(derived_value):
-                stale_config_keys.add(config_key)
-                continue
-            derived_path = Path(derived_value).expanduser()
-            if not derived_path.exists():
-                stale_config_keys.add(config_key)
-                continue
-            if derived_path.name != request_name:
-                stale_config_keys.add(config_key)
-                continue
-            values.append(derived_value)
-
-        unique_values = list(dict.fromkeys(values))
-        if len(unique_values) != 1:
-            # No ordered fallback across competing registrations. A canonical
-            # abxpkg provider resolution will refresh all matching derived keys.
-            return None, stale_config_keys
-        return unique_values[0], stale_config_keys
-
     async def _persist_binary_abspath_in_config(
         self,
         request: BinaryRequestEvent,
@@ -487,31 +365,3 @@ class AbxDlEnvConfigFileBinaryCacheBackend:
         elif link_path.exists():
             shutil.rmtree(link_path)
         _write_binary_wrapper(link_path, target)
-
-
-def _install_cache_from_config(config: RuntimeConfig) -> dict[str, str]:
-    install_cache: dict[str, str] = {}
-    current_derived_config = config.derived
-    if "ABX_INSTALL_CACHE" in current_derived_config:
-        install_cache_value = current_derived_config["ABX_INSTALL_CACHE"]
-        if not isinstance(install_cache_value, dict):
-            raise TypeError("ABX_INSTALL_CACHE must be a dict[str, str].")
-        install_cache = {str(binary_name): str(cached_at) for binary_name, cached_at in install_cache_value.items()}
-    return install_cache
-
-
-def _prune_install_cache(install_cache: dict[str, str]) -> dict[str, str]:
-    now = datetime.now(timezone.utc)
-    pruned_install_cache: dict[str, str] = {}
-    for binary_name, cached_at in install_cache.items():
-        if not binary_name.startswith("binary_request/"):
-            continue
-        try:
-            cache_time = datetime.fromisoformat(str(cached_at))
-        except ValueError:
-            continue
-        if cache_time.tzinfo is None:
-            cache_time = cache_time.replace(tzinfo=timezone.utc)
-        if now - cache_time < timedelta(hours=24):
-            pruned_install_cache[str(binary_name)] = cache_time.isoformat()
-    return pruned_install_cache

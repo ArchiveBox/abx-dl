@@ -1,6 +1,5 @@
 import asyncio
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 from abxpkg.binary_service import BinaryCacheService, BinaryEvent, BinaryRequestEvent, BinaryService
 
@@ -32,24 +31,25 @@ def test_install_phase_timeout_uses_largest_sequential_binary_lane_budget() -> N
     )
 
 
-def test_install_event_does_not_skip_stale_cached_binary_requests(tmp_path: Path) -> None:
+def test_install_event_resolves_concurrent_plugin_binaries_through_abxpkg(tmp_path: Path) -> None:
     plugins = discover_plugins()
-    plugin = plugins["ytdlp"]
+    selected = {name: plugins[name] for name in ("git", "wget")}
     snapshot = Snapshot(url="")
     run_dir = tmp_path / "run"
     managed_lib_dir = tmp_path / "lib"
-    stale_binary = managed_lib_dir / "pip" / "venv" / "bin" / "yt-dlp"
-    bus = create_bus(total_timeout=60.0, name=f"install_phase_stale_cache_{tmp_path.name}")
+    bus = create_bus(total_timeout=60.0, name=f"install_phase_concurrent_binaries_{tmp_path.name}")
     PluginBinariesService(
         bus,
-        plugins={"ytdlp": plugin},
-        auto_install=False,
-        install_plugins=[plugin],
+        plugins=selected,
+        auto_install=True,
+        install_plugins=list(selected.values()),
         output_dir=run_dir,
         snapshot=snapshot,
     )
-    BinaryCacheService(bus, backend=AbxDlEnvConfigFileBinaryCacheBackend(bus, plugins={"ytdlp": plugin}))
+    BinaryCacheService(bus, backend=AbxDlEnvConfigFileBinaryCacheBackend(bus, plugins=selected))
+    BinaryService(bus, auto_install=True)
     request_events: list[BinaryRequestEvent] = []
+    binary_events: list[BinaryEvent] = []
     machine_events: list[MachineEvent] = []
 
     async def on_BinaryRequestEvent(event: BinaryRequestEvent) -> None:
@@ -58,7 +58,11 @@ def test_install_event_does_not_skip_stale_cached_binary_requests(tmp_path: Path
     async def on_MachineEvent(event: MachineEvent) -> None:
         machine_events.append(event)
 
+    async def on_BinaryEvent(event: BinaryEvent) -> None:
+        binary_events.append(event)
+
     bus.on(BinaryRequestEvent, on_BinaryRequestEvent)
+    bus.on(BinaryEvent, on_BinaryEvent)
     bus.on(MachineEvent, on_MachineEvent)
 
     async def run() -> None:
@@ -72,17 +76,6 @@ def test_install_event_does_not_skip_stale_cached_binary_requests(tmp_path: Path
             ),
         ).now()
         await bus.emit(
-            MachineEvent(
-                config={
-                    "ABX_INSTALL_CACHE": {
-                        "yt-dlp": datetime.now(timezone.utc).isoformat(),
-                    },
-                    "YTDLP_BINARY": str(stale_binary),
-                },
-                config_type="derived",
-            ),
-        ).now()
-        await bus.emit(
             InstallEvent(
                 url="",
                 snapshot_id=snapshot.id,
@@ -93,19 +86,20 @@ def test_install_event_does_not_skip_stale_cached_binary_requests(tmp_path: Path
 
     asyncio.run(run())
 
-    assert any(event.extra_context.get("plugin_name") == "ytdlp" and event.name == "yt-dlp" for event in request_events)
-    assert any(
-        event.config_type == "derived" and event.method == "unset" and event.key == "config/YTDLP_BINARY" for event in machine_events
-    )
-    cache_update = next(
-        event
-        for event in reversed(machine_events)
-        if event.config_type == "derived"
-        and event.method == "update"
-        and event.key == "config/ABX_INSTALL_CACHE"
-        and isinstance(event.value, dict)
-    )
-    assert "yt-dlp" not in cache_update.value
+    for name, config_key in (("git", "GIT_BINARY"), ("wget", "WGET_BINARY")):
+        assert any(event.extra_context.get("plugin_name") == name and event.name == name for event in request_events)
+        binary_event = next(event for event in reversed(binary_events) if event.name == name)
+        assert binary_event.version
+        assert binary_event.binprovider == "env"
+        assert Path(binary_event.abspath) == managed_lib_dir / "env" / "bin" / name
+        assert Path(binary_event.abspath).is_file()
+        assert any(
+            event.config_type == "derived"
+            and event.method == "update"
+            and event.key == f"config/{config_key}"
+            and event.value == binary_event.abspath
+            for event in machine_events
+        )
 
 
 def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) -> None:
@@ -235,7 +229,7 @@ def test_install_event_includes_opencode_when_route_is_disabled(tmp_path: Path) 
     assert opencode_request.overrides["pnpm"]["install_root"] == str(managed_lib_dir / "pnpm" / "packages" / "opencode")
 
 
-def test_install_event_emits_cached_binary_requests_for_persistence(tmp_path: Path) -> None:
+def test_install_event_revalidates_derived_binary_requests_for_persistence(tmp_path: Path) -> None:
     plugin = discover_plugins()["wget"]
     snapshot = Snapshot(url="")
     run_dir = tmp_path / "run"
@@ -304,7 +298,10 @@ def test_install_event_emits_cached_binary_requests_for_persistence(tmp_path: Pa
     wget_events = [event for event in binary_events if event.name == "wget"]
     assert len(wget_requests) >= 2
     assert len(wget_events) >= 2
-    assert wget_events[-1].abspath == wget_events[0].abspath
+    assert wget_events[-1].version
+    assert wget_events[-1].binprovider == "env"
+    assert Path(wget_events[-1].abspath) == managed_lib_dir / "env" / "bin" / "wget"
+    assert Path(wget_events[-1].abspath).resolve() == Path(wget_events[0].abspath).resolve()
 
 
 def test_install_event_resolves_real_plugin_override_paths(tmp_path: Path) -> None:

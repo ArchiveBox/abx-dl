@@ -7,18 +7,18 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-07-17T23:32:34.797059Z"
+exclude-newer = "2026-07-18T04:20:09.979617Z"
 exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
-abxbus = { timestamp = "2026-07-22T23:32:33.797073Z", span = "PT1S" }
+abxbus = { timestamp = "2026-07-23T04:20:08.97963Z", span = "PT1S" }
 abx-dl = "2100-01-01T00:00:00Z"
 abx-plugins = "2100-01-01T00:00:00Z"
 abxpkg = "2100-01-01T00:00:00Z"
 
 [[package]]
 name = "abx-dl"
-version = "1.11.263"
+version = "1.11.264"
 source = { editable = "." }
 dependencies = [
     { name = "abx-plugins" },
@@ -55,9 +55,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "abx-plugins", specifier = "==1.11.300" },
+    { name = "abx-plugins", specifier = "==1.11.302" },
     { name = "abxbus", specifier = "==2.5.40" },
-    { name = "abxpkg", specifier = "==1.11.287" },
+    { name = "abxpkg", specifier = "==1.11.288" },
     { name = "jambo", specifier = ">=0.1.7" },
     { name = "platformdirs", specifier = ">=4.0.0" },
     { name = "psutil", specifier = ">=7.2.1" },
@@ -89,7 +89,7 @@ dev = [
 
 [[package]]
 name = "abx-plugins"
-version = "1.11.300"
+version = "1.11.302"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "abxbus" },
@@ -100,9 +100,9 @@ dependencies = [
     { name = "rich-click" },
     { name = "uv" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/64/38/7762913473a6a06a121b4ab45efed60cedeee32349cd8b9066e5044466d2/abx_plugins-1.11.300.tar.gz", hash = "sha256:bd14c17e1a0d210e322ae70f6868cd44817e05cc158b035a58cacf6324cc4fb2", size = 259442, upload-time = "2026-07-22T23:30:15.788Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/15/e9/aee4b57c26cfebe40e95cf0f4b0b65521be0215aacb59e7e21cce86a1d2b/abx_plugins-1.11.302.tar.gz", hash = "sha256:6b2c0de72a3e51c40d576e132948551a8d1269dcadd6d48bdf3fd9a3c4d12a4d", size = 259667, upload-time = "2026-07-23T04:18:32.501Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0e/ef/f093abb0c69d6eec3815948967fb1902f84a64e165a7e89d944c0e9f4869/abx_plugins-1.11.300-py3-none-any.whl", hash = "sha256:0dadb364aa2b86d42a91147c6caafdb80a221f90cc38dfb8704a27e096ad9cd2", size = 408776, upload-time = "2026-07-22T23:30:17.121Z" },
+    { url = "https://files.pythonhosted.org/packages/50/4d/0f6401c29e094b2136a11f9650223a79ad362a2abf75e4e7011e855fc899/abx_plugins-1.11.302-py3-none-any.whl", hash = "sha256:33f8bebff181c534620ad25b45ab9bf211f6e6812945c7d669aae709e7716bd5", size = 408980, upload-time = "2026-07-23T04:18:33.89Z" },
 ]
 
 [[package]]
@@ -121,7 +121,7 @@ wheels = [
 
 [[package]]
 name = "abxpkg"
-version = "1.11.287"
+version = "1.11.288"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pip" },
@@ -130,9 +130,9 @@ dependencies = [
     { name = "rich-click" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f3/5c/d9860aeadba8b8196bf1fca0925efe4f861ac61451811b0879774ea1c4cb/abxpkg-1.11.287.tar.gz", hash = "sha256:4a5c4ef5cff65d8f6fa11dae2f4003d275d1971c312bb8d6af850d114b2f7595", size = 212821, upload-time = "2026-07-22T22:28:14.2Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/8d/e0/f98aab6246c6d328ee289ced80e95befd46d8046abbbfc317ccf696582b1/abxpkg-1.11.288.tar.gz", hash = "sha256:d802c34ee655cc17930572b07a4ed9f62c18022fe98f380b38fb043dc7ba26b1", size = 212909, upload-time = "2026-07-23T03:30:24.528Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/71/86/b7e4fe8487fab44947587c84d1ea53c1c0a12fedc69d2a9f51c26152a43b/abxpkg-1.11.287-py3-none-any.whl", hash = "sha256:353f114c0b05f2b782696fd2845e57d0129837e76e0f4b6cc4f6dafc8965684e", size = 227370, upload-time = "2026-07-22T22:28:15.63Z" },
+    { url = "https://files.pythonhosted.org/packages/f8/c5/21478d9a246cacd51dc7d700bd0bce3ea08ac14b34ce09496640dea27d71/abxpkg-1.11.288-py3-none-any.whl", hash = "sha256:de7b0ed66a4d7ef06764634a1dae1b28f27d17c40f824159df4c2d2d89e3efa9", size = 227472, upload-time = "2026-07-23T03:30:22.856Z" },
 ]
 
 [[package]]

@@ -6,6 +6,7 @@ SCRIPT_REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 GITHUB_BASE="${GITHUB_BASE:-https://github.com/ArchiveBox}"
 MONOREPO_REMOTE="${MONOREPO_REMOTE:-$GITHUB_BASE/monorepo.git}"
 REPO_NAMES=(abxbus abxpkg abx-plugins abx-dl archivebox)
+ABXPKG_BOOTSTRAP_VERSION="${ABXPKG_BOOTSTRAP_VERSION:-1.11.288}"
 
 repo_branch() {
     if [[ "$1" == "archivebox" ]]; then
@@ -168,6 +169,27 @@ bootstrap_build_dependencies() {
     esac
 }
 
+bootstrap_git() {
+    export ABXPKG_LIB_DIR="$ROOT_DIR/.venv/abxpkg"
+    mkdir -p "$ABXPKG_LIB_DIR/env/bin"
+    export PATH="$ABXPKG_LIB_DIR/env/bin:$PATH"
+
+    uv run --no-project \
+        --with="abxpkg==$ABXPKG_BOOTSTRAP_VERSION" \
+        abxpkg env \
+        --install \
+        --json \
+        --lib="$ABXPKG_LIB_DIR" \
+        --binproviders=env,apt,brew \
+        git \
+        >/dev/null
+
+    export GIT_BINARY="$ABXPKG_LIB_DIR/env/bin/git"
+    test -L "$GIT_BINARY"
+    test -x "$GIT_BINARY"
+    "$GIT_BINARY" --version >/dev/null
+}
+
 sync_workspace() {
     uv sync --locked --all-packages --all-extras --no-cache --active
 }
@@ -198,8 +220,8 @@ bootstrap_monorepo_root() {
     local origin_url=""
 
     if [[ -d "$monorepo_root/.git" ]]; then
-        if git -C "$monorepo_root" remote get-url origin >/dev/null 2>&1; then
-            origin_url="$(git -C "$monorepo_root" remote get-url origin)"
+        if "$GIT_BINARY" -C "$monorepo_root" remote get-url origin >/dev/null 2>&1; then
+            origin_url="$("$GIT_BINARY" -C "$monorepo_root" remote get-url origin)"
         fi
 
         if [[ -n "$origin_url" ]] && ! monorepo_remote_matches "$origin_url"; then
@@ -208,22 +230,22 @@ bootstrap_monorepo_root() {
         fi
 
         if [[ -z "$origin_url" ]]; then
-            git -C "$monorepo_root" remote add origin "$MONOREPO_REMOTE"
+            "$GIT_BINARY" -C "$monorepo_root" remote add origin "$MONOREPO_REMOTE"
         fi
 
         printf 'Updating monorepo root: %s\n' "$monorepo_root"
-        git -C "$monorepo_root" fetch --quiet origin main
-        git -C "$monorepo_root" merge --ff-only --quiet origin/main
+        "$GIT_BINARY" -C "$monorepo_root" fetch --quiet origin main
+        "$GIT_BINARY" -C "$monorepo_root" merge --ff-only --quiet origin/main
         printf 'Updated monorepo root\n'
         return
     fi
 
     printf 'Bootstrapping monorepo root in %s\n' "$monorepo_root"
-    git -C "$monorepo_root" init -b main >/dev/null
-    git -C "$monorepo_root" remote add origin "$MONOREPO_REMOTE"
-    git -C "$monorepo_root" fetch --depth=1 origin main --quiet
+    "$GIT_BINARY" -C "$monorepo_root" init -b main >/dev/null
+    "$GIT_BINARY" -C "$monorepo_root" remote add origin "$MONOREPO_REMOTE"
+    "$GIT_BINARY" -C "$monorepo_root" fetch --depth=1 origin main --quiet
 
-    if git -C "$monorepo_root" checkout -B main --track origin/main >/dev/null 2>&1; then
+    if "$GIT_BINARY" -C "$monorepo_root" checkout -B main --track origin/main >/dev/null 2>&1; then
         printf 'Initialized monorepo root\n'
     else
         printf 'Failed to materialize monorepo root in %s; existing files likely conflict with tracked monorepo files\n' "$monorepo_root" >&2
@@ -231,14 +253,20 @@ bootstrap_monorepo_root() {
     fi
 }
 
+IS_MEMBER_REPO=false
 if is_member_repo "$SCRIPT_REPO_ROOT"; then
+    IS_MEMBER_REPO=true
     ROOT_DIR="$(cd -- "$SCRIPT_REPO_ROOT/.." && pwd)"
-    bootstrap_monorepo_root "$ROOT_DIR"
 elif [[ -f "$SCRIPT_REPO_ROOT/pyproject.toml" ]]; then
     ROOT_DIR="$SCRIPT_REPO_ROOT"
 else
     printf 'Unable to infer monorepo root from script location: %s\n' "$SCRIPT_DIR" >&2
     exit 1
+fi
+
+bootstrap_git
+if [[ "$IS_MEMBER_REPO" == true ]]; then
+    bootstrap_monorepo_root "$ROOT_DIR"
 fi
 
 ensure_member_repo() {
@@ -249,12 +277,12 @@ ensure_member_repo() {
 
     if [[ -d "$repo_dir/.git" ]]; then
         printf 'Updating existing checkout: %s\n' "$repo_name"
-        [[ "$(git -C "$repo_dir" branch --show-current)" == "$branch" ]] || {
+        [[ "$("$GIT_BINARY" -C "$repo_dir" branch --show-current)" == "$branch" ]] || {
             printf '%s must be checked out on %s\n' "$repo_name" "$branch" >&2
             return 1
         }
-        git -C "$repo_dir" fetch --quiet origin "$branch"
-        git -C "$repo_dir" merge --ff-only --quiet "origin/$branch"
+        "$GIT_BINARY" -C "$repo_dir" fetch --quiet origin "$branch"
+        "$GIT_BINARY" -C "$repo_dir" merge --ff-only --quiet "origin/$branch"
         printf 'Updated: %s\n' "$repo_name"
         return
     fi
@@ -265,7 +293,7 @@ ensure_member_repo() {
     fi
 
     printf 'Cloning %s/%s.git -> %s\n' "$GITHUB_BASE" "$repo_name" "$repo_name"
-    git clone --branch "$branch" --single-branch "$GITHUB_BASE/$repo_name.git" "$repo_dir"
+    "$GIT_BINARY" clone --branch "$branch" --single-branch "$GITHUB_BASE/$repo_name.git" "$repo_dir"
 }
 
 for repo_name in "${REPO_NAMES[@]}"; do

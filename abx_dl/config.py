@@ -599,12 +599,9 @@ def get_required_binary_requests(
         derived_env=derived_overrides,
         hydrate_binaries=False,
     )
-    # For the cache-key signature we want the binary's *logical* name (e.g.
-    # ``chromium``) regardless of where it's installed on this machine, so the
-    # ``ABX_INSTALL_CACHE`` key matches across runs and installs. Replace any
-    # resolved ``*_BINARY`` overrides with their plugin-schema defaults so
-    # ``{X_BINARY}`` name templates hydrate to ``"chromium"``/``"node"``/etc.
-    # rather than the local abspath.
+    # Resolve each binary by its logical name (e.g. ``chromium``), independent
+    # of the machine-specific path projected into derived config by a prior run.
+    # Explicit provider overrides remain in the request record for abxpkg.
     schema_binary_defaults: dict[str, Any] = {}
     for prop_key, prop in plugin.config.properties.items():
         if not prop_key.endswith("_BINARY"):

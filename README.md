@@ -309,7 +309,7 @@ abx-dl install wget singlefile ytdlp      # installs dependencies for specific p
 abx-dl plugins                            # checks which dependencies are available/missing
 ```
 
-Successful preflight installs are cached for 24 hours in `derived.env` under `ABX_INSTALL_CACHE`, keyed by binary name. If a binary was installed successfully recently, `abx-dl` skips re-running the install preflight for that binary. Cached abspaths are still validated at use time, and stale cache entries fall back to `abxpkg` provider resolution.
+Every preflight request is resolved through `abxpkg`. Compatible host binaries are selected first and projected into `ABXPKG_LIB_DIR/env/bin`; otherwise the configured managed provider installs and projects the dependency. `abxpkg` owns the validated provider cache, while the runtime derived configuration exposes resolved paths to plugins.
 
 The normal runtime flow after dependency preflight is:
 - `CrawlEvent` (internal lifecycle root)

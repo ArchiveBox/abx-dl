@@ -254,7 +254,8 @@ def test_binary_installed_event_resolves_config_backed_command_name(tmp_path: Pa
     wget_events = [event for event in asyncio.run(run()) if event.name == "wget"]
     assert wget_events
     assert wget_events[-1].abspath == resolved_binary.abspath
-    assert wget_events[-1].binprovider == ""
+    assert wget_events[-1].version
+    assert wget_events[-1].binprovider == "env"
 
 
 def test_binary_installed_event_uses_user_absolute_path_for_real_plugin(tmp_path: Path) -> None:
@@ -296,7 +297,7 @@ def test_binary_installed_event_uses_user_absolute_path_for_real_plugin(tmp_path
     assert wget_events[-1].binprovider == "env"
 
 
-def test_binary_installed_event_reuses_real_plugin_cached_paths_without_provider_inference(tmp_path: Path) -> None:
+def test_binary_installed_event_validates_real_plugin_derived_paths_through_abxpkg(tmp_path: Path) -> None:
     resolved_binary = _resolve_real_wget_binary(tmp_path)
     plugins = discover_plugins()
 
@@ -332,11 +333,11 @@ def test_binary_installed_event_reuses_real_plugin_cached_paths_without_provider
     wget_events = [event for event in asyncio.run(run()) if event.name == "wget"]
     assert wget_events
     assert wget_events[-1].abspath == resolved_binary.abspath
-    assert wget_events[-1].version == ""
-    assert wget_events[-1].binprovider == ""
+    assert wget_events[-1].version
+    assert wget_events[-1].binprovider == "env"
 
 
-def test_binary_event_uses_cached_config_binary_before_abxpkg_resolution(tmp_path: Path) -> None:
+def test_binary_event_validates_derived_config_binary_through_abxpkg_resolution(tmp_path: Path) -> None:
     resolved_binary = _resolve_real_wget_binary(tmp_path)
     plugins = discover_plugins()
     selected = {"wget": plugins["wget"]}
@@ -377,7 +378,8 @@ def test_binary_event_uses_cached_config_binary_before_abxpkg_resolution(tmp_pat
     wget_events = [event for event in installed_events if event.name == "wget"]
     assert wget_events
     assert wget_events[-1].abspath == resolved_binary.abspath
-    assert wget_events[-1].binprovider == ""
+    assert wget_events[-1].version
+    assert wget_events[-1].binprovider == "env"
 
 
 def test_required_binary_requests_preserve_extra_config_fields() -> None:
