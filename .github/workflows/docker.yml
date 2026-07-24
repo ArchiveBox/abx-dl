@@ -56,6 +56,7 @@ jobs:
       - name: Project host CI tools through abxpkg
         env:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
+          PYTHON_BINARY: ${{ env.pythonLocation }}/bin/python
         run: uv run --no-project python bin/ci_project_tools.py orchestration_binaries --lib "$ABXPKG_LIB_DIR"
 
       - name: Clone build contexts

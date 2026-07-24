@@ -803,6 +803,64 @@ def test_default_group_leaves_unknown_non_url_as_subcommand_error(tmp_path: Path
     assert '"url": "nonsense"' not in result.stdout
 
 
+def test_dl_refuses_to_write_crawl_output_into_source_checkout_root(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "abx_dl",
+            "dl",
+            "--plugins=wget",
+            "https://example.com",
+        ],
+        cwd=REPO_ROOT,
+        env=_cli_env(tmp_path),
+        text=True,
+        capture_output=True,
+        timeout=180,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "Refusing to write crawl output into the abx-dl source checkout root" in result.stderr
+    assert not (REPO_ROOT / "index.jsonl").exists()
+    assert not (REPO_ROOT / "wget").exists()
+
+    for metadata_args in (("--help",), ("--version",), ("plugins", "wget")):
+        metadata_result = subprocess.run(
+            [sys.executable, "-m", "abx_dl", *metadata_args],
+            cwd=REPO_ROOT,
+            env=_cli_env(tmp_path),
+            text=True,
+            capture_output=True,
+            timeout=180,
+            check=False,
+        )
+        assert metadata_result.returncode == 0
+
+    output_dir = tmp_path / "outside-checkout"
+    download_result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "abx_dl",
+            "dl",
+            "--plugins=wget",
+            f"--dir={output_dir}",
+            "https://example.com",
+        ],
+        cwd=REPO_ROOT,
+        env=_cli_env(tmp_path),
+        text=True,
+        capture_output=True,
+        timeout=180,
+        check=False,
+    )
+    assert download_result.returncode == 0
+    assert (output_dir / "index.jsonl").is_file()
+    assert "Example Domain" in (output_dir / "wget" / "example.com" / "index.html").read_text()
+
+
 def test_help_aliases_match_top_level_help(tmp_path: Path) -> None:
     help_result = _run_cli(tmp_path, "--help")
     command_help_result = _run_cli(tmp_path, "help")

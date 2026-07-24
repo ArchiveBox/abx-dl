@@ -9,6 +9,7 @@ import re
 import signal
 import sys
 import time
+import tomllib
 from collections import defaultdict, deque
 from contextlib import nullcontext
 from dataclasses import dataclass, field as dataclass_field
@@ -67,6 +68,25 @@ click.rich_click.GROUP_ARGUMENTS_OPTIONS = True
 
 REPR_HIGHLIGHTER = ReprHighlighter()
 HOME_PREFIX = str(Path.home())
+
+
+def _source_checkout_root() -> Path | None:
+    root = Path(__file__).resolve().parent.parent
+    git_marker = root / ".git"
+    if git_marker.is_file():
+        try:
+            is_checkout = git_marker.read_text().strip().startswith("gitdir:")
+        except OSError:
+            return None
+    else:
+        is_checkout = (git_marker / "config").is_file()
+    if not is_checkout:
+        return None
+    try:
+        project_name = tomllib.loads((root / "pyproject.toml").read_text())["project"]["name"]
+    except (OSError, KeyError, tomllib.TOMLDecodeError):
+        return None
+    return root if project_name == "abx-dl" else None
 
 
 def _get_commit_hash() -> str | None:
@@ -1350,6 +1370,11 @@ def dl(
             raise click.UsageError(f"No plugins found matching output types: {', '.join(prefixes)}")
         selected = list(set(selected or []) | set(output_matched))
     out_path = Path(output_dir) if output_dir else Path.cwd()
+    source_checkout_root = _source_checkout_root()
+    if source_checkout_root is not None and out_path.expanduser().resolve() == source_checkout_root:
+        raise click.UsageError(
+            "Refusing to write crawl output into the abx-dl source checkout root. Pass --dir with a path outside the checkout.",
+        )
     config_overrides: dict[str, object] = {"TIMEOUT": timeout} if timeout else {}
     if max_urls < 0:
         raise click.BadParameter("max_urls must be 0 or a positive integer.", param_hint="--max-urls")
