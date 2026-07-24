@@ -176,9 +176,6 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=abxpkg-tmp-$TARGETARCH$TARGETVARIANT \
     echo "[+] Installing Chrome and plugin dependencies..." \
     && export HOME=/var/tmp/abxpkg-cache ABXPKG_TMP_CACHE_DIR=/var/tmp/abxpkg-cache \
-    && python3 -c 'from abx_dl.models import discover_plugins; [print(f"export {plugin.enabled_key}=True") for plugin in discover_plugins(runtime="abx-dl").values() if plugin.enabled_key in plugin.config.properties]' > /tmp/abx-dl-enable-plugins.env \
-    && sort /tmp/abx-dl-enable-plugins.env | tee -a /VERSION.txt \
-    && source /tmp/abx-dl-enable-plugins.env \
     && ABXPKG_NO_CACHE=True abxpkg env --install --binproviders=env,apt --lib="$ABXPKG_LIB_DIR" git >/dev/null \
     && ABXPKG_NO_CACHE=True abxpkg env --install --binproviders=env,apt --lib="$ABXPKG_LIB_DIR" --overrides='{"apt":{"install_args":["findutils"]}}' find >/dev/null \
     && ABXPKG_NO_CACHE=True abx-dl install chrome \
@@ -216,8 +213,6 @@ RUN (echo -e "\n\n[+] abx-dl runtime versions" \
     && abx-dl version \
     && abxpkg load --binproviders=env /opt/node/bin/node \
     && abxpkg load --binproviders=env /venv/bin/python3 \
-    && python3 -c 'from abx_dl.models import discover_plugins; [print(f"export {plugin.enabled_key}=True") for plugin in discover_plugins(runtime="abx-dl").values() if plugin.enabled_key in plugin.config.properties]' > /tmp/abx-dl-enable-plugins.env \
-    && source /tmp/abx-dl-enable-plugins.env \
     && abx-dl plugins \
     && abxpkg load --binproviders=env rg \
     && ! command -v gcc \
