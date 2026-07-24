@@ -6,7 +6,11 @@ SCRIPT_REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 GITHUB_BASE="${GITHUB_BASE:-https://github.com/ArchiveBox}"
 MONOREPO_REMOTE="${MONOREPO_REMOTE:-$GITHUB_BASE/monorepo.git}"
 REPO_NAMES=(abxbus abxpkg abx-plugins abx-dl archivebox)
-ABXPKG_BOOTSTRAP_VERSION="${ABXPKG_BOOTSTRAP_VERSION:-1.11.289}"
+ABXPKG_BOOTSTRAP_VERSION="${ABXPKG_BOOTSTRAP_VERSION:-$(
+    uv run --no-project python -c \
+        'import re, sys, tomllib; dependencies = tomllib.load(open(sys.argv[1], "rb"))["project"]["dependencies"]; print(next(re.fullmatch(r"abxpkg==([^; ]+)", dep).group(1) for dep in dependencies if dep.startswith("abxpkg==")))' \
+        "$SCRIPT_REPO_ROOT/pyproject.toml"
+)}"
 
 repo_branch() {
     if [[ "$1" == "archivebox" ]]; then

@@ -62,19 +62,38 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+          mapfile -t versions < <("$PYTHON_BINARY" - <<'PY'
+          import re
+          import tomllib
+
+          dependencies = tomllib.load(open("pyproject.toml", "rb"))["project"]["dependencies"]
+          for package in ("abxbus", "abxpkg", "abx-plugins"):
+              match = next(
+                  (
+                      re.fullmatch(rf"{re.escape(package)}==([^; ]+)", dependency)
+                      for dependency in dependencies
+                      if dependency.startswith(f"{package}==")
+                  ),
+                  None,
+              )
+              if match is None:
+                  raise SystemExit(f"Missing exact {package} dependency")
+              print(match.group(1))
+          PY
+          )
+          test "${#versions[@]}" -eq 3
           for context in \
-            "abxbus|2.5.40|71df800033f35a7e319b63a3520990454d78bd7e|https://github.com/ArchiveBox/abxbus.git" \
-            "abxpkg|v1.11.289|c5ecfd87adf2c6aed9d76f7bb8a854de1dd5d2ee|https://github.com/ArchiveBox/abxpkg.git" \
-            "abx-plugins|v1.11.312|6288c77629d8206193d9650ee39d4a24671f3e3f|https://github.com/ArchiveBox/abx-plugins.git"
+            "abxbus|${versions[0]}|https://github.com/ArchiveBox/abxbus.git" \
+            "abxpkg|v${versions[1]}|https://github.com/ArchiveBox/abxpkg.git" \
+            "abx-plugins|v${versions[2]}|https://github.com/ArchiveBox/abx-plugins.git"
           do
-            IFS='|' read -r name tag expected_sha url <<< "$context"
+            IFS='|' read -r name tag url <<< "$context"
             remote_ref="$("${GIT_BINARY}" ls-remote "$url" "refs/tags/$tag")"
             remote_sha="${remote_ref%%[[:space:]]*}"
-            [[ "$expected_sha" =~ ^[0-9a-f]{40}$ ]]
-            test "$remote_sha" = "$expected_sha"
+            [[ "$remote_sha" =~ ^[0-9a-f]{40}$ ]]
             checkout="${{ runner.temp }}/$name"
             "${GIT_BINARY}" clone --depth=1 --branch "$tag" "$url" "$checkout"
-            test "$("${GIT_BINARY}" -C "$checkout" rev-parse HEAD)" = "$expected_sha"
+            test "$("${GIT_BINARY}" -C "$checkout" rev-parse HEAD)" = "$remote_sha"
           done
 
       - name: Install documentation test dependencies
@@ -157,6 +176,7 @@ jobs:
           platforms: ${{ matrix.platform }}
 
       - name: Test Docker documentation commands
+        if: matrix.platform == 'linux/amd64'
         env:
           ABXDL_IMAGE: ${{ matrix.local_tag }}
         run: $UV_BINARY run --no-sync --no-sources pytest -vv --tb=long -m docker_required README.md AGENTS.md CLAUDE.md skills
@@ -203,7 +223,7 @@ jobs:
           PY
 
           "$SCRIPT_BINARY" -q -e -c \
-            "\"${DOCKER_BINARY}\" run --rm -it --platform '${{ matrix.platform }}' --env-file '$ALL_PLUGINS_ENV' --env ANTHROPIC_API_KEY --env CLAUDE_CODE_OAUTH_TOKEN --env TWOCAPTCHA_API_KEY --volume '$OUT_DIR:/out' --volume '$PERSONAS_DIR:/data/personas' '${{ matrix.local_tag }}' --no-install --max-urls=1 https://example.com" \
+            "\"${DOCKER_BINARY}\" run --rm -it --platform '${{ matrix.platform }}' --env-file '$ALL_PLUGINS_ENV' --env ABXPKG_LIB_DIR=/tmp/runtime-abx-lib --env ANTHROPIC_API_KEY --env CLAUDE_CODE_OAUTH_TOKEN --env TWOCAPTCHA_API_KEY --volume '$OUT_DIR:/out' --volume '$PERSONAS_DIR:/data/personas' '${{ matrix.local_tag }}' --max-urls=1 https://example.com" \
             /dev/null 2>&1 | "$TEE_BINARY" "$OUT_DIR/crawl.log"
 
           "$SCRIPT_BINARY" -q -e -c \

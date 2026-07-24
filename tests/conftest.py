@@ -22,7 +22,6 @@ _TEST_CONFIG_KEYS = frozenset(
         "HOOK_ORDER",
         "JAVA_VERSION_CONSTRAINT",
         "ABXPKG_LIB_DIR",
-        "ABXPKG_LIB_DIR",
         "NPM_BIN_DIR",
         "NPM_HOME",
         "NODE_MODULES_DIR",
@@ -40,8 +39,8 @@ _TEST_CONFIG_KEYS = frozenset(
 
 
 @pytest.fixture(autouse=True)
-def isolated_config(tmp_path: Path):
-    """Point config.env and derived.env at a temp dir so tests don't share state."""
+def isolated_config(tmp_path: Path, tmp_path_factory: pytest.TempPathFactory):
+    """Isolate mutable state while sharing one managed binary root per test session."""
     original_cwd = Path.cwd()
     original_env = os.environ.copy()
     # Remove any env vars leaked from prior tests before setting the isolated values.
@@ -62,7 +61,7 @@ def isolated_config(tmp_path: Path):
     data_dir.mkdir(parents=True, exist_ok=True)
     personas_dir.mkdir(parents=True, exist_ok=True)
     tmp_dir.mkdir(parents=True, exist_ok=True)
-    lib_dir = config_dir / "lib"
+    lib_dir = tmp_path_factory.getbasetemp() / "abxpkg-lib"
     lib_dir.mkdir(parents=True, exist_ok=True)
 
     os.chdir(tmp_path)

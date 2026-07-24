@@ -407,8 +407,9 @@ def test_required_binary_requests_preserve_extra_config_fields() -> None:
         "papers-dl==0.0.25",
     ]
     assert "aiohttp>=3.13.2" in install_args
-    assert "/lib/" in papersdl_request["overrides"]["uv"]["install_root"]
-    assert papersdl_request["overrides"]["uv"]["install_root"].endswith("/uv/packages/papers-dl")
+    assert Path(papersdl_request["overrides"]["uv"]["install_root"]) == (
+        Path(os.environ["ABXPKG_LIB_DIR"]) / "uv" / "packages" / "papers-dl"
+    )
 
 
 def test_setup_services_accepts_runtime_config_overrides_and_seeds_machine_events(tmp_path: Path) -> None:
@@ -1295,7 +1296,13 @@ def test_snapshot_abort_stops_scheduling_later_hooks(tmp_path: Path, httpserver:
     output_dir = tmp_path / "run"
     bus = create_bus(total_timeout=300.0, name=f"snapshot_abort_{tmp_path.name}")
 
-    async def run() -> tuple[ProcessCompletedEvent | None, SnapshotCompletedEvent | None, ProcessStartedEvent | None]:
+    async def run() -> tuple[
+        ProcessCompletedEvent | None,
+        ProcessCompletedEvent | None,
+        SnapshotCompletedEvent | None,
+        ProcessStartedEvent | None,
+        int,
+    ]:
         task = asyncio.create_task(
             download(
                 stream_url,
@@ -1315,6 +1322,13 @@ def test_snapshot_abort_stops_scheduling_later_hooks(tmp_path: Path, httpserver:
             hook_name="on_Snapshot__30_chrome_navigate",
         )
         assert isinstance(navigate_started, ProcessStartedEvent)
+        tab_started = await bus.find(
+            ProcessStartedEvent,
+            past=True,
+            future=False,
+            hook_name="on_Snapshot__10_chrome_tab.daemon.bg",
+        )
+        assert isinstance(tab_started, ProcessStartedEvent)
         assert await asyncio.to_thread(response_started.wait, 60.0)
         crawl = await bus.find(CrawlEvent, past=True, future=False)
         assert isinstance(crawl, CrawlEvent)
@@ -1326,6 +1340,12 @@ def test_snapshot_abort_stops_scheduling_later_hooks(tmp_path: Path, httpserver:
             future=False,
             hook_name="on_Snapshot__30_chrome_navigate",
         )
+        tab_completed = await bus.find(
+            ProcessCompletedEvent,
+            past=True,
+            future=False,
+            hook_name="on_Snapshot__10_chrome_tab.daemon.bg",
+        )
         snapshot_completed = await bus.find(
             SnapshotCompletedEvent,
             past=True,
@@ -1335,17 +1355,25 @@ def test_snapshot_abort_stops_scheduling_later_hooks(tmp_path: Path, httpserver:
         await bus.wait_until_idle()
         return (
             first_completed if isinstance(first_completed, ProcessCompletedEvent) else None,
+            tab_completed if isinstance(tab_completed, ProcessCompletedEvent) else None,
             snapshot_completed if isinstance(snapshot_completed, SnapshotCompletedEvent) else None,
             second_started if isinstance(second_started, ProcessStartedEvent) else None,
+            tab_started.pid,
         )
 
     try:
-        first_completed, snapshot_completed, second_started = asyncio.run(run())
+        first_completed, tab_completed, snapshot_completed, second_started, tab_pid = asyncio.run(run())
     finally:
         release_response.set()
 
     assert first_completed is not None
     assert first_completed.status == "skipped"
+    assert tab_completed is not None
+    assert tab_completed.status == "succeeded"
+    assert tab_completed.exit_code == 0
+    assert not _pid_is_alive(tab_pid)
+    assert not (output_dir / "chrome" / "target_id.txt").exists()
+    assert not (output_dir / "chrome" / "url.txt").exists()
     assert snapshot_completed is not None
     assert second_started is None
 
@@ -1693,10 +1721,13 @@ def test_crawl_abort_cleans_real_chrome_process_tree_and_foreground_hook(
 
     by_hook = {event.hook_name: event for event in completed}
     launch_completed = by_hook["on_CrawlSetup__90_chrome_launch.daemon.bg"]
+    tab_completed = by_hook["on_Snapshot__10_chrome_tab.daemon.bg"]
     navigate_completed = by_hook["on_Snapshot__30_chrome_navigate"]
     assert launch_completed.status == "succeeded"
     assert "shutting down" in launch_completed.stdout
     assert "exited successfully" in launch_completed.stdout
+    assert tab_completed.status == "succeeded"
+    assert tab_completed.exit_code == 0
     assert navigate_completed.status == "skipped"
     assert navigate_completed.stderr == "Hook interrupted by user"
     assert {event.hook_name for event in kills} >= {

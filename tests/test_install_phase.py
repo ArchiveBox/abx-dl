@@ -165,6 +165,7 @@ def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) 
             "install_args": ["abxbus@2.5.9"],
             "abspath": str(managed_lib_dir / "pnpm" / "packages" / "abxbus" / "node_modules" / "abxbus" / "dist" / "cjs" / "index.js"),
             "version": "2.5.9",
+            "postinstall_scripts": True,
         },
     }
     no_cache_request = next(event for event in asyncio.run(collect_requests(no_cache=True)) if event.name == "abxbus")

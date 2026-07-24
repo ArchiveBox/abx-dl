@@ -1,7 +1,7 @@
 [project]
 name = "abx-dl"
-version = "1.11.269"
-requires-python = ">=3.12"
+version = "1.11.270"
+requires-python = ">=3.12,<3.15"
 description = "All-in-one CLI tool to download and extract content from URLs"
 authors = [{name = "Nick Sweeting"}, {name = "ArchiveBox"}]
 license = {text = "MIT"}
@@ -41,8 +41,8 @@ dependencies = [
     "rich-click>=1.8.0",
     "rich>=13.0.0",
     "abxbus==2.5.40",
-    "abxpkg==1.11.289",
-    "abx-plugins==1.11.312",
+    "abxpkg==1.11.292",
+    "abx-plugins==1.11.315",
     "jambo>=0.1.7",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
@@ -126,7 +126,6 @@ exclude-newer-package = { abx-dl = "2100-01-01T00:00:00Z", abxpkg = "2100-01-01T
 mypy_path = "abx_dl,tests,server,abx_dl/typings"
 namespace_packages = true
 explicit_package_bases = true
-plugins = ["mypy_django_plugin.main"]
 
 [tool.pyright]
 include = [
