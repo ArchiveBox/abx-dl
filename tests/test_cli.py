@@ -1,26 +1,32 @@
 import asyncio
-import io
 import importlib.metadata
+import io
 import json
 import os
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
-from rich.console import Console
-from rich.progress import Progress
-
 import abx_dl.cli as cli_module
-from abx_dl.cli import _build_archive_results_table, _compact_output, _format_archive_result_line, _format_elapsed, cli as cli_group
-from abx_dl.events import CrawlSetupEvent, ProcessCompletedEvent, ProcessEvent, ProcessStartedEvent, ProcessStdoutEvent, SnapshotEvent
+from abx_dl.cli import _build_archive_results_table, _compact_output, _format_archive_result_line, _format_elapsed
+from abx_dl.cli import cli as cli_group
+from abx_dl.events import (
+    ArchiveResultEvent,
+    CrawlSetupEvent,
+    ProcessCompletedEvent,
+    ProcessEvent,
+    ProcessStartedEvent,
+    ProcessStdoutEvent,
+    SnapshotEvent,
+)
 from abx_dl.limits import CrawlLimitState, parse_filesize_to_bytes
 from abx_dl.models import ArchiveResult, discover_plugins
 from abx_dl.orchestrator import create_bus
-from abx_dl.events import ArchiveResultEvent
 from abx_dl.output_files import OutputFile
-
+from rich.console import Console
+from rich.progress import Progress
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ABX_ENV_KEYS = {
@@ -56,7 +62,7 @@ def _cli_env(tmp_path: Path) -> dict[str, str]:
         sibling_path = REPO_ROOT.parent / sibling
         if sibling_path.exists():
             pythonpath_entries.append(str(sibling_path))
-    if "PYTHONPATH" in env and env["PYTHONPATH"]:
+    if env.get("PYTHONPATH"):
         pythonpath_entries.append(env["PYTHONPATH"])
     env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
     env["CONFIG_DIR"] = str(config_dir)
@@ -736,9 +742,14 @@ def test_format_archive_result_line_includes_requested_fields() -> None:
 
 
 def test_format_elapsed_uses_running_or_completed_timestamps() -> None:
-    now = datetime(2026, 3, 11, 12, 0, 15)
+    now = datetime(2026, 3, 11, 12, 0, 15, tzinfo=UTC)
     assert _format_elapsed("2026-03-11T12:00:00", None, 60, now=now) == "15.0s/60s"
     assert _format_elapsed("2026-03-11T12:00:00", "2026-03-11T12:00:05", 60, now=now) == "5.0s/60s"
+
+
+def test_format_elapsed_accepts_mixed_timezone_awareness() -> None:
+    assert _format_elapsed("2026-03-11T12:00:00+00:00", "2026-03-11T12:00:05", 60) == "5.0s/60s"
+    assert _format_elapsed("2026-03-11T12:00:00", "2026-03-11T12:00:05+00:00", 60) == "5.0s/60s"
 
 
 def test_advance_progress_expands_total_for_extra_completed_hooks() -> None:
@@ -759,7 +770,7 @@ def test_build_archive_results_table_includes_elapsed_column() -> None:
         status="started",
         start_ts="2026-03-11T12:00:00",
     )
-    table = _build_archive_results_table([result], timeout_seconds=60, now=datetime(2026, 3, 11, 12, 0, 5))
+    table = _build_archive_results_table([result], timeout_seconds=60, now=datetime(2026, 3, 11, 12, 0, 5, tzinfo=UTC))
     assert [column.header for column in table.columns] == ["Currently Running", "Phase", "Status", "Size", "Elapsed", "Output"]
     assert [str(cell) for cell in table.columns[3]._cells] == ["-"]
     assert table.columns[4]._cells == ["5.0s/60s"]
