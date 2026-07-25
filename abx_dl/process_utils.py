@@ -202,6 +202,24 @@ def _send_signal(pid: int, sig: int) -> bool:
         return False
 
 
+def _send_process_signal(pid: int, sig: int) -> bool:
+    """Send a signal only to the process leader."""
+    try:
+        os.kill(pid, sig)
+        return True
+    except (ProcessLookupError, PermissionError):
+        return False
+
+
+def _send_process_group_signal(pid: int, sig: int) -> bool:
+    """Send a signal to the process group identified by the original leader PID."""
+    try:
+        os.killpg(pid, sig)
+        return True
+    except (ProcessLookupError, PermissionError, OSError):
+        return False
+
+
 # ── Async graceful shutdown ─────────────────────────────────────────────────
 
 
@@ -213,9 +231,9 @@ async def graceful_kill_process(
     """Graceful shutdown of a live asyncio subprocess: SIGTERM → wait → SIGKILL.
 
     Uses ``process.wait()`` for reliable exit detection (tied to asyncio's
-    subprocess watcher). This is the right choice when we have the process
-    handle — i.e., killing a subprocess from the same handler that spawned it
-    (timeout path, exception path in ProcessService.on_ProcessEvent).
+    subprocess watcher). Signal the leader first so hooks with their own
+    SIGTERM cleanup handlers can shut down managed children cleanly; escalate
+    to the hook process group only if the leader does not exit.
 
     Args:
         process: The asyncio subprocess to kill.
@@ -228,17 +246,20 @@ async def graceful_kill_process(
     if pid is None:
         return
 
-    if not _send_signal(pid, signal.SIGTERM):
+    if not _send_process_signal(pid, signal.SIGTERM):
         return  # already dead
 
     try:
         await asyncio.wait_for(process.wait(), timeout=grace_period)
+        _send_process_group_signal(pid, signal.SIGTERM)
         return  # exited cleanly
     except TimeoutError:
         pass
 
-    # Process ignored SIGTERM — force kill
-    _send_signal(pid, signal.SIGKILL)
+    _send_process_group_signal(pid, signal.SIGTERM)
+
+    # Process ignored SIGTERM — force kill the whole hook process group.
+    _send_process_group_signal(pid, signal.SIGKILL)
     try:
         await asyncio.wait_for(process.wait(), timeout=2.0)
     except TimeoutError:

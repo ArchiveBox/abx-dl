@@ -193,9 +193,17 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR"/pnpm /opt/node -type f -name '*.map' -delete \
     && rm -rf /usr/lib/*-linux-gnu/dri /usr/lib/*-linux-gnu/libLLVM*.so* /usr/lib/*-linux-gnu/libz3.so.* \
     && rm -rf /usr/share/icons /usr/share/doc /usr/share/man /usr/share/bash-completion /usr/share/zsh /usr/share/info /usr/share/lintian /usr/share/bug \
+    && install -d -m 755 /usr/share/man/man1 \
     && rm -rf /opt/node/include /opt/node/share/doc /opt/node/share/man \
     && rm -f /opt/node/CHANGELOG.md /opt/node/README.md /opt/node/LICENSE \
     && rm -f /usr/lib/jvm/java-*-openjdk-*/lib/server/classes*.jsa \
+    && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR"/playwright/cache/chromium-* -type f -name chrome -print0 > /tmp/native-executables \
+    && while IFS= read -r -d '' native_executable; do \
+        magic=''; \
+        if IFS= read -r -N 4 magic < "$native_executable" && [[ "$magic" == $'\x7fELF' ]]; then \
+            "$ABXPKG_LIB_DIR/env/bin/strip" --strip-unneeded "$native_executable" || exit $?; \
+        fi; \
+    done < /tmp/native-executables \
     && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR" -type f \( -name '*.so' -o -name '*.node' \) -print0 > /tmp/native-libraries \
     && while IFS= read -r -d '' native_library; do \
         magic=''; \
