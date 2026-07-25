@@ -172,7 +172,7 @@ def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) 
     assert no_cache_request.no_cache is True
 
 
-def test_install_event_includes_opencode_when_route_is_disabled(tmp_path: Path) -> None:
+def test_install_event_excludes_opencode_when_route_is_disabled(tmp_path: Path) -> None:
     plugins = discover_plugins(runtime="archivebox")
     plugin = plugins["opencode"]
     snapshot = Snapshot(url="")
@@ -222,12 +222,7 @@ def test_install_event_includes_opencode_when_route_is_disabled(tmp_path: Path) 
 
     asyncio.run(run())
 
-    opencode_request = next(
-        event for event in request_events if event.extra_context.get("plugin_name") == "opencode" and event.name == "opencode"
-    )
-    assert opencode_request.binproviders == "env,pnpm"
-    assert opencode_request.overrides is not None
-    assert opencode_request.overrides["pnpm"]["install_root"] == str(managed_lib_dir / "pnpm" / "packages" / "opencode")
+    assert not [event for event in request_events if event.extra_context.get("plugin_name") == "opencode" and event.name == "opencode"]
 
 
 def test_install_event_revalidates_derived_binary_requests_for_persistence(tmp_path: Path) -> None:
