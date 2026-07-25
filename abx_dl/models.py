@@ -13,18 +13,17 @@ import platform
 import re
 import socket
 import sys
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
+from abx_plugins import get_plugins_dir
 from abxpkg import BinaryOverrides
 from abxpkg.base_types import is_forbidden_convenience_lib_bin
 from pydantic import BaseModel, ConfigDict, Field
-from abx_plugins import get_plugins_dir
 
 from .output_files import OutputFile
-
 
 try:
     LIBRARY_VERSION = importlib.metadata.version("abx-dl")
@@ -37,12 +36,12 @@ except importlib.metadata.PackageNotFoundError:
 
 def uuid7() -> str:
     """Generate a UUIDv7-like string (timestamp-based for sortability)."""
-    ts = int(datetime.now().timestamp() * 1000)
+    ts = int(datetime.now(UTC).timestamp() * 1000)
     return f"{ts:012x}{uuid4().hex[:20]}"
 
 
 def now_iso() -> str:
-    return datetime.now().isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 # ── Plugin models ──────────────────────────────────────────────────────────
@@ -101,7 +100,6 @@ class PluginConfig(BaseModel):
     title: str = ""
     description: str = ""
     x_runtimes: list[str] = Field(default_factory=list, alias="x-runtimes")
-    x_install_when_disabled: bool = Field(default=False, alias="x-install-when-disabled")
     x_accepts_internal_input: bool = Field(default=False, alias="x-accepts-internal-input")
     output_mimetypes: list[str] = Field(default_factory=list)  # e.g. ['text/html', 'video/']
     properties: dict[str, dict[str, Any]] = Field(default_factory=dict)  # JSONSchema format describing plugin config
@@ -442,7 +440,7 @@ def load_plugin(plugin_dir: Path, *, runtime: str | None = None) -> Plugin | Non
     plugin_name = plugin_dir.name
 
     # Skip hidden dirs and special dirs
-    if plugin_name.startswith(".") or plugin_name.startswith("_"):
+    if plugin_name.startswith((".", "_")):
         return None
 
     plugin = Plugin(name=plugin_name, path=plugin_dir)

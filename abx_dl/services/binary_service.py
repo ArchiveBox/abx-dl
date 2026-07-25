@@ -22,7 +22,6 @@ from ..events import CrawlAbortEvent, InstallEvent, MachineEvent
 from ..models import Plugin, Snapshot, uuid7
 from .base import BaseService
 
-
 _TEMPLATE_NAME_RE = re.compile(r"^\{([A-Z0-9_]+)\}$")
 
 
@@ -48,8 +47,6 @@ def _config_bool(value: Any) -> bool:
 
 
 def _plugin_enabled_from_user_config(plugin: Plugin, user_config: RuntimeConfig) -> bool:
-    if plugin.config.x_install_when_disabled:
-        return True
     enabled_key = plugin.enabled_key
     if enabled_key not in plugin.config.properties:
         return True
@@ -298,7 +295,7 @@ class AbxDlEnvConfigFileBinaryCacheBackend:
             key = match.group(1)
             try:
                 hydrated_name = template_name.format(**runtime_env)
-            except Exception:
+            except KeyError:
                 continue
             if hydrated_name == request.name:
                 matching_keys.append(key)
