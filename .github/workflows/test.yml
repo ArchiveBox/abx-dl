@@ -341,6 +341,6 @@ jobs:
           set -Eeuo pipefail
           VERSION="$("${UV_BINARY}" run --no-project python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
           for artifact in dist/*.whl dist/*.tar.gz; do
-            test "$("${UV_BINARY}" run --isolated --no-project --python '${{ matrix.python }}' --with "$artifact" abx-dl version --quiet)" = "$VERSION"
-            "${UV_BINARY}" run --isolated --no-project --python '${{ matrix.python }}' --with "$artifact" abx-dl --help > /dev/null
+            test "$("${UV_BINARY}" run --isolated --no-project --refresh-package abx-plugins --python '${{ matrix.python }}' --with "$artifact" abx-dl version --quiet)" = "$VERSION"
+            "${UV_BINARY}" run --isolated --no-project --refresh-package abx-plugins --python '${{ matrix.python }}' --with "$artifact" abx-dl --help > /dev/null
           done
