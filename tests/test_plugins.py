@@ -58,6 +58,7 @@ def test_discover_plugins_extends_packaged_plugins_with_runtime_plugin_dir(tmp_p
         env=env,
         text=True,
         capture_output=True,
+        timeout=30,
         check=True,
     )
     discovered_hooks = json.loads(result.stdout)

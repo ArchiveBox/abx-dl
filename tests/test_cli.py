@@ -919,6 +919,7 @@ def test_readme_plugins_command_lists_real_wget_hooks(tmp_path: Path) -> None:
         check=True,
         capture_output=True,
         text=True,
+        timeout=30,
     )
     assert version_result.stdout.startswith("GNU Wget")
     for hook_name in expected_hook_names:

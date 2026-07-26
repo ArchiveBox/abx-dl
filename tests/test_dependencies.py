@@ -46,6 +46,7 @@ def test_resolve_binary_requests_uses_real_abxpkg_env_projection(tmp_path: Path)
         check=True,
         capture_output=True,
         text=True,
+        timeout=30,
     )
     assert result.stdout == "canonical-abxpkg\n"
     assert shell_event is not None
