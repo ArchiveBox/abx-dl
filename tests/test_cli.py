@@ -66,7 +66,7 @@ def _cli_env(tmp_path: Path) -> dict[str, str]:
         pythonpath_entries.append(env["PYTHONPATH"])
     env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
     env["CONFIG_DIR"] = str(config_dir)
-    env["ABXPKG_LIB_DIR"] = str(config_dir / "lib")
+    env["ABXPKG_LIB_DIR"] = os.environ.get("ABXPKG_LIB_DIR", str(config_dir / "lib"))
     env["PERSONAS_DIR"] = str(config_dir / "personas")
     env["DATA_DIR"] = str(tmp_path / "data")
     env["TMP_DIR"] = str(tmp_path / "tmp")
@@ -906,7 +906,7 @@ def test_readme_config_commands_round_trip_in_isolated_config_dir(tmp_path: Path
 def test_readme_plugins_command_lists_real_wget_hooks(tmp_path: Path) -> None:
     result = _run_cli(tmp_path, "plugins", "wget")
     expected_hook_names = _hook_names("wget", "Crawl") + _hook_names("wget", "Snapshot")
-    resolved_wget = tmp_path / "config" / "lib" / "env" / "bin" / "wget"
+    resolved_wget = Path(_cli_env(tmp_path)["ABXPKG_LIB_DIR"]) / "env" / "bin" / "wget"
     assert result.returncode == 0
     assert "wget" in result.stdout
     assert "env/bin/wget" in result.stdout

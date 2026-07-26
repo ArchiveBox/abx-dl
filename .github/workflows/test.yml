@@ -30,7 +30,7 @@ jobs:
 
       - name: Project host CI tools through abxpkg
         env:
-          ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
+          ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
           PYTHON_BINARY: ${{ env.pythonLocation }}/bin/python
         run: uv run --no-project python bin/ci_project_tools.py orchestration_binaries --lib "$ABXPKG_LIB_DIR"
 
@@ -122,7 +122,7 @@ jobs:
 
       - name: Project host CI tools through abxpkg
         env:
-          ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
+          ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
           PYTHON_BINARY: ${{ env.pythonLocation }}/bin/python
         run: uv run --no-project python bin/ci_project_tools.py orchestration_binaries --lib "$ABXPKG_LIB_DIR"
 
@@ -155,7 +155,7 @@ jobs:
 
       - name: Project host CI tools through abxpkg
         env:
-          ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
+          ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
           PYTHON_BINARY: ${{ env.pythonLocation }}/bin/python
         run: uv run --no-project python bin/ci_project_tools.py orchestration_binaries --lib "$ABXPKG_LIB_DIR"
 
@@ -192,7 +192,7 @@ jobs:
 
       - name: Project host CI tools through abxpkg
         env:
-          ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
+          ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
           PYTHON_BINARY: ${{ env.pythonLocation }}/bin/python
         run: uv run --no-project python bin/ci_project_tools.py orchestration_binaries --lib "$ABXPKG_LIB_DIR"
 
@@ -267,7 +267,7 @@ jobs:
 
       - name: Project host CI tools through abxpkg
         env:
-          ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
+          ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
           PYTHON_BINARY: ${{ env.pythonLocation }}/bin/python
         run: uv run --no-project python bin/ci_project_tools.py orchestration_binaries --lib "$ABXPKG_LIB_DIR"
 
@@ -326,7 +326,7 @@ jobs:
 
       - name: Project host CI tools through abxpkg
         env:
-          ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
+          ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
           PYTHON_BINARY: ${{ env.pythonLocation }}/bin/python
         run: uv run --no-project python bin/ci_project_tools.py orchestration_binaries --lib "$ABXPKG_LIB_DIR"
 
@@ -340,7 +340,19 @@ jobs:
         run: |
           set -Eeuo pipefail
           VERSION="$("${UV_BINARY}" run --no-project python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          ABX_PLUGINS_WHEEL_URL="$("${UV_BINARY}" run --no-project python - <<'PY'
+          import tomllib
+
+          project = tomllib.load(open("pyproject.toml", "rb"))["project"]
+          expected_version = next(dep.split("==", 1)[1] for dep in project["dependencies"] if dep.startswith("abx-plugins=="))
+          lock = tomllib.load(open("uv.lock", "rb"))
+          package = next(pkg for pkg in lock["package"] if pkg["name"] == "abx-plugins")
+          if package["version"] != expected_version:
+              raise SystemExit(f"uv.lock has abx-plugins=={package['version']}, expected {expected_version}")
+          print(package["wheels"][0]["url"])
+          PY
+          )"
           for artifact in dist/*.whl dist/*.tar.gz; do
-            test "$("${UV_BINARY}" run --isolated --no-project --refresh-package abx-plugins --python '${{ matrix.python }}' --with "$artifact" abx-dl version --quiet)" = "$VERSION"
-            "${UV_BINARY}" run --isolated --no-project --refresh-package abx-plugins --python '${{ matrix.python }}' --with "$artifact" abx-dl --help > /dev/null
+            test "$("${UV_BINARY}" run --isolated --no-project --python '${{ matrix.python }}' --with "$ABX_PLUGINS_WHEEL_URL" --with "$artifact" abx-dl version --quiet)" = "$VERSION"
+            "${UV_BINARY}" run --isolated --no-project --python '${{ matrix.python }}' --with "$ABX_PLUGINS_WHEEL_URL" --with "$artifact" abx-dl --help > /dev/null
           done

@@ -35,7 +35,7 @@ from ..process_utils import graceful_kill_by_pid_file, graceful_kill_process, wr
 from .base import BaseService
 
 ProcessStatus = Literal["succeeded", "failed", "skipped"]
-STDOUT_POLL_INTERVAL = 0.5
+STDOUT_POLL_INTERVAL = 0.05
 SHELL_SIGNAL_STDERR_RE = re.compile(r"(?:Terminated|Killed):\s*(\d+)")
 POLITE_CLEANUP_SIGNAL_EXIT_CODES = {
     -signal.SIGINT,

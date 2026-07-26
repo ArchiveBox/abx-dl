@@ -5,12 +5,11 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from platformdirs import user_config_path
-
 from abx_dl.config import GlobalConfig, RuntimeConfig, get_config, get_initial_env, get_plugin_env
 from abx_dl.events import MachineEvent
 from abx_dl.models import PluginEnv, discover_plugins
 from abx_dl.orchestrator import create_bus, install_plugins
+from platformdirs import user_config_path
 
 
 def assemble_env(*, overrides: dict[str, Any] | None = None, run_output_dir: Path) -> dict[str, str]:
@@ -24,7 +23,7 @@ def test_isolated_config_shares_managed_binaries_but_isolates_mutable_state(
     tmp_path: Path,
     tmp_path_factory: pytest.TempPathFactory,
 ) -> None:
-    session_lib_dir = tmp_path_factory.getbasetemp() / "abxpkg-lib"
+    session_lib_dir = Path(os.environ["_ABX_DL_TEST_ABXPKG_LIB_DIR"])
 
     assert Path(os.environ["ABXPKG_LIB_DIR"]) == session_lib_dir
     assert Path(os.environ["CONFIG_DIR"]).is_relative_to(tmp_path)
