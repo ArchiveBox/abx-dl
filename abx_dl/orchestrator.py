@@ -7,10 +7,6 @@ the entire lifecycle. Everything else is driven by services reacting to events.
 
 Full event tree for a typical run::
 
-    InstallEvent                                # emitted here first by download()
-    └── BinaryRequestEvent × N                  # emitted from config.json required_binaries
-        └── abxpkg BinaryService → BinaryEvent
-
     CrawlEvent                                  # internal lifecycle root
     ├── CrawlSetupEvent                         # plugin on_CrawlSetup hooks run here
     │   ├── ProcessEvent  (bg: chrome_launch)
@@ -39,9 +35,8 @@ Full event tree for a typical run::
 Result collection:
 - ArchiveResultEvents are only emitted during the snapshot phase (under
   CrawlStartEvent → SnapshotEvent).
-- Install preflight emits ``BinaryRequestEvent`` records from
-  ``required_binaries``. abxpkg's ``BinaryService`` resolves or installs them,
-  and ``BinaryCacheService`` projects runtime cache/env state.
+- Hook shebangs run through ``abxpkg run --script --deps-from=...``, which
+  resolves declared dependencies when each hook starts.
 - Crawl setup hooks emit no stdout JSONL records. Snapshot hooks emit
   ``ArchiveResult`` and may also emit ``Snapshot`` and ``Tag``.
 - ArchiveResultService emits ArchiveResultEvents in two cases: directly from
@@ -61,11 +56,9 @@ Key abxbus concepts used:
   see config updates from all prior hooks.
 
 - **Queue-jump** (``await bus.emit(...).now()``): the emitted event and ALL its
-  descendants complete synchronously before the await returns. This is how
-  config propagation works: InstallEvent emits BinaryRequestEvent →
-  abxpkg resolves/installs it → BinaryEvent updates runtime binary state,
-  and snapshot hook stdout records like ``ArchiveResult`` / ``Snapshot`` / ``Tag``
-  are also fully routed before the next stdout line is read.
+  descendants complete synchronously before the await returns. Snapshot hook
+  stdout records like ``ArchiveResult`` / ``Snapshot`` / ``Tag`` are fully
+  routed before the next stdout line is read.
 
 - **Fire-and-forget** (``bus.emit(...)`` without await): the event becomes a
   concurrent child of the current event. It runs in the background and is
@@ -542,7 +535,6 @@ async def download(
     bus: EventBus | None = None,
     emit_jsonl: bool | None = None,
     interactive_tty: bool | None = None,
-    install_enabled: bool = True,
     crawl_setup_enabled: bool = True,
     crawl_start_enabled: bool = True,
     snapshot_cleanup_enabled: bool = True,
@@ -566,8 +558,8 @@ async def download(
     This is the only public function in the orchestrator. It:
     1. Discovers and sorts hooks from selected plugins
     2. Wires up all services on the bus
-    3. Emits InstallEvent for dependency preflight, then CrawlEvent as the
-       internal lifecycle root for the CrawlSetup → CrawlStart → Snapshot →
+    3. Emits CrawlEvent as the internal lifecycle root for the
+       CrawlSetup → CrawlStart → Snapshot →
        SnapshotCleanup → CrawlCleanup sequence (unless phase flags request a subset)
     4. Leaves all result collection to bus subscribers attached during setup
 
@@ -631,7 +623,6 @@ async def download(
 
     # Collect and sort hooks by (order, name) so execution order matches
     # the numeric prefix in hook filenames (e.g. __10, __41, __70, __90, __91)
-    install_plugins_for_phase = get_install_plugins(plugins)
     crawl_setup_hooks: list[tuple[Plugin, Hook]] = []
     snapshot_hooks: list[tuple[Plugin, Hook]] = []
     for plugin in plugins.values():
@@ -643,13 +634,15 @@ async def download(
     snapshot_hooks.sort(key=lambda x: x[1].sort_key)
 
     # Compute per-phase timeouts from plugin-specific settings
-    install_phase_timeout = compute_install_phase_timeout(install_plugins_for_phase, config_overrides or None)
+    dependency_check_timeout = (
+        compute_install_phase_timeout(get_install_plugins(plugins), config_overrides or None) if not auto_install else 0.0
+    )
     crawl_setup_phase_timeout = compute_phase_timeout(crawl_setup_hooks, config_overrides or None)
     snapshot_phase_timeout = compute_phase_timeout(snapshot_hooks, config_overrides or None)
     snapshot_cleanup_phase_timeout = snapshot_phase_timeout
     crawl_cleanup_phase_timeout = crawl_setup_phase_timeout
     total_timeout = (
-        (install_phase_timeout if install_enabled else 0.0)
+        dependency_check_timeout
         + (crawl_setup_phase_timeout if crawl_setup_enabled else 0.0)
         + (snapshot_phase_timeout if crawl_start_enabled else 0.0)
         + (snapshot_cleanup_phase_timeout if snapshot_cleanup_enabled else 0.0)
@@ -675,7 +668,7 @@ async def download(
             user=GlobalConfig(**explicit_user_config),
             derived=initial_derived_config,
         ),
-        install_enabled=install_enabled,
+        install_enabled=not auto_install,
         crawl_setup_enabled=crawl_setup_enabled,
         crawl_start_enabled=crawl_start_enabled,
         snapshot_cleanup_enabled=snapshot_cleanup_enabled,
@@ -725,18 +718,18 @@ async def download(
         await heartbeat.start()
 
     try:
-        if install_enabled:
+        if not auto_install:
             install_event = bus.emit(
                 InstallEvent(
                     url=url,
                     snapshot_id=snapshot.id,
                     output_dir=str(output_dir),
-                    event_timeout=install_phase_timeout,
-                    event_handler_slow_timeout=slow_warning_timeout(install_phase_timeout),
+                    event_timeout=dependency_check_timeout,
+                    event_handler_slow_timeout=slow_warning_timeout(dependency_check_timeout),
                 ),
             )
-            await install_event.now(timeout=install_phase_timeout)
-            await install_event.wait(timeout=install_phase_timeout)
+            await install_event.now(timeout=dependency_check_timeout)
+            await install_event.wait(timeout=dependency_check_timeout)
             await install_event.event_results_list()
             await bus.wait_until_idle()
         if crawl_setup_enabled or crawl_start_enabled or crawl_cleanup_enabled:

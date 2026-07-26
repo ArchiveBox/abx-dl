@@ -2,10 +2,6 @@
 
 Events form this phase order during execution::
 
-    InstallEvent                                    # orchestrator preflight only
-    └── BinaryRequestEvent × N                      # from config.json required_binaries
-        └── abxpkg BinaryService → BinaryEvent
-
     CrawlEvent                                      # internal lifecycle root
     ├── CrawlSetupEvent                             # plugin on_CrawlSetup hooks run here
     │   ├── ProcessEvent (on_CrawlSetup hooks)
@@ -71,11 +67,10 @@ def slow_warning_timeout(timeout: float | int | None) -> float | None:
 
 
 class InstallEvent(BaseEvent):
-    """Root pre-run phase for required binary resolution.
+    """Explicit dependency-check/install phase.
 
-    Emitted by the orchestrator before CrawlEvent. BinaryService handles it by
-    reading each enabled plugin's ``config.json > required_binaries`` and
-    emitting BinaryRequestEvent records for provider plugins to satisfy.
+    Used by the ``install`` command and by ``--no-install`` checks. Normal
+    crawls resolve each hook's dependencies through its abxpkg shebang.
     """
 
     url: str
@@ -87,8 +82,8 @@ class InstallEvent(BaseEvent):
 class CrawlEvent(BaseEvent):
     """Root event: kicks off the full crawl → snapshot → cleanup lifecycle.
 
-    Emitted once by orchestrator.download() after InstallEvent completes.
-    CrawlService.on_CrawlEvent handles this by emitting the lifecycle chain:
+    Emitted once by orchestrator.download(). CrawlService.on_CrawlEvent handles
+    this by emitting the lifecycle chain:
     CrawlSetupEvent → CrawlStartEvent → CrawlCleanupEvent → CrawlCompletedEvent.
     """
 

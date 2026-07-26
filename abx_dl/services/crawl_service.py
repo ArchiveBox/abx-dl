@@ -47,7 +47,7 @@ async def _run_event_now(event: BaseEvent, timeout: float | None = None) -> Base
 
 
 class CrawlService(BaseService):
-    """Orchestrates the crawl lifecycle after the install phase.
+    """Orchestrates the crawl lifecycle.
 
     Lifecycle::
 
@@ -65,8 +65,7 @@ class CrawlService(BaseService):
         │
         └── CrawlCompletedEvent                       # informational
 
-    CrawlEvent is the root crawl-lifecycle driver. InstallEvent is handled by
-    BinaryService before the crawl phase starts. Crawl setup per-hook handlers
+    CrawlEvent is the root crawl-lifecycle driver. Crawl setup per-hook handlers
     are registered on CrawlSetupEvent so phase ordering stays explicit.
     """
 

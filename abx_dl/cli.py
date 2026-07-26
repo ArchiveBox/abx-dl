@@ -1427,7 +1427,6 @@ def dl(
         selected_plugins = {k: v for k, v in selected_plugins.items() if k.lower() not in disabled}
     # Update selected to match the final plugin set so download() doesn't re-include disabled plugins
     selected = list(selected_plugins.keys())
-    install_plugins_for_phase = get_install_plugins(selected_plugins)
     crawl_setup_hooks: list[tuple[Plugin, Hook]] = []
     snapshot_hooks: list[tuple[Plugin, Hook]] = []
     for plugin in selected_plugins.values():
@@ -1436,11 +1435,11 @@ def dl(
         for hook in plugin.filter_hooks("Snapshot"):
             snapshot_hooks.append((plugin, hook))
     total_timeout = (
-        compute_install_phase_timeout(install_plugins_for_phase, config_overrides)
+        (compute_install_phase_timeout(get_install_plugins(selected_plugins), config_overrides) if no_install else 0.0)
         + compute_phase_timeout(crawl_setup_hooks, config_overrides)
         + compute_phase_timeout(snapshot_hooks, config_overrides)
     )
-    total_hooks = _count_install_requests(selected_plugins) + len(crawl_setup_hooks) + len(snapshot_hooks)
+    total_hooks = (_count_install_requests(selected_plugins) if no_install else 0) + len(crawl_setup_hooks) + len(snapshot_hooks)
     bus = create_bus(total_timeout=total_timeout)
     live_ui = LiveBusUI(
         bus,

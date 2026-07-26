@@ -309,9 +309,9 @@ abx-dl install wget singlefile ytdlp      # installs dependencies for specific p
 abx-dl plugins                            # checks which dependencies are available/missing
 ```
 
-Every preflight request is resolved through `abxpkg`. Compatible host binaries are selected first and projected into `ABXPKG_LIB_DIR/env/bin`; otherwise the configured managed provider installs and projects the dependency. `abxpkg` owns the validated provider cache, while the runtime derived configuration exposes resolved paths to plugins.
+Every hook executable declares its dependencies in an `abxpkg run --script --deps-from=...` shebang. Compatible host binaries are selected first and projected into `ABXPKG_LIB_DIR/env/bin`; otherwise the configured managed provider installs and projects the dependency. The explicit `install` command and `--no-install` dependency check use the same abxpkg resolution path.
 
-The normal runtime flow after dependency preflight is:
+The normal runtime flow is:
 - `CrawlEvent` (internal lifecycle root)
 - `CrawlSetupEvent` → plugin `on_CrawlSetup__*` hooks
 - `CrawlStartEvent` → `SnapshotEvent`
@@ -319,7 +319,7 @@ The normal runtime flow after dependency preflight is:
 - `SnapshotCleanupEvent` / `CrawlCleanupEvent`
 
 Hook output contract:
-- binary preflight is driven by plugin `required_binaries` and handled by `abxpkg`, not by plugin hooks
+- hook dependencies are driven by plugin `required_binaries` and resolved by each hook's abxpkg shebang
 - `on_CrawlSetup__*` hooks emit no stdout JSONL records
 - `on_Snapshot__*` hooks emit only `ArchiveResult`, `Snapshot`, and `Tag`
 - the TUI and services consume structured events derived from those hook records

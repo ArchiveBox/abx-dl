@@ -77,13 +77,6 @@ print(match.group(1))
 PY
 }
 
-version_at_ref() {
-    local ref="$1"
-    "${GIT_BINARY}" show "${ref}:pyproject.toml" \
-        | sed -nE 's/^version = "([^"]+)".*/\1/p' \
-        | head -n 1
-}
-
 compare_versions() {
     "${UV_BINARY}" run --no-project python - "$1" "$2" <<'PY'
 import re, sys
@@ -357,7 +350,7 @@ create_release_tag() {
 }
 
 main() {
-    local slug version previous_version latest release_sha target artifact_dir ci_run_id pypi_output pypi_state github_exists=false github_complete=false
+    local slug version latest release_sha target artifact_dir ci_run_id pypi_output pypi_state github_exists=false github_complete=false
     local pypi_lines=() pypi_missing=()
     source_optional_env
     require_release_binaries
@@ -365,12 +358,6 @@ main() {
     version="$(current_version)"
     release_sha="${RELEASE_SHA:-$("${GIT_BINARY}" rev-parse HEAD)}"
     require_clean_exact_checkout "${release_sha}"
-    previous_version="$(version_at_ref "${release_sha}^" || true)"
-    if [[ -n "${previous_version}" && "${previous_version}" == "${version}" ]]; then
-        echo "Package version ${version} did not change in ${release_sha}; nothing to publish"
-        return
-    fi
-
     target="$(tag_target "${TAG_PREFIX}${version}")"
     ci_run_id="${CI_RUN_ID:-}"
     [[ "${ci_run_id}" =~ ^[0-9]+$ ]] || { echo "CI_RUN_ID must identify the successful CI workflow run" >&2; return 1; }

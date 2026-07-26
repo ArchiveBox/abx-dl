@@ -3,7 +3,6 @@
 import asyncio
 import re
 import signal
-import sys
 import time
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
@@ -80,9 +79,6 @@ def _process_status(exit_code: int) -> ProcessStatus:
 
 
 def _process_command(event: ProcessEvent) -> list[str]:
-    if Path(event.hook_path).suffix.lower() == ".py":
-        python_binary = str(event.env.get("PYTHON3_BINARY") or sys.executable)
-        return [python_binary, event.hook_path, *event.hook_args]
     return [event.hook_path, *event.hook_args]
 
 

@@ -80,7 +80,7 @@ def _run_download(*args, **kwargs):
     return results
 
 
-def test_process_command_runs_python_hooks_with_active_runtime_interpreter(tmp_path: Path) -> None:
+def test_process_command_executes_python_hook_through_declared_shebang(tmp_path: Path) -> None:
     hook_path = tmp_path / "on_Snapshot__57_mercury.py"
     hook_path.write_text("print('ok')\n", encoding="utf-8")
     event = ProcessEvent(
@@ -94,7 +94,7 @@ def test_process_command_runs_python_hooks_with_active_runtime_interpreter(tmp_p
         timeout=5,
     )
 
-    assert _process_command(event) == [sys.executable, str(hook_path), "--url=https://example.com"]
+    assert _process_command(event) == [str(hook_path), "--url=https://example.com"]
 
 
 def _pid_is_alive(pid: int) -> bool:
