@@ -7,6 +7,17 @@ GITHUB_BASE="${GITHUB_BASE:-https://github.com/ArchiveBox}"
 MONOREPO_REMOTE="${MONOREPO_REMOTE:-$GITHUB_BASE/monorepo.git}"
 REPO_NAMES=(abxbus abxpkg abx-plugins abx-dl archivebox)
 
+repo_target_branch() {
+    case "$1" in
+        archivebox)
+            printf 'dev\n'
+            ;;
+        *)
+            printf 'main\n'
+            ;;
+    esac
+}
+
 is_member_repo() {
     local repo_root="$1"
     local repo_name
@@ -254,10 +265,20 @@ fi
 ensure_member_repo() {
     local repo_name="$1"
     local repo_dir="$ROOT_DIR/$repo_name"
+    local target_branch
+    local current_branch
+    target_branch="$(repo_target_branch "$repo_name")"
 
     if [[ -d "$repo_dir/.git" ]]; then
         printf 'Updating existing checkout: %s\n' "$repo_name"
-        if git -C "$repo_dir" -c pull.rebase=false pull --ff-only --quiet >/dev/null 2>&1; then
+        current_branch="$(git -C "$repo_dir" branch --show-current)"
+
+        if [[ "$current_branch" != "$target_branch" ]]; then
+            git -C "$repo_dir" fetch --depth=1 origin "$target_branch" --quiet
+            git -C "$repo_dir" checkout -B "$target_branch" --track "origin/$target_branch" >/dev/null
+        fi
+
+        if git -C "$repo_dir" -c pull.rebase=false pull --ff-only --quiet origin "$target_branch" >/dev/null 2>&1; then
             printf 'Updated: %s\n' "$repo_name"
         else
             printf 'Skipping pull for %s (local changes, divergent branch, detached HEAD, or no upstream)\n' "$repo_name" >&2
@@ -271,7 +292,7 @@ ensure_member_repo() {
     fi
 
     printf 'Cloning %s/%s.git -> %s\n' "$GITHUB_BASE" "$repo_name" "$repo_name"
-    git clone "$GITHUB_BASE/$repo_name.git" "$repo_dir"
+    git clone --branch "$target_branch" "$GITHUB_BASE/$repo_name.git" "$repo_dir"
 }
 
 for repo_name in "${REPO_NAMES[@]}"; do
