@@ -27,7 +27,7 @@ from abx_dl.events import (
     SnapshotEvent,
 )
 from abx_dl.limits import CrawlLimitState
-from abx_dl.models import Snapshot, discover_plugins
+from abx_dl.models import Snapshot, discover_plugins, filter_plugins
 from abx_dl.orchestrator import create_bus, download, setup_services
 from abx_dl.services.archive_result_service import ArchiveResultService
 from abx_dl.services.binary_service import AbxDlEnvConfigFileBinaryCacheBackend
@@ -95,6 +95,21 @@ def test_process_command_executes_python_hook_through_declared_shebang(tmp_path:
     )
 
     assert _process_command(event) == [str(hook_path), "--url=https://example.com"]
+
+
+def test_archivewebpage_extension_prepare_runs_before_chrome_launch() -> None:
+    plugins = filter_plugins(discover_plugins(), ["archivewebpage"])
+    setup_hooks = [
+        (plugin.name, hook.name)
+        for plugin, hook in sorted(
+            ((plugin, hook) for plugin in plugins.values() for hook in plugin.filter_hooks("CrawlSetup")),
+            key=lambda item: item[1].sort_key,
+        )
+    ]
+
+    assert setup_hooks.index(("archivewebpage", "on_CrawlSetup__80_archivewebpage_prepare")) < setup_hooks.index(
+        ("chrome", "on_CrawlSetup__90_chrome_launch.daemon.bg"),
+    )
 
 
 def _pid_is_alive(pid: int) -> bool:
