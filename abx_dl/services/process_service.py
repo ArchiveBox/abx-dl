@@ -3,14 +3,16 @@
 import asyncio
 import re
 import signal
+import sys
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import ClassVar, Literal, TextIO
+from typing import BinaryIO, ClassVar, Literal, TextIO
 
-from abxbus import BaseEvent, EventBus
 import click
+from abxbus import BaseEvent, EventBus
+
 from ..events import (
     PROCESS_EXIT_SKIPPED,
     CrawlAbortEvent,
@@ -27,11 +29,10 @@ from ..events import (
     SnapshotCleanupEvent,
     SnapshotEvent,
 )
-from ..models import Process, write_jsonl, now_iso
+from ..models import Process, now_iso, write_jsonl
 from ..output_files import scan_output_files
-from ..process_utils import write_pid_file_with_mtime, write_cmd_file, graceful_kill_process, graceful_kill_by_pid_file
+from ..process_utils import graceful_kill_by_pid_file, graceful_kill_process, write_cmd_file, write_pid_file_with_mtime
 from .base import BaseService
-
 
 ProcessStatus = Literal["succeeded", "failed", "skipped"]
 STDOUT_POLL_INTERVAL = 0.5
@@ -52,6 +53,23 @@ class _StdoutStreamState:
     stop_requested: bool = False
 
 
+def _open_process_spawn_files(
+    stdout_file: Path,
+    stderr_file: Path,
+    reader_stack: ExitStack,
+) -> tuple[ExitStack, BinaryIO, TextIO, TextIO, TextIO]:
+    spawn_stack = ExitStack()
+    try:
+        out_fh = spawn_stack.enter_context(stdout_file.open("wb"))
+        err_fh = spawn_stack.enter_context(stderr_file.open("w"))
+        stdout_reader = reader_stack.enter_context(stdout_file.open(errors="replace"))
+        stderr_reader = reader_stack.enter_context(stderr_file.open(errors="replace"))
+    except Exception:
+        spawn_stack.close()
+        raise
+    return spawn_stack, out_fh, err_fh, stdout_reader, stderr_reader
+
+
 def _process_status(exit_code: int) -> ProcessStatus:
     """Normalize process exit codes into ArchiveResult-compatible statuses."""
     if exit_code == 0:
@@ -62,6 +80,9 @@ def _process_status(exit_code: int) -> ProcessStatus:
 
 
 def _process_command(event: ProcessEvent) -> list[str]:
+    if Path(event.hook_path).suffix.lower() == ".py":
+        python_binary = str(event.env.get("PYTHON3_BINARY") or sys.executable)
+        return [python_binary, event.hook_path, *event.hook_args]
     return [event.hook_path, *event.hook_args]
 
 
@@ -292,16 +313,21 @@ class ProcessService(BaseService):
         started_event: ProcessStartedEvent | None = None
         stdout_reader: TextIO | None = None
         stderr_reader: TextIO | None = None
+        reader_stack: ExitStack | None = None
         completion_owns_process = False
         try:
             try:
-                with open(stdout_file, "wb") as out_fh, open(stderr_file, "w") as err_fh:
+                reader_stack = ExitStack()
+                spawn_stack, out_fh, err_fh, stdout_reader, stderr_reader = _open_process_spawn_files(
+                    stdout_file,
+                    stderr_file,
+                    reader_stack,
+                )
+                with spawn_stack:
                     # Open independent readers before awaiting spawn. Snapshot
                     # hooks may mutate their output tree while background hooks
                     # are still running, so there must never be a window where
                     # the only durable reference to these inodes is a pathname.
-                    stdout_reader = open(stdout_file, errors="replace")
-                    stderr_reader = open(stderr_file, errors="replace")
                     process = await asyncio.create_subprocess_exec(
                         *cmd,
                         cwd=str(plugin_output_dir),
@@ -314,7 +340,7 @@ class ProcessService(BaseService):
                         start_new_session=True,
                     )
                 write_pid_file_with_mtime(pid_file, process.pid, time.time())
-            except Exception as e:
+            except (OSError, ValueError) as e:
                 # If spawn partially succeeded, shut it down before surfacing the
                 # failure as a normal ProcessCompletedEvent.
                 if process is not None:
@@ -410,8 +436,8 @@ class ProcessService(BaseService):
                         foreground_interrupts=foreground_interrupts,
                     )
                 finally:
-                    stdout_reader.close()
-                    stderr_reader.close()
+                    if reader_stack is not None:
+                        reader_stack.close()
 
             completion = complete_and_close_readers()
             if event.is_background:
@@ -422,8 +448,8 @@ class ProcessService(BaseService):
                     self._background_completion_tasks.discard(task)
                     try:
                         task.result()
-                    except Exception:
-                        pass
+                    except (RuntimeError, OSError, ValueError, asyncio.CancelledError) as err:
+                        click.echo(f"Background hook completion failed: {err}", err=True)
 
                 completion_task.add_done_callback(forget_background_completion)
                 completion_owns_process = True
@@ -435,11 +461,8 @@ class ProcessService(BaseService):
                 await graceful_kill_process(process)
             raise
         finally:
-            if not completion_owns_process:
-                if stdout_reader is not None:
-                    stdout_reader.close()
-                if stderr_reader is not None:
-                    stderr_reader.close()
+            if not completion_owns_process and reader_stack is not None:
+                reader_stack.close()
             self.pause_requested.clear()
 
     async def _complete_process_event(
@@ -573,9 +596,7 @@ class ProcessService(BaseService):
             returncode = PROCESS_EXIT_SKIPPED
             status = "skipped"
             stderr = "Hook interrupted by user"
-            if self.abort_requested:
-                action = "abort"
-            elif not self.interactive_tty:
+            if self.abort_requested or not self.interactive_tty:
                 action = "abort"
             else:
                 action = self.on_InterruptedHookPrompt(event.hook_name)
@@ -717,7 +738,7 @@ class ProcessService(BaseService):
                     where=lambda candidate: self.bus.event_is_parent_of(candidate, event),
                 )
             if not isinstance(parent_event, (SnapshotCleanupEvent, CrawlCleanupEvent)):
-                raise RuntimeError(f"Missing cleanup parent for ProcessKillEvent {event.event_id}")
+                raise TypeError(f"Missing cleanup parent for ProcessKillEvent {event.event_id}")
             root_event: SnapshotEvent | CrawlEvent | None
             if isinstance(parent_event, SnapshotCleanupEvent):
                 found_root_event = await self.bus.find(

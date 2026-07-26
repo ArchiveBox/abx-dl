@@ -7,12 +7,7 @@ import threading
 from pathlib import Path
 from uuid import uuid4
 
-from abxpkg.binary_service import BinaryCacheService, BinaryEvent, BinaryRequestEvent, BinaryService
-from pytest_httpserver import HTTPServer
-from werkzeug import Response
-
-from abx_dl.config import GlobalConfig, RuntimeConfig, get_initial_env
-from abx_dl.config import get_required_binary_requests
+from abx_dl.config import GlobalConfig, RuntimeConfig, get_initial_env, get_required_binary_requests
 from abx_dl.events import (
     ArchiveResultEvent,
     CrawlAbortEvent,
@@ -27,8 +22,8 @@ from abx_dl.events import (
     ProcessKillEvent,
     ProcessStartedEvent,
     ProcessStdoutEvent,
-    SnapshotCompletedEvent,
     SnapshotCleanupEvent,
+    SnapshotCompletedEvent,
     SnapshotEvent,
 )
 from abx_dl.limits import CrawlLimitState
@@ -38,8 +33,11 @@ from abx_dl.services.archive_result_service import ArchiveResultService
 from abx_dl.services.binary_service import AbxDlEnvConfigFileBinaryCacheBackend
 from abx_dl.services.crawl_service import CrawlService
 from abx_dl.services.machine_service import MachineService
-from abx_dl.services.process_service import ProcessService
+from abx_dl.services.process_service import ProcessService, _process_command
 from abx_dl.services.snapshot_service import SnapshotService
+from abxpkg.binary_service import BinaryCacheService, BinaryEvent, BinaryRequestEvent, BinaryService
+from pytest_httpserver import HTTPServer
+from werkzeug import Response
 
 
 def _binary_extra_context(
@@ -80,6 +78,23 @@ def _run_download(*args, **kwargs):
 
     asyncio.run(run())
     return results
+
+
+def test_process_command_runs_python_hooks_with_active_runtime_interpreter(tmp_path: Path) -> None:
+    hook_path = tmp_path / "on_Snapshot__57_mercury.py"
+    hook_path.write_text("print('ok')\n", encoding="utf-8")
+    event = ProcessEvent(
+        plugin_name="mercury",
+        hook_name=hook_path.name,
+        hook_path=str(hook_path),
+        hook_args=["--url=https://example.com"],
+        is_background=False,
+        output_dir=str(tmp_path / "mercury"),
+        env={"PYTHON3_BINARY": sys.executable},
+        timeout=5,
+    )
+
+    assert _process_command(event) == [sys.executable, str(hook_path), "--url=https://example.com"]
 
 
 def _pid_is_alive(pid: int) -> bool:
