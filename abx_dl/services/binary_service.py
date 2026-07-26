@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import copy
 import json
 import re
@@ -220,17 +219,10 @@ class PluginBinariesService(BaseService):
             if await self.should_abort():
                 break
 
-        requests_by_binary: dict[str, list[BinaryRequestEvent]] = {}
         for request_event in request_events:
-            requests_by_binary.setdefault(request_event.name, []).append(request_event)
-
-        async def resolve_binary_requests(binary_requests: list[BinaryRequestEvent]) -> None:
-            for request_event in binary_requests:
-                emitted_request: BaseEvent = event.emit(request_event)
-                completed_request = await emitted_request.now()
-                await completed_request.event_results_list(raise_if_none=False)
-
-        await asyncio.gather(*(resolve_binary_requests(binary_requests) for binary_requests in requests_by_binary.values()))
+            emitted_request: BaseEvent = event.emit(request_event)
+            completed_request = await emitted_request.now()
+            await completed_request.event_results_list(raise_if_none=False)
 
 
 class AbxDlEnvConfigFileBinaryCacheBackend:

@@ -5,7 +5,7 @@ from abxpkg.binary_service import BinaryCacheService, BinaryEvent, BinaryRequest
 
 from abx_dl.config import get_initial_env
 from abx_dl.events import InstallEvent, MachineEvent
-from abx_dl.models import Snapshot, discover_plugins
+from abx_dl.models import Plugin, PluginConfig, RequiredBinary, Snapshot, discover_plugins
 from abx_dl.orchestrator import compute_install_phase_timeout, create_bus
 from abx_dl.services.binary_service import (
     AbxDlEnvConfigFileBinaryCacheBackend,
@@ -31,7 +31,7 @@ def test_install_phase_timeout_uses_largest_sequential_binary_lane_budget() -> N
     )
 
 
-def test_install_event_resolves_concurrent_plugin_binaries_through_abxpkg(tmp_path: Path) -> None:
+def test_install_event_resolves_plugin_binaries_through_abxpkg(tmp_path: Path) -> None:
     plugins = discover_plugins()
     selected = {name: plugins[name] for name in ("git", "wget")}
     snapshot = Snapshot(url="")
@@ -100,6 +100,66 @@ def test_install_event_resolves_concurrent_plugin_binaries_through_abxpkg(tmp_pa
             and event.value == binary_event.abspath
             for event in machine_events
         )
+
+
+def test_install_event_resolves_plugin_binaries_in_config_order(tmp_path: Path) -> None:
+    plugin = Plugin(
+        name="ordered",
+        path=tmp_path / "ordered",
+        config=PluginConfig(
+            required_binaries=[
+                RequiredBinary(name="bash", binproviders="env"),
+                RequiredBinary(name="sh", binproviders="env"),
+            ],
+        ),
+    )
+    snapshot = Snapshot(url="")
+    run_dir = tmp_path / "run"
+    managed_lib_dir = tmp_path / "lib"
+    bus = create_bus(total_timeout=60.0, name=f"install_phase_ordered_binaries_{tmp_path.name}")
+    PluginBinariesService(
+        bus,
+        plugins={plugin.name: plugin},
+        auto_install=True,
+        install_plugins=[plugin],
+        output_dir=run_dir,
+        snapshot=snapshot,
+    )
+    BinaryCacheService(bus, backend=AbxDlEnvConfigFileBinaryCacheBackend(bus, plugins={plugin.name: plugin}))
+    BinaryService(bus, auto_install=True)
+    events_seen: list[tuple[str, str]] = []
+
+    async def on_BinaryRequestEvent(event: BinaryRequestEvent) -> None:
+        events_seen.append(("request", event.name))
+
+    async def on_BinaryEvent(event: BinaryEvent) -> None:
+        events_seen.append(("binary", event.name))
+
+    bus.on(BinaryRequestEvent, on_BinaryRequestEvent)
+    bus.on(BinaryEvent, on_BinaryEvent)
+
+    async def run() -> None:
+        await bus.emit(
+            MachineEvent(
+                config={
+                    **get_initial_env(),
+                    "ABXPKG_LIB_DIR": str(managed_lib_dir),
+                },
+                config_type="user",
+            ),
+        ).now()
+        await bus.emit(
+            InstallEvent(
+                url="",
+                snapshot_id=snapshot.id,
+                output_dir=str(run_dir),
+            ),
+        ).now()
+        await bus.wait_until_idle()
+
+    asyncio.run(run())
+
+    assert events_seen.index(("binary", "bash")) < events_seen.index(("request", "sh"))
 
 
 def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) -> None:
