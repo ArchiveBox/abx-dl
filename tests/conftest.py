@@ -28,6 +28,8 @@ _TEST_CONFIG_KEYS = frozenset(
         "PERSONAS_DIR",
         "PIP_BIN_DIR",
         "PIP_HOME",
+        "PNPM_BIN_DIR",
+        "PNPM_HOME",
         "PUPPETEER_CACHE_DIR",
         "SNAP_DIR",
         "TMP_DIR",
