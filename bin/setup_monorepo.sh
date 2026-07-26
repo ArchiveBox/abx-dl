@@ -6,19 +6,6 @@ SCRIPT_REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 GITHUB_BASE="${GITHUB_BASE:-https://github.com/ArchiveBox}"
 MONOREPO_REMOTE="${MONOREPO_REMOTE:-$GITHUB_BASE/monorepo.git}"
 REPO_NAMES=(abxbus abxpkg abx-plugins abx-dl archivebox)
-ABXPKG_BOOTSTRAP_VERSION="${ABXPKG_BOOTSTRAP_VERSION:-$(
-    uv run --no-project python -c \
-        'import re, sys, tomllib; dependencies = tomllib.load(open(sys.argv[1], "rb"))["project"]["dependencies"]; print(next(re.fullmatch(r"abxpkg==([^; ]+)", dep).group(1) for dep in dependencies if dep.startswith("abxpkg==")))' \
-        "$SCRIPT_REPO_ROOT/pyproject.toml"
-)}"
-
-repo_branch() {
-    if [[ "$1" == "archivebox" ]]; then
-        printf '%s\n' dev
-    else
-        printf '%s\n' main
-    fi
-}
 
 is_member_repo() {
     local repo_root="$1"
@@ -53,7 +40,7 @@ bootstrap_build_dependencies() {
 
     case "$OSTYPE" in
         linux*)
-            uv run --no-sync abxpkg env \
+            uv tool run --from "$ROOT_DIR/abxpkg" abxpkg env \
                 --install \
                 --no-cache \
                 --json \
@@ -61,7 +48,7 @@ bootstrap_build_dependencies() {
                 --binproviders=env,apt \
                 --overrides='{"apt":{"install_args":["build-essential"]}}' \
                 cc >/dev/null
-            uv run --no-sync abxpkg env \
+            uv tool run --from "$ROOT_DIR/abxpkg" abxpkg env \
                 --install \
                 --no-cache \
                 --json \
@@ -70,14 +57,14 @@ bootstrap_build_dependencies() {
                 --overrides='{"env":{"version":["ldapsearch","-VV"]},"apt":{"install_args":["ldap-utils","python3-dev","python3-setuptools","libssl-dev","libldap2-dev","libsasl2-dev","zlib1g-dev","libatomic1"],"version":["ldapsearch","-VV"]}}' \
                 ldapsearch >/dev/null
 
-            uv run --no-sync abxpkg env \
+            uv tool run --from "$ROOT_DIR/abxpkg" abxpkg env \
                 --install \
                 --no-cache \
                 --json \
                 --lib="$ABXPKG_LIB_DIR" \
                 --binproviders=env \
                 cc >/dev/null
-            uv run --no-sync abxpkg env \
+            uv tool run --from "$ROOT_DIR/abxpkg" abxpkg env \
                 --install \
                 --no-cache \
                 --json \
@@ -92,7 +79,7 @@ bootstrap_build_dependencies() {
             test -x "$ABXPKG_LIB_DIR/env/bin/ldapsearch"
             ;;
         darwin*)
-            uv run --no-sync abxpkg env \
+            uv tool run --from "$ROOT_DIR/abxpkg" abxpkg env \
                 --install \
                 --json \
                 --lib="$ABXPKG_LIB_DIR" \
@@ -107,7 +94,7 @@ bootstrap_build_dependencies() {
             brew_root="$(dirname "$(dirname "$brew_target")")"
             export ABXPKG_BREW_ROOT="$brew_root"
 
-            uv run --no-sync abxpkg env \
+            uv tool run --from "$ROOT_DIR/abxpkg" abxpkg env \
                 --install \
                 --no-cache \
                 --json \
@@ -115,7 +102,7 @@ bootstrap_build_dependencies() {
                 --binproviders=env,brew \
                 --overrides='{"brew":{"install_args":["llvm"]}}' \
                 clang >/dev/null
-            uv run --no-sync abxpkg env \
+            uv tool run --from "$ROOT_DIR/abxpkg" abxpkg env \
                 --install \
                 --no-cache \
                 --json \
@@ -125,7 +112,7 @@ bootstrap_build_dependencies() {
                 ldapvc >/dev/null
 
             PATH="$PATH:$brew_root/opt/llvm/bin" \
-                uv run --no-sync abxpkg env \
+                uv tool run --from "$ROOT_DIR/abxpkg" abxpkg env \
                     --install \
                     --no-cache \
                     --json \
@@ -133,7 +120,7 @@ bootstrap_build_dependencies() {
                     --binproviders=env \
                     clang >/dev/null
             PATH="$PATH:$brew_root/opt/openldap/bin" \
-                uv run --no-sync abxpkg env \
+                uv tool run --from "$ROOT_DIR/abxpkg" abxpkg env \
                     --install \
                     --no-cache \
                     --json \
@@ -173,29 +160,26 @@ bootstrap_build_dependencies() {
     esac
 }
 
-bootstrap_git() {
-    export ABXPKG_LIB_DIR="$ROOT_DIR/.venv/abxpkg"
-    mkdir -p "$ABXPKG_LIB_DIR/env/bin"
-    export PATH="$ABXPKG_LIB_DIR/env/bin:$PATH"
-
-    uv run --no-project \
-        --with="abxpkg==$ABXPKG_BOOTSTRAP_VERSION" \
-        abxpkg env \
-        --install \
-        --json \
-        --lib="$ABXPKG_LIB_DIR" \
-        --binproviders=env,apt,brew \
-        git \
-        >/dev/null
-
-    export GIT_BINARY="$ABXPKG_LIB_DIR/env/bin/git"
-    test -L "$GIT_BINARY"
-    test -x "$GIT_BINARY"
-    "$GIT_BINARY" --version >/dev/null
-}
-
 sync_workspace() {
-    uv sync --locked --all-packages --all-extras --no-cache --active
+    uv sync --all-extras --no-cache --active
+
+    for repo_name in "${REPO_NAMES[@]}"; do
+        printf 'Syncing %s into monorepo environment\n' "$repo_name"
+        case "$repo_name" in
+            archivebox)
+                (
+                    cd "$ROOT_DIR/$repo_name"
+                    UV_PROJECT_ENVIRONMENT="$ROOT_DIR/.venv" uv sync --dev --all-extras --inexact --no-cache --active
+                )
+                ;;
+            *)
+                (
+                    cd "$ROOT_DIR/$repo_name"
+                    UV_PROJECT_ENVIRONMENT="$ROOT_DIR/.venv" uv sync --dev --inexact --no-cache --active
+                )
+                ;;
+        esac
+    done
 }
 
 ensure_setup_link() {
@@ -224,9 +208,7 @@ bootstrap_monorepo_root() {
     local origin_url=""
 
     if [[ -d "$monorepo_root/.git" ]]; then
-        if "$GIT_BINARY" -C "$monorepo_root" remote get-url origin >/dev/null 2>&1; then
-            origin_url="$("$GIT_BINARY" -C "$monorepo_root" remote get-url origin)"
-        fi
+        origin_url="$(git -C "$monorepo_root" remote get-url origin 2>/dev/null || true)"
 
         if [[ -n "$origin_url" ]] && ! monorepo_remote_matches "$origin_url"; then
             printf 'Refusing to reuse existing git repo at %s (origin: %s)\n' "$monorepo_root" "$origin_url" >&2
@@ -234,22 +216,24 @@ bootstrap_monorepo_root() {
         fi
 
         if [[ -z "$origin_url" ]]; then
-            "$GIT_BINARY" -C "$monorepo_root" remote add origin "$MONOREPO_REMOTE"
+            git -C "$monorepo_root" remote add origin "$MONOREPO_REMOTE"
         fi
 
         printf 'Updating monorepo root: %s\n' "$monorepo_root"
-        "$GIT_BINARY" -C "$monorepo_root" fetch --quiet origin main
-        "$GIT_BINARY" -C "$monorepo_root" merge --ff-only --quiet origin/main
-        printf 'Updated monorepo root\n'
+        if git -C "$monorepo_root" -c pull.rebase=false pull --ff-only --quiet >/dev/null 2>&1; then
+            printf 'Updated monorepo root\n'
+        else
+            printf 'Skipping monorepo pull (local changes, divergent branch, detached HEAD, or no upstream)\n' >&2
+        fi
         return
     fi
 
     printf 'Bootstrapping monorepo root in %s\n' "$monorepo_root"
-    "$GIT_BINARY" -C "$monorepo_root" init -b main >/dev/null
-    "$GIT_BINARY" -C "$monorepo_root" remote add origin "$MONOREPO_REMOTE"
-    "$GIT_BINARY" -C "$monorepo_root" fetch --depth=1 origin main --quiet
+    git -C "$monorepo_root" init -b main >/dev/null
+    git -C "$monorepo_root" remote add origin "$MONOREPO_REMOTE"
+    git -C "$monorepo_root" fetch --depth=1 origin main --quiet
 
-    if "$GIT_BINARY" -C "$monorepo_root" checkout -B main --track origin/main >/dev/null 2>&1; then
+    if git -C "$monorepo_root" checkout -B main --track origin/main >/dev/null 2>&1; then
         printf 'Initialized monorepo root\n'
     else
         printf 'Failed to materialize monorepo root in %s; existing files likely conflict with tracked monorepo files\n' "$monorepo_root" >&2
@@ -257,10 +241,9 @@ bootstrap_monorepo_root() {
     fi
 }
 
-IS_MEMBER_REPO=false
 if is_member_repo "$SCRIPT_REPO_ROOT"; then
-    IS_MEMBER_REPO=true
     ROOT_DIR="$(cd -- "$SCRIPT_REPO_ROOT/.." && pwd)"
+    bootstrap_monorepo_root "$ROOT_DIR"
 elif [[ -f "$SCRIPT_REPO_ROOT/pyproject.toml" ]]; then
     ROOT_DIR="$SCRIPT_REPO_ROOT"
 else
@@ -268,26 +251,17 @@ else
     exit 1
 fi
 
-bootstrap_git
-if [[ "$IS_MEMBER_REPO" == true ]]; then
-    bootstrap_monorepo_root "$ROOT_DIR"
-fi
-
 ensure_member_repo() {
     local repo_name="$1"
     local repo_dir="$ROOT_DIR/$repo_name"
-    local branch
-    branch="$(repo_branch "$repo_name")"
 
     if [[ -d "$repo_dir/.git" ]]; then
         printf 'Updating existing checkout: %s\n' "$repo_name"
-        [[ "$("$GIT_BINARY" -C "$repo_dir" branch --show-current)" == "$branch" ]] || {
-            printf '%s must be checked out on %s\n' "$repo_name" "$branch" >&2
-            return 1
-        }
-        "$GIT_BINARY" -C "$repo_dir" fetch --quiet origin "$branch"
-        "$GIT_BINARY" -C "$repo_dir" merge --ff-only --quiet "origin/$branch"
-        printf 'Updated: %s\n' "$repo_name"
+        if git -C "$repo_dir" -c pull.rebase=false pull --ff-only --quiet >/dev/null 2>&1; then
+            printf 'Updated: %s\n' "$repo_name"
+        else
+            printf 'Skipping pull for %s (local changes, divergent branch, detached HEAD, or no upstream)\n' "$repo_name" >&2
+        fi
         return
     fi
 
@@ -297,7 +271,7 @@ ensure_member_repo() {
     fi
 
     printf 'Cloning %s/%s.git -> %s\n' "$GITHUB_BASE" "$repo_name" "$repo_name"
-    "$GIT_BINARY" clone --branch "$branch" --single-branch "$GITHUB_BASE/$repo_name.git" "$repo_dir"
+    git clone "$GITHUB_BASE/$repo_name.git" "$repo_dir"
 }
 
 for repo_name in "${REPO_NAMES[@]}"; do
@@ -309,15 +283,12 @@ for repo_name in "${REPO_NAMES[@]}"; do
 done
 
 cd "$ROOT_DIR"
-if declare -F deactivate >/dev/null; then
-    deactivate
-fi
+deactivate || true
 rm -Rf ./*/.venv   # delete all sub-repo venvs, the monorepo venv needs to take precedence
 
 uv venv --allow-existing "$ROOT_DIR/.venv"
 # shellcheck disable=SC1091
 source "$ROOT_DIR/.venv/bin/activate"
-uv sync --package abxpkg --no-dev --no-cache --active
 bootstrap_build_dependencies
 sync_workspace
 echo
@@ -328,5 +299,5 @@ echo "    VIRTUAL_ENV=$VIRTUAL_ENV"
 echo "    PYTHON_BIN=$VIRTUAL_ENV/bin/python"
 echo
 echo "TIPS:"
-echo " - Always use 'uv run ...' within each subrepo, never in the root & never run 'python ...' directly"
+echo " - Use 'uv run ...' inside subrepos for package work; their standalone uv.lock files remain authoritative for CI/release"
 echo " - Always read $ROOT_DIR/README.md into context before starting any work"
