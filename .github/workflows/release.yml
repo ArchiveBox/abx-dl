@@ -55,6 +55,7 @@ jobs:
           set -Eeuo pipefail
           ABXPKG_VERSION="$(sed -n 's/^[[:space:]]*"abxpkg==\([^"]*\)",[[:space:]]*$/\1/p' pyproject.toml | head -n1)"
           test -n "$ABXPKG_VERSION"
+          echo "ABXPKG_LIB_DIR=$ABXPKG_LIB_DIR" >> "$GITHUB_ENV"
           uv run --no-cache --no-project --with "abxpkg==$ABXPKG_VERSION" abxpkg env --install \
             --lib="$ABXPKG_LIB_DIR" \
             --deps-from="$GITHUB_WORKSPACE/.github/configs/ci-tooling.json:orchestration_binaries" >> "$GITHUB_ENV"
@@ -96,6 +97,7 @@ jobs:
           set -Eeuo pipefail
           ABXPKG_VERSION="$(sed -n 's/^[[:space:]]*"abxpkg==\([^"]*\)",[[:space:]]*$/\1/p' pyproject.toml | head -n1)"
           test -n "$ABXPKG_VERSION"
+          echo "ABXPKG_LIB_DIR=$ABXPKG_LIB_DIR" >> "$GITHUB_ENV"
           uv run --no-cache --no-project --with "abxpkg==$ABXPKG_VERSION" abxpkg env --install \
             --lib="$ABXPKG_LIB_DIR" \
             --deps-from="$GITHUB_WORKSPACE/.github/configs/ci-tooling.json:orchestration_binaries" >> "$GITHUB_ENV"
@@ -108,6 +110,7 @@ jobs:
           set -Eeuo pipefail
           ABXPKG_VERSION="$(sed -n 's/^[[:space:]]*"abxpkg==\([^"]*\)",[[:space:]]*$/\1/p' pyproject.toml | head -n1)"
           test -n "$ABXPKG_VERSION"
+          echo "ABXPKG_LIB_DIR=$ABXPKG_LIB_DIR" >> "$GITHUB_ENV"
           uv run --no-cache --no-project --with "abxpkg==$ABXPKG_VERSION" abxpkg env --install \
             --lib="$ABXPKG_LIB_DIR" \
             --deps-from="$GITHUB_WORKSPACE/.github/configs/ci-tooling.json:docker_binaries" >> "$GITHUB_ENV"
@@ -151,7 +154,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          VERSION="$("${UV_BINARY}" run --no-project python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          VERSION="$("${UV_BINARY}" run --no-cache --no-project python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
           SHORT_SHA="${RELEASE_SHA::12}"
           TAG="v${VERSION}"
           tag_output="$("${GIT_BINARY}" ls-remote origin "refs/tags/${TAG}^{}")"
@@ -188,7 +191,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          mapfile -t DIGESTS < <("${UV_BINARY}" run --no-project python -c 'from pathlib import Path; print("\n".join(sorted(path.name for path in Path("/tmp/digests").iterdir() if path.is_file())))')
+          mapfile -t DIGESTS < <("${UV_BINARY}" run --no-cache --no-project python -c 'from pathlib import Path; print("\n".join(sorted(path.name for path in Path("/tmp/digests").iterdir() if path.is_file())))')
           [[ "${#DIGESTS[@]}" -eq 2 ]]
           for digest in "${DIGESTS[@]}"; do
             [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
@@ -198,7 +201,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          mapfile -t DIGESTS < <("${UV_BINARY}" run --no-project python -c 'from pathlib import Path; print("\n".join(sorted(path.name for path in Path("/tmp/digests").iterdir() if path.is_file())))')
+          mapfile -t DIGESTS < <("${UV_BINARY}" run --no-cache --no-project python -c 'from pathlib import Path; print("\n".join(sorted(path.name for path in Path("/tmp/digests").iterdir() if path.is_file())))')
           TAG_ARGS=()
           while IFS= read -r tag; do
             [[ -n "$tag" ]] && TAG_ARGS+=(--tag "$tag")
@@ -213,7 +216,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          mapfile -t DIGESTS < <("${UV_BINARY}" run --no-project python -c 'from pathlib import Path; print("\n".join(sorted(path.name for path in Path("/tmp/digests").iterdir() if path.is_file())))')
+          mapfile -t DIGESTS < <("${UV_BINARY}" run --no-cache --no-project python -c 'from pathlib import Path; print("\n".join(sorted(path.name for path in Path("/tmp/digests").iterdir() if path.is_file())))')
           TAG_ARGS=()
           while IFS= read -r tag; do
             [[ -n "$tag" ]] && TAG_ARGS+=(--tag "$tag")

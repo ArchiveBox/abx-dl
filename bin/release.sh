@@ -26,7 +26,7 @@ require_release_binaries() {
 
 cleanup_artifact_dir() {
     if [[ -n "${ARTIFACT_DIR_TO_CLEAN}" ]]; then
-        ARTIFACT_DIR_TO_CLEAN="${ARTIFACT_DIR_TO_CLEAN}" "${UV_BINARY}" run --no-project python - <<'PY'
+        ARTIFACT_DIR_TO_CLEAN="${ARTIFACT_DIR_TO_CLEAN}" "${UV_BINARY}" run --no-cache --no-project python - <<'PY'
 import os
 import shutil
 
@@ -37,7 +37,7 @@ PY
 
 cleanup_verify_dir() {
     if [[ -n "${VERIFY_DIR_TO_CLEAN}" ]]; then
-        VERIFY_DIR_TO_CLEAN="${VERIFY_DIR_TO_CLEAN}" "${UV_BINARY}" run --no-project python - <<'PY'
+        VERIFY_DIR_TO_CLEAN="${VERIFY_DIR_TO_CLEAN}" "${UV_BINARY}" run --no-cache --no-project python - <<'PY'
 import os
 import shutil
 
@@ -67,7 +67,7 @@ source_optional_env() {
 repo_slug() { "${GH_BINARY}" repo view --json nameWithOwner --jq .nameWithOwner; }
 
 current_version() {
-    "${UV_BINARY}" run --no-project python - <<'PY'
+    "${UV_BINARY}" run --no-cache --no-project python - <<'PY'
 from pathlib import Path
 import re
 match = re.search(r'^version = "([^"]+)"$', Path('pyproject.toml').read_text(), re.MULTILINE)
@@ -78,7 +78,7 @@ PY
 }
 
 compare_versions() {
-    "${UV_BINARY}" run --no-project python - "$1" "$2" <<'PY'
+    "${UV_BINARY}" run --no-cache --no-project python - "$1" "$2" <<'PY'
 import re, sys
 def parse(version):
     match = re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:-?rc(\d+))?', version)
@@ -95,7 +95,7 @@ latest_published_version() {
     local slug="$1" pypi_versions github_tags
     pypi_versions="$("${CURL_BINARY}" -fsSL "https://pypi.org/pypi/${PYPI_PACKAGE}/json" | "${JQ_BINARY}" -r '.releases | keys[]')"
     github_tags="$("${GH_BINARY}" api "repos/${slug}/releases?per_page=100" --jq '.[].tag_name')"
-    PYPI_VERSIONS="${pypi_versions}" GITHUB_TAGS="${github_tags}" TAG_PREFIX="${TAG_PREFIX}" "${UV_BINARY}" run --no-project python - <<'PY'
+    PYPI_VERSIONS="${pypi_versions}" GITHUB_TAGS="${github_tags}" TAG_PREFIX="${TAG_PREFIX}" "${UV_BINARY}" run --no-cache --no-project python - <<'PY'
 import os, re
 def parse(version):
     match = re.fullmatch(r'(\d+)\.(\d+)\.(\d+)(?:-?rc(\d+))?', version)
@@ -116,7 +116,7 @@ PY
 pypi_artifact_status() {
     local version="$1" artifact_dir="$2" pypi_urls
     pypi_urls="$("${CURL_BINARY}" -fsSL "https://pypi.org/pypi/${PYPI_PACKAGE}/json" | "${JQ_BINARY}" -c --arg version "${version}" ".releases[\$version] // []")" || return 1
-    PYPI_URLS="${pypi_urls}" ARTIFACT_DIR="${artifact_dir}" EXPECTED_VERSION="${version}" "${UV_BINARY}" run --no-project python - <<'PY'
+    PYPI_URLS="${pypi_urls}" ARTIFACT_DIR="${artifact_dir}" EXPECTED_VERSION="${version}" "${UV_BINARY}" run --no-cache --no-project python - <<'PY'
 import hashlib
 import json
 import os
@@ -179,7 +179,7 @@ github_release_has_version() { "${GH_BINARY}" release view "${TAG_PREFIX}$1" --r
 github_release_metadata_is_valid() {
     local version="$1" slug="$2" release_json
     release_json="$("${GH_BINARY}" release view "${TAG_PREFIX}${version}" --repo "${slug}" --json isDraft,isPrerelease,tagName)" || return 1
-    RELEASE_JSON="${release_json}" EXPECTED_VERSION="${version}" TAG_PREFIX="${TAG_PREFIX}" "${UV_BINARY}" run --no-project python - <<'PY'
+    RELEASE_JSON="${release_json}" EXPECTED_VERSION="${version}" TAG_PREFIX="${TAG_PREFIX}" "${UV_BINARY}" run --no-cache --no-project python - <<'PY'
 import json
 import os
 import re
@@ -197,11 +197,11 @@ PY
 github_release_has_assets() {
     local version="$1" slug="$2" assets_json verify_dir validation_status=0
     assets_json="$("${GH_BINARY}" release view "${TAG_PREFIX}${version}" --repo "${slug}" --json assets)" || return 1
-    verify_dir="$("${UV_BINARY}" run --no-project python -c 'import tempfile; print(tempfile.mkdtemp())')" || return 1
+    verify_dir="$("${UV_BINARY}" run --no-cache --no-project python -c 'import tempfile; print(tempfile.mkdtemp())')" || return 1
     VERIFY_DIR_TO_CLEAN="${verify_dir}"
     "${GH_BINARY}" release download "${TAG_PREFIX}${version}" --repo "${slug}" --pattern SHA256SUMS --dir "${verify_dir}" || validation_status=$?
     if [[ "${validation_status}" -eq 0 ]]; then
-        ASSETS_JSON="${assets_json}" VERIFY_DIR="${verify_dir}" EXPECTED_VERSION="${version}" "${UV_BINARY}" run --no-project python - <<'PY' || validation_status=$?
+        ASSETS_JSON="${assets_json}" VERIFY_DIR="${verify_dir}" EXPECTED_VERSION="${version}" "${UV_BINARY}" run --no-cache --no-project python - <<'PY' || validation_status=$?
 import json
 import os
 import re
@@ -262,10 +262,10 @@ require_clean_exact_checkout() {
 download_tested_python_artifacts() {
     local slug="$1" run_id="$2" sha="$3" version="$4" destination="$5"
     local artifact_name="python-dist-${sha}"
-    ARTIFACT_DIR="${destination}" "${UV_BINARY}" run --no-project python -c 'import os; from pathlib import Path; Path(os.environ["ARTIFACT_DIR"]).mkdir(parents=True, exist_ok=True)'
+    ARTIFACT_DIR="${destination}" "${UV_BINARY}" run --no-cache --no-project python -c 'import os; from pathlib import Path; Path(os.environ["ARTIFACT_DIR"]).mkdir(parents=True, exist_ok=True)'
     "${GH_BINARY}" run download "${run_id}" --repo "${slug}" --name "${artifact_name}" --dir "${destination}"
 
-    ARTIFACT_DIR="${destination}" EXPECTED_VERSION="${version}" "${UV_BINARY}" run --no-project python - <<'PY'
+    ARTIFACT_DIR="${destination}" EXPECTED_VERSION="${version}" "${UV_BINARY}" run --no-cache --no-project python - <<'PY'
 import hashlib
 import os
 import re
@@ -361,7 +361,7 @@ main() {
     target="$(tag_target "${TAG_PREFIX}${version}")"
     ci_run_id="${CI_RUN_ID:-}"
     [[ "${ci_run_id}" =~ ^[0-9]+$ ]] || { echo "CI_RUN_ID must identify the successful CI workflow run" >&2; return 1; }
-    artifact_dir="$("${UV_BINARY}" run --no-project python -c 'import tempfile; print(tempfile.mkdtemp())')"
+    artifact_dir="$("${UV_BINARY}" run --no-cache --no-project python -c 'import tempfile; print(tempfile.mkdtemp())')"
     ARTIFACT_DIR_TO_CLEAN="${artifact_dir}"
     download_tested_python_artifacts "${slug}" "${ci_run_id}" "${release_sha}" "${version}" "${artifact_dir}"
 
