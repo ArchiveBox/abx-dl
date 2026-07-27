@@ -53,7 +53,7 @@ dev = [
 requires-dist = [
     { name = "abx-plugins", specifier = "==1.12.15" },
     { name = "abxbus", specifier = "==2.5.40" },
-    { name = "abxpkg", specifier = "==1.12.13" },
+    { name = "abxpkg" },
     { name = "jambo", specifier = ">=0.1.7" },
     { name = "platformdirs", specifier = ">=4.0.0" },
     { name = "psutil", specifier = ">=7.2.1" },
