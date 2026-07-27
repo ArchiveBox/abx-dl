@@ -36,7 +36,6 @@ jobs:
           set -Eeuo pipefail
           ABXPKG_VERSION="$(sed -n 's/^[[:space:]]*"abxpkg==\([^"]*\)",[[:space:]]*$/\1/p' pyproject.toml | head -n1)"
           test -n "$ABXPKG_VERSION"
-          sleep 60
           uv run --no-cache --no-project --with "abxpkg==$ABXPKG_VERSION" abxpkg env --install \
             --lib="$ABXPKG_LIB_DIR" \
             --deps-from="$GITHUB_WORKSPACE/.github/configs/ci-tooling.json:orchestration_binaries" >> "$GITHUB_ENV"
@@ -136,7 +135,6 @@ jobs:
           set -Eeuo pipefail
           ABXPKG_VERSION="$(sed -n 's/^[[:space:]]*"abxpkg==\([^"]*\)",[[:space:]]*$/\1/p' pyproject.toml | head -n1)"
           test -n "$ABXPKG_VERSION"
-          sleep 60
           uv run --no-cache --no-project --with "abxpkg==$ABXPKG_VERSION" abxpkg env --install \
             --lib="$ABXPKG_LIB_DIR" \
             --deps-from="$GITHUB_WORKSPACE/.github/configs/ci-tooling.json:orchestration_binaries" >> "$GITHUB_ENV"
@@ -177,7 +175,6 @@ jobs:
           set -Eeuo pipefail
           ABXPKG_VERSION="$(sed -n 's/^[[:space:]]*"abxpkg==\([^"]*\)",[[:space:]]*$/\1/p' pyproject.toml | head -n1)"
           test -n "$ABXPKG_VERSION"
-          sleep 60
           uv run --no-cache --no-project --with "abxpkg==$ABXPKG_VERSION" abxpkg env --install \
             --lib="$ABXPKG_LIB_DIR" \
             --deps-from="$GITHUB_WORKSPACE/.github/configs/ci-tooling.json:orchestration_binaries" >> "$GITHUB_ENV"
@@ -222,7 +219,6 @@ jobs:
           set -Eeuo pipefail
           ABXPKG_VERSION="$(sed -n 's/^[[:space:]]*"abxpkg==\([^"]*\)",[[:space:]]*$/\1/p' pyproject.toml | head -n1)"
           test -n "$ABXPKG_VERSION"
-          sleep 60
           uv run --no-cache --no-project --with "abxpkg==$ABXPKG_VERSION" abxpkg env --install \
             --lib="$ABXPKG_LIB_DIR" \
             --deps-from="$GITHUB_WORKSPACE/.github/configs/ci-tooling.json:orchestration_binaries" >> "$GITHUB_ENV"
@@ -305,7 +301,6 @@ jobs:
           set -Eeuo pipefail
           ABXPKG_VERSION="$(sed -n 's/^[[:space:]]*"abxpkg==\([^"]*\)",[[:space:]]*$/\1/p' pyproject.toml | head -n1)"
           test -n "$ABXPKG_VERSION"
-          sleep 60
           uv run --no-cache --no-project --with "abxpkg==$ABXPKG_VERSION" abxpkg env --install \
             --lib="$ABXPKG_LIB_DIR" \
             --deps-from="$GITHUB_WORKSPACE/.github/configs/ci-tooling.json:orchestration_binaries" >> "$GITHUB_ENV"
@@ -372,7 +367,6 @@ jobs:
           set -Eeuo pipefail
           ABXPKG_VERSION="$(sed -n 's/^[[:space:]]*"abxpkg==\([^"]*\)",[[:space:]]*$/\1/p' pyproject.toml | head -n1)"
           test -n "$ABXPKG_VERSION"
-          sleep 60
           uv run --no-cache --no-project --with "abxpkg==$ABXPKG_VERSION" abxpkg env --install \
             --lib="$ABXPKG_LIB_DIR" \
             --deps-from="$GITHUB_WORKSPACE/.github/configs/ci-tooling.json:orchestration_binaries" >> "$GITHUB_ENV"
