@@ -32,7 +32,15 @@ jobs:
         env:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
           PYTHON_BINARY: ${{ env.pythonLocation }}/bin/python
-        run: uv run --no-project python bin/ci_project_tools.py orchestration_binaries --lib "$ABXPKG_LIB_DIR"
+        run: |
+          set -Eeuo pipefail
+          ABXPKG_VERSION="$(sed -n 's/^[[:space:]]*"abxpkg==\([^"]*\)",[[:space:]]*$/\1/p' pyproject.toml | head -n1)"
+          test -n "$ABXPKG_VERSION"
+          sleep 60
+          uv run --no-cache --no-project --with "abxpkg==$ABXPKG_VERSION" abxpkg env --install \
+            --lib="$ABXPKG_LIB_DIR" \
+            --deps-from="$GITHUB_WORKSPACE/.github/configs/ci-tooling.json:orchestration_binaries" >> "$GITHUB_ENV"
+          echo "$ABXPKG_LIB_DIR/env/bin" >> "$GITHUB_PATH"
 
       - name: Install Python dependencies
         run: '"${UV_BINARY}" sync --locked --dev --no-sources'
@@ -124,7 +132,15 @@ jobs:
         env:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
           PYTHON_BINARY: ${{ env.pythonLocation }}/bin/python
-        run: uv run --no-project python bin/ci_project_tools.py orchestration_binaries --lib "$ABXPKG_LIB_DIR"
+        run: |
+          set -Eeuo pipefail
+          ABXPKG_VERSION="$(sed -n 's/^[[:space:]]*"abxpkg==\([^"]*\)",[[:space:]]*$/\1/p' pyproject.toml | head -n1)"
+          test -n "$ABXPKG_VERSION"
+          sleep 60
+          uv run --no-cache --no-project --with "abxpkg==$ABXPKG_VERSION" abxpkg env --install \
+            --lib="$ABXPKG_LIB_DIR" \
+            --deps-from="$GITHUB_WORKSPACE/.github/configs/ci-tooling.json:orchestration_binaries" >> "$GITHUB_ENV"
+          echo "$ABXPKG_LIB_DIR/env/bin" >> "$GITHUB_PATH"
 
       - name: Install Python dependencies
         run: '"${UV_BINARY}" sync --locked --dev --no-sources'
@@ -157,7 +173,15 @@ jobs:
         env:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
           PYTHON_BINARY: ${{ env.pythonLocation }}/bin/python
-        run: uv run --no-project python bin/ci_project_tools.py orchestration_binaries --lib "$ABXPKG_LIB_DIR"
+        run: |
+          set -Eeuo pipefail
+          ABXPKG_VERSION="$(sed -n 's/^[[:space:]]*"abxpkg==\([^"]*\)",[[:space:]]*$/\1/p' pyproject.toml | head -n1)"
+          test -n "$ABXPKG_VERSION"
+          sleep 60
+          uv run --no-cache --no-project --with "abxpkg==$ABXPKG_VERSION" abxpkg env --install \
+            --lib="$ABXPKG_LIB_DIR" \
+            --deps-from="$GITHUB_WORKSPACE/.github/configs/ci-tooling.json:orchestration_binaries" >> "$GITHUB_ENV"
+          echo "$ABXPKG_LIB_DIR/env/bin" >> "$GITHUB_PATH"
 
       - name: Install Python dependencies
         run: '"${UV_BINARY}" sync --locked --dev --no-sources'
@@ -194,7 +218,15 @@ jobs:
         env:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
           PYTHON_BINARY: ${{ env.pythonLocation }}/bin/python
-        run: uv run --no-project python bin/ci_project_tools.py orchestration_binaries --lib "$ABXPKG_LIB_DIR"
+        run: |
+          set -Eeuo pipefail
+          ABXPKG_VERSION="$(sed -n 's/^[[:space:]]*"abxpkg==\([^"]*\)",[[:space:]]*$/\1/p' pyproject.toml | head -n1)"
+          test -n "$ABXPKG_VERSION"
+          sleep 60
+          uv run --no-cache --no-project --with "abxpkg==$ABXPKG_VERSION" abxpkg env --install \
+            --lib="$ABXPKG_LIB_DIR" \
+            --deps-from="$GITHUB_WORKSPACE/.github/configs/ci-tooling.json:orchestration_binaries" >> "$GITHUB_ENV"
+          echo "$ABXPKG_LIB_DIR/env/bin" >> "$GITHUB_PATH"
 
       - name: Install Python dependencies
         run: '"${UV_BINARY}" sync --locked --dev --no-sources'
@@ -269,7 +301,15 @@ jobs:
         env:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
           PYTHON_BINARY: ${{ env.pythonLocation }}/bin/python
-        run: uv run --no-project python bin/ci_project_tools.py orchestration_binaries --lib "$ABXPKG_LIB_DIR"
+        run: |
+          set -Eeuo pipefail
+          ABXPKG_VERSION="$(sed -n 's/^[[:space:]]*"abxpkg==\([^"]*\)",[[:space:]]*$/\1/p' pyproject.toml | head -n1)"
+          test -n "$ABXPKG_VERSION"
+          sleep 60
+          uv run --no-cache --no-project --with "abxpkg==$ABXPKG_VERSION" abxpkg env --install \
+            --lib="$ABXPKG_LIB_DIR" \
+            --deps-from="$GITHUB_WORKSPACE/.github/configs/ci-tooling.json:orchestration_binaries" >> "$GITHUB_ENV"
+          echo "$ABXPKG_LIB_DIR/env/bin" >> "$GITHUB_PATH"
 
       - name: Install build and test dependencies
         run: $UV_BINARY sync --locked --dev --no-sources
@@ -328,7 +368,15 @@ jobs:
         env:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
           PYTHON_BINARY: ${{ env.pythonLocation }}/bin/python
-        run: uv run --no-project python bin/ci_project_tools.py orchestration_binaries --lib "$ABXPKG_LIB_DIR"
+        run: |
+          set -Eeuo pipefail
+          ABXPKG_VERSION="$(sed -n 's/^[[:space:]]*"abxpkg==\([^"]*\)",[[:space:]]*$/\1/p' pyproject.toml | head -n1)"
+          test -n "$ABXPKG_VERSION"
+          sleep 60
+          uv run --no-cache --no-project --with "abxpkg==$ABXPKG_VERSION" abxpkg env --install \
+            --lib="$ABXPKG_LIB_DIR" \
+            --deps-from="$GITHUB_WORKSPACE/.github/configs/ci-tooling.json:orchestration_binaries" >> "$GITHUB_ENV"
+          echo "$ABXPKG_LIB_DIR/env/bin" >> "$GITHUB_PATH"
 
       - name: Download the exact release artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0

@@ -57,7 +57,15 @@ jobs:
         env:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
           PYTHON_BINARY: ${{ env.pythonLocation }}/bin/python
-        run: uv run --no-project python bin/ci_project_tools.py orchestration_binaries --lib "$ABXPKG_LIB_DIR"
+        run: |
+          set -Eeuo pipefail
+          ABXPKG_VERSION="$(sed -n 's/^[[:space:]]*"abxpkg==\([^"]*\)",[[:space:]]*$/\1/p' pyproject.toml | head -n1)"
+          test -n "$ABXPKG_VERSION"
+          sleep 60
+          uv run --no-cache --no-project --with "abxpkg==$ABXPKG_VERSION" abxpkg env --install \
+            --lib="$ABXPKG_LIB_DIR" \
+            --deps-from="$GITHUB_WORKSPACE/.github/configs/ci-tooling.json:orchestration_binaries" >> "$GITHUB_ENV"
+          echo "$ABXPKG_LIB_DIR/env/bin" >> "$GITHUB_PATH"
 
       - name: Clone build contexts
         shell: bash
@@ -105,7 +113,13 @@ jobs:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
         run: |
           set -Eeuo pipefail
-          "${UV_BINARY}" run --no-project python bin/ci_project_tools.py docker_binaries --lib "$ABXPKG_LIB_DIR"
+          ABXPKG_VERSION="$(sed -n 's/^[[:space:]]*"abxpkg==\([^"]*\)",[[:space:]]*$/\1/p' pyproject.toml | head -n1)"
+          test -n "$ABXPKG_VERSION"
+          sleep 60
+          uv run --no-cache --no-project --with "abxpkg==$ABXPKG_VERSION" abxpkg env --install \
+            --lib="$ABXPKG_LIB_DIR" \
+            --deps-from="$GITHUB_WORKSPACE/.github/configs/ci-tooling.json:docker_binaries" >> "$GITHUB_ENV"
+          echo "$ABXPKG_LIB_DIR/env/bin" >> "$GITHUB_PATH"
           docker_binary="$ABXPKG_LIB_DIR/env/bin/docker"
           test -L "$docker_binary"
           test -x "$docker_binary"
