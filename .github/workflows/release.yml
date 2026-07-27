@@ -53,7 +53,7 @@ jobs:
           PYTHON_BINARY: ${{ env.pythonLocation }}/bin/python
         run: |
           set -Eeuo pipefail
-          ABXPKG_VERSION="$(sed -n 's/^[[:space:]]*"abxpkg==\([^"]*\)",[[:space:]]*$/\1/p' pyproject.toml | head -n1)"
+          ABXPKG_VERSION="$(uv run --no-cache --no-project python -c 'import tomllib; print(next(package["version"] for package in tomllib.load(open("uv.lock", "rb"))["package"] if package["name"] == "abxpkg"))')"
           test -n "$ABXPKG_VERSION"
           echo "ABXPKG_LIB_DIR=$ABXPKG_LIB_DIR" >> "$GITHUB_ENV"
           uv run --no-cache --no-project --with "abxpkg==$ABXPKG_VERSION" abxpkg env --install \
@@ -95,7 +95,7 @@ jobs:
           PYTHON_BINARY: ${{ env.pythonLocation }}/bin/python
         run: |
           set -Eeuo pipefail
-          ABXPKG_VERSION="$(sed -n 's/^[[:space:]]*"abxpkg==\([^"]*\)",[[:space:]]*$/\1/p' pyproject.toml | head -n1)"
+          ABXPKG_VERSION="$(uv run --no-cache --no-project python -c 'import tomllib; print(next(package["version"] for package in tomllib.load(open("uv.lock", "rb"))["package"] if package["name"] == "abxpkg"))')"
           test -n "$ABXPKG_VERSION"
           echo "ABXPKG_LIB_DIR=$ABXPKG_LIB_DIR" >> "$GITHUB_ENV"
           uv run --no-cache --no-project --with "abxpkg==$ABXPKG_VERSION" abxpkg env --install \
@@ -108,7 +108,7 @@ jobs:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
         run: |
           set -Eeuo pipefail
-          ABXPKG_VERSION="$(sed -n 's/^[[:space:]]*"abxpkg==\([^"]*\)",[[:space:]]*$/\1/p' pyproject.toml | head -n1)"
+          ABXPKG_VERSION="$(uv run --no-cache --no-project python -c 'import tomllib; print(next(package["version"] for package in tomllib.load(open("uv.lock", "rb"))["package"] if package["name"] == "abxpkg"))')"
           test -n "$ABXPKG_VERSION"
           echo "ABXPKG_LIB_DIR=$ABXPKG_LIB_DIR" >> "$GITHUB_ENV"
           uv run --no-cache --no-project --with "abxpkg==$ABXPKG_VERSION" abxpkg env --install \
