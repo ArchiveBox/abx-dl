@@ -406,11 +406,11 @@ def test_install_event_resolves_real_plugin_override_paths(tmp_path: Path) -> No
     asyncio.run(run())
 
     request = next(event for event in request_events if event.name == "feedparser")
+    required_binary = next(binary for binary in plugin.config.required_binaries if binary.name == "feedparser")
+    expected_uv_overrides = dict(required_binary.overrides["uv"])
+    expected_uv_overrides["install_root"] = str(managed_lib_dir / "uv" / "packages" / "parse_rss_urls")
     assert request.overrides == {
-        "uv": {
-            "install_root": str(managed_lib_dir / "uv" / "packages" / "parse_rss_urls"),
-            "install_args": ["feedparser"],
-        },
+        "uv": expected_uv_overrides,
     }
     assert "provider_metadata" not in request.extra_context
     assert "raw_overrides" not in request.extra_context
