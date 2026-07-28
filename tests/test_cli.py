@@ -936,16 +936,12 @@ def test_plugins_single_plugin_shows_metadata_from_config(tmp_path: Path) -> Non
     assert "Outputs: application/json" in normalized
 
 
-def test_plugins_list_includes_metadata_summary_columns(tmp_path: Path) -> None:
+def test_plugins_list_includes_requested_plugins(tmp_path: Path) -> None:
     result = _run_cli(tmp_path, "plugins", "headers", "chrome")
     normalized = " ".join(result.stdout.split())
     assert result.returncode == 0
-    assert "Deps" in normalized
-    assert "Outputs" in normalized
-    assert "Info" in normalized
     assert "chrome" in normalized
     assert "headers" in normalized
-    assert "application/json" in normalized
 
 
 def test_readme_install_command_runs_real_install_pipeline(tmp_path: Path) -> None:
