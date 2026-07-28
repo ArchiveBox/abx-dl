@@ -50,10 +50,16 @@ async def _run_event_now(event: BaseEvent, timeout: float | None = None) -> Base
 async def _wait_for_background_ready(
     bus: EventBus,
     process_event: ProcessEvent,
+    started_process: ProcessStartedEvent,
     timeout: float,
 ) -> None:
     deadline = asyncio.get_running_loop().time() + timeout
     while asyncio.get_running_loop().time() < deadline:
+        try:
+            if started_process.stderr_file.stat().st_size > 0:
+                return
+        except OSError:
+            pass
         first_stdout = await bus.find(
             ProcessStdoutEvent,
             child_of=process_event,
@@ -74,7 +80,7 @@ async def _wait_for_background_ready(
         if remaining <= 0:
             break
         await asyncio.sleep(min(0.05, remaining))
-    raise RuntimeError("Background hook did not emit stdout or exit")
+    raise RuntimeError("Background hook did not emit stdout, stderr, or exit")
 
 
 class SnapshotService(BaseService):
@@ -308,7 +314,7 @@ class SnapshotService(BaseService):
                     return
                 if started_process is None:
                     raise RuntimeError(f"Background hook {hook.name} did not start")
-                await _wait_for_background_ready(self.bus, background_process, ready_wait_timeout)
+                await _wait_for_background_ready(self.bus, background_process, started_process, ready_wait_timeout)
             else:
                 foreground_process = event.emit(process_event)
                 await _run_event_now(foreground_process, handler_timeout)
