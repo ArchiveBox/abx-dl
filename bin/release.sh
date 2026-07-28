@@ -163,6 +163,29 @@ for filename in missing:
 PY
 }
 
+pypi_release_has_expected_files() {
+    local version="$1" pypi_urls
+    pypi_urls="$("${CURL_BINARY}" -fsSL "https://pypi.org/pypi/${PYPI_PACKAGE}/json" | "${JQ_BINARY}" -c --arg version "${version}" ".releases[\$version] // []")" || return 1
+    PYPI_URLS="${pypi_urls}" EXPECTED_VERSION="${version}" "${UV_BINARY}" run --no-cache --no-project python - <<'PY'
+import json
+import os
+import re
+
+version = os.environ["EXPECTED_VERSION"]
+expected_names = {
+    f"abx_dl-{version}-py3-none-any.whl",
+    f"abx_dl-{version}.tar.gz",
+}
+published_files = json.loads(os.environ["PYPI_URLS"])
+published = {item["filename"]: item["digests"].get("sha256", "") for item in published_files}
+if set(published) != expected_names:
+    raise SystemExit(f"PyPI release {version} does not contain the exact wheel and sdist")
+for filename, digest in published.items():
+    if not re.fullmatch(r"[0-9a-f]{64}", digest):
+        raise SystemExit(f"PyPI release {version} has an invalid sha256 for {filename}")
+PY
+}
+
 tag_target() {
     local tag="$1" output target
     output="$("${GIT_BINARY}" ls-remote origin "refs/tags/${tag}^{}")"
@@ -361,6 +384,22 @@ main() {
     target="$(tag_target "${TAG_PREFIX}${version}")"
     ci_run_id="${CI_RUN_ID:-}"
     [[ "${ci_run_id}" =~ ^[0-9]+$ ]] || { echo "CI_RUN_ID must identify the successful CI workflow run" >&2; return 1; }
+    latest="$(latest_published_version "${slug}")"
+    if [[ -n "${latest}" && "$(compare_versions "${version}" "${latest}")" == "lt" ]]; then
+        echo "Source version ${version} is behind published version ${latest}" >&2
+        return 1
+    fi
+    if [[ -n "${target}" && "${target}" != "${release_sha}" ]]; then
+        "${GIT_BINARY}" merge-base --is-ancestor "${target}" "refs/remotes/origin/${RELEASE_BRANCH:-main}" || {
+            echo "Existing tag ${TAG_PREFIX}${version} is not on ${RELEASE_BRANCH:-main}" >&2
+            return 1
+        }
+        github_release_metadata_is_valid "${version}" "${slug}"
+        github_release_has_assets "${version}" "${slug}"
+        pypi_release_has_expected_files "${version}"
+        echo "${PYPI_PACKAGE} ${version} is already fully released from ${target}"
+        return 0
+    fi
     artifact_dir="$("${UV_BINARY}" run --no-cache --no-project python -c 'import tempfile; print(tempfile.mkdtemp())')"
     ARTIFACT_DIR_TO_CLEAN="${artifact_dir}"
     download_tested_python_artifacts "${slug}" "${ci_run_id}" "${release_sha}" "${version}" "${artifact_dir}"
@@ -379,11 +418,6 @@ main() {
     fi
     if [[ "${github_exists}" == true ]] && github_release_has_assets "${version}" "${slug}"; then
         github_complete=true
-    fi
-    latest="$(latest_published_version "${slug}")"
-    if [[ -n "${latest}" && "$(compare_versions "${version}" "${latest}")" == "lt" ]]; then
-        echo "Source version ${version} is behind published version ${latest}" >&2
-        return 1
     fi
     if [[ "${pypi_state}" == "complete" && "${github_complete}" == true ]]; then
         [[ -n "${target}" ]] || { echo "Fully published ${version} is missing tag ${TAG_PREFIX}${version}" >&2; return 1; }
