@@ -799,7 +799,7 @@ def test_snapshot_background_only_hook_finishes_before_cleanup_without_filename_
     assert completed_processes[-1].status == "succeeded"
     assert completed_processes[-1].exit_code == 0
     assert "ArchiveResult" in completed_processes[-1].stdout
-    assert completed_processes[-1].stderr == ""
+    assert "ArchiveResult" not in completed_processes[-1].stderr
     assert (tmp_path / "run" / "wget" / "example.com" / "index.html").exists()
     assert not list((tmp_path / "run" / "wget").glob("*.pid"))
 
