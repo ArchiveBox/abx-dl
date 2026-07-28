@@ -47,42 +47,6 @@ async def _run_event_now(event: BaseEvent, timeout: float | None = None) -> Base
     return event
 
 
-async def _wait_for_background_ready(
-    bus: EventBus,
-    process_event: ProcessEvent,
-    started_process: ProcessStartedEvent,
-    timeout: float,
-) -> None:
-    deadline = asyncio.get_running_loop().time() + timeout
-    while asyncio.get_running_loop().time() < deadline:
-        try:
-            if started_process.stderr_file.stat().st_size > 0:
-                return
-        except OSError:
-            pass
-        first_stdout = await bus.find(
-            ProcessStdoutEvent,
-            child_of=process_event,
-            past=True,
-            future=False,
-        )
-        if first_stdout is not None:
-            return
-        completed_process = await bus.find(
-            ProcessCompletedEvent,
-            child_of=process_event,
-            past=True,
-            future=False,
-        )
-        if completed_process is not None:
-            return
-        remaining = deadline - asyncio.get_running_loop().time()
-        if remaining <= 0:
-            break
-        await asyncio.sleep(min(0.05, remaining))
-    raise RuntimeError("Background hook did not emit stdout, stderr, or exit")
-
-
 class SnapshotService(BaseService):
     """Orchestrates the snapshot phase: extraction hooks, cleanup, completion.
 
@@ -275,12 +239,10 @@ class SnapshotService(BaseService):
                 handler_timeout: float | None = None
                 handler_slow_timeout: float | None = None
                 started_wait_timeout = 60.0
-                ready_wait_timeout = float(timeout or 0) + 30.0
             else:
                 handler_timeout = float(timeout or 0) + 30.0
                 handler_slow_timeout = slow_warning_timeout(handler_timeout)
                 started_wait_timeout = handler_timeout
-                ready_wait_timeout = handler_timeout
             process_event = ProcessEvent(
                 plugin_name=plugin.name,
                 hook_name=hook.name,
@@ -314,7 +276,6 @@ class SnapshotService(BaseService):
                     return
                 if started_process is None:
                     raise RuntimeError(f"Background hook {hook.name} did not start")
-                await _wait_for_background_ready(self.bus, background_process, started_process, ready_wait_timeout)
             else:
                 foreground_process = event.emit(process_event)
                 await _run_event_now(foreground_process, handler_timeout)
@@ -500,6 +461,11 @@ class SnapshotService(BaseService):
             future=False,
             where=lambda candidate: candidate.is_background and (candidate.plugin_name, candidate.hook_name) in background_hook_keys,
         )
+        grace_by_hook: dict[tuple[str, str], int] = {}
+        for plugin, hook in self.hooks:
+            if not hook.is_background:
+                continue
+            grace_by_hook[(plugin.name, hook.name)] = self._hook_timeouts.get((plugin.name, hook.name), 60)
         foreground_process = await self.bus.find(
             ProcessEvent,
             child_of=root_snapshot_event,
@@ -508,15 +474,14 @@ class SnapshotService(BaseService):
             where=lambda candidate: not candidate.is_background,
         )
         if foreground_process is None and background_process_events:
-            # Background-only snapshots have no foreground hook to create a
-            # natural gap between "the OS process exists" and cleanup's polite
-            # SIGTERM. That gap matters because PEP-723 hooks first enter the
-            # abxpkg shebang launcher before Python user code can install its
-            # own signal disposition. Without this tiny grace, cleanup can send
-            # SIGTERM in the same scheduler turn as spawn and convert valid
-            # finite extraction work into a signal failure. Keep the budget
-            # small and only spend it when there is no foreground work and no
-            # background hook has already completed.
+            # Background-only snapshots have no foreground hook to create the
+            # normal state-machine barrier between process start and cleanup.
+            # In that case cleanup owns the barrier: let each background hook
+            # complete through the ordinary ProcessCompletedEvent path using
+            # its configured hook timeout, then SIGTERM only processes that are
+            # still alive. This preserves the single bg/fg lifecycle model
+            # without guessing from filename hints like ".finite" / ".daemon"
+            # or from incidental stdout/stderr output.
             pending_startup_processes: list[ProcessEvent] = []
             for process_event in background_process_events:
                 completed_process = await self.bus.find(
@@ -534,16 +499,11 @@ class SnapshotService(BaseService):
                             ProcessCompletedEvent,
                             child_of=process_event,
                             past=True,
-                            future=0.1,
+                            future=grace_by_hook.get((process_event.plugin_name, process_event.hook_name), 60),
                         )
                         for process_event in pending_startup_processes
                     ],
                 )
-        grace_by_hook: dict[tuple[str, str], int] = {}
-        for plugin, hook in self.hooks:
-            if not hook.is_background:
-                continue
-            grace_by_hook[(plugin.name, hook.name)] = self._hook_timeouts.get((plugin.name, hook.name), 60)
         started_processes: list[tuple[ProcessEvent, ProcessStartedEvent]] = []
         for process_event in background_process_events:
             started_process = await self.bus.find(
