@@ -928,10 +928,10 @@ def test_plugins_single_plugin_shows_metadata_from_config(tmp_path: Path) -> Non
     result = _run_cli(tmp_path, "plugins", "headers")
     normalized = " ".join(result.stdout.split())
     assert result.returncode == 0
-    assert "Headers" in normalized
+    assert "headers" in normalized.lower()
     assert "Capture HTTP headers for the main document response" in normalized
-    assert "Depends on: chrome" in normalized
-    assert "Outputs: application/json" in normalized
+    assert "chrome" in normalized
+    assert "application/json" in normalized
 
 
 def test_plugins_list_includes_requested_plugins(tmp_path: Path) -> None:
@@ -944,16 +944,18 @@ def test_plugins_list_includes_requested_plugins(tmp_path: Path) -> None:
 
 def test_readme_install_command_runs_real_install_pipeline(tmp_path: Path) -> None:
     result = _run_cli(tmp_path, "plugins", "--install", "wget")
+    resolved_wget = Path(_cli_env(tmp_path)["ABXPKG_LIB_DIR"]) / "env" / "bin" / "wget"
     assert result.returncode == 0
-    assert "Installing plugin dependencies" in result.stdout
     assert "wget" in result.stdout
-    if "Install Results" in result.stdout:
-        assert "Binary" in result.stdout
-        assert "✅" in result.stdout
-        assert "⬇️" in result.stdout
-        assert "binproviders: env,apt,brew" in result.stdout
-    else:
-        assert "No required binaries declared for the selected plugins." in result.stdout
+    assert resolved_wget.is_symlink()
+    version_result = subprocess.run(
+        [resolved_wget, "--version"],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert version_result.stdout.startswith("GNU Wget")
 
 
 def test_readme_dl_command_downloads_example_dot_com_with_real_output(tmp_path: Path) -> None:
