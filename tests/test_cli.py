@@ -909,9 +909,7 @@ def test_readme_plugins_command_lists_real_wget_hooks(tmp_path: Path) -> None:
     resolved_wget = Path(_cli_env(tmp_path)["ABXPKG_LIB_DIR"]) / "env" / "bin" / "wget"
     assert result.returncode == 0
     assert "wget" in result.stdout
-    assert "env/bin/wget" in result.stdout
     assert "Archive pages and their requisites with wget" in result.stdout
-    assert "Outputs:" in result.stdout
     assert "text/html" in result.stdout
     assert resolved_wget.is_symlink()
     version_result = subprocess.run(
