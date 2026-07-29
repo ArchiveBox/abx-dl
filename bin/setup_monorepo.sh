@@ -6,6 +6,48 @@ SCRIPT_REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 GITHUB_BASE="${GITHUB_BASE:-https://github.com/ArchiveBox}"
 MONOREPO_REMOTE="${MONOREPO_REMOTE:-$GITHUB_BASE/monorepo.git}"
 REPO_NAMES=(abxbus abxpkg abx-plugins abx-dl archivebox)
+GIT_BINARY=""
+
+locked_version() {
+    local lock_file="$1" wanted="$2" line package=""
+    while IFS= read -r line; do
+        case "$line" in
+            '[[package]]') package="" ;;
+            "name = \"${wanted}\"") package="$wanted" ;;
+            'version = "'*'"')
+                if [[ "$package" == "$wanted" ]]; then
+                    line="${line#version = \"}"
+                    printf '%s\n' "${line%\"}"
+                    return 0
+                fi
+                ;;
+        esac
+    done < "$lock_file"
+    return 1
+}
+
+resolve_git_binary() {
+    local lock_file="$SCRIPT_REPO_ROOT/uv.lock"
+    if [[ ! -f "$lock_file" && -f "$SCRIPT_REPO_ROOT/archivebox/uv.lock" ]]; then
+        lock_file="$SCRIPT_REPO_ROOT/archivebox/uv.lock"
+    fi
+    [[ -f "$lock_file" ]] || { printf 'Unable to find an ArchiveBox uv.lock for abxpkg bootstrap\n' >&2; exit 1; }
+
+    local abxpkg_version
+    abxpkg_version="$(locked_version "$lock_file" abxpkg)"
+    [[ -n "$abxpkg_version" ]] || { printf 'Unable to find abxpkg in %s\n' "$lock_file" >&2; exit 1; }
+
+    export ABXPKG_LIB_DIR="${ABXPKG_LIB_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/archivebox/setup-monorepo-abxpkg}"
+    mkdir -p "$ABXPKG_LIB_DIR/env/bin"
+    uv run --no-cache --no-project --with "abxpkg==$abxpkg_version" abxpkg env \
+        --install \
+        --lib="$ABXPKG_LIB_DIR" \
+        --binproviders=env,brew,apt \
+        git >/dev/null
+    GIT_BINARY="$ABXPKG_LIB_DIR/env/bin/git"
+    test -L "$GIT_BINARY"
+    test -x "$GIT_BINARY"
+}
 
 repo_target_branch() {
     case "$1" in
@@ -172,25 +214,7 @@ bootstrap_build_dependencies() {
 }
 
 sync_workspace() {
-    uv sync --all-extras --no-cache --active
-
-    for repo_name in "${REPO_NAMES[@]}"; do
-        printf 'Syncing %s into monorepo environment\n' "$repo_name"
-        case "$repo_name" in
-            archivebox)
-                (
-                    cd "$ROOT_DIR/$repo_name"
-                    UV_PROJECT_ENVIRONMENT="$ROOT_DIR/.venv" uv sync --dev --all-extras --inexact --no-cache --active
-                )
-                ;;
-            *)
-                (
-                    cd "$ROOT_DIR/$repo_name"
-                    UV_PROJECT_ENVIRONMENT="$ROOT_DIR/.venv" uv sync --dev --inexact --no-cache --active
-                )
-                ;;
-        esac
-    done
+    uv sync --all-packages --all-extras --all-groups --no-cache --active
 }
 
 ensure_setup_link() {
@@ -219,7 +243,7 @@ bootstrap_monorepo_root() {
     local origin_url=""
 
     if [[ -d "$monorepo_root/.git" ]]; then
-        origin_url="$(git -C "$monorepo_root" remote get-url origin 2>/dev/null || true)"
+        origin_url="$("$GIT_BINARY" -C "$monorepo_root" remote get-url origin 2>/dev/null || true)"
 
         if [[ -n "$origin_url" ]] && ! monorepo_remote_matches "$origin_url"; then
             printf 'Refusing to reuse existing git repo at %s (origin: %s)\n' "$monorepo_root" "$origin_url" >&2
@@ -227,11 +251,11 @@ bootstrap_monorepo_root() {
         fi
 
         if [[ -z "$origin_url" ]]; then
-            git -C "$monorepo_root" remote add origin "$MONOREPO_REMOTE"
+            "$GIT_BINARY" -C "$monorepo_root" remote add origin "$MONOREPO_REMOTE"
         fi
 
         printf 'Updating monorepo root: %s\n' "$monorepo_root"
-        if git -C "$monorepo_root" -c pull.rebase=false pull --ff-only --quiet >/dev/null 2>&1; then
+        if "$GIT_BINARY" -C "$monorepo_root" -c pull.rebase=false pull --ff-only --quiet >/dev/null 2>&1; then
             printf 'Updated monorepo root\n'
         else
             printf 'Skipping monorepo pull (local changes, divergent branch, detached HEAD, or no upstream)\n' >&2
@@ -240,17 +264,19 @@ bootstrap_monorepo_root() {
     fi
 
     printf 'Bootstrapping monorepo root in %s\n' "$monorepo_root"
-    git -C "$monorepo_root" init -b main >/dev/null
-    git -C "$monorepo_root" remote add origin "$MONOREPO_REMOTE"
-    git -C "$monorepo_root" fetch --depth=1 origin main --quiet
+    "$GIT_BINARY" -C "$monorepo_root" init -b main >/dev/null
+    "$GIT_BINARY" -C "$monorepo_root" remote add origin "$MONOREPO_REMOTE"
+    "$GIT_BINARY" -C "$monorepo_root" fetch --depth=1 origin main --quiet
 
-    if git -C "$monorepo_root" checkout -B main --track origin/main >/dev/null 2>&1; then
+    if "$GIT_BINARY" -C "$monorepo_root" checkout -B main --track origin/main >/dev/null 2>&1; then
         printf 'Initialized monorepo root\n'
     else
         printf 'Failed to materialize monorepo root in %s; existing files likely conflict with tracked monorepo files\n' "$monorepo_root" >&2
         exit 1
     fi
 }
+
+resolve_git_binary
 
 if is_member_repo "$SCRIPT_REPO_ROOT"; then
     ROOT_DIR="$(cd -- "$SCRIPT_REPO_ROOT/.." && pwd)"
@@ -271,14 +297,14 @@ ensure_member_repo() {
 
     if [[ -d "$repo_dir/.git" ]]; then
         printf 'Updating existing checkout: %s\n' "$repo_name"
-        current_branch="$(git -C "$repo_dir" branch --show-current)"
+        current_branch="$("$GIT_BINARY" -C "$repo_dir" branch --show-current)"
 
         if [[ "$current_branch" != "$target_branch" ]]; then
-            git -C "$repo_dir" fetch --depth=1 origin "$target_branch" --quiet
-            git -C "$repo_dir" checkout -B "$target_branch" --track "origin/$target_branch" >/dev/null
+            "$GIT_BINARY" -C "$repo_dir" fetch --depth=1 origin "$target_branch" --quiet
+            "$GIT_BINARY" -C "$repo_dir" checkout -B "$target_branch" --track "origin/$target_branch" >/dev/null
         fi
 
-        if git -C "$repo_dir" -c pull.rebase=false pull --ff-only --quiet origin "$target_branch" >/dev/null 2>&1; then
+        if "$GIT_BINARY" -C "$repo_dir" -c pull.rebase=false pull --ff-only --quiet origin "$target_branch" >/dev/null 2>&1; then
             printf 'Updated: %s\n' "$repo_name"
         else
             printf 'Skipping pull for %s (local changes, divergent branch, detached HEAD, or no upstream)\n' "$repo_name" >&2
@@ -292,7 +318,7 @@ ensure_member_repo() {
     fi
 
     printf 'Cloning %s/%s.git -> %s\n' "$GITHUB_BASE" "$repo_name" "$repo_name"
-    git clone --branch "$target_branch" "$GITHUB_BASE/$repo_name.git" "$repo_dir"
+    "$GIT_BINARY" clone --branch "$target_branch" "$GITHUB_BASE/$repo_name.git" "$repo_dir"
 }
 
 for repo_name in "${REPO_NAMES[@]}"; do
@@ -320,5 +346,5 @@ echo "    VIRTUAL_ENV=$VIRTUAL_ENV"
 echo "    PYTHON_BIN=$VIRTUAL_ENV/bin/python"
 echo
 echo "TIPS:"
-echo " - Use 'uv run ...' inside subrepos for package work; their standalone uv.lock files remain authoritative for CI/release"
+echo " - Use 'uv run ...' inside member repos for package work; the root uv.lock owns this workspace"
 echo " - Always read $ROOT_DIR/README.md into context before starting any work"
