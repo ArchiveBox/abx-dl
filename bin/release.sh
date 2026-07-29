@@ -345,7 +345,7 @@ publish_to_pypi() {
         }
         artifacts+=("${artifact_dir}/${filename}")
     done
-    "${UV_BINARY}" publish --trusted-publishing always "${artifacts[@]}"
+    "${UV_BINARY}" publish --no-cache --trusted-publishing always "${artifacts[@]}"
 }
 
 create_release() {
