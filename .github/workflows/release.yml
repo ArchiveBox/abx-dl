@@ -95,6 +95,7 @@ jobs:
           fi
 
       - name: Verify published PyPI package installs and runs
+        if: steps.cascade-state.outputs.ready == 'true'
         shell: bash
         run: |
           set -Eeuo pipefail
