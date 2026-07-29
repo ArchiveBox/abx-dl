@@ -1,0 +1,39 @@
+abx_dl/models.py
+  s_f8414d52051f83::t_3e1da4bf3277cc 579,637
+  s_f8414d52051f83::t_a8e0333ce1a96c 578,580,592-594,611-636,638-643
+tests/test_install_phase.py
+  s_69ddf154c10e6f::t_80575cb366d5ee 34-61
+tests/test_plugins.py
+  s_f8414d52051f83::t_a8e0333ce1a96c 91
+  s_f8414d52051f83::t_ab6276529c9d3b 99-101
+abx_dl/orchestrator.py
+  s_f8414d52051f83::t_64bc8423f476b6 339-343,608
+abx_dl/cli.py
+  s_f8414d52051f83::t_64bc8423f476b6 1388,1777
+abx_dl/services/binary_service.py
+  s_69ddf154c10e6f::t_c9d2204047d5d6 72-75
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.17",
+  "base_commit_sha": "036ba0e48037719b8364ba12c742acccfdc9d78c",
+  "prompts": {},
+  "sessions": {
+    "s_69ddf154c10e6f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019faf8b-797c-7c30-9a89-b8c3ca8cc3e2",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    },
+    "s_f8414d52051f83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f73c1-cded-7c63-bb8b-3b3c3e5de67d",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
