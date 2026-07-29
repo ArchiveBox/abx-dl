@@ -1,7 +1,6 @@
 import asyncio
 import json
 from pathlib import Path
-from abxpkg.binary_service import BinaryCacheService, BinaryEvent, BinaryRequestEvent, BinaryService
 
 from abx_dl.config import get_initial_env
 from abx_dl.events import InstallEvent, MachineEvent
@@ -12,6 +11,7 @@ from abx_dl.services.binary_service import (
     PluginBinariesService,
     split_abxpkg_binary_request_overrides,
 )
+from abxpkg.binary_service import BinaryCacheService, BinaryEvent, BinaryRequestEvent, BinaryService
 
 
 def test_install_phase_timeout_uses_largest_sequential_binary_lane_budget() -> None:
@@ -197,8 +197,11 @@ def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) 
     run_dir = tmp_path / "run"
     managed_lib_dir = tmp_path / "lib"
 
-    async def collect_requests(*, no_cache: bool) -> list[BinaryRequestEvent]:
-        bus = create_bus(total_timeout=60.0, name=f"install_phase_chrome_abxbus_{tmp_path.name}_{no_cache}")
+    async def collect_requests(*, no_cache: bool, allowed_binproviders: list[str] | None = None) -> list[BinaryRequestEvent]:
+        bus = create_bus(
+            total_timeout=60.0,
+            name=f"install_phase_chrome_abxbus_{tmp_path.name}_{no_cache}_{allowed_binproviders is not None}",
+        )
         PluginBinariesService(
             bus,
             plugins={"chrome": plugin},
@@ -206,6 +209,7 @@ def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) 
             install_plugins=[plugin],
             output_dir=run_dir,
             snapshot=snapshot,
+            allowed_binproviders=allowed_binproviders,
         )
         request_events: list[BinaryRequestEvent] = []
 
@@ -261,6 +265,10 @@ def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) 
     }
     no_cache_request = next(event for event in asyncio.run(collect_requests(no_cache=True)) if event.name == "abxbus")
     assert no_cache_request.no_cache is True
+    restricted_request = next(
+        event for event in asyncio.run(collect_requests(no_cache=False, allowed_binproviders=["apt", "env"])) if event.name == "abxbus"
+    )
+    assert restricted_request.binproviders == "env"
 
 
 def test_install_event_excludes_opencode_when_route_is_disabled(tmp_path: Path) -> None:
