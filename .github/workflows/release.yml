@@ -6,11 +6,7 @@ on:
     types: [completed]
     branches: [main]
 
-permissions:
-  actions: read
-  contents: write
-  id-token: write
-  packages: write
+permissions: {}
 
 concurrency:
   group: release-main
@@ -29,6 +25,10 @@ jobs:
     if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
     runs-on: ubuntu-24.04
     environment: pypi
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
     outputs:
       version: ${{ steps.version.outputs.version }}
 
@@ -106,6 +106,10 @@ jobs:
     name: Build and push tested Docker digests
     if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
     needs: python-release
+    permissions:
+      actions: read
+      contents: read
+      packages: write
     uses: ./.github/workflows/docker.yml
     with:
       checkout_ref: ${{ github.event.workflow_run.head_sha }}
@@ -119,6 +123,10 @@ jobs:
       - python-release
       - docker
     runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+      packages: write
 
     steps:
       - name: Checkout the released commit
