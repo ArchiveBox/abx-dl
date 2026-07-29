@@ -119,32 +119,13 @@ jobs:
           INSTALLED_VERSION="$("$UV_TOOL_BIN_DIR/abx-dl" --version)"
           test "$INSTALLED_VERSION" = "$VERSION"
 
-  docker:
-    name: Build and push tested Docker digests
-    if: >-
-      github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'push' &&
-      needs.python-release.outputs.cascade_ready == 'true'
-    needs: python-release
-    permissions:
-      actions: read
-      contents: read
-      packages: write
-    uses: ./.github/workflows/docker.yml
-    with:
-      checkout_ref: ${{ github.event.workflow_run.head_sha }}
-      push_digests: true
-    secrets: inherit
-
   docker-release:
     name: Publish tested multiarch image
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
       github.event.workflow_run.event == 'push' &&
       needs.python-release.outputs.cascade_ready == 'true'
-    needs:
-      - python-release
-      - docker
+    needs: python-release
     runs-on: ubuntu-24.04
     permissions:
       actions: read
@@ -227,7 +208,7 @@ jobs:
           merge-multiple: true
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
-          run-id: ${{ github.run_id }}
+          run-id: ${{ env.CI_RUN_ID }}
 
       - name: Collect release tags
         id: docker_meta

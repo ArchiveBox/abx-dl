@@ -14,7 +14,7 @@ abxpkg = { timestamp = "2026-07-29T18:18:29.449272104Z", span = "PT1S" }
 
 [[package]]
 name = "abx-dl"
-version = "1.12.42"
+version = "1.12.43"
 source = { editable = "." }
 dependencies = [
     { name = "abx-plugins" },

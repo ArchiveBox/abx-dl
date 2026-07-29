@@ -21,3 +21,11 @@ jobs:
     name: Full test suite
     uses: ./.github/workflows/test.yml
     secrets: inherit
+
+  docker:
+    name: Docker build and test
+    uses: ./.github/workflows/docker.yml
+    with:
+      checkout_ref: ${{ github.sha }}
+      push_digests: ${{ github.event_name == 'push' }}
+    secrets: inherit
