@@ -179,11 +179,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && abx-dl install chrome \
     && abx-dl install \
     && abxpkg env --install --binproviders=env,apt --lib="$ABXPKG_LIB_DIR" --overrides='{"apt":{"install_args":["binutils"]}}' strip >/dev/null \
-    && ORIGINAL_PATH="$PATH" \
-    && eval "$(abxpkg env --lib="$ABXPKG_LIB_DIR" chromium)" \
-    && CHROMIUM_BINARY="$(command -v chromium)" \
-    && PATH="$ORIGINAL_PATH" \
-    && CHROMIUM_BINARY="$(readlink -f "$CHROMIUM_BINARY")" \
+    && CHROMIUM_BINARY="$(readlink -f "$ABXPKG_LIB_DIR/env/bin/chromium")" \
     && test -x "$CHROMIUM_BINARY" \
     && CHROMIUM_DIR="${CHROMIUM_BINARY%/*}" \
     && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR"/chromewebstore -type f -name '*.crx' -delete \
