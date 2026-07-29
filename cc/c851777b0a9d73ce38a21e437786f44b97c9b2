@@ -1,0 +1,21 @@
+.github/configs/ci-tooling.json
+  s_f8414d52051f83::t_161810efd89535 46,54,58,62
+abx_dl/models.py
+  s_f8414d52051f83::t_a3b75f5ddc91af 106
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.17",
+  "base_commit_sha": "ccc851777b0a9d73ce38a21e437786f44b97c9b2",
+  "prompts": {},
+  "sessions": {
+    "s_f8414d52051f83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f73c1-cded-7c63-bb8b-3b3c3e5de67d",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
