@@ -103,7 +103,7 @@ class PluginConfig(BaseModel):
     x_accepts_internal_input: bool = Field(default=False, alias="x-accepts-internal-input")
     output_mimetypes: list[str] = Field(default_factory=list)  # e.g. ['text/html', 'video/']
     properties: dict[str, dict[str, Any]] = Field(default_factory=dict)  # JSONSchema format describing plugin config
-    required_binaries: list[RequiredBinary] = Field(default_factory=list)  # e.g. [{'name': 'wget', 'binproviders': 'env,apt,brew'}]
+    required_binaries: list[RequiredBinary] = Field(default_factory=list)  # e.g. [{'name': 'wget', 'binproviders': 'env,brew,apt'}]
     required_plugins: list[str] = Field(default_factory=list)  # e.g. ['chrome', 'pdf']
 
 

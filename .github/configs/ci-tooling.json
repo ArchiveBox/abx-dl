@@ -43,7 +43,7 @@
     },
     {
       "name": "{CURL_BINARY}",
-      "binproviders": "env,apt,brew"
+      "binproviders": "env,brew,apt"
     },
     {
       "name": "{PYTHON_BINARY}",
@@ -51,15 +51,15 @@
     },
     {
       "name": "{GH_BINARY}",
-      "binproviders": "env,apt,brew"
+      "binproviders": "env,brew,apt"
     },
     {
       "name": "{GIT_BINARY}",
-      "binproviders": "env,apt,brew"
+      "binproviders": "env,brew,apt"
     },
     {
       "name": "{JQ_BINARY}",
-      "binproviders": "env,apt,brew"
+      "binproviders": "env,brew,apt"
     }
   ],
   "docker_binaries": [
