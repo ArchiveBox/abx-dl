@@ -422,7 +422,7 @@ class SnapshotService(BaseService):
                     event_timeout=self.snapshot_cleanup_phase_timeout,
                     event_handler_slow_timeout=slow_warning_timeout(self.snapshot_cleanup_phase_timeout),
                 )
-                event.emit(cleanup_event)
+                await _run_event_now(event.emit(cleanup_event), self.snapshot_cleanup_phase_timeout)
         if self.snapshot_cleanup_enabled:
             return
 

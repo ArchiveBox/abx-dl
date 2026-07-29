@@ -27,6 +27,7 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           version: "0.10.6"
+          enable-cache: false
 
       - name: Project host CI tools through abxpkg
         env:
@@ -42,10 +43,10 @@ jobs:
           echo "$ABXPKG_LIB_DIR/env/bin" >> "$GITHUB_PATH"
 
       - name: Install Python dependencies
-        run: '"${UV_BINARY}" sync --locked --dev --no-sources'
+        run: '"${UV_BINARY}" sync --no-cache --locked --dev --no-sources'
 
       - name: Run prek
-        run: $UV_BINARY run --no-sync --no-sources prek run --all-files
+        run: $UV_BINARY run --no-cache --no-sync --no-sources prek run --all-files
 
   discover-tests:
     name: Discover test files
@@ -62,11 +63,12 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           version: "0.10.6"
+          enable-cache: false
 
       - name: Build test matrix
         id: matrix
         run: |
-          uv run --no-project python - <<'PY'
+          uv run --no-cache --no-project python - <<'PY'
           import json
           import os
           from pathlib import Path
@@ -126,6 +128,7 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           version: "0.10.6"
+          enable-cache: false
 
       - name: Project host CI tools through abxpkg
         env:
@@ -141,12 +144,12 @@ jobs:
           echo "$ABXPKG_LIB_DIR/env/bin" >> "$GITHUB_PATH"
 
       - name: Install Python dependencies
-        run: '"${UV_BINARY}" sync --locked --dev --no-sources'
+        run: '"${UV_BINARY}" sync --no-cache --locked --dev --no-sources'
 
       - name: Run repo test suite
         env:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
-        run: $UV_BINARY run --no-sync --no-sources pytest -q "${{ matrix.file }}"
+        run: $UV_BINARY run --no-cache --no-sync --no-sources pytest -q "${{ matrix.file }}"
 
   documentation:
     name: Documentation code blocks
@@ -166,6 +169,7 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           version: "0.10.6"
+          enable-cache: false
 
       - name: Project host CI tools through abxpkg
         env:
@@ -181,12 +185,12 @@ jobs:
           echo "$ABXPKG_LIB_DIR/env/bin" >> "$GITHUB_PATH"
 
       - name: Install Python dependencies
-        run: '"${UV_BINARY}" sync --locked --dev --no-sources'
+        run: '"${UV_BINARY}" sync --no-cache --locked --dev --no-sources'
 
       - name: Run documentation code blocks
         env:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
-        run: $UV_BINARY run --no-sync --no-sources pytest -vv --tb=long --durations=0 -m "not docker_required" README.md AGENTS.md CLAUDE.md skills
+        run: $UV_BINARY run --no-cache --no-sync --no-sources pytest -vv --tb=long --durations=0 -m "not docker_required" README.md AGENTS.md CLAUDE.md skills
 
   test-all:
     name: All plugins
@@ -210,6 +214,7 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           version: "0.10.6"
+          enable-cache: false
 
       - name: Project host CI tools through abxpkg
         env:
@@ -225,18 +230,18 @@ jobs:
           echo "$ABXPKG_LIB_DIR/env/bin" >> "$GITHUB_PATH"
 
       - name: Install Python dependencies
-        run: '"${UV_BINARY}" sync --locked --dev --no-sources'
+        run: '"${UV_BINARY}" sync --no-cache --locked --dev --no-sources'
 
       - name: Locate installed ArchiveBox plugins
         run: |
-          plugins_dir="$("${UV_BINARY}" run --no-sync --no-sources python -c 'from abx_plugins import get_plugins_dir; print(get_plugins_dir())')"
+          plugins_dir="$("${UV_BINARY}" run --no-cache --no-sync --no-sources python -c 'from abx_plugins import get_plugins_dir; print(get_plugins_dir())')"
           test -d "$plugins_dir"
           echo "ABX_PLUGINS_DIR=$plugins_dir" >> "$GITHUB_ENV"
 
       - name: Enable every Snapshot plugin
         run: |
           set -Eeuo pipefail
-          "$UV_BINARY" run --no-sync --no-sources python - <<'PY'
+          "$UV_BINARY" run --no-cache --no-sync --no-sources python - <<'PY'
           import os
           from pathlib import Path
           from abx_dl.models import discover_plugins
@@ -256,8 +261,8 @@ jobs:
       - name: Test all plugins
         run: |
           set -Eeuo pipefail
-          "${UV_BINARY}" run --no-sync --no-sources abx-dl dl 'https://example.com' --dir=./test-output --max-urls=2
-          "${UV_BINARY}" run --no-sync --no-sources python bin/validate_crawl.py \
+          "${UV_BINARY}" run --no-cache --no-sync --no-sources abx-dl dl 'https://example.com' --dir=./test-output --max-urls=2
+          "${UV_BINARY}" run --no-cache --no-sync --no-sources python bin/validate_crawl.py \
             ./test-output/index.jsonl \
             --output-dir=./test-output \
             --plugins-dir="$ABX_PLUGINS_DIR"
@@ -292,6 +297,7 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           version: "0.10.6"
+          enable-cache: false
 
       - name: Project host CI tools through abxpkg
         env:
@@ -307,13 +313,13 @@ jobs:
           echo "$ABXPKG_LIB_DIR/env/bin" >> "$GITHUB_PATH"
 
       - name: Install build and test dependencies
-        run: $UV_BINARY sync --locked --dev --no-sources
+        run: $UV_BINARY sync --no-cache --locked --dev --no-sources
 
       - name: Build wheel and source distribution once
         run: |
           set -Eeuo pipefail
-          "${UV_BINARY}" build --out-dir=dist
-          "${UV_BINARY}" run --no-sync --no-sources python - <<'PY'
+          "${UV_BINARY}" build --no-cache --out-dir=dist
+          "${UV_BINARY}" run --no-cache --no-sync --no-sources python - <<'PY'
           import hashlib
           from pathlib import Path
 
@@ -358,6 +364,7 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           version: "0.10.6"
+          enable-cache: false
 
       - name: Project host CI tools through abxpkg
         env:
@@ -381,8 +388,8 @@ jobs:
       - name: Install and smoke-test the exact wheel and sdist
         run: |
           set -Eeuo pipefail
-          VERSION="$("${UV_BINARY}" run --no-project python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
-          ABX_PLUGINS_WHEEL_URL="$("${UV_BINARY}" run --no-project python - <<'PY'
+          VERSION="$("${UV_BINARY}" run --no-cache --no-project python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+          ABX_PLUGINS_WHEEL_URL="$("${UV_BINARY}" run --no-cache --no-project python - <<'PY'
           import tomllib
 
           project = tomllib.load(open("pyproject.toml", "rb"))["project"]
@@ -395,6 +402,6 @@ jobs:
           PY
           )"
           for artifact in dist/*.whl dist/*.tar.gz; do
-            test "$("${UV_BINARY}" run --isolated --no-project --python '${{ matrix.python }}' --with "$ABX_PLUGINS_WHEEL_URL" --with "$artifact" abx-dl version --quiet)" = "$VERSION"
-            "${UV_BINARY}" run --isolated --no-project --python '${{ matrix.python }}' --with "$ABX_PLUGINS_WHEEL_URL" --with "$artifact" abx-dl --help > /dev/null
+            test "$("${UV_BINARY}" run --no-cache --isolated --no-project --python '${{ matrix.python }}' --with "$ABX_PLUGINS_WHEEL_URL" --with "$artifact" abx-dl version --quiet)" = "$VERSION"
+            "${UV_BINARY}" run --no-cache --isolated --no-project --python '${{ matrix.python }}' --with "$ABX_PLUGINS_WHEEL_URL" --with "$artifact" abx-dl --help > /dev/null
           done

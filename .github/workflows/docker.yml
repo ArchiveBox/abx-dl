@@ -52,6 +52,7 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           version: "0.10.6"
+          enable-cache: false
 
       - name: Project host CI tools through abxpkg
         env:
@@ -120,7 +121,7 @@ jobs:
           done
 
       - name: Install documentation test dependencies
-        run: $UV_BINARY sync --locked --group dev --no-sources
+        run: $UV_BINARY sync --no-cache --locked --group dev --no-sources
 
       - name: Resolve Docker through abxpkg
         env:
@@ -153,14 +154,14 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          VERSION="$("${UV_BINARY}" run --no-sync python - <<'PY'
+          VERSION="$("${UV_BINARY}" run --no-cache --no-sync python - <<'PY'
           import tomllib
 
           with open("pyproject.toml", "rb") as f:
               print(tomllib.load(f)["project"]["version"])
           PY
           )"
-          BRANCH_TAG="$(GITHUB_REF_NAME="$GITHUB_REF_NAME" "$UV_BINARY" run --no-project python - <<'PY'
+          BRANCH_TAG="$(GITHUB_REF_NAME="$GITHUB_REF_NAME" "$UV_BINARY" run --no-cache --no-project python - <<'PY'
           import os
           import re
 
@@ -207,7 +208,7 @@ jobs:
         if: matrix.platform == 'linux/amd64'
         env:
           ABXDL_IMAGE: ${{ matrix.local_tag }}
-        run: $UV_BINARY run --no-sync --no-sources pytest -vv --tb=long -m docker_required README.md AGENTS.md CLAUDE.md skills
+        run: $UV_BINARY run --no-cache --no-sync --no-sources pytest -vv --tb=long -m docker_required README.md AGENTS.md CLAUDE.md skills
 
       - name: Validate real crawl inside Docker image
         shell: bash
@@ -220,7 +221,7 @@ jobs:
           OUT_DIR="${{ runner.temp }}/abx-dl-smoke-${{ matrix.artifact_name }}"
           PERSONAS_DIR="${{ runner.temp }}/abx-dl-personas-${{ matrix.artifact_name }}"
           ALL_PLUGINS_ENV="${{ runner.temp }}/abx-dl-all-plugins-${{ matrix.artifact_name }}.env"
-          OUT_DIR="$OUT_DIR" PERSONAS_DIR="$PERSONAS_DIR" "$UV_BINARY" run --no-project python - <<'PY'
+          OUT_DIR="$OUT_DIR" PERSONAS_DIR="$PERSONAS_DIR" "$UV_BINARY" run --no-cache --no-project python - <<'PY'
           import os
           import shutil
           from pathlib import Path
@@ -233,7 +234,7 @@ jobs:
 
           ABX_PLUGINS_DIR="${{ runner.temp }}/abx-plugins/abx_plugins/plugins" \
             ALL_PLUGINS_ENV="$ALL_PLUGINS_ENV" \
-            "$UV_BINARY" run --no-sync --no-sources python - <<'PY'
+            "$UV_BINARY" run --no-cache --no-sync --no-sources python - <<'PY'
           import os
           from pathlib import Path
           from abx_dl.models import discover_plugins
@@ -258,14 +259,14 @@ jobs:
             "\"${DOCKER_BINARY}\" run --rm -it --platform '${{ matrix.platform }}' --volume '$OUT_DIR:/out' --volume '$PERSONAS_DIR:/data/personas' --entrypoint bash '${{ matrix.local_tag }}' -lc 'set -Eeuo pipefail; test \"\$PWD\" = /out; test -d /data/personas; test ! -e /out/personas; ! command -v sonic; ! command -v cargo; ! command -v gcc; ! command -v g++; ! command -v make'" \
             /dev/null
 
-          "${UV_BINARY}" run --no-sync --no-sources python bin/validate_crawl.py \
+          "${UV_BINARY}" run --no-cache --no-sync --no-sources python bin/validate_crawl.py \
             "$OUT_DIR/index.jsonl" \
             --output-dir="$OUT_DIR" \
             --plugins-dir="${{ runner.temp }}/abx-plugins/abx_plugins/plugins"
 
           test -s "$OUT_DIR/title/title.txt"
           test -s "$OUT_DIR/wget/example.com/index.html"
-          OUT_DIR="$OUT_DIR" "$UV_BINARY" run --no-project python - <<'PY'
+          OUT_DIR="$OUT_DIR" "$UV_BINARY" run --no-cache --no-project python - <<'PY'
           import os
           from pathlib import Path
 
@@ -337,7 +338,7 @@ jobs:
           set -Eeuo pipefail
           digest="${{ steps.push_tested.outputs.digest }}"
           test -n "$digest"
-          DIGEST="${digest#sha256:}" "$UV_BINARY" run --no-project python - <<'PY'
+          DIGEST="${digest#sha256:}" "$UV_BINARY" run --no-cache --no-project python - <<'PY'
           import os
           from pathlib import Path
 
