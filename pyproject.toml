@@ -1,6 +1,6 @@
 [project]
 name = "abx-dl"
-version = "1.12.32"
+version = "1.12.33"
 requires-python = ">=3.12,<3.15"
 description = "All-in-one CLI tool to download and extract content from URLs"
 authors = [{name = "Nick Sweeting"}, {name = "ArchiveBox"}]
@@ -80,15 +80,6 @@ build-backend = "pdm.backend"
 [tool.pdm.build]
 includes = [
     "abx_dl/",
-    # Package the same minimal git metadata shape ArchiveBox uses, so
-    # abx-dl resolves COMMIT_HASH by reading .git in both dev and installs.
-    ".git/HEAD",
-    ".git/refs/heads/main",
-]
-source-includes = [
-    # Keep sdists self-contained; pdm_build.py mirrors these files into wheels.
-    ".git/HEAD",
-    ".git/refs/heads/main",
 ]
 excludes = [
     ".DS_Store",

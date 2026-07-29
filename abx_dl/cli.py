@@ -102,10 +102,17 @@ def _source_checkout_root() -> Path | None:
 
 
 def _get_commit_hash() -> str | None:
-    for env_var in ("ABX_DL_COMMIT_HASH", "COMMIT_HASH"):
+    for env_var in ("ABX_DL_COMMIT_HASH",):
         env_commit_hash = os.environ.get(env_var, "").strip()
         if re.fullmatch(r"[0-9a-fA-F]{40}", env_commit_hash):
             return env_commit_hash
+
+    try:
+        packaged_commit_hash = (Path(__file__).resolve().parent / "COMMIT_SHA").read_text().strip()
+        if re.fullmatch(r"[0-9a-fA-F]{40}", packaged_commit_hash):
+            return packaged_commit_hash
+    except OSError:
+        pass
 
     def read_git_file(git_dir: Path, ref: str) -> str | None:
         try:
@@ -129,7 +136,11 @@ def _get_commit_hash() -> str | None:
         return None
 
     try:
-        git_dir = Path(__file__).resolve().parents[1] / ".git"
+        checkout_root = _source_checkout_root()
+        if checkout_root is None:
+            return None
+
+        git_dir = checkout_root / ".git"
         if git_dir.is_file():
             gitdir_path = git_dir.read_text().strip().removeprefix("gitdir:").strip()
             git_dir = Path(gitdir_path) if Path(gitdir_path).is_absolute() else git_dir.parent / gitdir_path
