@@ -214,6 +214,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && abxpkg run --binproviders=env --lib="$ABXPKG_LIB_DIR" apt-get purge -y --auto-remove binutils \
     && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR/env/bin" -maxdepth 1 -type l -name strip -delete \
     && rm -f /venv/bin/uv /venv/bin/uvx \
+    && "$ABXPKG_LIB_DIR/env/bin/find" "$XDG_CACHE_HOME" -mindepth 1 -maxdepth 1 -exec rm -rf {} + \
     && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR" \( ! -user "$DEFAULT_ARCHIVEBOX_UID" -o ! -group "$DEFAULT_ARCHIVEBOX_GID" \) -exec chown "$DEFAULT_ARCHIVEBOX_UID:$DEFAULT_ARCHIVEBOX_GID" {} + \
     && rm -rf /var/lib/apt/lists/* /tmp/*
 
