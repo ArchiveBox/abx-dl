@@ -8,7 +8,7 @@ if [[ "$#" -ne 1 ]]; then
     exit 2
 fi
 
-uv run python - "$1" <<'PY'
+uv run --no-cache --no-project python - "$1" <<'PY'
 from pathlib import Path
 import re
 import sys
