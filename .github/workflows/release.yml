@@ -303,6 +303,5 @@ jobs:
     with:
       upstream_package: abx-dl
       upstream_version: ${{ needs.python-release.outputs.version }}
-      upstream_sha: ${{ github.event.workflow_run.head_sha }}
     secrets:
       release_token: ${{ secrets.RELEASE_GH_TOKEN }}
