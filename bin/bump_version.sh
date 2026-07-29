@@ -33,3 +33,5 @@ if count != 1:
 path.write_text(updated)
 print(version)
 PY
+
+uv lock --no-cache
