@@ -627,10 +627,6 @@ def filter_plugins(
         visiting.append(lower_name)
         for dependency in plugin.config.required_plugins:
             dependency_name = dependency.lower()
-            if dependency_name not in plugins_by_lower:
-                raise ValueError(
-                    f"Plugin {name!r} requires missing plugin {dependency!r}",
-                )
             add_with_dependencies(dependency_name)
         visiting.pop()
         visited.add(lower_name)
