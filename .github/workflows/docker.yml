@@ -213,7 +213,7 @@ jobs:
           PY
 
           "$SCRIPT_BINARY" -q -e -c \
-            "\"${DOCKER_BINARY}\" run --rm -it --platform '${{ matrix.platform }}' --env ANTHROPIC_API_KEY --env CLAUDE_CODE_OAUTH_TOKEN --env TWOCAPTCHA_API_KEY --volume '$OUT_DIR:/out' --volume '$PERSONAS_DIR:/data/personas' '${{ matrix.local_tag }}' --max-urls=1 https://example.com" \
+            "\"${DOCKER_BINARY}\" run --rm -it --platform '${{ matrix.platform }}' --env ANTHROPIC_API_KEY --env CLAUDE_CODE_OAUTH_TOKEN --env TWOCAPTCHA_API_KEY --volume '$OUT_DIR:/out' --volume '$PERSONAS_DIR:/data/personas' '${{ matrix.local_tag }}' https://sweeting.me" \
             /dev/null 2>&1 | "$TEE_BINARY" "$OUT_DIR/crawl.log"
 
           "$SCRIPT_BINARY" -q -e -c \
@@ -226,17 +226,17 @@ jobs:
             --plugins-dir="${{ runner.temp }}/abx-plugins/abx_plugins/plugins"
 
           test -s "$OUT_DIR/title/title.txt"
-          test -s "$OUT_DIR/wget/example.com/index.html"
+          test -s "$OUT_DIR/wget/sweeting.me/index.html"
           OUT_DIR="$OUT_DIR" "$UV_BINARY" run --no-cache --no-project python - <<'PY'
           import os
           from pathlib import Path
 
           output_dir = Path(os.environ["OUT_DIR"])
           title = (output_dir / "title" / "title.txt").read_text()
-          downloaded_html = (output_dir / "wget" / "example.com" / "index.html").read_text()
-          if title.strip() != "Example Domain":
+          downloaded_html = (output_dir / "wget" / "sweeting.me" / "index.html").read_text()
+          if title.strip() != "Nick Sweeting":
               raise SystemExit(f"Unexpected title output: {title!r}")
-          for expected in ("Example Domain", "This domain is for use"):
+          for expected in ("Nick Sweeting", "ArchiveBox"):
               if expected not in downloaded_html:
                   raise SystemExit(f"Downloaded HTML is missing {expected!r}")
           PY
