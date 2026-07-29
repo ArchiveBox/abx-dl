@@ -31,6 +31,7 @@ jobs:
       id-token: write
     outputs:
       version: ${{ steps.version.outputs.version }}
+      cascade_ready: ${{ steps.cascade-state.outputs.ready }}
 
     steps:
       - name: Checkout the tested commit
@@ -77,6 +78,21 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.RELEASE_GH_TOKEN || github.token }}
         run: ./bin/release.sh
+
+      - name: Confirm this tested commit owns the release tag
+        id: cascade-state
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          TARGET=""
+          while read -r sha _; do
+            TARGET="$sha"
+          done < <("${GIT_BINARY}" ls-remote origin "refs/tags/v${{ steps.version.outputs.version }}")
+          if [[ "$TARGET" == "$RELEASE_SHA" ]]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Verify published PyPI package installs and runs
         shell: bash
@@ -297,6 +313,7 @@ jobs:
     needs:
       - python-release
       - docker-release
+    if: needs.python-release.outputs.cascade_ready == 'true'
     permissions:
       contents: read
     uses: ArchiveBox/monorepo/.github/workflows/cascade-release.yml@main

@@ -52,7 +52,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "abx-plugins", specifier = "==1.12.42" },
-    { name = "abxbus", specifier = "==2.5.40" },
+    { name = "abxbus" },
     { name = "abxpkg" },
     { name = "jambo", specifier = ">=0.1.7" },
     { name = "platformdirs", specifier = ">=4.0.0" },
