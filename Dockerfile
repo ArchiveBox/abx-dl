@@ -176,11 +176,11 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=abxpkg-tmp-$TARGETARCH$TARGETVARIANT \
     echo "[+] Installing Chrome and plugin dependencies..." \
     && export HOME=/var/tmp/abxpkg-cache ABXPKG_TMP_CACHE_DIR=/var/tmp/abxpkg-cache \
-    && ABXPKG_NO_CACHE=True abxpkg env --install --binproviders=env,apt --lib="$ABXPKG_LIB_DIR" git >/dev/null \
-    && ABXPKG_NO_CACHE=True abxpkg env --install --binproviders=env,apt --lib="$ABXPKG_LIB_DIR" --overrides='{"apt":{"install_args":["findutils"]}}' find >/dev/null \
-    && ABXPKG_NO_CACHE=True abx-dl install chrome \
-    && ABXPKG_NO_CACHE=True abx-dl install \
-    && ABXPKG_NO_CACHE=True abxpkg env --install --binproviders=env,apt --lib="$ABXPKG_LIB_DIR" --overrides='{"apt":{"install_args":["binutils"]}}' strip >/dev/null \
+    && abxpkg env --install --binproviders=env,apt --lib="$ABXPKG_LIB_DIR" git >/dev/null \
+    && abxpkg env --install --binproviders=env,apt --lib="$ABXPKG_LIB_DIR" --overrides='{"apt":{"install_args":["findutils"]}}' find >/dev/null \
+    && abx-dl install chrome \
+    && abx-dl install \
+    && abxpkg env --install --binproviders=env,apt --lib="$ABXPKG_LIB_DIR" --overrides='{"apt":{"install_args":["binutils"]}}' strip >/dev/null \
     && rm -rf "$ABXPKG_LIB_DIR"/playwright/cache/ffmpeg-* \
     && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR"/chromewebstore -type f -name '*.crx' -delete \
     && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR"/playwright/cache -path '*/chrome-linux*/locales/*' ! -name 'en-US.pak' -delete \
