@@ -179,11 +179,18 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && abx-dl install chrome \
     && abx-dl install \
     && abxpkg env --install --binproviders=env,apt --lib="$ABXPKG_LIB_DIR" --overrides='{"apt":{"install_args":["binutils"]}}' strip >/dev/null \
+    && ORIGINAL_PATH="$PATH" \
+    && eval "$(abxpkg env --lib="$ABXPKG_LIB_DIR" chromium)" \
+    && CHROMIUM_BINARY="$(command -v chromium)" \
+    && PATH="$ORIGINAL_PATH" \
+    && CHROMIUM_BINARY="$(readlink -f "$CHROMIUM_BINARY")" \
+    && test -x "$CHROMIUM_BINARY" \
+    && CHROMIUM_DIR="${CHROMIUM_BINARY%/*}" \
     && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR"/chromewebstore -type f -name '*.crx' -delete \
-    && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR" -path '*/locales/*' ! -name 'en-US.pak' -delete \
-    && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR" -name '*.pak.info' -delete \
-    && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR" -type f \( -name libvk_swiftshader.so -o -name libGLESv2.so -o -name chrome_200_percent.pak \) -delete \
-    && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR" -type d \( -name MEIPreload -o -name PrivacySandboxAttestationsPreloaded -o -name WidevineCdm \) -prune -exec rm -rf {} + \
+    && "$ABXPKG_LIB_DIR/env/bin/find" "$CHROMIUM_DIR" -path '*/locales/*' ! -name 'en-US.pak' -delete \
+    && "$ABXPKG_LIB_DIR/env/bin/find" "$CHROMIUM_DIR" -name '*.pak.info' -delete \
+    && rm -f "$CHROMIUM_DIR"/libvk_swiftshader.so "$CHROMIUM_DIR"/libGLESv2.so "$CHROMIUM_DIR"/chrome_200_percent.pak \
+    && rm -rf "$CHROMIUM_DIR"/MEIPreload "$CHROMIUM_DIR"/PrivacySandboxAttestationsPreloaded "$CHROMIUM_DIR"/WidevineCdm \
     && rm -rf "$ABXPKG_LIB_DIR"/pnpm/packages/singlefile/node_modules/.pnpm/selenium-webdriver@*/node_modules/selenium-webdriver/bin/macos "$ABXPKG_LIB_DIR"/pnpm/packages/singlefile/node_modules/.pnpm/selenium-webdriver@*/node_modules/selenium-webdriver/bin/windows \
     && if [[ "$TARGETARCH" == "arm64" ]]; then rm -f "$ABXPKG_LIB_DIR"/pnpm/packages/liteparse/node_modules/.pnpm/@llamaindex+liteparse@*/node_modules/@llamaindex/liteparse/liteparse.linux-x64-gnu.node "$ABXPKG_LIB_DIR"/pnpm/packages/liteparse/node_modules/.pnpm/@llamaindex+liteparse@*/node_modules/@llamaindex/liteparse/libpdfium.so; fi \
     && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR"/pnpm /opt/node -type f -name '*.map' -delete \
@@ -193,7 +200,8 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && rm -rf /opt/node/include /opt/node/share/doc /opt/node/share/man \
     && rm -f /opt/node/CHANGELOG.md /opt/node/README.md /opt/node/LICENSE \
     && rm -f /usr/lib/jvm/java-*-openjdk-*/lib/server/classes*.jsa \
-    && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR" -type f \( -name chrome -o -name chromium -o -name '*.so' -o -name '*.node' \) -print0 > /tmp/native-libraries \
+    && "$ABXPKG_LIB_DIR/env/bin/strip" --strip-unneeded "$CHROMIUM_BINARY" \
+    && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR" -type f \( -name '*.so' -o -name '*.node' \) -print0 > /tmp/native-libraries \
     && while IFS= read -r -d '' native_library; do \
         magic=''; \
         if IFS= read -r -N 4 magic < "$native_library" && [[ "$magic" == $'\x7fELF' ]]; then \
