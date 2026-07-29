@@ -206,8 +206,6 @@ jobs:
             abxbus=${{ runner.temp }}/abxbus
             abxpkg=${{ runner.temp }}/abxpkg
             abx-plugins=${{ runner.temp }}/abx-plugins
-          cache-from: type=gha,scope=${{ matrix.cache_scope }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.cache_scope }}
           platforms: ${{ matrix.platform }}
 
       - name: Test Docker documentation commands
