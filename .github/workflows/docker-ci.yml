@@ -26,16 +26,16 @@ env:
 jobs:
   docker:
     name: Docker build and test
-    if: github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     uses: ./.github/workflows/docker.yml
     with:
       checkout_ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
-      push_digests: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' }}
+      push_digests: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' }}
     secrets: inherit
 
   publish-manifest:
     name: Publish tested multiarch image
-    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success'
     needs: docker
     runs-on: ubuntu-24.04
 
