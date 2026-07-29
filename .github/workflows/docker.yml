@@ -233,7 +233,7 @@ jobs:
           PY
 
           "$SCRIPT_BINARY" -q -e -c \
-            "\"${DOCKER_BINARY}\" run --rm -it --platform '${{ matrix.platform }}' --env-file '$ALL_PLUGINS_ENV' --env ABXPKG_LIB_DIR=/tmp/runtime-abx-lib --env ANTHROPIC_API_KEY --env CLAUDE_CODE_OAUTH_TOKEN --env TWOCAPTCHA_API_KEY --volume '$OUT_DIR:/out' --volume '$PERSONAS_DIR:/data/personas' '${{ matrix.local_tag }}' --max-urls=1 https://example.com" \
+            "\"${DOCKER_BINARY}\" run --rm -it --platform '${{ matrix.platform }}' --env-file '$ALL_PLUGINS_ENV' --env ANTHROPIC_API_KEY --env CLAUDE_CODE_OAUTH_TOKEN --env TWOCAPTCHA_API_KEY --volume '$OUT_DIR:/out' --volume '$PERSONAS_DIR:/data/personas' '${{ matrix.local_tag }}' --max-urls=1 https://example.com" \
             /dev/null 2>&1 | "$TEE_BINARY" "$OUT_DIR/crawl.log"
 
           "$SCRIPT_BINARY" -q -e -c \
