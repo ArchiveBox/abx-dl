@@ -78,37 +78,14 @@ jobs:
         run: |
           set -Eeuo pipefail
           mapfile -t versions < <("$PYTHON_BINARY" - <<'PY'
-          import re
           import tomllib
 
-          project = tomllib.load(open("pyproject.toml", "rb"))
           lock = tomllib.load(open("uv.lock", "rb"))
-          dependencies = project["project"]["dependencies"]
-          for package in ("abxbus",):
-              match = next(
-                  (
-                      re.fullmatch(rf"{re.escape(package)}==([^; ]+)", dependency)
-                      for dependency in dependencies
-                      if dependency.startswith(f"{package}==")
-                  ),
-                  None,
-              )
-              if match is None:
-                  raise SystemExit(f"Missing exact {package} dependency")
-              print(match.group(1))
-          print(next(package["version"] for package in lock["package"] if package["name"] == "abxpkg"))
-          for package in ("abx-plugins",):
-              match = next(
-                  (
-                      re.fullmatch(rf"{re.escape(package)}==([^; ]+)", dependency)
-                      for dependency in dependencies
-                      if dependency.startswith(f"{package}==")
-                  ),
-                  None,
-              )
-              if match is None:
-                  raise SystemExit(f"Missing exact {package} dependency")
-              print(match.group(1))
+          versions = {package["name"]: package["version"] for package in lock["package"]}
+          for package in ("abxbus", "abxpkg", "abx-plugins"):
+              if package not in versions:
+                  raise SystemExit(f"Missing locked {package} dependency")
+              print(versions[package])
           PY
           )
           test "${#versions[@]}" -eq 3
