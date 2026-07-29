@@ -31,6 +31,34 @@ def test_install_phase_timeout_uses_largest_sequential_binary_lane_budget() -> N
     )
 
 
+def test_split_abxpkg_binary_request_overrides_preserves_apt_provider_fields() -> None:
+    overrides = {
+        "apt": {
+            "install_args": ["sonic"],
+            "apt_gpg_keys": {
+                "https://packagecloud.io/valeriansaliou/sonic/gpgkey": "valeriansaliou_sonic.asc",
+            },
+            "apt_sources": {
+                "valeriansaliou_sonic.list": "deb [signed-by=/etc/apt/keyrings/valeriansaliou_sonic.asc] https://packagecloud.io/valeriansaliou/sonic/debian/ bookworm main",
+            },
+            "apt_system_groups": {"sonic": {}},
+            "apt_system_users": {
+                "sonic": {
+                    "gid": "sonic",
+                    "home": "/var/lib/sonic",
+                    "shell": "/usr/sbin/nologin",
+                    "create_home": False,
+                },
+            },
+        },
+    }
+
+    native, extra_context = split_abxpkg_binary_request_overrides(overrides)
+
+    assert native == overrides
+    assert extra_context == {}
+
+
 def test_install_event_resolves_plugin_binaries_through_abxpkg(tmp_path: Path) -> None:
     plugins = discover_plugins()
     selected = {name: plugins[name] for name in ("git", "wget")}

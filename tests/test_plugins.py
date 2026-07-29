@@ -88,12 +88,16 @@ def test_filter_plugins_includes_required_plugins_without_binary_providers() -> 
 
     assert "ublock" in selected
     assert "chrome" in selected
+    assert list(selected).index("chrome") < list(selected).index("ublock")
     assert "puppeteer" not in selected
     assert "chromewebstore" not in selected
     assert "env" not in selected
     assert "apt" not in selected
     assert "brew" not in selected
     assert "npm" not in selected
+
+    all_selected = filter_plugins(plugins, None, include_providers=True)
+    assert list(all_selected).index("chrome") < list(all_selected).index("ublock")
 
 
 def test_filter_plugins_prunes_plugins_with_disabled_required_plugins() -> None:

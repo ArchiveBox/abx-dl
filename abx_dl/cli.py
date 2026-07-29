@@ -1385,7 +1385,7 @@ def dl(
     interactive_tty = stdout_is_tty or stderr_is_tty
     ui_console = stderr_console if stderr_is_tty else console
 
-    selected_plugins = filter_plugins(plugins, selected) if selected else plugins
+    selected_plugins = filter_plugins(plugins, selected if selected else None)
     if disable_list:
         disabled = {p.strip().lower() for p in disable_list.split(",") if p.strip()}
         selected_plugins = {k: v for k, v in selected_plugins.items() if k.lower() not in disabled}
@@ -1774,7 +1774,7 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
             console.print(f"[dim]Available: {', '.join(sorted(all_plugins.keys()))}[/dim]")
             return
     else:
-        selected = all_plugins
+        selected = filter_plugins(all_plugins, None, include_providers=do_install)
         visible_plugins = set(enabled_plugins)
 
     if do_install:

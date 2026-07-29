@@ -336,7 +336,11 @@ async def install_plugins(
     later ``on_CrawlSetup__*`` or ``on_Snapshot__*`` plugin phases.
     """
     all_plugins = plugins or discover_plugins()
-    selected = filter_plugins(all_plugins, list(plugin_names), include_providers=True) if plugin_names else all_plugins
+    selected = filter_plugins(
+        all_plugins,
+        list(plugin_names) if plugin_names else None,
+        include_providers=True,
+    )
     if not selected:
         return []
 
@@ -601,8 +605,7 @@ async def download(
         interactive_tty = stdout_is_tty or sys.stderr.isatty()
 
     # Filter plugins for runtime phases; binary providers are handled by abxpkg.
-    if selected_plugins:
-        plugins = filter_plugins(plugins, selected_plugins)
+    plugins = filter_plugins(plugins, selected_plugins)
 
     # Create snapshot record and write it as the first line of index.jsonl
     snapshot_payload: dict[str, Any] = {"url": url}
