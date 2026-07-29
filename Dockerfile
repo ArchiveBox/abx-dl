@@ -61,7 +61,6 @@ ENV CODE_DIR=/app \
     DATA_DIR=/out \
     CONFIG_DIR=/opt/archivebox \
     ABXPKG_LIB_DIR=/opt/archivebox/lib \
-    PLAYWRIGHT_BROWSERS_PATH=/opt/archivebox/lib/playwright/cache \
     PERSONAS_DIR=/data/personas \
     CHROME_HEADLESS=true \
     CHROME_SANDBOX=false \
@@ -164,7 +163,7 @@ RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_ARCHIVEBOX_UID}..."
     && useradd --system --create-home --gid "$ARCHIVEBOX_USER" --groups audio,video "$ARCHIVEBOX_USER" \
     && usermod -u "$DEFAULT_ARCHIVEBOX_UID" "$ARCHIVEBOX_USER" \
     && groupmod -g "$DEFAULT_ARCHIVEBOX_GID" "$ARCHIVEBOX_USER" \
-    && install -d -o "$DEFAULT_ARCHIVEBOX_UID" -g "$DEFAULT_ARCHIVEBOX_GID" "$DATA_DIR" "$CONFIG_DIR" "$ABXPKG_LIB_DIR" "$PLAYWRIGHT_BROWSERS_PATH" \
+    && install -d -o "$DEFAULT_ARCHIVEBOX_UID" -g "$DEFAULT_ARCHIVEBOX_GID" "$DATA_DIR" "$CONFIG_DIR" "$ABXPKG_LIB_DIR" \
     && echo "ARCHIVEBOX_USER=$ARCHIVEBOX_USER ARCHIVEBOX_UID=$(id -u "$ARCHIVEBOX_USER") ARCHIVEBOX_GID=$(id -g "$ARCHIVEBOX_USER")" | tee -a /VERSION.txt
 
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
@@ -172,7 +171,6 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     --mount=type=cache,target=/root/.cache/npm,sharing=locked,id=abxpkg-npm-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/pnpm,sharing=locked,id=abxpkg-pnpm-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/root/.cache/pip,sharing=locked,id=pip-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/ms-playwright,sharing=locked,id=browsers-$TARGETARCH$TARGETVARIANT \
     --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=abxpkg-tmp-$TARGETARCH$TARGETVARIANT \
     echo "[+] Installing Chrome and plugin dependencies..." \
     && export HOME=/var/tmp/abxpkg-cache ABXPKG_TMP_CACHE_DIR=/var/tmp/abxpkg-cache \
@@ -181,13 +179,14 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && abx-dl install chrome \
     && abx-dl install \
     && abxpkg env --install --binproviders=env,apt --lib="$ABXPKG_LIB_DIR" --overrides='{"apt":{"install_args":["binutils"]}}' strip >/dev/null \
-    && rm -rf "$ABXPKG_LIB_DIR"/playwright/cache/ffmpeg-* \
+    && CHROMIUM_BINARY="$(readlink -f "$ABXPKG_LIB_DIR/env/bin/chromium")" \
+    && test -x "$CHROMIUM_BINARY" \
+    && CHROMIUM_DIR="${CHROMIUM_BINARY%/*}" \
     && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR"/chromewebstore -type f -name '*.crx' -delete \
-    && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR"/playwright/cache -path '*/chrome-linux*/locales/*' ! -name 'en-US.pak' -delete \
-    && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR"/playwright/cache -path '*/chrome-linux*/*.pak.info' -delete \
-    && rm -f "$ABXPKG_LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/libvk_swiftshader.so "$ABXPKG_LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/libGLESv2.so \
-    && rm -f "$ABXPKG_LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/chrome_200_percent.pak \
-    && rm -rf "$ABXPKG_LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/MEIPreload "$ABXPKG_LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/PrivacySandboxAttestationsPreloaded "$ABXPKG_LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/WidevineCdm \
+    && "$ABXPKG_LIB_DIR/env/bin/find" "$CHROMIUM_DIR" -path '*/locales/*' ! -name 'en-US.pak' -delete \
+    && "$ABXPKG_LIB_DIR/env/bin/find" "$CHROMIUM_DIR" -name '*.pak.info' -delete \
+    && rm -f "$CHROMIUM_DIR"/libvk_swiftshader.so "$CHROMIUM_DIR"/libGLESv2.so "$CHROMIUM_DIR"/chrome_200_percent.pak \
+    && rm -rf "$CHROMIUM_DIR"/MEIPreload "$CHROMIUM_DIR"/PrivacySandboxAttestationsPreloaded "$CHROMIUM_DIR"/WidevineCdm \
     && rm -rf "$ABXPKG_LIB_DIR"/pnpm/packages/singlefile/node_modules/.pnpm/selenium-webdriver@*/node_modules/selenium-webdriver/bin/macos "$ABXPKG_LIB_DIR"/pnpm/packages/singlefile/node_modules/.pnpm/selenium-webdriver@*/node_modules/selenium-webdriver/bin/windows \
     && if [[ "$TARGETARCH" == "arm64" ]]; then rm -f "$ABXPKG_LIB_DIR"/pnpm/packages/liteparse/node_modules/.pnpm/@llamaindex+liteparse@*/node_modules/@llamaindex/liteparse/liteparse.linux-x64-gnu.node "$ABXPKG_LIB_DIR"/pnpm/packages/liteparse/node_modules/.pnpm/@llamaindex+liteparse@*/node_modules/@llamaindex/liteparse/libpdfium.so; fi \
     && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR"/pnpm /opt/node -type f -name '*.map' -delete \
@@ -197,13 +196,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && rm -rf /opt/node/include /opt/node/share/doc /opt/node/share/man \
     && rm -f /opt/node/CHANGELOG.md /opt/node/README.md /opt/node/LICENSE \
     && rm -f /usr/lib/jvm/java-*-openjdk-*/lib/server/classes*.jsa \
-    && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR"/playwright/cache/chromium-* -type f -name chrome -print0 > /tmp/native-executables \
-    && while IFS= read -r -d '' native_executable; do \
-        magic=''; \
-        if IFS= read -r -N 4 magic < "$native_executable" && [[ "$magic" == $'\x7fELF' ]]; then \
-            "$ABXPKG_LIB_DIR/env/bin/strip" --strip-unneeded "$native_executable" || exit $?; \
-        fi; \
-    done < /tmp/native-executables \
+    && "$ABXPKG_LIB_DIR/env/bin/strip" --strip-unneeded "$CHROMIUM_BINARY" \
     && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR" -type f \( -name '*.so' -o -name '*.node' \) -print0 > /tmp/native-libraries \
     && while IFS= read -r -d '' native_library; do \
         magic=''; \
