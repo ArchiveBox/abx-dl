@@ -120,7 +120,10 @@ jobs:
 
   docker:
     name: Build and push tested Docker digests
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      needs.python-release.outputs.cascade_ready == 'true'
     needs: python-release
     permissions:
       actions: read
@@ -134,7 +137,10 @@ jobs:
 
   docker-release:
     name: Publish tested multiarch image
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      needs.python-release.outputs.cascade_ready == 'true'
     needs:
       - python-release
       - docker
