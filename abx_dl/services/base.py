@@ -24,10 +24,24 @@ async def wait_for_background_ready(
     timeout: float,
 ) -> None:
     """Wait until a background hook reaches its normal stdout boundary."""
+
+    def matches_started_process(event: BaseEvent) -> bool:
+        if getattr(event, "plugin_name", None) != started_event.plugin_name:
+            return False
+        if getattr(event, "hook_name", None) != started_event.hook_name:
+            return False
+        if getattr(event, "output_dir", None) != started_event.output_dir:
+            return False
+        if getattr(event, "start_ts", None) != started_event.start_ts:
+            return False
+        if isinstance(event, ProcessCompletedEvent) and event.pid != started_event.pid:
+            return False
+        return True
+
     stdout_task = asyncio.create_task(
         bus.find(
             ProcessStdoutEvent,
-            child_of=started_event,
+            where=matches_started_process,
             past=True,
             future=timeout,
         ),
@@ -35,7 +49,7 @@ async def wait_for_background_ready(
     completed_task = asyncio.create_task(
         bus.find(
             ProcessCompletedEvent,
-            child_of=started_event,
+            where=matches_started_process,
             past=True,
             future=timeout,
         ),
