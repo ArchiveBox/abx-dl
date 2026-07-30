@@ -40,28 +40,37 @@ async def wait_for_background_ready(
             future=timeout,
         ),
     )
-    done, pending = await asyncio.wait(
-        {stdout_task, completed_task},
-        return_when=asyncio.FIRST_COMPLETED,
-    )
-    for task in pending:
-        task.cancel()
-    for task in pending:
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
-
-    stdout_event = stdout_task.result() if stdout_task in done else None
-    if isinstance(stdout_event, ProcessStdoutEvent):
-        return
-
-    completed_event = completed_task.result() if completed_task in done else None
-    if isinstance(completed_event, ProcessCompletedEvent):
-        if completed_event.status == "failed" or completed_event.exit_code != 0:
-            raise RuntimeError(
-                f"Background hook {started_event.hook_name} exited before readiness",
+    pending = {stdout_task, completed_task}
+    deadline = asyncio.get_running_loop().time() + timeout
+    try:
+        while pending:
+            remaining = max(deadline - asyncio.get_running_loop().time(), 0.0)
+            if remaining <= 0:
+                break
+            done, pending = await asyncio.wait(
+                pending,
+                timeout=remaining,
+                return_when=asyncio.FIRST_COMPLETED,
             )
-        return
+            if not done:
+                break
+            for task in done:
+                ready_event = task.result()
+                if isinstance(ready_event, ProcessStdoutEvent):
+                    return
+                if isinstance(ready_event, ProcessCompletedEvent):
+                    if ready_event.status == "failed" or ready_event.exit_code != 0:
+                        raise RuntimeError(
+                            f"Background hook {started_event.hook_name} exited before readiness",
+                        )
+                    return
+    finally:
+        for task in pending:
+            task.cancel()
+        for task in pending:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
     raise RuntimeError(f"Background hook {started_event.hook_name} did not become ready")

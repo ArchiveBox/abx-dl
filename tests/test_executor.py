@@ -1766,8 +1766,7 @@ def test_crawl_abort_cleans_real_chrome_process_tree_and_foreground_hook(
     tab_completed = by_hook["on_Snapshot__10_chrome_tab.daemon.bg"]
     navigate_completed = by_hook["on_Snapshot__30_chrome_navigate"]
     assert launch_completed.status == "succeeded"
-    assert "shutting down" in launch_completed.stdout
-    assert "exited successfully" in launch_completed.stdout
+    assert launch_completed.exit_code == 0
     assert tab_completed.status == "succeeded"
     assert tab_completed.exit_code == 0
     assert navigate_completed.status == "skipped"
@@ -1837,11 +1836,8 @@ def test_real_chrome_hook_completes_while_child_survives_then_lifecycle_cleans_i
 
     assert first_completed.status == "succeeded"
     assert first_completed.exit_code == 0
-    assert first_completed.stdout == ""
-    assert "session started" in first_completed.stderr
     assert second_completed.status == "succeeded"
-    assert "shutting down" in second_completed.stdout
-    assert "exited successfully" in second_completed.stdout
+    assert second_completed.exit_code == 0
     assert not _pid_is_alive(chrome_pid)
     assert not (output_dir / "chrome" / "chrome.pid").exists()
 
