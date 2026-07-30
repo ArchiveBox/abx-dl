@@ -231,7 +231,7 @@ class CrawlService(BaseService):
                     raise RuntimeError(f"Background hook {hook.name} did not start")
                 await wait_for_background_ready(
                     self.bus,
-                    process_event,
+                    started_process,
                     started_wait_timeout,
                 )
             else:

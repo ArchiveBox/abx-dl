@@ -5,7 +5,7 @@ from typing import ClassVar
 
 from abxbus import BaseEvent, EventBus
 
-from ..events import ProcessCompletedEvent, ProcessEvent, ProcessStdoutEvent
+from ..events import ProcessCompletedEvent, ProcessStartedEvent, ProcessStdoutEvent
 
 
 class BaseService:
@@ -20,14 +20,14 @@ class BaseService:
 
 async def wait_for_background_ready(
     bus: EventBus,
-    process_event: ProcessEvent,
+    started_event: ProcessStartedEvent,
     timeout: float,
 ) -> None:
     """Wait until a background hook reaches its normal stdout boundary."""
     stdout_task = asyncio.create_task(
         bus.find(
             ProcessStdoutEvent,
-            child_of=process_event,
+            child_of=started_event,
             past=True,
             future=timeout,
         ),
@@ -35,7 +35,7 @@ async def wait_for_background_ready(
     completed_task = asyncio.create_task(
         bus.find(
             ProcessCompletedEvent,
-            child_of=process_event,
+            child_of=started_event,
             past=True,
             future=timeout,
         ),
@@ -52,13 +52,16 @@ async def wait_for_background_ready(
         except asyncio.CancelledError:
             pass
 
-    ready_event = next(iter(done)).result()
-    if isinstance(ready_event, ProcessStdoutEvent):
+    stdout_event = stdout_task.result() if stdout_task in done else None
+    if isinstance(stdout_event, ProcessStdoutEvent):
         return
-    if isinstance(ready_event, ProcessCompletedEvent):
-        if ready_event.status == "failed" or ready_event.exit_code != 0:
+
+    completed_event = completed_task.result() if completed_task in done else None
+    if isinstance(completed_event, ProcessCompletedEvent):
+        if completed_event.status == "failed" or completed_event.exit_code != 0:
             raise RuntimeError(
-                f"Background hook {process_event.hook_name} exited before readiness",
+                f"Background hook {started_event.hook_name} exited before readiness",
             )
         return
-    raise RuntimeError(f"Background hook {process_event.hook_name} did not become ready")
+
+    raise RuntimeError(f"Background hook {started_event.hook_name} did not become ready")
