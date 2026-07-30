@@ -441,6 +441,18 @@ def test_required_binary_requests_preserve_extra_config_fields() -> None:
         Path(os.environ["ABXPKG_LIB_DIR"]) / "uv" / "packages" / "papers-dl"
     )
 
+    sonic_plugin = discover_plugins(runtime="archivebox")["search_backend_sonic"]
+    sonic_request = get_required_binary_requests(
+        sonic_plugin,
+        sonic_plugin.config.required_binaries,
+        overrides=get_initial_env(),
+        derived_overrides={},
+        run_output_dir=Path.cwd(),
+    )[0]
+    install_script = sonic_request["overrides"]["bash"]["install"]
+    assert "{'x86_64', 'amd64'}" in install_script
+    assert "{'User-Agent': 'abxpkg sonic bootstrap/1.7.4'}" in install_script
+
 
 def test_setup_services_accepts_runtime_config_overrides_and_seeds_machine_events(tmp_path: Path) -> None:
     wget_binary = _resolve_real_wget_binary(tmp_path)

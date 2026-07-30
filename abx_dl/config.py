@@ -571,6 +571,7 @@ GLOBAL_DEFAULT_KEYS = (
     "CHROME_SANDBOX",
 )
 GLOBAL_DEFAULT_KEY_SET = frozenset(GLOBAL_DEFAULT_KEYS)
+ENV_PLACEHOLDER_RE = re.compile(r"\{([A-Z][A-Z0-9_]*)\}")
 
 
 def load_plugin_schema(plugin_dir: Path) -> dict[str, Any]:
@@ -624,7 +625,10 @@ def get_required_binary_requests(
 
         def hydrate(value: Any, source_env: dict[str, str]) -> Any:
             if isinstance(value, str):
-                return value.format(**source_env)
+                return ENV_PLACEHOLDER_RE.sub(
+                    lambda match: source_env[match.group(1)],
+                    value,
+                )
             if isinstance(value, list):
                 return [hydrate(item, source_env) for item in value]
             if isinstance(value, dict):
