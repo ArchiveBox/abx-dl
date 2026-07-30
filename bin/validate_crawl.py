@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 from abx_dl.models import discover_plugins
@@ -42,6 +43,20 @@ def main() -> None:
     index_path = args.index.resolve()
     output_dir = args.output_dir.resolve()
     plugins = discover_plugins(args.plugins_dir.resolve(), runtime="abx-dl")
+    disabled_plugins = {
+        plugin.name
+        for plugin in plugins.values()
+        if plugin.enabled_key in plugin.config.properties
+        and str(
+            os.environ.get(
+                plugin.enabled_key,
+                plugin.config.properties[plugin.enabled_key].get("default", True),
+            ),
+        )
+        .strip()
+        .lower()
+        in {"", "0", "false", "no", "off", "none", "null"}
+    }
     validation = json.loads(args.config.read_text())["crawl_validation"]
     required_plugin_outputs: dict[str, list[str]] = validation["required_plugin_outputs"]
 
@@ -74,6 +89,8 @@ def main() -> None:
         hook_name = str(record.get("hook_name"))
         if (plugin_name, hook_name) == CHROME_SNAPSHOT_OWNER and record.get("output_str") == "CHROME_ISOLATION=crawl":
             chrome_owner_skips.append(record)
+            continue
+        if plugin_name in disabled_plugins and record.get("output_str") == f"{plugins[plugin_name].enabled_key}=False":
             continue
         unexpected_skips.append((plugin_name, hook_name, record.get("output_str")))
     if unexpected_skips:
