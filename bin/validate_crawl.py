@@ -123,9 +123,9 @@ def main() -> None:
         if not plugin_results:
             raise SystemExit(f"Required plugin did not succeed: {plugin_name}")
         for relative_path in relative_paths:
-            output_path = output_dir / relative_path
-            if not output_path.is_file() or output_path.stat().st_size == 0:
-                raise SystemExit(f"Required non-empty output is missing: {output_path}")
+            output_paths = list(output_dir.glob(relative_path))
+            if not output_paths or any(not path.is_file() or path.stat().st_size == 0 for path in output_paths):
+                raise SystemExit(f"Required non-empty output is missing: {output_dir / relative_path}")
 
     print(
         json.dumps(

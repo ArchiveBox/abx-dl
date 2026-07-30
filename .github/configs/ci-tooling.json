@@ -129,7 +129,7 @@
         "title/title.txt"
       ],
       "wget": [
-        "wget/sweeting.me/index.html"
+        "wget/*/index.html"
       ]
     }
   }
