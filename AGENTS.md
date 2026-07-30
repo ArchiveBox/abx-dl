@@ -78,12 +78,20 @@ uv run abx-dl config --get TIMEOUT
 
 ## Verification
 
-Use targeted tests and real user-facing commands:
+Use targeted live user-facing commands:
 
 ```bash
 set -Eeuo pipefail
-uv run pytest tests/test_cli.py::test_readme_install_command_runs_real_install_pipeline -q
+tmpdir="$(mktemp -d)"
+cd "$tmpdir"
+uv run --project /path/to/abx-dl abx-dl dl --plugins=chrome,consolelog,headers,wget 'https://example.com'
+test -s index.jsonl
 ```
 
-The skill's live wget check covers extractor output. The main test workflow runs
-the exhaustive repository suite and the separate Prek job runs every hook.
+The main CI workflow runs the exhaustive repository suite and the separate Prek
+job runs every hook.
+Background hook scheduling is based only on `bg` vs `fg`; filename words like
+`daemon` and `finite` are human hints only. Background hooks advance the
+scheduler on their first stdout line or successful completion; that first stdout
+line must mean the hook is ready for the next hook to launch, and non-ready
+diagnostics belong on stderr.

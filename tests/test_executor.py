@@ -843,7 +843,7 @@ def test_real_js_snapshot_hook_replays_early_sigterm_to_late_cleanup_handler(tmp
             future=60.0,
             plugin_name=plugin.name,
             hook_name=hook.name,
-            where=lambda event: event.line == "waiting for initial response...",
+            where=lambda event: event.line == "staticfile listener attached",
         )
         assert isinstance(ready, ProcessStdoutEvent)
         snapshot_event = await bus.find(SnapshotEvent, past=True, future=False)

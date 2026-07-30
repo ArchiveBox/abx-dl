@@ -28,7 +28,7 @@ from ..events import (
 )
 from ..models import Snapshot
 from ..models import Hook, Plugin, filter_plugins
-from .base import BaseService
+from .base import BaseService, wait_for_background_ready
 
 
 async def _wait_for_process_completed(event: ProcessCompletedEvent | None, timeout: float | None) -> ProcessCompletedEvent | None:
@@ -229,6 +229,11 @@ class CrawlService(BaseService):
                     return
                 if started_process is None:
                     raise RuntimeError(f"Background hook {hook.name} did not start")
+                await wait_for_background_ready(
+                    self.bus,
+                    process_event,
+                    started_wait_timeout,
+                )
             else:
                 foreground_process = event.emit(process_event)
                 await _run_event_now(foreground_process, handler_timeout)

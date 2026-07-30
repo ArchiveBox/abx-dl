@@ -110,8 +110,8 @@ grep -q '"plugin": "readability".*"status": "succeeded"' index.jsonl
 
 Plugins are loaded from the installed [`abx-plugins`](https://pypi.org/project/abx-plugins/) package (or from `ABX_PLUGINS_DIR` if you override it) and execute in distinct phases:
 1. **Install phase** runner reads plugins `config.json`: `required_binaries` and emits `BinaryRequestEvent`s for `abxpkg.binary_service.BinaryService`, which resolves or installs binaries using built-in providers such as env, pip, npm, brew, apt, cargo, and browser-specific providers. `BinaryCacheService` and the `abx-dl` cache backend then project resolved state into `derived.env`.
-2. **CrawlSetup hooks** (`on_CrawlSetup__*`) launch/configure expensive crawl-scoped processes like chrome, or trigger side effects. they emit no stdout JSONL records.
-4. **Snapshot hooks** (`on_Snapshot__*`) run per URL to extract content and emit only `ArchiveResult`, `Snapshot`, and `Tag` records
+2. **CrawlSetup hooks** (`on_CrawlSetup__*`) launch/configure expensive crawl-scoped processes like chrome, or trigger side effects. background hooks use their first stdout line as the readiness boundary and emit no stdout JSONL records.
+4. **Snapshot hooks** (`on_Snapshot__*`) run per URL to extract content. background hooks use their first stdout line as the readiness boundary; JSONL records after that are `ArchiveResult`, `Snapshot`, and `Tag`.
 
 
 <br/>
@@ -320,8 +320,8 @@ The normal runtime flow is:
 
 Hook output contract:
 - hook dependencies are driven by plugin `required_binaries` and resolved by each hook's abxpkg shebang
-- `on_CrawlSetup__*` hooks emit no stdout JSONL records
-- `on_Snapshot__*` hooks emit only `ArchiveResult`, `Snapshot`, and `Tag`
+- `on_CrawlSetup__*` background hooks emit a first stdout readiness line, but no stdout JSONL records
+- `on_Snapshot__*` background hooks emit a first stdout readiness line; hook JSONL records after that are only `ArchiveResult`, `Snapshot`, and `Tag`
 - the TUI and services consume structured events derived from those hook records
 
 Dependencies are installed to `<user-config>/abx/lib/{arch}/` using the appropriate package manager:
