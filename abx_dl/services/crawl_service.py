@@ -193,9 +193,7 @@ class CrawlService(BaseService):
             if hook.is_background:
                 handler_timeout: float | None = None
                 handler_slow_timeout: float | None = None
-                # Spawn + PEP-723 cold-cache dep install fits comfortably in
-                # 60s; ``None`` would silently hang on a failed spawn.
-                started_wait_timeout = 60.0
+                started_wait_timeout = float(timeout or 0) + 30.0
             else:
                 handler_timeout = float(timeout or 0) + 30.0
                 handler_slow_timeout = slow_warning_timeout(handler_timeout)
@@ -216,9 +214,6 @@ class CrawlService(BaseService):
             )
             if hook.is_background:
                 background_process = event.emit(process_event)
-                # See snapshot_service.py — PEP-723 hooks with cold uv caches
-                # routinely need >5s to resolve + install inline-script deps
-                # before they can emit ProcessStartedEvent. Bumped to 60s.
                 started_process = await self.bus.find(
                     ProcessStartedEvent,
                     child_of=background_process,
