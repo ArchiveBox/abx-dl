@@ -66,6 +66,7 @@ def _permanently_drop_child_privileges(uid: int, gid: int) -> Callable[[], None]
     def drop_privileges() -> None:
         if os.getuid() == 0 and os.geteuid() != 0:
             os.seteuid(0)
+        os.setgroups([gid])
         os.setgid(gid)
         os.setuid(uid)
 

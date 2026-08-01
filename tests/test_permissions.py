@@ -35,7 +35,7 @@ async def main():
     child = await asyncio.create_subprocess_exec(
         sys.executable,
         "-c",
-        "import json, os; print(json.dumps([os.getuid(), os.geteuid(), os.getgid(), os.getegid()]))",
+        "import json, os; print(json.dumps([os.getuid(), os.geteuid(), os.getgid(), os.getegid(), os.getgroups()]))",
         stdout=asyncio.subprocess.PIPE,
         preexec_fn=_permanently_drop_child_privileges(*identity),
     )
@@ -61,4 +61,4 @@ asyncio.run(main())
     )
 
     assert result.returncode == 0, result.stderr or result.stdout
-    assert json.loads(result.stdout) == [nobody.pw_uid, nobody.pw_uid, nobody.pw_gid, nobody.pw_gid]
+    assert json.loads(result.stdout) == [nobody.pw_uid, nobody.pw_uid, nobody.pw_gid, nobody.pw_gid, [nobody.pw_gid]]
