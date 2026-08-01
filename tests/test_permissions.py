@@ -33,15 +33,16 @@ assert identity == ({nobody.pw_uid}, {nobody.pw_gid})
 
 async def main():
     child = await asyncio.create_subprocess_exec(
-        sys.executable,
+        "/bin/sh",
         "-c",
-        "import json, os; print(json.dumps([os.getuid(), os.geteuid(), os.getgid(), os.getegid(), os.getgroups()]))",
+        "id -ru; id -u; id -rg; id -g; id -G",
         stdout=asyncio.subprocess.PIPE,
         preexec_fn=_permanently_drop_child_privileges(*identity),
     )
     stdout, _ = await child.communicate()
     assert child.returncode == 0
-    print(stdout.decode().strip())
+    values = stdout.decode().splitlines()
+    print(json.dumps([*(int(value) for value in values[:4]), [int(value) for value in values[4].split()]]))
 
 asyncio.run(main())
 """
