@@ -3,18 +3,18 @@ revision = 3
 requires-python = ">=3.12, <3.15"
 
 [options]
-exclude-newer = "2026-07-26T06:31:09.361924308Z"
+exclude-newer = "2026-07-27T06:04:50.805588685Z"
 exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
-abxbus = { timestamp = "2026-07-31T06:31:08.361938695Z", span = "PT1S" }
+abxbus = { timestamp = "2026-08-01T06:04:49.805603533Z", span = "PT1S" }
 abx-dl = "2100-01-01T00:00:00Z"
 abx-plugins = "2100-01-01T00:00:00Z"
 abxpkg = "2100-01-01T00:00:00Z"
 
 [[package]]
 name = "abx-dl"
-version = "1.12.59"
+version = "1.12.60"
 source = { editable = "." }
 dependencies = [
     { name = "abx-plugins" },
@@ -51,7 +51,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "abx-plugins", specifier = "==1.12.57" },
+    { name = "abx-plugins", specifier = "==1.12.61" },
     { name = "abxbus" },
     { name = "abxpkg" },
     { name = "jambo", specifier = ">=0.1.7" },
@@ -85,7 +85,7 @@ dev = [
 
 [[package]]
 name = "abx-plugins"
-version = "1.12.57"
+version = "1.12.61"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "abxbus" },
@@ -95,9 +95,9 @@ dependencies = [
     { name = "rich-click" },
     { name = "uv" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/cf/5f/2c4809ea117917b332b4835cc02248d92011a3342919516bc4351d01f594/abx_plugins-1.12.57.tar.gz", hash = "sha256:50c043a53170268daa8297623b2e00b984c98641cedf8b4a3fd642d71904fff5", size = 261969, upload-time = "2026-07-31T06:28:45.091489Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e0/ac/74d98d48d5d866c340593f077675dc3f9ce76ac97f4c2889262c5b27925b/abx_plugins-1.12.61.tar.gz", hash = "sha256:1905b1f31c1243a51132af8136eb2a2ba0aa23c3871480e90c76a667f76dcb62", size = 254658, upload-time = "2026-08-01T06:02:16.395761Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/98/6f/ca2fd4455b4e30992bc9857a650beca33d7d7a99455b2716ca239a2451b6/abx_plugins-1.12.57-py3-none-any.whl", hash = "sha256:f7b3ff9f8768ce5cac3f70cb5063f54dd87f128f434d11a4354ab01daf88b24e", size = 412903, upload-time = "2026-07-31T06:28:43.842197Z" },
+    { url = "https://files.pythonhosted.org/packages/18/43/527041f1cfd3c5cbfd1751ced7b987f361f86b00d5a15a35bb6aaff9d293/abx_plugins-1.12.61-py3-none-any.whl", hash = "sha256:24f097f3d32c538f6654f5f5f9b72088efe9d17a99d0b6454f4ae54ca99a7646", size = 405316, upload-time = "2026-08-01T06:02:14.588993Z" },
 ]
 
 [[package]]
@@ -116,7 +116,7 @@ wheels = [
 
 [[package]]
 name = "abxpkg"
-version = "1.12.38"
+version = "1.12.41"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pip" },
@@ -125,9 +125,9 @@ dependencies = [
     { name = "rich-click" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/dc/8c/833b2c9e9d6fa2089697a53245f1fb48496d6565fdfea2785d71129639cc/abxpkg-1.12.38.tar.gz", hash = "sha256:71992aa3c5d89beee2c793837243be7f3c4773ca6bd1010702b87ba1a056e914", size = 226997, upload-time = "2026-07-31T06:17:42.729Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ee/16/46835e176bc5ea8d06c74bc23acf852ec761afe0989b6cba90974b766a9e/abxpkg-1.12.41.tar.gz", hash = "sha256:30b6b50026126f26e3a0f676ca0eaeca1240bc797b12b772fd7dfbb36825ebd1", size = 227067, upload-time = "2026-08-01T05:41:43.397Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5f/6d/20bb0f8c58900ff5900631ba4b4c0ee734b48bca79596818dd6e5d764a64/abxpkg-1.12.38-py3-none-any.whl", hash = "sha256:6b46dfd60b34d7fef2a6b8c7fb71c9f6f49a23bb295edb7bae7b423278bd438f", size = 241852, upload-time = "2026-07-31T06:17:41.333Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/8c/2d96fca2b3393a3653850df45197259323366271b068d7d9626cc253f883/abxpkg-1.12.41-py3-none-any.whl", hash = "sha256:826529dc6d0a2826286575ae8fdf2edadb2f3bf7cde16be29bb8dc7a2f8828a9", size = 241935, upload-time = "2026-08-01T05:41:42.107Z" },
 ]
 
 [[package]]
