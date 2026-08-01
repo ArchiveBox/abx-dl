@@ -1,0 +1,23 @@
+pyproject.toml
+  s_69ddf154c10e6f::t_1702740b596cfc 3
+abx_dl/services/process_service.py
+  s_69ddf154c10e6f::t_1702740b596cfc 69
+tests/test_permissions.py
+  s_69ddf154c10e6f::t_1702740b596cfc 38,64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.19",
+  "base_commit_sha": "5b348a1a8862b01f42def22a9baee7fe4696dbe4",
+  "prompts": {},
+  "sessions": {
+    "s_69ddf154c10e6f": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019faf8b-797c-7c30-9a89-b8c3ca8cc3e2",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
