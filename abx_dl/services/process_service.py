@@ -1,6 +1,7 @@
 """ProcessService — owns hook subprocess execution and raw process events."""
 
 import asyncio
+import os
 import re
 import signal
 import time
@@ -8,6 +9,7 @@ from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO, ClassVar, Literal, TextIO
+from collections.abc import Callable
 
 import click
 from abxbus import BaseEvent, EventBus
@@ -42,6 +44,32 @@ POLITE_CLEANUP_SIGNAL_EXIT_CODES = {
     128 + signal.SIGINT,
     128 + signal.SIGTERM,
 }
+
+
+def _hook_child_identity(
+    *,
+    real_uid: int | None = None,
+    effective_uid: int | None = None,
+    effective_gid: int | None = None,
+) -> tuple[int, int] | None:
+    """Return the permanent identity needed by a mixed-root hook child."""
+
+    real_uid = os.getuid() if real_uid is None else real_uid
+    effective_uid = os.geteuid() if effective_uid is None else effective_uid
+    effective_gid = os.getegid() if effective_gid is None else effective_gid
+    if real_uid == 0 and effective_uid != 0:
+        return effective_uid, effective_gid
+    return None
+
+
+def _permanently_drop_child_privileges(uid: int, gid: int) -> Callable[[], None]:
+    def drop_privileges() -> None:
+        if os.getuid() == 0 and os.geteuid() != 0:
+            os.seteuid(0)
+        os.setgid(gid)
+        os.setuid(uid)
+
+    return drop_privileges
 
 
 @dataclass
@@ -324,6 +352,7 @@ class ProcessService(BaseService):
                     # hooks may mutate their output tree while background hooks
                     # are still running, so there must never be a window where
                     # the only durable reference to these inodes is a pathname.
+                    child_identity = _hook_child_identity()
                     process = await asyncio.create_subprocess_exec(
                         *cmd,
                         cwd=str(plugin_output_dir),
@@ -334,6 +363,7 @@ class ProcessService(BaseService):
                         # cleanup can target the hook explicitly instead of relying
                         # on terminal-delivered SIGINT reaching the right child.
                         start_new_session=True,
+                        preexec_fn=(_permanently_drop_child_privileges(*child_identity) if child_identity is not None else None),
                     )
                 write_pid_file_with_mtime(pid_file, process.pid, time.time())
             except (OSError, ValueError) as e:
