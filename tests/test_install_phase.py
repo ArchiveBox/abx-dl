@@ -249,7 +249,7 @@ def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) 
     abxbus_request = next(event for event in request_events if event.name == "abxbus")
     assert abxbus_request.no_cache is None
     assert abxbus_request.binproviders == "env,pnpm"
-    assert abxbus_request.min_version == "2.5.9"
+    assert abxbus_request.min_version == "2.5.45"
     assert abxbus_request.min_release_age == 0
     assert abxbus_request.overrides == {
         "env": {
@@ -257,9 +257,9 @@ def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) 
         },
         "pnpm": {
             "install_root": str(managed_lib_dir / "pnpm" / "packages" / "abxbus"),
-            "install_args": ["abxbus@2.5.9"],
+            "install_args": ["abxbus@2.5.45"],
             "abspath": str(managed_lib_dir / "pnpm" / "packages" / "abxbus" / "node_modules" / "abxbus" / "dist" / "cjs" / "index.js"),
-            "version": "2.5.9",
+            "version": "2.5.45",
             "postinstall_scripts": True,
         },
     }
