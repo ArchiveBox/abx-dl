@@ -749,7 +749,9 @@ async def download(
                 event_timeout=crawl_event_timeout,
                 event_handler_slow_timeout=slow_warning_timeout(crawl_event_timeout),
             )
-            await bus.emit(crawl_event).now()
+            emitted_crawl_event = bus.emit(crawl_event)
+            await emitted_crawl_event.now()
+            await emitted_crawl_event.event_results_list()
     finally:
         if heartbeat is not None:
             await heartbeat.stop()

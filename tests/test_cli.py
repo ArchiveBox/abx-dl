@@ -997,6 +997,61 @@ def test_readme_dl_command_downloads_example_dot_com_with_real_output(tmp_path: 
     )
 
 
+def test_dl_max_urls_is_scoped_to_each_output_dir(tmp_path: Path) -> None:
+    output_dirs = [tmp_path / "first-output", tmp_path / "second-output"]
+
+    for output_dir in output_dirs:
+        result = _run_cli(
+            tmp_path,
+            "dl",
+            "--plugins=wget",
+            "--max-urls=1",
+            f"--dir={output_dir}",
+            "https://example.com",
+        )
+
+        assert result.returncode == 0, result.stderr
+        assert "denied by crawl limits" not in result.stderr
+        assert "Traceback" not in result.stderr
+        assert (output_dir / ".abx-dl" / "limits.json").is_file()
+        assert "Example Domain" in (output_dir / "wget" / "example.com" / "index.html").read_text()
+
+
+def test_dl_root_event_failure_exits_nonzero_without_success_summary(tmp_path: Path) -> None:
+    output_dir = tmp_path / "exhausted-output"
+    state_dir = output_dir / ".abx-dl"
+    state_dir.mkdir(parents=True)
+    (state_dir / "limits.json").write_text(
+        json.dumps(
+            {
+                "admission_key": "snapshot_id",
+                "admitted_snapshot_ids": ["already-admitted"],
+                "counted_event_ids": [],
+                "snapshot_sizes": {},
+                "snapshot_stop_reasons": {},
+                "started_at": time.time(),
+                "total_size": 0,
+                "stop_reason": "crawl_max_urls",
+            },
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_cli(
+        tmp_path,
+        "dl",
+        "--plugins=wget",
+        "--max-urls=1",
+        f"--dir={output_dir}",
+        "https://example.com",
+    )
+
+    output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "denied by crawl limits: crawl_max_urls" in output
+    assert "0 succeeded, 0 noresult, 0 failed, 0 skipped" not in output
+
+
 def test_dl_relative_dir_keeps_shared_hook_paths_in_run_dir(tmp_path: Path) -> None:
     result = _run_cli(
         tmp_path,

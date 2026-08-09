@@ -1355,7 +1355,9 @@ def dl(
         raise click.UsageError(
             "Refusing to write crawl output into the abx-dl source checkout root. Pass --dir with a path outside the checkout.",
         )
-    config_overrides: dict[str, object] = {"TIMEOUT": timeout} if timeout else {}
+    config_overrides: dict[str, object] = {"CRAWL_DIR": out_path.expanduser().resolve()}
+    if timeout:
+        config_overrides["TIMEOUT"] = timeout
     if max_urls < 0:
         raise click.BadParameter("max_urls must be 0 or a positive integer.", param_hint="--max-urls")
     if crawl_timeout < 0:
