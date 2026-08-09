@@ -445,7 +445,7 @@ def test_install_event_resolves_real_plugin_override_paths(tmp_path: Path) -> No
     request = next(event for event in request_events if event.name == "feedparser")
     required_binary = next(binary for binary in plugin.config.required_binaries if binary.name == "feedparser")
     expected_uv_overrides = dict(required_binary.overrides["uv"])
-    expected_uv_overrides["install_root"] = str(managed_lib_dir / "uv" / "packages" / "parse_rss_urls")
+    expected_uv_overrides["install_root"] = str(managed_lib_dir / "uv" / "packages" / "parse_rss_urls-6.0.12")
     assert request.overrides == {
         "uv": expected_uv_overrides,
     }
