@@ -59,7 +59,7 @@ class SnapshotService(BaseService):
         ├── CrawlStartEvent
         │   └── SnapshotEvent (depth=0)                    # triggers this service
         │       │
-        │       │  ── Snapshot hook handlers run serially ──
+        │       │  ── Snapshot hooks launch serially, then run concurrently ──
         │       │  (only root SnapshotEvents emitted by CrawlStartEvent)
         │       │
         │       ├── on_Snapshot__06_wget.finite.bg
@@ -180,7 +180,7 @@ class SnapshotService(BaseService):
     def on_SnapshotEvent__for_hook(self, plugin: Plugin, hook: Hook):
         """Create the concrete SnapshotEvent handler for one snapshot hook."""
 
-        async def on_SnapshotEvent__hook(event: SnapshotEvent) -> None:
+        async def on_SnapshotEvent__hook(event: SnapshotEvent) -> ProcessEvent | None:
             if event.output_dir != str(self.output_dir) or event.snapshot_id != self.snapshot.id:
                 return
             parent_event = await self.bus.find(
@@ -233,8 +233,7 @@ class SnapshotService(BaseService):
             plugin_output_dir.mkdir(parents=True, exist_ok=True)
             # Snapshot background hooks own resources that are explicitly
             # shut down by SnapshotCleanupEvent. Do not give abxbus a
-            # wall-clock handler timeout for them; the foreground barrier
-            # hooks enforce readiness and cleanup owns termination.
+            # wall-clock handler timeout for them; cleanup owns termination.
             if hook.is_background:
                 handler_timeout: float | None = None
                 handler_slow_timeout: float | None = None
@@ -276,18 +275,16 @@ class SnapshotService(BaseService):
                 )
             else:
                 foreground_process = event.emit(process_event)
-                await _run_event_now(foreground_process, handler_timeout)
-                completed_process = await self.bus.find(
-                    ProcessCompletedEvent,
+                started_process = await self.bus.find(
+                    ProcessStartedEvent,
                     child_of=foreground_process,
                     past=True,
-                    future=handler_timeout,
+                    future=started_wait_timeout,
                 )
-                if completed_process is None:
-                    raise RuntimeError(f"Foreground hook {hook.name} did not complete")
-                await _wait_for_process_completed(completed_process, handler_timeout)
-                if await self.should_abort():
-                    return
+                if started_process is None:
+                    raise RuntimeError(f"Foreground hook {hook.name} did not start")
+                return foreground_process
+            return None
 
         handler_name = f"on_SnapshotEvent__{plugin.name}__{hook.name.replace('.', '_')}__{self.snapshot.id.replace('-', '_')[-12:]}"
         on_SnapshotEvent__hook.__name__ = handler_name
@@ -402,15 +399,21 @@ class SnapshotService(BaseService):
         url = self.url
         snapshot_id = self.snapshot.id
         output_dir = str(self.output_dir)
+        foreground_processes: list[ProcessEvent] = []
         try:
             for plugin, hook in self.hooks:
                 if await self.should_abort():
                     break
-                await self.on_SnapshotEvent__for_hook(plugin, hook)(event)
+                process_event = await self.on_SnapshotEvent__for_hook(plugin, hook)(event)
+                if process_event is not None:
+                    foreground_processes.append(process_event)
                 if await self.should_abort():
                     break
                 if self.limit_state.get_snapshot_stop_reason(event.snapshot_id) == "snapshot_max_size":
                     break
+            await asyncio.gather(
+                *(self._wait_for_foreground_process(process_event) for process_event in foreground_processes),
+            )
         finally:
             if self.snapshot_cleanup_enabled:
                 cleanup_event = SnapshotCleanupEvent(
@@ -433,6 +436,18 @@ class SnapshotService(BaseService):
             event_handler_slow_timeout=slow_warning_timeout(self.snapshot_phase_timeout),
         )
         event.emit(completed_event)
+
+    async def _wait_for_foreground_process(self, process_event: ProcessEvent) -> None:
+        timeout = process_event.event_handler_timeout
+        completed_process = await self.bus.find(
+            ProcessCompletedEvent,
+            child_of=process_event,
+            past=True,
+            future=timeout,
+        )
+        if completed_process is None:
+            raise RuntimeError(f"Foreground hook {process_event.hook_name} did not complete")
+        await _wait_for_process_completed(completed_process, timeout)
 
     async def on_SnapshotCleanupEvent(self, event: SnapshotCleanupEvent) -> None:
         """SIGTERM all background snapshot hooks so they can flush and exit.
