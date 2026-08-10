@@ -275,13 +275,14 @@ class SnapshotService(BaseService):
                 )
             else:
                 foreground_process = event.emit(process_event)
-                started_process = await self.bus.find(
-                    ProcessStartedEvent,
+                started_or_completed = await self.bus.find(
+                    "*",
                     child_of=foreground_process,
                     past=True,
                     future=started_wait_timeout,
+                    where=lambda candidate: isinstance(candidate, (ProcessStartedEvent, ProcessCompletedEvent)),
                 )
-                if started_process is None:
+                if started_or_completed is None:
                     raise RuntimeError(f"Foreground hook {hook.name} did not start")
                 return foreground_process
             return None
