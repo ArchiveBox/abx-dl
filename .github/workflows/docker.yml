@@ -192,6 +192,7 @@ jobs:
         run: $UV_BINARY run --no-cache --no-sync --no-sources pytest -vv --tb=long -m docker_required README.md AGENTS.md CLAUDE.md skills
 
       - name: Validate real crawl inside Docker image
+        id: real_crawl
         shell: bash
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -240,6 +241,17 @@ jobs:
               if expected not in downloaded_html:
                   raise SystemExit(f"Downloaded HTML is missing {expected!r}")
           PY
+
+      - name: Upload failed crawl diagnostics
+        if: steps.real_crawl.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: crawl-diagnostics-${{ matrix.artifact_name }}
+          path: |
+            ${{ runner.temp }}/abx-dl-smoke-${{ matrix.artifact_name }}
+            ${{ runner.temp }}/abx-dl-personas-${{ matrix.artifact_name }}
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Validate image version and commit
         shell: bash
