@@ -29,7 +29,7 @@ from ..events import (
 from ..limits import CrawlLimitState
 from ..models import Snapshot
 from ..models import Hook, Plugin, filter_plugins
-from .base import BaseService, wait_for_background_ready
+from .base import BaseService, wait_for_process_ready
 
 
 async def _wait_for_process_completed(event: ProcessCompletedEvent | None, timeout: float | None) -> ProcessCompletedEvent | None:
@@ -268,8 +268,7 @@ class SnapshotService(BaseService):
                     return
                 if started_process is None:
                     raise RuntimeError(f"Background hook {hook.name} did not start")
-                await wait_for_background_ready(
-                    self.bus,
+                await wait_for_process_ready(
                     started_process,
                     started_wait_timeout,
                 )
@@ -284,6 +283,11 @@ class SnapshotService(BaseService):
                 )
                 if started_or_completed is None:
                     raise RuntimeError(f"Foreground hook {hook.name} did not start")
+                if isinstance(started_or_completed, ProcessStartedEvent):
+                    await wait_for_process_ready(
+                        started_or_completed,
+                        started_wait_timeout,
+                    )
                 return foreground_process
             return None
 

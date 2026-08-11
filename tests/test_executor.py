@@ -1337,6 +1337,21 @@ def test_snapshot_abort_interrupts_concurrently_running_hooks(tmp_path: Path, ht
     selected = {name: plugins[name] for name in ("chrome", "title")}
     output_dir = tmp_path / "run"
     bus = create_bus(total_timeout=300.0, name=f"snapshot_abort_{tmp_path.name}")
+    title_started_after_navigate_ready: list[bool] = []
+
+    async def on_ProcessStartedEvent(event: ProcessStartedEvent) -> None:
+        if event.hook_name != "on_Snapshot__54_title":
+            return
+        navigate_started = await bus.find(
+            ProcessStartedEvent,
+            past=True,
+            future=False,
+            hook_name="on_Snapshot__30_chrome_navigate",
+        )
+        assert isinstance(navigate_started, ProcessStartedEvent)
+        title_started_after_navigate_ready.append(navigate_started.stdout_file.stat().st_size > 0)
+
+    bus.on(ProcessStartedEvent, on_ProcessStartedEvent)
 
     async def run() -> tuple[
         ProcessCompletedEvent | None,
@@ -1423,6 +1438,7 @@ def test_snapshot_abort_interrupts_concurrently_running_hooks(tmp_path: Path, ht
     assert not (output_dir / "chrome" / "url.txt").exists()
     assert snapshot_completed is not None
     assert second_started is not None
+    assert title_started_after_navigate_ready == [True]
     assert second_started.start_ts < first_completed.end_ts
 
 

@@ -28,12 +28,12 @@ class BaseService:
         self.bus = bus
 
 
-async def wait_for_background_ready(
-    bus: EventBus,
+async def wait_for_process_ready(
     started_event: ProcessStartedEvent,
     timeout: float,
 ) -> None:
-    """Wait until a background hook reaches its normal stdout boundary."""
+    """Wait until a hook reaches its normal stdout boundary."""
+    hook_kind = "Background hook" if started_event.is_background else "Foreground hook"
     deadline = asyncio.get_running_loop().time() + timeout
     while asyncio.get_running_loop().time() < deadline:
         if started_event.stdout_file.exists() and started_event.stdout_file.stat().st_size > 0:
@@ -41,7 +41,7 @@ async def wait_for_background_ready(
 
         returncode = started_event.subprocess.returncode
         if returncode is not None:
-            if returncode != 0:
+            if started_event.is_background and returncode != 0:
                 stdout = _log_tail(started_event.stdout_file)
                 stderr = _log_tail(started_event.stderr_file)
                 output = "\n".join(
@@ -56,7 +56,7 @@ async def wait_for_background_ready(
                     "\n".join(
                         part
                         for part in (
-                            f"Background hook {started_event.hook_name} exited before readiness (exit code {returncode})",
+                            f"{hook_kind} {started_event.hook_name} exited before readiness (exit code {returncode})",
                             output,
                             f"Logs: {started_event.stdout_file} {started_event.stderr_file}",
                         )
@@ -67,4 +67,4 @@ async def wait_for_background_ready(
 
         await asyncio.sleep(0.05)
 
-    raise RuntimeError(f"Background hook {started_event.hook_name} did not become ready")
+    raise RuntimeError(f"{hook_kind} {started_event.hook_name} did not become ready")
