@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -62,6 +63,7 @@ def test_plugin_env_sets_run_dirs_and_node_path(tmp_path: Path) -> None:
     assert env["PNPM_BIN_DIR"] in env["PATH"].split(":")
     assert env["NPM_BIN_DIR"] in env["PATH"].split(":")
     assert "VIRTUAL_ENV" not in env
+    assert Path(env["PATH"].split(os.pathsep)[0]) == Path(sys.executable).parent
 
 
 def test_plugin_timeout_defaults_only_yield_to_explicit_global_timeout(tmp_path: Path) -> None:

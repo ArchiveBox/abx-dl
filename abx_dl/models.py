@@ -240,7 +240,9 @@ class PluginEnv(BaseModel):
         # package environment instead of drifting to a bare system Python.
         env.setdefault("PYTHON3_BINARY", sys.executable)
 
-        runtime_bin_dirs: list[str] = []
+        # Hook shebangs must resolve launchers from the active package
+        # environment before any managed tool projection.
+        runtime_bin_dirs = [str(Path(sys.executable).parent)]
 
         for key, raw_value in env.items():
             if not key.endswith("_BINARY"):
@@ -257,7 +259,6 @@ class PluginEnv(BaseModel):
 
         for extra_dir in (
             str(Path(env["ABXPKG_LIB_DIR"]) / "env" / "bin"),
-            str(Path(sys.executable).parent),
             str(Path(env["PIP_BIN_DIR"])),
             str(Path(env["PNPM_BIN_DIR"])),
             str(Path(env["NPM_BIN_DIR"])),
