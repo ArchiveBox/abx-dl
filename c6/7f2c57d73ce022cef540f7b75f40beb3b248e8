@@ -1,0 +1,14 @@
+uv.lock
+  h_923c208e183a7b 6,10,98,100
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "c67f2c57d73ce022cef540f7b75f40beb3b248e8",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
