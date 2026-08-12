@@ -303,15 +303,15 @@ abx-dl plugins wget title
 ```
 
 ```text
-abx-dl 'https://example.com'              # auto-installs missing deps on-the-fly
+abx-dl 'https://example.com'              # checks and installs missing deps before hooks run
 abx-dl --no-install 'https://example.com' # skips plugins with missing deps and emits warnings
 abx-dl install wget singlefile ytdlp      # installs dependencies for specific plugins only
 abx-dl plugins                            # checks which dependencies are available/missing
 ```
 
-Every hook executable declares its dependencies in an `abxpkg run --script --deps-from=...` shebang. Compatible host binaries are selected first and projected into `ABXPKG_LIB_DIR/env/bin`; otherwise the configured managed provider installs and projects the dependency. The explicit `install` command and `--no-install` dependency check use the same abxpkg resolution path.
+Every preflight request is resolved through `abxpkg`. Compatible host binaries are selected first and projected into `ABXPKG_LIB_DIR/env/bin`; otherwise the configured managed provider installs and projects the dependency. Hook subprocesses then use the resolved Python or Node interpreter and projected runtime environment directly.
 
-The normal runtime flow is:
+The normal runtime flow after dependency preflight is:
 - `CrawlEvent` (internal lifecycle root)
 - `CrawlSetupEvent` → plugin `on_CrawlSetup__*` hooks
 - `CrawlStartEvent` → `SnapshotEvent`
@@ -319,7 +319,7 @@ The normal runtime flow is:
 - `SnapshotCleanupEvent` / `CrawlCleanupEvent`
 
 Hook output contract:
-- hook dependencies are driven by plugin `required_binaries` and resolved by each hook's abxpkg shebang
+- binary preflight is driven by plugin `required_binaries` and handled by `abxpkg`, not by plugin hooks
 - `on_CrawlSetup__*` background hooks emit a first stdout readiness line, but no stdout JSONL records
 - `on_Snapshot__*` background hooks emit a first stdout readiness line; hook JSONL records after that are only `ArchiveResult`, `Snapshot`, and `Tag`
 - the TUI and services consume structured events derived from those hook records

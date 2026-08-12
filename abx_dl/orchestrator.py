@@ -7,6 +7,9 @@ the entire lifecycle. Everything else is driven by services reacting to events.
 
 Full event tree for a typical run::
 
+    InstallEvent                                # dependency preflight
+    └── BinaryRequestEvent × N                  # config.json required_binaries
+
     CrawlEvent                                  # internal lifecycle root
     ├── CrawlSetupEvent                         # plugin on_CrawlSetup hooks run here
     │   ├── ProcessEvent  (bg: chrome_launch)
@@ -35,8 +38,8 @@ Full event tree for a typical run::
 Result collection:
 - ArchiveResultEvents are only emitted during the snapshot phase (under
   CrawlStartEvent → SnapshotEvent).
-- Hook shebangs run through ``abxpkg run --script --deps-from=...``, which
-  resolves declared dependencies when each hook starts.
+- Install preflight resolves ``required_binaries`` through abxpkg and projects
+  the resulting runtime environment before any hooks start.
 - Crawl setup hooks emit no stdout JSONL records. Snapshot hooks emit
   ``ArchiveResult`` and may also emit ``Snapshot`` and ``Tag``.
 - ArchiveResultService emits ArchiveResultEvents in two cases: directly from
@@ -563,7 +566,7 @@ async def download(
     This is the only public function in the orchestrator. It:
     1. Discovers and sorts hooks from selected plugins
     2. Wires up all services on the bus
-    3. Emits CrawlEvent as the internal lifecycle root for the
+    3. Emits InstallEvent for dependency preflight, then CrawlEvent for the
        CrawlSetup → CrawlStart → Snapshot →
        SnapshotCleanup → CrawlCleanup sequence (unless phase flags request a subset)
     4. Leaves all result collection to bus subscribers attached during setup
@@ -638,15 +641,13 @@ async def download(
     snapshot_hooks.sort(key=lambda x: x[1].sort_key)
 
     # Compute per-phase timeouts from plugin-specific settings
-    dependency_check_timeout = (
-        compute_install_phase_timeout(get_install_plugins(plugins), config_overrides or None) if not auto_install else 0.0
-    )
+    install_phase_timeout = compute_install_phase_timeout(get_install_plugins(plugins), config_overrides or None)
     crawl_setup_phase_timeout = compute_phase_timeout(crawl_setup_hooks, config_overrides or None)
     snapshot_phase_timeout = compute_phase_timeout(snapshot_hooks, config_overrides or None)
     snapshot_cleanup_phase_timeout = snapshot_phase_timeout
     crawl_cleanup_phase_timeout = crawl_setup_phase_timeout
     total_timeout = (
-        dependency_check_timeout
+        install_phase_timeout
         + (crawl_setup_phase_timeout if crawl_setup_enabled else 0.0)
         + (snapshot_phase_timeout if crawl_start_enabled else 0.0)
         + (snapshot_cleanup_phase_timeout if snapshot_cleanup_enabled else 0.0)
@@ -672,7 +673,7 @@ async def download(
             user=GlobalConfig(**explicit_user_config),
             derived=initial_derived_config,
         ),
-        install_enabled=not auto_install,
+        install_enabled=True,
         crawl_setup_enabled=crawl_setup_enabled,
         crawl_start_enabled=crawl_start_enabled,
         snapshot_cleanup_enabled=snapshot_cleanup_enabled,
@@ -722,20 +723,19 @@ async def download(
         await heartbeat.start()
 
     try:
-        if not auto_install:
-            install_event = bus.emit(
-                InstallEvent(
-                    url=url,
-                    snapshot_id=snapshot.id,
-                    output_dir=str(output_dir),
-                    event_timeout=dependency_check_timeout,
-                    event_handler_slow_timeout=slow_warning_timeout(dependency_check_timeout),
-                ),
-            )
-            await install_event.now(timeout=dependency_check_timeout)
-            await install_event.wait(timeout=dependency_check_timeout)
-            await install_event.event_results_list()
-            await bus.wait_until_idle()
+        install_event = bus.emit(
+            InstallEvent(
+                url=url,
+                snapshot_id=snapshot.id,
+                output_dir=str(output_dir),
+                event_timeout=install_phase_timeout,
+                event_handler_slow_timeout=slow_warning_timeout(install_phase_timeout),
+            ),
+        )
+        await install_event.now(timeout=install_phase_timeout)
+        await install_event.wait(timeout=install_phase_timeout)
+        await install_event.event_results_list()
+        await bus.wait_until_idle()
         if crawl_setup_enabled or crawl_start_enabled or crawl_cleanup_enabled:
             crawl_event_timeout = (
                 (crawl_setup_phase_timeout if crawl_setup_enabled else 0.0)

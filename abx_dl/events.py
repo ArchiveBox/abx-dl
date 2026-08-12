@@ -67,10 +67,10 @@ def slow_warning_timeout(timeout: float | int | None) -> float | None:
 
 
 class InstallEvent(BaseEvent):
-    """Explicit dependency-check/install phase.
+    """Root pre-run phase for required binary resolution.
 
-    Used by the ``install`` command and by ``--no-install`` checks. Normal
-    crawls resolve each hook's dependencies through its abxpkg shebang.
+    Emitted by the orchestrator before CrawlEvent. BinaryService handles it by
+    reading enabled plugins' ``config.json > required_binaries`` declarations.
     """
 
     url: str
