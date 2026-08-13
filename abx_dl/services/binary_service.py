@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import re
 import shlex
 import shutil
@@ -13,12 +14,12 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from abxbus import BaseEvent, EventBus
-from abxpkg import Binary as AbxBinary
-from abxpkg.binary_service import BinaryRequestEvent
+from abxpkg import BinProvider, Binary as AbxBinary, prepare_script_exec_plan
+from abxpkg.binary_service import BinaryEvent, BinaryRequestEvent
 
 from ..config import RuntimeConfig, get_config, get_plugin_env, get_required_binary_requests, is_path_like_env_value
 from ..events import CrawlAbortEvent, InstallEvent, MachineEvent
-from ..models import Plugin, Snapshot, uuid7
+from ..models import Plugin, Snapshot, filter_plugins, uuid7
 from .base import BaseService
 
 _TEMPLATE_NAME_RE = re.compile(r"^\{([A-Z0-9_]+)\}$")
@@ -187,6 +188,14 @@ class PluginBinariesService(BaseService):
                 break
             if not _plugin_enabled_from_user_config(plugin, current_config):
                 continue
+            plugin_base_env = (
+                await get_plugin_env(
+                    self.bus,
+                    plugin=plugin,
+                    run_output_dir=self.output_dir,
+                    config=current_config,
+                )
+            ).to_env()
             plugin_output_dir = self.output_dir / plugin.name
             for record in get_required_binary_requests(
                 plugin,
@@ -228,6 +237,7 @@ class PluginBinariesService(BaseService):
                     **request_payload,
                     auto_install=self.auto_install,
                     lib_dir=current_user_config.ABXPKG_LIB_DIR,
+                    base_env=plugin_base_env,
                     dry_run=current_user_config.DRY_RUN,
                     extra_context={
                         "plugin_name": plugin.name,
@@ -246,6 +256,38 @@ class PluginBinariesService(BaseService):
             emitted_request: BaseEvent = event.emit(request_event)
             completed_request = await emitted_request.now()
             await completed_request.event_results_list(raise_if_none=False)
+
+        if current_user_config.DRY_RUN or current_user_config.ABXPKG_NO_CACHE:
+            return
+        current_config = await get_config(self.bus)
+        binary_events = await self.bus.filter(BinaryEvent, past=True)
+        for plugin in self.plugins.values():
+            if not _plugin_enabled_from_user_config(plugin, current_config):
+                continue
+            runtime = await get_plugin_env(
+                self.bus,
+                plugin=plugin,
+                run_output_dir=self.output_dir,
+                config=current_config,
+            )
+            env = runtime.to_env()
+            env_plugin_names = set(
+                filter_plugins(
+                    self.plugins,
+                    [plugin.name],
+                    include_providers=True,
+                ),
+            )
+            for binary_event in reversed(binary_events):
+                if str(binary_event.extra_context.get("plugin_name") or "") in env_plugin_names and binary_event.env:
+                    env = BinProvider.build_exec_env(
+                        base_env=env,
+                        extra_env=binary_event.env,
+                    )
+            if plugin.path.is_dir():
+                for script_path in plugin.path.iterdir():
+                    if script_path.is_file() and os.access(script_path, os.X_OK):
+                        prepare_script_exec_plan(script_path, env=env)
 
 
 class AbxDlEnvConfigFileBinaryCacheBackend:
