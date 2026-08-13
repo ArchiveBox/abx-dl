@@ -394,6 +394,7 @@ async def get_plugin_env(
     plugin: Plugin,
     run_output_dir: Path,
     include_derived: bool = True,
+    hydrate_binaries: bool = True,
     extra_context: dict[str, Any] | None = None,
     config: RuntimeConfig | None = None,
 ) -> PluginEnv:
@@ -407,6 +408,7 @@ async def get_plugin_env(
         plugin,
         user_env=runtime_config.user,
         derived_env=runtime_config.derived if include_derived else None,
+        hydrate_binaries=hydrate_binaries,
     )
     return PluginEnv.from_config(plugin_config, run_output_dir=run_output_dir, extra_context=extra_context)
 

@@ -194,6 +194,7 @@ class PluginBinariesService(BaseService):
                     plugin=plugin,
                     run_output_dir=self.output_dir,
                     config=current_config,
+                    hydrate_binaries=False,
                 )
             ).to_env()
             plugin_output_dir = self.output_dir / plugin.name
@@ -269,6 +270,7 @@ class PluginBinariesService(BaseService):
                 plugin=plugin,
                 run_output_dir=self.output_dir,
                 config=current_config,
+                hydrate_binaries=False,
             )
             env = runtime.to_env()
             env_plugin_names = set(
@@ -340,6 +342,7 @@ class AbxDlEnvConfigFileBinaryCacheBackend:
                 plugin=plugin,
                 run_output_dir=self._request_run_output_dir(output_dir, plugin_name),
                 include_derived=False,
+                hydrate_binaries=False,
                 config=config,
             )
         ).to_env()
