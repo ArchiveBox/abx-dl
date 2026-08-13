@@ -14,12 +14,12 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from abxbus import BaseEvent, EventBus
-from abxpkg import BinProvider, Binary as AbxBinary, prepare_script_exec_plan
-from abxpkg.binary_service import BinaryEvent, BinaryRequestEvent
+from abxpkg import Binary as AbxBinary, prepare_script_exec_plan
+from abxpkg.binary_service import BinaryRequestEvent
 
 from ..config import RuntimeConfig, get_config, get_plugin_env, get_required_binary_requests, is_path_like_env_value
 from ..events import CrawlAbortEvent, InstallEvent, MachineEvent
-from ..models import Plugin, Snapshot, filter_plugins, uuid7
+from ..models import Plugin, Snapshot, uuid7
 from .base import BaseService
 
 _TEMPLATE_NAME_RE = re.compile(r"^\{([A-Z0-9_]+)\}$")
@@ -261,7 +261,6 @@ class PluginBinariesService(BaseService):
         if current_user_config.DRY_RUN or current_user_config.ABXPKG_NO_CACHE:
             return
         current_config = await get_config(self.bus)
-        binary_events = await self.bus.filter(BinaryEvent, past=True)
         for plugin in self.plugins.values():
             if not _plugin_enabled_from_user_config(plugin, current_config):
                 continue
@@ -271,22 +270,9 @@ class PluginBinariesService(BaseService):
                 run_output_dir=self.output_dir,
                 config=current_config,
             )
-            runtime_env = runtime.to_env()
-            env = runtime_env
-            env_plugin_names = set(
-                filter_plugins(
-                    self.plugins,
-                    [plugin.name],
-                    include_providers=True,
-                ),
-            )
-            for binary_event in reversed(binary_events):
-                if str(binary_event.extra_context.get("plugin_name") or "") in env_plugin_names and binary_event.env:
-                    env = BinProvider.build_exec_env(
-                        base_env=env,
-                        extra_env=binary_event.env,
-                    )
-            env = BinProvider.build_exec_env(base_env=env, extra_env=runtime_env)
+            # BinaryEvents are process-local install state. Prepared plans must
+            # match the persisted environment available after a cold restart.
+            env = runtime.to_env()
             if plugin.path.is_dir():
                 for script_path in plugin.path.iterdir():
                     if script_path.is_file() and os.access(script_path, os.X_OK):
