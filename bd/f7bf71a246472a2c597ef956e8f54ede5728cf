@@ -1,0 +1,18 @@
+abx_dl/services/crawl_service.py
+  h_923c208e183a7b 172-173
+abx_dl/services/snapshot_service.py
+  h_923c208e183a7b 209-210
+tests/test_executor.py
+  h_923c208e183a7b 945,956-975
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "bdf7bf71a246472a2c597ef956e8f54ede5728cf",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
