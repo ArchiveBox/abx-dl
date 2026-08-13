@@ -1,0 +1,16 @@
+abx_dl/config.py
+  h_923c208e183a7b 397,411
+abx_dl/services/binary_service.py
+  h_923c208e183a7b 197,273,345
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "dc0bc90aee99b69212abd5476e29ff08645cd7b4",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
