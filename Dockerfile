@@ -215,21 +215,23 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups abx-dl install \
     && rm -rf /var/lib/apt/lists/* /tmp/*
 
-RUN (echo -e "\n\n[+] abx-dl runtime versions" \
-    && abx-dl version \
-    && abxpkg load --binproviders=env /opt/node/bin/node \
-    && abxpkg load --binproviders=env /venv/bin/python3 \
-    && abx-dl plugins \
-    && abxpkg load --binproviders=env rg \
-    && ! command -v gcc \
-    && ! command -v g++ \
-    && ! command -v make \
-    && ! command -v cargo \
-    && ! command -v sonic \
-    && ! command -v supervisord \
-    && echo -e "\n\n[√] Finished abx-dl Docker build successfully." \
-    && echo -e "BUILD_END_TIME=$(date +"%Y-%m-%d %H:%M:%S %s")\n\n" \
-    ) | tee -a /VERSION.txt
+RUN env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox \
+    setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups \
+    bash -c '(echo -e "\n\n[+] abx-dl runtime versions" \
+        && abx-dl version \
+        && abxpkg load --binproviders=env /opt/node/bin/node \
+        && abxpkg load --binproviders=env /venv/bin/python3 \
+        && abx-dl plugins \
+        && abxpkg load --binproviders=env rg \
+        && ! command -v gcc \
+        && ! command -v g++ \
+        && ! command -v make \
+        && ! command -v cargo \
+        && ! command -v sonic \
+        && ! command -v supervisord \
+        && echo -e "\n\n[√] Finished abx-dl Docker build successfully." \
+        && echo -e "BUILD_END_TIME=$(date +"%Y-%m-%d %H:%M:%S %s")\n\n" \
+        )' | tee -a /VERSION.txt
 
 WORKDIR /out
 VOLUME ["/out", "/data/personas"]
