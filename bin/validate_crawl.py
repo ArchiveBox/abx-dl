@@ -67,7 +67,12 @@ def main() -> None:
 
     results = [record for record in records if record.get("type") == "ArchiveResult"]
     actual_hooks = {(str(record.get("plugin")), str(record.get("hook_name"))) for record in results}
-    expected_hooks = {(plugin.name, hook.name) for plugin in plugins.values() for hook in plugin.filter_hooks("Snapshot")}
+    expected_hooks = {
+        (plugin.name, hook.name)
+        for plugin in plugins.values()
+        if plugin.name not in disabled_plugins
+        for hook in plugin.filter_hooks("Snapshot")
+    }
     missing_hooks = sorted(expected_hooks - actual_hooks)
     if missing_hooks:
         raise SystemExit(f"Snapshot hooks missing ArchiveResult records: {missing_hooks}")
@@ -89,8 +94,6 @@ def main() -> None:
         hook_name = str(record.get("hook_name"))
         if (plugin_name, hook_name) == CHROME_SNAPSHOT_OWNER and record.get("output_str") == "CHROME_ISOLATION=crawl":
             chrome_owner_skips.append(record)
-            continue
-        if plugin_name in disabled_plugins and record.get("output_str") == f"{plugins[plugin_name].enabled_key}=False":
             continue
         unexpected_skips.append((plugin_name, hook_name, record.get("output_str")))
     if unexpected_skips:
