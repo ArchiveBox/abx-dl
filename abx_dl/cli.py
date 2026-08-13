@@ -1750,16 +1750,10 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
     else:
         all_plugins = discover_plugins()
 
-    initial_user_env = get_initial_env()
-    initial_derived_env = get_derived_config(initial_user_env)
+    plugin_schemas = {name: plugin.config.properties for name, plugin in all_plugins.items()}
+    resolved_config = get_initial_env(plugin_schemas=plugin_schemas)
     enabled_plugin_names = [
-        name
-        for name, plugin in all_plugins.items()
-        if _plugin_enabled_for_install(
-            plugin,
-            initial_user_env=initial_user_env,
-            initial_derived_env=initial_derived_env,
-        )
+        name for name, plugin in all_plugins.items() if bool(resolved_config.get(f"plugins/{name}", {}).get(plugin.enabled_key, True))
     ]
     enabled_plugins = filter_plugins(all_plugins, enabled_plugin_names, include_providers=True)
     enabled_plugin_set = set(enabled_plugins)
@@ -1792,6 +1786,8 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
         )
     else:
         # Check + info mode (default)
+        initial_user_env = get_initial_env()
+        initial_derived_env = get_derived_config(initial_user_env)
         rows: list[dict[str, str]] = []
         declared_binary_specs: dict[str, dict[str, object]] = {}
         for plugin in selected.values():

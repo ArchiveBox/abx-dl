@@ -942,6 +942,16 @@ def test_plugins_list_includes_requested_plugins(tmp_path: Path) -> None:
     assert "headers" in normalized
 
 
+def test_plugins_list_resolves_enabled_aliases(tmp_path: Path) -> None:
+    set_result = _run_cli(tmp_path, "config", "--set", "MEDIA_ENABLED=false")
+    result = _run_cli(tmp_path, "plugins", "ytdlp")
+
+    assert set_result.returncode == 0
+    assert "YTDLP_ENABLED=false" in set_result.stdout
+    assert result.returncode == 0
+    assert "disabled" in result.stdout
+
+
 def test_readme_install_command_runs_real_install_pipeline(tmp_path: Path) -> None:
     result = _run_cli(tmp_path, "plugins", "--install", "wget")
     resolved_wget = Path(_cli_env(tmp_path)["ABXPKG_LIB_DIR"]) / "env" / "bin" / "wget"
