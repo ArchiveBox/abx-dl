@@ -270,9 +270,9 @@ class PluginBinariesService(BaseService):
                 plugin=plugin,
                 run_output_dir=self.output_dir,
                 config=current_config,
-                hydrate_binaries=False,
             )
-            env = runtime.to_env()
+            runtime_env = runtime.to_env()
+            env = runtime_env
             env_plugin_names = set(
                 filter_plugins(
                     self.plugins,
@@ -286,6 +286,7 @@ class PluginBinariesService(BaseService):
                         base_env=env,
                         extra_env=binary_event.env,
                     )
+            env = BinProvider.build_exec_env(base_env=env, extra_env=runtime_env)
             if plugin.path.is_dir():
                 for script_path in plugin.path.iterdir():
                     if script_path.is_file() and os.access(script_path, os.X_OK):

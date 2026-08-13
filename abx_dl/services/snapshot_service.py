@@ -210,7 +210,8 @@ class SnapshotService(BaseService):
                 return
             if plugin_config.DRY_RUN:
                 return
-            env = plugin_config.to_env()
+            runtime_env = plugin_config.to_env()
+            env = runtime_env
             env_plugin_names = set(filter_plugins(self.plugins, [plugin.name], include_providers=True))
             binary_events = await self.bus.filter(
                 BinaryEvent,
@@ -223,6 +224,7 @@ class SnapshotService(BaseService):
                         base_env=env,
                         extra_env=binary_event.env,
                     )
+            env = BinProvider.build_exec_env(base_env=env, extra_env=runtime_env)
             env["SNAP_DIR"] = str(self.output_dir)
             if str(env.get("CHROME_ISOLATION") or "").lower() == "snapshot":
                 active_persona = str(env.get("ACTIVE_PERSONA") or "Default")

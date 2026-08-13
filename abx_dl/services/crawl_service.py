@@ -171,7 +171,8 @@ class CrawlService(BaseService):
             )
             if plugin.enabled_key in plugin.config.properties and not runtime[plugin.enabled_key]:
                 return
-            env = runtime.to_env()
+            runtime_env = runtime.to_env()
+            env = runtime_env
             env_plugin_names = set(filter_plugins(self.plugins, [plugin.name], include_providers=True))
             binary_events = await self.bus.filter(
                 BinaryEvent,
@@ -184,6 +185,7 @@ class CrawlService(BaseService):
                         base_env=env,
                         extra_env=binary_event.env,
                     )
+            env = BinProvider.build_exec_env(base_env=env, extra_env=runtime_env)
             timeout_key = f"{plugin.name.upper()}_TIMEOUT"
             timeout = runtime[timeout_key] if timeout_key in plugin.config.properties else runtime.TIMEOUT
             plugin_output_dir = self.output_dir / plugin.name

@@ -16,12 +16,14 @@ from abxpkg.binary_service import BinaryCacheService, BinaryEvent, BinaryRequest
 from abxpkg.config import load_derived_cache
 
 
-def _planned_script_paths(cache_path: Path) -> set[str]:
-    paths: set[str] = set()
+def _planned_script_contexts(cache_path: Path) -> dict[str, dict[str, str]]:
+    contexts: dict[str, dict[str, str]] = {}
     for record in load_derived_cache(cache_path).values():
         plans = cast(dict[str, dict[str, Any]], record.get("script_exec_plans") or {})
-        paths.update(json.loads(plan["run_context"])["script_path"] for plan in plans.values())
-    return paths
+        for plan in plans.values():
+            context = json.loads(plan["run_context"])
+            contexts[context["script_path"]] = context["template_env"]
+    return contexts
 
 
 def test_install_phase_timeout_uses_largest_sequential_binary_lane_budget() -> None:
@@ -124,6 +126,7 @@ def test_install_event_resolves_plugin_binaries_through_abxpkg(tmp_path: Path) -
 
     asyncio.run(run())
 
+    resolved_paths: dict[str, str] = {}
     for name, config_key in (("git", "GIT_BINARY"), ("wget", "WGET_BINARY")):
         assert any(event.extra_context.get("plugin_name") == name and event.name == name for event in request_events)
         binary_event = next(event for event in reversed(binary_events) if event.name == name)
@@ -131,6 +134,7 @@ def test_install_event_resolves_plugin_binaries_through_abxpkg(tmp_path: Path) -
         assert binary_event.binprovider == "env"
         assert Path(binary_event.abspath) == managed_lib_dir / "env" / "bin" / name
         assert Path(binary_event.abspath).is_file()
+        resolved_paths[config_key] = binary_event.abspath
         assert any(
             event.config_type == "derived"
             and event.method == "update"
@@ -138,8 +142,11 @@ def test_install_event_resolves_plugin_binaries_through_abxpkg(tmp_path: Path) -
             and event.value == binary_event.abspath
             for event in machine_events
         )
-    planned_scripts = _planned_script_paths(managed_lib_dir / "env" / "derived.env")
-    assert {str(hook.path.resolve()) for plugin in selected.values() for hook in plugin.hooks} <= planned_scripts
+    planned_scripts = _planned_script_contexts(managed_lib_dir / "env" / "derived.env")
+    assert {str(hook.path.resolve()) for plugin in selected.values() for hook in plugin.hooks} <= set(planned_scripts)
+    for plugin_name, config_key in (("git", "GIT_BINARY"), ("wget", "WGET_BINARY")):
+        for hook in selected[plugin_name].hooks:
+            assert planned_scripts[str(hook.path.resolve())][config_key] == resolved_paths[config_key]
 
 
 def test_install_event_resolves_plugin_binaries_in_config_order(tmp_path: Path) -> None:
@@ -221,7 +228,7 @@ def test_install_event_resolves_plugin_binaries_in_config_order(tmp_path: Path) 
     asyncio.run(run())
 
     assert events_seen.index(("binary", "bash")) < events_seen.index(("request", "sh"))
-    assert str(helper_script.resolve()) in _planned_script_paths(managed_lib_dir / "env" / "derived.env")
+    assert str(helper_script.resolve()) in _planned_script_contexts(managed_lib_dir / "env" / "derived.env")
 
 
 def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) -> None:
