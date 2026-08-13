@@ -282,13 +282,10 @@ def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) 
     request_events = asyncio.run(collect_requests(no_cache=False))
     abxbus_request = next(event for event in request_events if event.name == "abxbus")
     assert abxbus_request.no_cache is None
-    assert abxbus_request.binproviders == "env,pnpm"
+    assert abxbus_request.binproviders == "pnpm"
     assert abxbus_request.min_version == "2.5.45"
     assert abxbus_request.min_release_age == 0
     assert abxbus_request.overrides == {
-        "env": {
-            "version": ["node", "-p", "require('abxbus/package.json').version"],
-        },
         "pnpm": {
             "install_root": str(managed_lib_dir / "pnpm" / "packages" / "abxbus"),
             "min_release_age": 0,
@@ -301,9 +298,11 @@ def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) 
     no_cache_request = next(event for event in asyncio.run(collect_requests(no_cache=True)) if event.name == "abxbus")
     assert no_cache_request.no_cache is True
     restricted_request = next(
-        event for event in asyncio.run(collect_requests(no_cache=False, allowed_binproviders=["apt", "env"])) if event.name == "abxbus"
+        event
+        for event in asyncio.run(collect_requests(no_cache=False, allowed_binproviders=["apt", "env", "pnpm"]))
+        if event.name == "abxbus"
     )
-    assert restricted_request.binproviders == "env"
+    assert restricted_request.binproviders == "pnpm"
 
 
 def test_install_event_excludes_opencode_when_route_is_disabled(tmp_path: Path) -> None:
