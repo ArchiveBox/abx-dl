@@ -3,18 +3,18 @@ revision = 3
 requires-python = ">=3.12, <3.15"
 
 [options]
-exclude-newer = "2026-08-08T09:38:26.27948102Z"
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
-abxbus = { timestamp = "2026-08-13T09:38:25.279493995Z", span = "PT1S" }
+abxbus = { timestamp = "0001-01-01T00:00:00Z", span = "PT1S" }
 abx-dl = "2100-01-01T00:00:00Z"
 abx-plugins = "2100-01-01T00:00:00Z"
 abxpkg = "2100-01-01T00:00:00Z"
 
 [[package]]
 name = "abx-dl"
-version = "1.12.102"
+version = "1.12.103"
 source = { editable = "." }
 dependencies = [
     { name = "abx-plugins" },
@@ -95,9 +95,9 @@ dependencies = [
     { name = "rich-click" },
     { name = "uv" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ec/7c/433e0f87cff1ef8cf8f34392dfdb666f4483ce83169e7685def043e7fc6a/abx_plugins-1.12.96.tar.gz", hash = "sha256:87eaadc9521ee23065b620c400721665402249a2d6be79f71329a38b2718bbe4", size = 255513, upload-time = "2026-08-13T09:35:45.662819Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ec/7c/433e0f87cff1ef8cf8f34392dfdb666f4483ce83169e7685def043e7fc6a/abx_plugins-1.12.96.tar.gz", hash = "sha256:87eaadc9521ee23065b620c400721665402249a2d6be79f71329a38b2718bbe4", size = 255513, upload-time = "2026-08-13T09:35:45.662Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/44/6c/ce6567db6e9e26635ec54acbd837248d01f43cf7a4bd3d946ac3f96443a9/abx_plugins-1.12.96-py3-none-any.whl", hash = "sha256:0aa19c7f2f98a6fc45954c5f74898a9179684576bffc7006182abb1e97cdd654", size = 406217, upload-time = "2026-08-13T09:35:43.991198Z" },
+    { url = "https://files.pythonhosted.org/packages/44/6c/ce6567db6e9e26635ec54acbd837248d01f43cf7a4bd3d946ac3f96443a9/abx_plugins-1.12.96-py3-none-any.whl", hash = "sha256:0aa19c7f2f98a6fc45954c5f74898a9179684576bffc7006182abb1e97cdd654", size = 406217, upload-time = "2026-08-13T09:35:43.991Z" },
 ]
 
 [[package]]
