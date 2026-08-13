@@ -212,6 +212,8 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && rm -f /venv/bin/uv /venv/bin/uvx \
     && "$ABXPKG_LIB_DIR/env/bin/find" "$XDG_CACHE_HOME" -mindepth 1 -maxdepth 1 -exec rm -rf {} + \
     && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR" \( ! -user "$DEFAULT_ARCHIVEBOX_UID" -o ! -group "$DEFAULT_ARCHIVEBOX_GID" \) -exec chown "$DEFAULT_ARCHIVEBOX_UID:$DEFAULT_ARCHIVEBOX_GID" {} + \
+    && NORMALIZED_MTIME="@$(date +%s)" \
+    && "$ABXPKG_LIB_DIR/env/bin/find" /venv /opt/node "$ABXPKG_LIB_DIR" -exec touch -h -d "$NORMALIZED_MTIME" {} + \
     && env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups abx-dl install \
     && rm -rf /var/lib/apt/lists/* /tmp/*
 
