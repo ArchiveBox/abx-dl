@@ -214,7 +214,7 @@ jobs:
           PY
 
           "${DOCKER_BINARY}" run --rm --platform '${{ matrix.platform }}' --entrypoint /venv/bin/python3 '${{ matrix.local_tag }}' -c \
-            'import json; cache_file = "/opt/archivebox/lib/env/derived.env"; raw = open(cache_file).read().strip(); records = json.loads(raw[len("ABXPKG_DERIVED_CACHE=\x27"):-1]); plans = [plan for record in records.values() for plan in record.get("script_exec_plans", {}).values()]; assert plans and {plan.get("euid") for plan in plans} == {911}'
+            'import json; cache_file = "/opt/archivebox/lib/env/derived.env"; raw = open(cache_file).read().strip(); records = json.loads(raw[len("ABXPKG_DERIVED_CACHE=\x27"):-1]); plans = [plan for record in records.values() for plan in record.get("script_exec_plans", {}).values()]; contexts = [json.loads(plan["run_context"])["base"]["abxpkg_env"] for plan in plans]; assert plans and {plan.get("euid") for plan in plans} == {911}; assert all("ABXPKG_TMP_CACHE_DIR" not in context for context in contexts)'
 
           "$SCRIPT_BINARY" -q -e -c \
             "\"${DOCKER_BINARY}\" run --rm -it --platform '${{ matrix.platform }}' --env ANTHROPIC_API_KEY --env CLAUDE_CODE_OAUTH_TOKEN --env TWOCAPTCHA_API_KEY --volume '$OUT_DIR:/out' --volume '$PERSONAS_DIR:/data/personas' '${{ matrix.local_tag }}' https://sweeting.me" \
