@@ -4,7 +4,6 @@ import asyncio
 import os
 import re
 import signal
-import sys
 import time
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
@@ -109,11 +108,6 @@ def _process_status(exit_code: int) -> ProcessStatus:
 
 
 def _process_command(event: ProcessEvent) -> list[str]:
-    suffix = Path(event.hook_path).suffix.lower()
-    if suffix == ".py":
-        return [str(event.env.get("PYTHON3_BINARY") or sys.executable), event.hook_path, *event.hook_args]
-    if suffix == ".js":
-        return [str(event.env.get("NODE_BINARY") or "node"), event.hook_path, *event.hook_args]
     return [event.hook_path, *event.hook_args]
 
 

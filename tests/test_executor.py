@@ -80,7 +80,7 @@ def _run_download(*args, **kwargs):
     return results
 
 
-def test_process_command_uses_resolved_runtime_interpreters(tmp_path: Path) -> None:
+def test_process_command_executes_hooks_through_declared_shebang(tmp_path: Path) -> None:
     hook_path = tmp_path / "on_Snapshot__57_mercury.py"
     hook_path.write_text("print('ok')\n", encoding="utf-8")
     event = ProcessEvent(
@@ -94,7 +94,7 @@ def test_process_command_uses_resolved_runtime_interpreters(tmp_path: Path) -> N
         timeout=5,
     )
 
-    assert _process_command(event) == [sys.executable, str(hook_path), "--url=https://example.com"]
+    assert _process_command(event) == [str(hook_path), "--url=https://example.com"]
 
     node_hook_path = tmp_path / "on_CrawlSetup__90_chrome_launch.daemon.bg.js"
     node_event = event.model_copy(
@@ -105,7 +105,7 @@ def test_process_command_uses_resolved_runtime_interpreters(tmp_path: Path) -> N
         },
     )
 
-    assert _process_command(node_event) == ["/opt/abx/node", str(node_hook_path), "--url=https://example.com"]
+    assert _process_command(node_event) == [str(node_hook_path), "--url=https://example.com"]
 
 
 def test_archivewebpage_extension_prepare_runs_before_chrome_launch() -> None:
