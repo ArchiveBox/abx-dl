@@ -206,6 +206,8 @@ class SnapshotService(BaseService):
                 },
                 config=self.config,
             )
+            if plugin.enabled_key in plugin.config.properties and not plugin_config[plugin.enabled_key]:
+                return
             if plugin_config.DRY_RUN:
                 return
             env = plugin_config.to_env()

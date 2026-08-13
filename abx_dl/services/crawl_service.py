@@ -169,6 +169,8 @@ class CrawlService(BaseService):
                     "hook_name": hook.name,
                 },
             )
+            if plugin.enabled_key in plugin.config.properties and not runtime[plugin.enabled_key]:
+                return
             env = runtime.to_env()
             env_plugin_names = set(filter_plugins(self.plugins, [plugin.name], include_providers=True))
             binary_events = await self.bus.filter(
