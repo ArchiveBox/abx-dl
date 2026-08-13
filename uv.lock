@@ -3,18 +3,18 @@ revision = 3
 requires-python = ">=3.12, <3.15"
 
 [options]
-exclude-newer = "2026-08-07T23:04:58.206231488Z"
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
-abxbus = { timestamp = "2026-08-12T23:04:57.206243871Z", span = "PT1S" }
+abxbus = { timestamp = "0001-01-01T00:00:00Z", span = "PT1S" }
 abx-dl = "2100-01-01T00:00:00Z"
 abx-plugins = "2100-01-01T00:00:00Z"
 abxpkg = "2100-01-01T00:00:00Z"
 
 [[package]]
 name = "abx-dl"
-version = "1.12.92"
+version = "1.12.93"
 source = { editable = "." }
 dependencies = [
     { name = "abx-plugins" },
@@ -95,9 +95,9 @@ dependencies = [
     { name = "rich-click" },
     { name = "uv" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/78/c9/66effab5d0891b7bfd56cdcecd40f300308ed95a7f5b301d9384b957935c/abx_plugins-1.12.90.tar.gz", hash = "sha256:e9513efe1035009b8e4e14c28a1224ed69b6e252597efca8edd34beec05f50fe", size = 255231, upload-time = "2026-08-12T23:02:27.888805Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/78/c9/66effab5d0891b7bfd56cdcecd40f300308ed95a7f5b301d9384b957935c/abx_plugins-1.12.90.tar.gz", hash = "sha256:e9513efe1035009b8e4e14c28a1224ed69b6e252597efca8edd34beec05f50fe", size = 255231, upload-time = "2026-08-12T23:02:27.888Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/7e/ed/e87c40cd48e1aeceb53eccc5502751e03b111386620392e7d6e2ff694d49/abx_plugins-1.12.90-py3-none-any.whl", hash = "sha256:f3c4845f47532d211d348267a832dd6f97b0599d913eddf618727853590e6bbd", size = 405956, upload-time = "2026-08-12T23:02:29.298383Z" },
+    { url = "https://files.pythonhosted.org/packages/7e/ed/e87c40cd48e1aeceb53eccc5502751e03b111386620392e7d6e2ff694d49/abx_plugins-1.12.90-py3-none-any.whl", hash = "sha256:f3c4845f47532d211d348267a832dd6f97b0599d913eddf618727853590e6bbd", size = 405956, upload-time = "2026-08-12T23:02:29.298Z" },
 ]
 
 [[package]]
