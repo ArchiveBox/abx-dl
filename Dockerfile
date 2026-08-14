@@ -132,7 +132,6 @@ COPY --from=abxbus --chown=root:root --chmod=755 abxbus /src/abxbus/abxbus
 COPY --from=abxpkg --chown=root:root --chmod=755 abxpkg /src/abxpkg/abxpkg
 COPY --from=abx-plugins --chown=root:root --chmod=755 abx_plugins /src/abx-plugins/abx_plugins
 COPY --chown=root:root --chmod=755 abx_dl "$CODE_DIR/abx_dl"
-COPY --chown=root:root --chmod=755 bin/docker_entrypoint.sh /usr/local/bin/abx-dl-docker-entrypoint
 COPY --chown=root:root --chmod=755 .git "$CODE_DIR/.git"
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
     echo "[*] Installing local abxbus/abxpkg/abx-plugins/abx-dl Python source code..." \
@@ -158,6 +157,7 @@ FROM abx-dl-runtime-base
 
 COPY --from=abx-dl-builder /venv /venv
 COPY --from=abx-dl-builder /VERSION.txt /VERSION.txt
+COPY --chown=root:root --chmod=755 bin/docker_entrypoint.sh /usr/local/bin/abx-dl-docker-entrypoint
 
 RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_ARCHIVEBOX_UID}..." \
     && groupadd --system "$ARCHIVEBOX_USER" \
