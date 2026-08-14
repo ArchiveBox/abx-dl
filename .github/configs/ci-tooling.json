@@ -15,9 +15,6 @@
     "JQ_BINARY": {
       "default": "jq"
     },
-    "PYTHON_BINARY": {
-      "default": "python"
-    },
     "SCRIPT_BINARY": {
       "default": "script"
     },
@@ -44,10 +41,6 @@
     {
       "name": "{CURL_BINARY}",
       "binproviders": "env,brew,apt"
-    },
-    {
-      "name": "{PYTHON_BINARY}",
-      "binproviders": "env"
     },
     {
       "name": "{GH_BINARY}",

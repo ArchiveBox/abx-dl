@@ -63,7 +63,6 @@ jobs:
       - name: Project host CI tools through abxpkg
         env:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/abx-lib
-          PYTHON_BINARY: ${{ env.pythonLocation }}/bin/python
         run: |
           set -Eeuo pipefail
           ABXPKG_VERSION="$(uv run --no-cache --no-project python -c 'import tomllib; print(next(package["version"] for package in tomllib.load(open("uv.lock", "rb"))["package"] if package["name"] == "abxpkg"))')"
@@ -77,7 +76,7 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          mapfile -t versions < <("$PYTHON_BINARY" - <<'PY'
+          mapfile -t versions < <(python - <<'PY'
           import tomllib
 
           lock = tomllib.load(open("uv.lock", "rb"))
