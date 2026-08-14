@@ -1,0 +1,22 @@
+Dockerfile
+  h_923c208e183a7b 183,193,196
+abx_dl/config.py
+  h_923c208e183a7b 20,115,548-552,557-560,580
+abx_dl/services/binary_service.py
+  h_923c208e183a7b 6
+tests/test_install_phase.py
+  h_923c208e183a7b 167,170,175,178,182,184,240-241
+tests/test_plugins.py
+  h_923c208e183a7b 114,121,131,134
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "9b0a9882185cbf4b1a76755b9cb7a4c7634019d7",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
