@@ -42,7 +42,7 @@ async def build_plugin_process_env(
                 base_env=env,
                 extra_env=binary_event.env,
             )
-    return BinProvider.build_exec_env(base_env=env, extra_env=runtime_env)
+    return env
 
 
 def _config_bool(value: Any) -> bool:

@@ -1237,7 +1237,7 @@ def test_snapshot_hook_binary_event_env_replay_applies_newest_last(tmp_path: Pat
         snapshot=snapshot,
         output_dir=output_dir,
         plugins={plugin.name: plugin},
-        config=_runtime_config(CRAWL_DIR=output_dir),
+        config=_runtime_config(CRAWL_DIR=output_dir, ABX_TEST_BINARY_MARKER="runtime-stale"),
         snapshot_phase_timeout=10.0,
     )
     wget_binary = _resolve_real_wget_binary(tmp_path)
@@ -1302,6 +1302,9 @@ def test_crawl_setup_hook_binary_event_env_replay_applies_newest_last(tmp_path: 
     wget_binary = _resolve_real_wget_binary(tmp_path)
 
     async def run() -> ProcessEvent:
+        await bus.emit(
+            MachineEvent(config={"ABX_TEST_BINARY_MARKER": "runtime-stale"}, config_type="user"),
+        ).now()
         await bus.emit(
             BinaryEvent(
                 name="setup-env-check-tool",
