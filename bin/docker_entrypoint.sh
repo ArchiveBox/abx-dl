@@ -15,12 +15,15 @@ if [[ "$(id -u)" == "0" ]]; then
     [[ "$target_gid" != "0" ]] || target_gid="$DEFAULT_ARCHIVEBOX_GID"
 
     groupmod -o -g "$target_gid" "$ARCHIVEBOX_USER"
-    for path in "$DATA_DIR" "$PERSONAS_DIR" "$HOME" "$CONFIG_DIR" "$CONFIG_DIR/google-chrome-for-testing" "$CRASH_REPORTS_DIR"; do
+
+    mkdir -p "$DATA_DIR" "$PERSONAS_DIR"
+    chmod a+rwx "$DATA_DIR" "$PERSONAS_DIR"
+
+    for path in "$HOME" "$CONFIG_DIR" "$CONFIG_DIR/google-chrome-for-testing" "$CRASH_REPORTS_DIR"; do
         mkdir -p "$path"
         chown -h "$ARCHIVEBOX_USER:$ARCHIVEBOX_USER" "$path"
         chmod u+rwx,g+rwx "$path"
     done
-    chmod a+rwx "$DATA_DIR" "$PERSONAS_DIR"
 
     exec setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups abx-dl "$@"
 fi

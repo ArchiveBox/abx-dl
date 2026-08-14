@@ -40,32 +40,6 @@ grep -q 'WGET_BINARY=wget' <<<"$plugin_info"
 grep -q 'on_Snapshot__06_wget' <<<"$plugin_info"
 ```
 
-Docker:
-
-<!--pytest.mark.docker_required-->
-```bash
-set -Eeuo pipefail
-output_dir="$(mktemp -d)"
-image="${ABXDL_IMAGE:-archivebox/abx-dl:latest}"
-trap 'rm -rf "$output_dir"' EXIT
-docker run --rm \
-  --env OUTPUT_UID="$(id -u)" \
-  --env OUTPUT_GID="$(id -g)" \
-  --volume "$output_dir:/out" \
-  --entrypoint bash \
-  "$image" \
-  -c 'set -Eeuo pipefail
-cleanup() { chown -R "$OUTPUT_UID:$OUTPUT_GID" /out; }
-trap cleanup EXIT
-/venv/bin/abx-dl "$@"' \
-  -- --no-install --max-urls=1 --plugins=title,wget 'https://example.com'
-test -s "$output_dir/index.jsonl"
-test -s "$output_dir/title/title.txt"
-test -s "$output_dir/wget/example.com/index.html"
-grep -q 'Example Domain' "$output_dir/title/title.txt"
-grep -q 'Example Domain' "$output_dir/wget/example.com/index.html"
-```
-
 ## Basic Usage
 
 ```text

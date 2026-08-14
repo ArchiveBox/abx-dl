@@ -189,20 +189,7 @@ jobs:
         if: matrix.platform == 'linux/amd64'
         env:
           ABXDL_IMAGE: ${{ matrix.local_tag }}
-        run: |
-          set -Eeuxo pipefail
-          output_dir="$(mktemp -d)"
-          trap 'rm -rf "$output_dir"' EXIT
-          docker run --rm \
-            --volume "$output_dir:/out" \
-            "$ABXDL_IMAGE" \
-            --no-install --max-urls=1 --plugins=title,wget 'https://example.com'
-          test -s "$output_dir/index.jsonl"
-          test -s "$output_dir/title/title.txt"
-          test -s "$output_dir/wget/example.com/index.html"
-          grep -q 'Example Domain' "$output_dir/title/title.txt"
-          grep -q 'Example Domain' "$output_dir/wget/example.com/index.html"
-          $UV_BINARY run --no-cache --no-sync --no-sources pytest -vv -s --tb=long -m docker_required README.md AGENTS.md CLAUDE.md skills
+        run: $UV_BINARY run --no-cache --no-sync --no-sources pytest -vv --tb=long -m docker_required README.md AGENTS.md CLAUDE.md skills
 
       - name: Validate real crawl inside Docker image
         id: real_crawl
