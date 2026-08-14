@@ -990,6 +990,10 @@ def test_readme_dl_command_downloads_example_dot_com_with_real_output(tmp_path: 
     wget_results = [record for record in index_records if record["type"] == "ArchiveResult" and record["plugin"] == "wget"]
     assert any(record["output_str"] == "wget/example.com/index.html" for record in wget_results)
 
+    limit_state = json.loads((output_dir / ".abx-dl" / "limits.json").read_text())
+    assert limit_state["admitted_snapshot_ids"] == [next(record["id"] for record in index_records if record["type"] == "Snapshot")]
+    assert limit_state["stop_reason"] == "crawl_max_urls"
+
     wget_processes = [
         record
         for record in index_records
