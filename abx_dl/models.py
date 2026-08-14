@@ -12,7 +12,6 @@ import os
 import platform
 import re
 import socket
-import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -20,7 +19,6 @@ from uuid import uuid4
 
 from abx_plugins import get_plugins_dir
 from abxpkg import BinaryOverrides
-from abxpkg.base_types import is_forbidden_convenience_lib_bin
 from pydantic import BaseModel, ConfigDict, Field
 
 from .output_files import OutputFile
@@ -230,54 +228,6 @@ class PluginEnv(BaseModel):
         for key, value in payload.items():
             if value is not None:
                 env[key] = dump_to_dotenv_format(value)
-
-        # Python hooks import the same installed abx-dl/abx-plugins deps that
-        # launched the crawl. The managed env provider may also expose a cached
-        # ``python3`` shim for user-facing convenience, but that interpreter is
-        # not guaranteed to have hook deps like rich_click installed. Publish
-        # the active runtime interpreter through abxpkg's normal manual binary
-        # override path so ``abxpkg run --script ... python3`` preserves the
-        # package environment instead of drifting to a bare system Python.
-        env.setdefault("PYTHON3_BINARY", sys.executable)
-
-        # Hook shebangs must resolve launchers from the active package
-        # environment before any managed tool projection.
-        runtime_bin_dirs = [str(Path(sys.executable).parent)]
-
-        for key, raw_value in env.items():
-            if not key.endswith("_BINARY"):
-                continue
-            value = str(raw_value).strip()
-            if not value:
-                continue
-            path_value = Path(value).expanduser()
-            if not (path_value.is_absolute() or "/" in value or "\\" in value):
-                continue
-            binary_dir = str(path_value.resolve(strict=False).parent)
-            if binary_dir and binary_dir not in runtime_bin_dirs and not is_forbidden_convenience_lib_bin(binary_dir):
-                runtime_bin_dirs.append(binary_dir)
-
-        for extra_dir in (
-            str(Path(env["ABXPKG_LIB_DIR"]) / "env" / "bin"),
-            str(Path(env["PIP_BIN_DIR"])),
-            str(Path(env["PNPM_BIN_DIR"])),
-            str(Path(env["NPM_BIN_DIR"])),
-        ):
-            if extra_dir and extra_dir not in runtime_bin_dirs and not is_forbidden_convenience_lib_bin(extra_dir):
-                runtime_bin_dirs.append(extra_dir)
-        if "UV" in env:
-            uv_bin_dir = str(Path(env["UV"]).expanduser().resolve(strict=False).parent)
-            if uv_bin_dir not in runtime_bin_dirs and not is_forbidden_convenience_lib_bin(uv_bin_dir):
-                runtime_bin_dirs.append(uv_bin_dir)
-
-        # Prepend runtime dirs even if they already appear later in PATH. Hooks
-        # are executed via shebangs like ``abxpkg run --script``; a stale abxpkg
-        # in the managed pip venv must not shadow the active ArchiveBox runtime.
-        path_dirs: list[str] = []
-        for extra_dir in (*runtime_bin_dirs, *env["PATH"].split(os.pathsep)):
-            if extra_dir and extra_dir not in path_dirs and not is_forbidden_convenience_lib_bin(extra_dir):
-                path_dirs.append(extra_dir)
-        env["PATH"] = os.pathsep.join(path_dirs)
 
         return env
 

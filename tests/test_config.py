@@ -1,15 +1,17 @@
 import asyncio
 import json
 import os
-import sys
+import shutil
 from pathlib import Path
 from typing import Any
 
 import pytest
+from abxpkg.binary_service import BinaryEvent
 from abx_dl.config import GlobalConfig, RuntimeConfig, get_config, get_initial_env, get_plugin_env
 from abx_dl.events import MachineEvent
 from abx_dl.models import PluginEnv, discover_plugins
 from abx_dl.orchestrator import create_bus, install_plugins
+from abx_dl.services.binary_service import build_plugin_process_env
 from platformdirs import user_config_path
 
 
@@ -33,7 +35,7 @@ def test_isolated_config_shares_managed_binaries_but_isolates_mutable_state(
     assert Path(os.environ["TMP_DIR"]).is_relative_to(tmp_path)
 
 
-def test_plugin_env_sets_run_dirs_and_node_path(tmp_path: Path) -> None:
+def test_plugin_env_sets_run_dirs_without_projecting_binary_paths(tmp_path: Path) -> None:
     for key in (
         "CRAWL_DIR",
         "SNAP_DIR",
@@ -58,12 +60,14 @@ def test_plugin_env_sets_run_dirs_and_node_path(tmp_path: Path) -> None:
     assert env["CRAWL_DIR"] == str(tmp_path)
     assert env["SNAP_DIR"] == str(tmp_path)
     assert Path(env["ABXPKG_LIB_DIR"]) == expected_lib_dir
-    assert env["NODE_PATH"] == env["NODE_MODULES_DIR"]
-    assert env["PIP_BIN_DIR"] in env["PATH"].split(":")
-    assert env["PNPM_BIN_DIR"] in env["PATH"].split(":")
-    assert env["NPM_BIN_DIR"] in env["PATH"].split(":")
+    assert "NODE_MODULES_DIR" not in env
+    assert "NODE_PATH" not in env
+    assert "PIP_BIN_DIR" not in env
+    assert "PNPM_BIN_DIR" not in env
+    assert "NPM_BIN_DIR" not in env
+    assert "PUPPETEER_CACHE_DIR" not in env
     assert "VIRTUAL_ENV" not in env
-    assert Path(env["PATH"].split(os.pathsep)[0]) == Path(sys.executable).parent
+    assert env["PATH"] == os.environ["PATH"]
 
 
 def test_plugin_timeout_defaults_only_yield_to_explicit_global_timeout(tmp_path: Path) -> None:
@@ -133,81 +137,52 @@ def test_machine_event_config_rebuild_applies_events_oldest_to_newest(tmp_path: 
     assert runtime_config.derived["ABXPKG_LIB_DIR"] == str(tmp_path / "lib-c")
 
 
-def test_plugin_env_exports_shared_runtime_paths_after_real_install_phase(
-    tmp_path: Path,
-) -> None:
+def test_plugin_env_exports_abxpkg_runtime_after_real_install_phase(tmp_path: Path) -> None:
     os.environ.pop("VIRTUAL_ENV", None)
     run_output_dir = tmp_path / "run"
     plugins = discover_plugins()
     bus = create_bus(total_timeout=300.0, name=f"test_config_shared_runtime_{tmp_path.name}")
-    try:
-        asyncio.run(
-            install_plugins(
-                plugin_names=["ytdlp", "puppeteer"],
-                plugins=plugins,
-                output_dir=run_output_dir,
-                bus=bus,
-            ),
+
+    async def run() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+        await install_plugins(
+            plugin_names=["ytdlp"],
+            plugins=plugins,
+            output_dir=run_output_dir,
+            bus=bus,
         )
-        ytdlp_env = asyncio.run(
-            get_plugin_env(
+        base_env = (
+            await get_plugin_env(
                 bus,
                 plugin=plugins["ytdlp"],
                 run_output_dir=run_output_dir,
-            ),
+            )
         ).to_env()
+        process_env = await build_plugin_process_env(
+            bus,
+            plugins=plugins,
+            plugin=plugins["ytdlp"],
+            runtime_env=base_env,
+        )
+        binary_events = await bus.filter(
+            BinaryEvent,
+            past=True,
+            where=lambda event: event.name == "yt-dlp",
+        )
+        assert binary_events
+        return base_env, process_env, binary_events[-1].env
+
+    try:
+        base_env, process_env, binary_env = asyncio.run(run())
     finally:
         asyncio.run(bus.wait_until_idle())
 
-    lib_dir = Path(ytdlp_env["ABXPKG_LIB_DIR"])
-    pip_venv = lib_dir / "pip" / "venv"
-    pnpm_prefix = lib_dir / "pnpm" / "packages" / "chrome"
-    pnpm_bin_dir = pnpm_prefix / "node_modules" / ".bin"
-
-    assert "VIRTUAL_ENV" not in ytdlp_env
-    assert ytdlp_env["PIP_BIN_DIR"] == str(pip_venv / "bin")
-    assert ytdlp_env["PIP_BIN_DIR"] in ytdlp_env["PATH"].split(":")
-    assert ytdlp_env["PNPM_HOME"] == str(pnpm_prefix)
-    assert ytdlp_env["PNPM_BIN_DIR"] == str(pnpm_bin_dir)
-    assert ytdlp_env["NPM_HOME"] == str(pnpm_prefix)
-    assert ytdlp_env["NODE_MODULES_DIR"] == str(pnpm_prefix / "node_modules")
-    assert ytdlp_env["NODE_PATH"] == str(pnpm_prefix / "node_modules")
-    assert ytdlp_env["NPM_BIN_DIR"] == str(pnpm_bin_dir)
-    assert ytdlp_env["PNPM_BIN_DIR"] in ytdlp_env["PATH"].split(":")
-    assert ytdlp_env["NPM_BIN_DIR"] in ytdlp_env["PATH"].split(":")
-
-
-def test_plugin_env_derives_puppeteer_cache_from_effective_lib_dir(tmp_path: Path) -> None:
-    env = assemble_env(overrides={"ABXPKG_LIB_DIR": str(tmp_path / "lib")}, run_output_dir=tmp_path)
-
-    assert env["PUPPETEER_CACHE_DIR"] == str(tmp_path / "lib" / "puppeteer")
-
-
-def test_plugin_env_treats_empty_optional_node_paths_as_unset(tmp_path: Path) -> None:
-    lib_dir = tmp_path / "lib"
-    node_path = ":".join(
-        [
-            "/home/archivebox/.npm/lib/node_modules",
-            str(lib_dir / "pnpm" / "packages" / "chrome" / "node_modules"),
-            "/usr/share/archivebox/lib/pnpm/packages/chrome/node_modules",
-        ],
-    )
-    env = assemble_env(
-        overrides={
-            "ABXPKG_LIB_DIR": str(lib_dir),
-            "NODE_MODULES_DIR": "",
-            "PNPM_BIN_DIR": "",
-            "NPM_BIN_DIR": "",
-            "NODE_PATH": node_path,
-        },
-        run_output_dir=tmp_path / "run",
-    )
-
-    assert env["NODE_MODULES_DIR"] == str(lib_dir / "pnpm" / "packages" / "chrome" / "node_modules")
-    assert env["PNPM_BIN_DIR"] == str(lib_dir / "pnpm" / "packages" / "chrome" / "node_modules" / ".bin")
-    assert env["NPM_BIN_DIR"] == str(lib_dir / "pnpm" / "packages" / "chrome" / "node_modules" / ".bin")
-    assert env["NODE_PATH"] == node_path
-    assert env["NODE_MODULES_DIR"] in env["NODE_PATH"].split(":")
+    ytdlp_binary = shutil.which(process_env["YTDLP_BINARY"], path=process_env["PATH"])
+    assert "VIRTUAL_ENV" not in base_env
+    assert ytdlp_binary
+    ytdlp_path = Path(ytdlp_binary)
+    assert ytdlp_path.is_file()
+    assert binary_env.get("PATH")
+    assert str(ytdlp_path.parent) in process_env["PATH"].split(os.pathsep)
 
 
 def test_plugin_env_keeps_chrome_sandbox_enabled_by_default(tmp_path: Path) -> None:
@@ -308,11 +283,11 @@ def test_plugin_env_preserves_user_runtime_dirs_when_derived_config_has_defaults
     assert env["CRAWL_DIR"] == str(crawl_dir)
     assert env["SNAP_DIR"] == str(snap_dir)
     assert env["ABXPKG_LIB_DIR"] == str(lib_dir)
-    assert env["PNPM_HOME"] == str(lib_dir / "pnpm" / "packages" / "chrome")
-    assert env["NPM_HOME"] == str(lib_dir / "pnpm" / "packages" / "chrome")
-    assert env["NODE_MODULES_DIR"] == str(lib_dir / "pnpm" / "packages" / "chrome" / "node_modules")
-    assert env["NODE_PATH"] == str(lib_dir / "pnpm" / "packages" / "chrome" / "node_modules")
-    assert env["PUPPETEER_CACHE_DIR"] == str(lib_dir / "puppeteer")
+    assert "PNPM_HOME" not in env
+    assert "NPM_HOME" not in env
+    assert env["NODE_MODULES_DIR"] == ""
+    assert env["NODE_PATH"] == ""
+    assert "PUPPETEER_CACHE_DIR" not in env
 
 
 def test_plugin_env_ignores_direct_chrome_profile_env(
