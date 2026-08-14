@@ -3,6 +3,7 @@
 import asyncio
 from pathlib import Path
 from typing import ClassVar
+from collections.abc import Awaitable, Callable
 
 from abxbus import BaseEvent, EventBus
 
@@ -31,11 +32,14 @@ class BaseService:
 async def wait_for_process_ready(
     started_event: ProcessStartedEvent,
     timeout: float,
+    abort_requested: Callable[[], Awaitable[bool]] | None = None,
 ) -> None:
     """Wait until a hook reaches its normal stdout boundary."""
     hook_kind = "Background hook" if started_event.is_background else "Foreground hook"
     deadline = asyncio.get_running_loop().time() + timeout
     while asyncio.get_running_loop().time() < deadline:
+        if abort_requested is not None and await abort_requested():
+            return
         if started_event.stdout_file.exists() and started_event.stdout_file.stat().st_size > 0:
             return
 

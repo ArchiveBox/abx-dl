@@ -222,6 +222,7 @@ class CrawlService(BaseService):
                 await wait_for_process_ready(
                     started_process,
                     started_wait_timeout,
+                    self.should_abort,
                 )
             else:
                 foreground_process = event.emit(process_event)
@@ -409,19 +410,6 @@ class CrawlService(BaseService):
                 and (candidate.plugin_name, candidate.hook_name) in setup_hook_keys
             ),
         )
-        grace_by_hook: dict[tuple[str, str], int] = {}
-        config = await get_config(self.bus)
-        for plugin, hook in self.crawl_setup_hooks:
-            plugin_config = await get_plugin_env(
-                self.bus,
-                plugin=plugin,
-                run_output_dir=self.output_dir,
-                config=config,
-            )
-            timeout_key = f"{plugin.name.upper()}_TIMEOUT"
-            grace_by_hook[(plugin.name, hook.name)] = (
-                plugin_config[timeout_key] if timeout_key in plugin.config.properties else plugin_config.TIMEOUT
-            )
         started_processes: list[tuple[ProcessEvent, ProcessStartedEvent]] = []
         for process_event in setup_process_events:
             started_process = await self.bus.find(
@@ -460,11 +448,11 @@ class CrawlService(BaseService):
                     plugin_name=started_process.plugin_name,
                     hook_name=started_process.hook_name,
                     pid=started_process.pid,
-                    grace_period=grace_by_hook[(started_process.plugin_name, started_process.hook_name)],
-                    event_timeout=grace_by_hook[(started_process.plugin_name, started_process.hook_name)] + 10.0,
+                    grace_period=float(process_event.timeout),
+                    event_timeout=float(process_event.timeout) + 10.0,
                 ),
             )
-            for _, started_process in started_processes
+            for process_event, started_process in started_processes
         ]
 
         # await the killing of any setup hooks that should still be running
@@ -480,9 +468,9 @@ class CrawlService(BaseService):
                             ProcessCompletedEvent,
                             child_of=process_event,
                             past=True,
-                            future=grace_by_hook[(process_event.plugin_name, process_event.hook_name)] + 10.0,
+                            future=float(process_event.timeout) + 10.0,
                         ),
-                        grace_by_hook[(process_event.plugin_name, process_event.hook_name)] + 10.0,
+                        float(process_event.timeout) + 10.0,
                     )
                     for process_event, _ in started_processes
                 ],

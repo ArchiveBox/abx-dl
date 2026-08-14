@@ -266,6 +266,7 @@ class SnapshotService(BaseService):
                 await wait_for_process_ready(
                     started_process,
                     started_wait_timeout,
+                    self.should_abort,
                 )
             else:
                 foreground_process = event.emit(process_event)
@@ -282,6 +283,7 @@ class SnapshotService(BaseService):
                     await wait_for_process_ready(
                         started_or_completed,
                         started_wait_timeout,
+                        self.should_abort,
                     )
                 return foreground_process
             return None
