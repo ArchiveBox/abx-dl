@@ -7,11 +7,7 @@ from abx_dl.config import get_initial_env
 from abx_dl.events import InstallEvent, MachineEvent
 from abx_dl.models import Plugin, PluginConfig, RequiredBinary, Snapshot, discover_plugins
 from abx_dl.orchestrator import compute_install_phase_timeout, create_bus
-from abx_dl.services.binary_service import (
-    AbxDlEnvConfigFileBinaryCacheBackend,
-    PluginBinariesService,
-    split_abxpkg_binary_request_overrides,
-)
+from abx_dl.services.binary_service import AbxDlEnvConfigFileBinaryCacheBackend, PluginBinariesService
 from abxpkg.binary_service import BinaryCacheService, BinaryEvent, BinaryRequestEvent, BinaryService
 from abxpkg.config import load_derived_cache
 
@@ -45,34 +41,6 @@ def test_install_phase_timeout_uses_largest_sequential_binary_lane_budget() -> N
         )
         == 1660.0
     )
-
-
-def test_split_abxpkg_binary_request_overrides_preserves_apt_provider_fields() -> None:
-    overrides = {
-        "apt": {
-            "install_args": ["sonic"],
-            "apt_gpg_keys": {
-                "https://packagecloud.io/valeriansaliou/sonic/gpgkey": "valeriansaliou_sonic.asc",
-            },
-            "apt_sources": {
-                "valeriansaliou_sonic.list": "deb [signed-by=/etc/apt/keyrings/valeriansaliou_sonic.asc] https://packagecloud.io/valeriansaliou/sonic/debian/ bookworm main",
-            },
-            "apt_system_groups": {"sonic": {}},
-            "apt_system_users": {
-                "sonic": {
-                    "gid": "sonic",
-                    "home": "/var/lib/sonic",
-                    "shell": "/usr/sbin/nologin",
-                    "create_home": False,
-                },
-            },
-        },
-    }
-
-    native, extra_context = split_abxpkg_binary_request_overrides(overrides)
-
-    assert native == overrides
-    assert extra_context == {}
 
 
 def test_install_event_resolves_plugin_binaries_through_abxpkg(tmp_path: Path) -> None:
@@ -512,31 +480,6 @@ def test_install_event_resolves_real_plugin_override_paths(tmp_path: Path) -> No
     }
     assert "provider_metadata" not in request.extra_context
     assert "raw_overrides" not in request.extra_context
-
-
-def test_plugin_owned_override_metadata_is_kept_out_of_abxpkg_request(tmp_path: Path) -> None:
-    install_root = tmp_path / "lib" / "uv" / "packages" / "feedparser"
-    install_root.mkdir(parents=True)
-    raw_overrides = {
-        "uv": {
-            "install_root": str(install_root),
-            "install_args": ["feedparser"],
-            "module_name": "feedparser",
-        },
-    }
-
-    native_overrides, extra_context = split_abxpkg_binary_request_overrides(raw_overrides)
-
-    assert native_overrides == {
-        "uv": {
-            "install_root": str(install_root),
-            "install_args": ["feedparser"],
-        },
-    }
-    assert extra_context == {
-        "provider_metadata": {"uv": {"module_name": "feedparser"}},
-        "raw_overrides": raw_overrides,
-    }
 
 
 def test_chromewebstore_install_preflight_uses_shared_cache_without_persona_duplicate(tmp_path: Path) -> None:
