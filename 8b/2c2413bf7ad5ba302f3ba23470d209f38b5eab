@@ -1,0 +1,16 @@
+abx_dl/services/binary_service.py
+  h_923c208e183a7b 45
+tests/test_executor.py
+  h_923c208e183a7b 1240,1305-1307
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "8b2c2413bf7ad5ba302f3ba23470d209f38b5eab",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
