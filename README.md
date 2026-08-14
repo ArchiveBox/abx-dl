@@ -111,7 +111,7 @@ Plugins are loaded from the installed [`abx-plugins`](https://pypi.org/project/a
 
 #### ⚙️ Configuration
 
-Configuration is handled via environment variables plus a user config file under the platformdirs user config path (`<user-config>/abx/config.env`). Runtime-derived cache entries such as resolved binary paths are stored separately in `<user-config>/abx/derived.env`:
+Configuration is handled via environment variables plus a user config file under the platformdirs user config path (`<user-config>/abx/config.env`). Resolved binary paths are projected into the current run in memory; persistent binary state lives only in the abxpkg library cache:
 
 <!--
 ```bash

@@ -1,4 +1,4 @@
-"""Required binary request orchestration and abx-dl cache projection."""
+"""Required binary requests and in-memory plugin config projection."""
 
 from __future__ import annotations
 
