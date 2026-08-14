@@ -215,6 +215,9 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR" \( ! -user "$DEFAULT_ARCHIVEBOX_UID" -o ! -group "$DEFAULT_ARCHIVEBOX_GID" \) -exec chown "$DEFAULT_ARCHIVEBOX_UID:$DEFAULT_ARCHIVEBOX_GID" {} + \
     && NORMALIZED_MTIME="@$(date +%s)" \
     && "$ABXPKG_LIB_DIR/env/bin/find" /venv /opt/node /opt/uv "$ABXPKG_LIB_DIR" -exec touch -h -d "$NORMALIZED_MTIME" {} + \
+    && STDLIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("stdlib"))')" \
+    && PURELIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
+    && /venv/bin/python -m compileall -q "$STDLIB_DIR" "$PURELIB_DIR" \
     && env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups abx-dl install \
     && rm -rf /var/lib/apt/lists/* /tmp/*
 
@@ -222,6 +225,9 @@ RUN env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox \
     setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups \
     bash -c '(echo -e "\n\n[+] abx-dl runtime versions" \
         && abx-dl version \
+        && test -f "$(/venv/bin/python -c "import json; print(json.__cached__)")" \
+        && test -f "$(/venv/bin/python -c "import abxpkg.cli; print(abxpkg.cli.__cached__)")" \
+        && test -f "$(/venv/bin/python -c "import pydantic; print(pydantic.__cached__)")" \
         && abxpkg load --binproviders=env /opt/node/bin/node \
         && abxpkg load --binproviders=env /venv/bin/python3 \
         && abx-dl plugins \
