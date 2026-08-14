@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from inspect import isawaitable
@@ -11,7 +10,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from abxbus import BaseEvent, EventBus
-from abxpkg import BinProvider, Binary as AbxBinary, prepare_script_exec_plan
+from abxpkg import BinProvider, Binary as AbxBinary
 from abxpkg.binary_service import BinaryEvent, BinaryRequestEvent
 
 from ..config import RuntimeConfig, get_config, get_plugin_env, get_required_binary_requests, is_path_like_env_value
@@ -197,32 +196,6 @@ class PluginBinariesService(BaseService):
             emitted_request: BaseEvent = event.emit(request_event)
             completed_request = await emitted_request.now()
             await completed_request.event_results_list(raise_if_none=False)
-
-        if current_user_config.DRY_RUN or current_user_config.ABXPKG_NO_CACHE:
-            return
-        current_config = await get_config(self.bus)
-        for plugin in self.plugins.values():
-            if not _plugin_enabled_from_user_config(plugin, current_config):
-                continue
-            runtime = await get_plugin_env(
-                self.bus,
-                plugin=plugin,
-                run_output_dir=self.output_dir,
-                config=current_config,
-            )
-            # BinaryEvents are process-local install state. Prepared plans must
-            # match the persisted environment available after a cold restart.
-            runtime_env = runtime.to_env()
-            env = await build_plugin_process_env(
-                self.bus,
-                plugins=self.plugins,
-                plugin=plugin,
-                runtime_env=runtime_env,
-            )
-            if plugin.path.is_dir():
-                for script_path in plugin.path.iterdir():
-                    if script_path.is_file() and os.access(script_path, os.X_OK):
-                        prepare_script_exec_plan(script_path, env=env)
 
 
 class AbxDlEnvConfigFileBinaryCacheBackend:
