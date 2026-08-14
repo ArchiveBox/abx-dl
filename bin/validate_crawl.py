@@ -78,7 +78,7 @@ def main() -> None:
         raise SystemExit(f"Snapshot hooks missing ArchiveResult records: {missing_hooks}")
 
     failures = [
-        (record.get("plugin"), record.get("hook_name"), record.get("status"), record.get("error"))
+        (record.get("plugin"), record.get("hook_name"), record.get("status"), record.get("output_str"))
         for record in results
         if record.get("status") not in SUCCESS_STATUSES | {"skipped"}
     ]
