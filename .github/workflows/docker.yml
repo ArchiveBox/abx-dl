@@ -189,7 +189,7 @@ jobs:
         if: matrix.platform == 'linux/amd64'
         env:
           ABXDL_IMAGE: ${{ matrix.local_tag }}
-        run: $UV_BINARY run --no-cache --no-sync --no-sources pytest -vv --tb=long -m docker_required README.md AGENTS.md CLAUDE.md skills
+        run: $UV_BINARY run --no-cache --no-sync --no-sources pytest -vv -s --tb=long -m docker_required README.md AGENTS.md CLAUDE.md skills
 
       - name: Validate real crawl inside Docker image
         id: real_crawl
