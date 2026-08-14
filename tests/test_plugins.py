@@ -111,14 +111,14 @@ def test_filter_plugins_prunes_plugins_with_disabled_required_plugins() -> None:
     assert "ublock" not in selected
 
 
-def test_required_binary_requests_ignore_nonexistent_derived_binary_paths() -> None:
+def test_required_binary_requests_preserve_user_binary_overrides_and_ignore_stale_derived_paths() -> None:
     plugins = discover_plugins()
     plugin = plugins["ytdlp"]
 
     requests = get_required_binary_requests(
         plugin,
         plugin.config.required_binaries,
-        overrides=get_initial_env(),
+        overrides={**get_initial_env(), "YTDLP_BINARY": "/custom/tools/yt-dlp"},
         derived_overrides={
             "YTDLP_BINARY": "/does/not/exist/yt-dlp",
             "NODE_BINARY": "/does/not/exist/node",
@@ -128,9 +128,10 @@ def test_required_binary_requests_ignore_nonexistent_derived_binary_paths() -> N
     )
 
     request_names = {request["name"] for request in requests}
-    assert "yt-dlp" in request_names
+    assert "/custom/tools/yt-dlp" in request_names
     assert "node" in request_names
     assert "ffmpeg" in request_names
+    assert "yt-dlp" not in request_names
     assert "/does/not/exist/yt-dlp" not in request_names
     assert "/does/not/exist/node" not in request_names
     assert "/does/not/exist/ffmpeg" not in request_names

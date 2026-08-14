@@ -164,26 +164,26 @@ def test_install_event_resolves_plugin_binaries_in_config_order(tmp_path: Path) 
     assert events_seen.index(("binary", "bash")) < events_seen.index(("request", "sh"))
 
 
-def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) -> None:
+def test_install_event_preserves_binary_overrides_and_plugin_context(tmp_path: Path) -> None:
     plugins = discover_plugins()
     plugin = plugins["chrome"]
+    ytdlp_plugin = plugins["ytdlp"]
     snapshot = Snapshot(url="")
     run_dir = tmp_path / "run"
     managed_lib_dir = tmp_path / "lib"
 
-    async def collect_requests(*, no_cache: bool, allowed_binproviders: list[str] | None = None) -> list[BinaryRequestEvent]:
+    async def collect_requests(*, no_cache: bool) -> list[BinaryRequestEvent]:
         bus = create_bus(
             total_timeout=60.0,
-            name=f"install_phase_chrome_abxbus_{tmp_path.name}_{no_cache}_{allowed_binproviders is not None}",
+            name=f"install_phase_chrome_abxbus_{tmp_path.name}_{no_cache}",
         )
         PluginBinariesService(
             bus,
-            plugins={"chrome": plugin},
+            plugins={"chrome": plugin, "ytdlp": ytdlp_plugin},
             auto_install=False,
-            install_plugins=[plugin],
+            install_plugins=[plugin, ytdlp_plugin],
             output_dir=run_dir,
             snapshot=snapshot,
-            allowed_binproviders=allowed_binproviders,
         )
         request_events: list[BinaryRequestEvent] = []
 
@@ -237,12 +237,8 @@ def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) 
     }
     no_cache_request = next(event for event in asyncio.run(collect_requests(no_cache=True)) if event.name == "abxbus")
     assert no_cache_request.no_cache is True
-    restricted_request = next(
-        event
-        for event in asyncio.run(collect_requests(no_cache=False, allowed_binproviders=["apt", "env", "pnpm"]))
-        if event.name == "abxbus"
-    )
-    assert restricted_request.binproviders == "pnpm"
+    node_requests = [event for event in request_events if event.name == "node"]
+    assert {event.extra_context.get("plugin_name") for event in node_requests} == {"chrome", "ytdlp"}
 
 
 def test_install_event_excludes_opencode_when_route_is_disabled(tmp_path: Path) -> None:

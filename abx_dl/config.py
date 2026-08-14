@@ -17,6 +17,7 @@ from typing import Any, Self, cast
 from collections.abc import Mapping
 
 from abxbus import EventBus
+from abxpkg.config import default_abxpkg_lib_dir
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from platformdirs import user_config_path
@@ -110,9 +111,8 @@ class GlobalConfig(BaseSettings):
     @model_validator(mode="after")
     def derive_runtime_paths(self) -> Self:
         """Fill runtime path defaults from CONFIG_DIR / DATA_DIR once, centrally."""
-        default_lib_dir = self.CONFIG_DIR / "lib"
         if self.ABXPKG_LIB_DIR is None:
-            self.ABXPKG_LIB_DIR = default_lib_dir
+            self.ABXPKG_LIB_DIR = default_abxpkg_lib_dir()
         if self.PERSONAS_DIR is None:
             self.PERSONAS_DIR = self.CONFIG_DIR / "personas"
         if self.CRAWL_DIR is None:
@@ -537,7 +537,6 @@ def get_required_binary_requests(
     overrides: GlobalConfig | Mapping[str, Any] | None = None,
     derived_overrides: GlobalConfig | Mapping[str, Any] | None = None,
     run_output_dir: Path | None = None,
-    logical_names: bool = True,
 ) -> list[dict[str, Any]]:
     """Hydrate one plugin's ``required_binaries`` into BinaryRequest payloads."""
     plugin_config = _load_plugin_config_model(
@@ -546,25 +545,20 @@ def get_required_binary_requests(
         derived_env=derived_overrides,
         hydrate_binaries=False,
     )
-    # Resolve each binary by its logical name (e.g. ``chromium``), independent
-    # of the machine-specific path projected into derived config by a prior run.
-    # Explicit provider overrides remain in the request record for abxpkg.
-    schema_binary_defaults: dict[str, Any] = {}
-    for prop_key, prop in plugin.config.properties.items():
-        if not prop_key.endswith("_BINARY"):
-            continue
-        default = prop.get("default") if isinstance(prop, dict) else None
-        if isinstance(default, str) and default:
-            schema_binary_defaults[prop_key] = default
+    request_config = _load_plugin_config_model(
+        plugin,
+        user_env=overrides,
+        hydrate_binaries=False,
+    )
     env = PluginEnv.from_config(
         plugin_config,
         run_output_dir=run_output_dir or Path.cwd(),
     ).to_env()
-    request_name_env = env
-    if logical_names:
-        request_name_env = {**env, **{key: dump_to_dotenv_format(value) for key, value in schema_binary_defaults.items()}}
+    request_env = PluginEnv.from_config(
+        request_config,
+        run_output_dir=run_output_dir or Path.cwd(),
+    ).to_env()
     requests: list[dict[str, Any]] = []
-    seen: set[str] = set()
     for spec in binaries:
         record = spec.model_dump(mode="json")
         name_template = record.get("name")
@@ -583,11 +577,7 @@ def get_required_binary_requests(
 
         record = hydrate(record, env)
         if isinstance(name_template, str):
-            record["name"] = hydrate(name_template, request_name_env)
-        signature = json.dumps(record, sort_keys=True, default=str)
-        if signature in seen:
-            continue
-        seen.add(signature)
+            record["name"] = hydrate(name_template, request_env)
         requests.append(record)
     return requests
 

@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import json
 import re
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping
 from inspect import isawaitable
 from pathlib import Path
 from typing import Any, ClassVar
@@ -80,7 +79,6 @@ class PluginBinariesService(BaseService):
         output_dir: Path | None = None,
         snapshot: Snapshot | None = None,
         abort_requested: Callable[[], bool | Awaitable[bool]] | None = None,
-        allowed_binproviders: Sequence[str] | None = None,
     ):
         self.auto_install = auto_install
         self.plugins = plugins
@@ -89,11 +87,6 @@ class PluginBinariesService(BaseService):
         self.snapshot = snapshot
         self.abort_requested = False
         self.abort_requested_callback = abort_requested
-        self.allowed_binproviders = (
-            {provider.strip().lower() for provider in allowed_binproviders if provider.strip()}
-            if allowed_binproviders is not None
-            else None
-        )
         super().__init__(bus)
         self.bus.on(InstallEvent, self.on_InstallEvent)
         self.bus.on(CrawlAbortEvent, self.on_CrawlAbortEvent)
@@ -126,7 +119,6 @@ class PluginBinariesService(BaseService):
         current_config = await get_config(self.bus)
         current_user_config = current_config.user
         current_derived_config = current_config.derived
-        seen: set[str] = set()
         request_events: list[BinaryRequestEvent] = []
         for plugin in self.install_plugins:
             if await self.should_abort():
@@ -152,23 +144,6 @@ class PluginBinariesService(BaseService):
             ):
                 if await self.should_abort():
                     break
-                if self.allowed_binproviders is not None:
-                    configured_value = record.get("binproviders", "")
-                    configured = (
-                        [provider.strip() for provider in configured_value.split(",") if provider.strip()]
-                        if isinstance(configured_value, str)
-                        else [str(provider).strip() for provider in configured_value if str(provider).strip()]
-                    )
-                    configured = [provider for provider in configured if provider.lower() in self.allowed_binproviders]
-                    if not configured:
-                        raise ValueError(
-                            f"Binary {record.get('name')!r} has no configured providers allowed by {sorted(self.allowed_binproviders)!r}",
-                        )
-                    record["binproviders"] = ",".join(configured) if isinstance(configured_value, str) else configured
-                signature = json.dumps(record, sort_keys=True, default=str)
-                if signature in seen:
-                    continue
-                seen.add(signature)
                 request_payload = {
                     key: value for key, value in record.items() if key in BinaryRequestEvent.model_fields and key != "extra_context"
                 }

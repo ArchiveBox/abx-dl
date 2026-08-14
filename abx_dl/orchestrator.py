@@ -134,7 +134,6 @@ def setup_services(
     emit_jsonl: bool = True,
     interactive_tty: bool | None = None,
     abort_requested: Any | None = None,
-    allowed_binproviders: Sequence[str] | None = None,
     MachineService: type[MachineService] | None = MachineService,
     PluginBinariesService: type[PluginBinariesService] | None = PluginBinariesService,
     BinaryCacheService: type[BinaryCacheService] | None = BinaryCacheService,
@@ -213,7 +212,6 @@ def setup_services(
             output_dir=output_dir,
             snapshot=snapshot,
             abort_requested=abort_requested,
-            allowed_binproviders=allowed_binproviders,
         )
 
     if ProcessService is not None:
@@ -324,7 +322,6 @@ async def install_plugins(
     emit_jsonl: bool = False,
     bus: EventBus | None = None,
     dry_run: bool = False,
-    allowed_binproviders: Sequence[str] | None = None,
     MachineService: type[MachineService] | None = MachineService,
     PluginBinariesService: type[PluginBinariesService] | None = PluginBinariesService,
     BinaryCacheService: type[BinaryCacheService] | None = BinaryCacheService,
@@ -391,7 +388,6 @@ async def install_plugins(
             auto_install=True,
             emit_jsonl=emit_jsonl,
             interactive_tty=sys.stdout.isatty() or sys.stderr.isatty(),
-            allowed_binproviders=allowed_binproviders,
             MachineService=MachineService,
             PluginBinariesService=PluginBinariesService,
             BinaryCacheService=BinaryCacheService,

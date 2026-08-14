@@ -180,41 +180,20 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && abx-dl install chrome \
     && abx-dl install \
     && abxpkg env --install --binproviders=env,apt --lib="$ABXPKG_LIB_DIR" --overrides='{"apt":{"install_args":["binutils"]}}' strip >/dev/null \
-    && ORIGINAL_PATH="$PATH" \
-    && eval "$(abxpkg env --lib="$ABXPKG_LIB_DIR" chromium)" \
-    && CHROMIUM_PROVIDER_BIN_DIR="${PATH%%:*}" \
-    && PATH="$ORIGINAL_PATH" \
-    && CHROMIUM_PROVIDER_DIR="${CHROMIUM_PROVIDER_BIN_DIR%/bin}" \
-    && test -d "$CHROMIUM_PROVIDER_DIR" \
-    && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR"/chromewebstore -type f -name '*.crx' -delete \
-    && "$ABXPKG_LIB_DIR/env/bin/find" "$CHROMIUM_PROVIDER_DIR" -path '*/locales/*' ! -name 'en-US.pak' -delete \
-    && "$ABXPKG_LIB_DIR/env/bin/find" "$CHROMIUM_PROVIDER_DIR" -name '*.pak.info' -delete \
-    && "$ABXPKG_LIB_DIR/env/bin/find" "$CHROMIUM_PROVIDER_DIR" -type f \( -name 'libvk_swiftshader.so' -o -name 'libGLESv2.so' -o -name 'chrome_200_percent.pak' \) -delete \
-    && "$ABXPKG_LIB_DIR/env/bin/find" "$CHROMIUM_PROVIDER_DIR" -type d \( -name MEIPreload -o -name PrivacySandboxAttestationsPreloaded -o -name WidevineCdm \) -prune -exec rm -rf {} + \
-    && rm -rf "$ABXPKG_LIB_DIR"/pnpm/packages/singlefile/node_modules/.pnpm/selenium-webdriver@*/node_modules/selenium-webdriver/bin/macos "$ABXPKG_LIB_DIR"/pnpm/packages/singlefile/node_modules/.pnpm/selenium-webdriver@*/node_modules/selenium-webdriver/bin/windows \
-    && if [[ "$TARGETARCH" == "arm64" ]]; then rm -f "$ABXPKG_LIB_DIR"/pnpm/packages/liteparse/node_modules/.pnpm/@llamaindex+liteparse@*/node_modules/@llamaindex/liteparse/liteparse.linux-x64-gnu.node "$ABXPKG_LIB_DIR"/pnpm/packages/liteparse/node_modules/.pnpm/@llamaindex+liteparse@*/node_modules/@llamaindex/liteparse/libpdfium.so; fi \
-    && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR"/pnpm /opt/node -type f -name '*.map' -delete \
+    && "$ABXPKG_LIB_DIR/env/bin/find" /opt/node -type f -name '*.map' -delete \
     && rm -rf /usr/lib/*-linux-gnu/dri /usr/lib/*-linux-gnu/libLLVM*.so* /usr/lib/*-linux-gnu/libz3.so.* \
     && rm -rf /usr/share/icons /usr/share/doc /usr/share/man /usr/share/bash-completion /usr/share/zsh /usr/share/info /usr/share/lintian /usr/share/bug \
     && install -d -m 755 /usr/share/man/man1 \
     && rm -rf /opt/node/include /opt/node/share/doc /opt/node/share/man \
     && rm -f /opt/node/CHANGELOG.md /opt/node/README.md /opt/node/LICENSE \
     && rm -f /usr/lib/jvm/java-*-openjdk-*/lib/server/classes*.jsa \
-    && "$ABXPKG_LIB_DIR/env/bin/find" "$CHROMIUM_PROVIDER_DIR" -type f -perm /111 -print0 > /tmp/native-libraries \
-    && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR" -type f \( -name '*.so' -o -name '*.node' \) -print0 >> /tmp/native-libraries \
-    && while IFS= read -r -d '' native_library; do \
-        magic=''; \
-        if IFS= read -r -N 4 magic < "$native_library" && [[ "$magic" == $'\x7fELF' ]]; then \
-            "$ABXPKG_LIB_DIR/env/bin/strip" --strip-unneeded "$native_library" || exit $?; \
-        fi; \
-    done < /tmp/native-libraries \
     && abxpkg run --binproviders=env --lib="$ABXPKG_LIB_DIR" apt-get purge -y --auto-remove binutils \
     && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR/env/bin" -maxdepth 1 -type l -name strip -delete \
     && rm -f /venv/bin/uv /venv/bin/uvx \
-    && "$ABXPKG_LIB_DIR/env/bin/find" "$XDG_CACHE_HOME" -mindepth 1 -maxdepth 1 -exec rm -rf {} + \
+    && find "$XDG_CACHE_HOME" -mindepth 1 -maxdepth 1 -exec rm -rf {} + \
     && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR" \( ! -user "$DEFAULT_ARCHIVEBOX_UID" -o ! -group "$DEFAULT_ARCHIVEBOX_GID" \) -exec chown "$DEFAULT_ARCHIVEBOX_UID:$DEFAULT_ARCHIVEBOX_GID" {} + \
     && NORMALIZED_MTIME="@$(date +%s)" \
-    && "$ABXPKG_LIB_DIR/env/bin/find" /venv /opt/node /opt/uv "$ABXPKG_LIB_DIR" -exec touch -h -d "$NORMALIZED_MTIME" {} + \
+    && find /venv /opt/node /opt/uv -exec touch -h -d "$NORMALIZED_MTIME" {} + \
     && env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups abx-dl install \
     && STDLIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("stdlib"))')" \
     && PURELIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \

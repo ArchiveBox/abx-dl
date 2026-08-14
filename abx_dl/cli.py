@@ -1797,7 +1797,6 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
                 overrides=initial_user_env,
                 derived_overrides=initial_derived_env,
                 run_output_dir=Path.cwd(),
-                logical_names=False,
             ):
                 binary_signature = json.dumps(hydrated_spec, sort_keys=True, default=str)
                 declared_binary_specs.setdefault(binary_signature, hydrated_spec)
@@ -1836,7 +1835,6 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
                         overrides=initial_user_env,
                         derived_overrides=initial_derived_env,
                         run_output_dir=Path.cwd(),
-                        logical_names=False,
                     ):
                         binary_signature = json.dumps(hydrated_spec, sort_keys=True, default=str)
                         binary = loaded_binaries[binary_signature]
