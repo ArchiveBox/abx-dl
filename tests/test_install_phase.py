@@ -16,14 +16,18 @@ from abxpkg.binary_service import BinaryCacheService, BinaryEvent, BinaryRequest
 from abxpkg.config import load_derived_cache
 
 
-def _planned_script_contexts(cache_path: Path) -> dict[str, dict[str, str]]:
-    contexts: dict[str, dict[str, str]] = {}
+def _planned_scripts(cache_path: Path) -> dict[str, dict[str, Any]]:
+    plans_by_path: dict[str, dict[str, Any]] = {}
     for record in load_derived_cache(cache_path).values():
         plans = cast(dict[str, dict[str, Any]], record.get("script_exec_plans") or {})
         for plan in plans.values():
             context = json.loads(plan["run_context"])
-            contexts[context["script_path"]] = context["template_env"]
-    return contexts
+            plans_by_path[context["script_path"]] = plan
+    return plans_by_path
+
+
+def _planned_script_contexts(cache_path: Path) -> dict[str, dict[str, str]]:
+    return {script_path: json.loads(plan["run_context"])["template_env"] for script_path, plan in _planned_scripts(cache_path).items()}
 
 
 def test_install_phase_timeout_uses_largest_sequential_binary_lane_budget() -> None:
@@ -184,6 +188,8 @@ def test_install_event_resolves_plugin_binaries_in_config_order(tmp_path: Path) 
     snapshot = Snapshot(url="")
     run_dir = tmp_path / "run"
     managed_lib_dir = tmp_path / "lib"
+    provider_site_packages = tmp_path / "provider-site-packages"
+    provider_site_packages.mkdir()
     bus = create_bus(total_timeout=60.0, name=f"install_phase_ordered_binaries_{tmp_path.name}")
     PluginBinariesService(
         bus,
@@ -217,6 +223,19 @@ def test_install_event_resolves_plugin_binaries_in_config_order(tmp_path: Path) 
             ),
         ).now()
         await bus.emit(
+            BinaryRequestEvent(
+                name="bash",
+                binproviders="env",
+                lib_dir=managed_lib_dir,
+                extra_env={"PYTHONPATH": str(provider_site_packages)},
+                extra_context={
+                    "plugin_name": dependent.name,
+                    "hook_name": "",
+                    "output_dir": str(run_dir / dependent.name),
+                },
+            ),
+        ).now()
+        await bus.emit(
             InstallEvent(
                 url="",
                 snapshot_id=snapshot.id,
@@ -228,7 +247,9 @@ def test_install_event_resolves_plugin_binaries_in_config_order(tmp_path: Path) 
     asyncio.run(run())
 
     assert events_seen.index(("binary", "bash")) < events_seen.index(("request", "sh"))
-    assert str(helper_script.resolve()) in _planned_script_contexts(managed_lib_dir / "env" / "derived.env")
+    plans = _planned_scripts(managed_lib_dir / "env" / "derived.env")
+    plan = plans[str(helper_script.resolve())]
+    assert plan["env_base"]["PYTHONPATH"] == str(provider_site_packages)
 
 
 def test_install_event_preserves_chrome_abxbus_binary_overrides(tmp_path: Path) -> None:

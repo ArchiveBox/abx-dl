@@ -8,8 +8,6 @@ from typing import ClassVar
 from collections.abc import Awaitable, Callable
 
 from abxbus import BaseEvent, EventBus
-from abxpkg import BinProvider
-from abxpkg.binary_service import BinaryEvent
 from pydantic import ValidationError
 
 from ..config import RuntimeConfig, get_plugin_env
@@ -28,8 +26,9 @@ from ..events import (
 )
 from ..limits import CrawlLimitState
 from ..models import Snapshot
-from ..models import Hook, Plugin, filter_plugins
+from ..models import Hook, Plugin
 from .base import BaseService, wait_for_process_ready
+from .binary_service import build_plugin_process_env
 
 
 async def _wait_for_process_completed(event: ProcessCompletedEvent | None, timeout: float | None) -> ProcessCompletedEvent | None:
@@ -211,20 +210,12 @@ class SnapshotService(BaseService):
             if plugin_config.DRY_RUN:
                 return
             runtime_env = plugin_config.to_env()
-            env = runtime_env
-            env_plugin_names = set(filter_plugins(self.plugins, [plugin.name], include_providers=True))
-            binary_events = await self.bus.filter(
-                BinaryEvent,
-                past=True,
-                where=lambda candidate: str(candidate.extra_context.get("plugin_name") or "") in env_plugin_names,
+            env = await build_plugin_process_env(
+                self.bus,
+                plugins=self.plugins,
+                plugin=plugin,
+                runtime_env=runtime_env,
             )
-            for binary_event in reversed(binary_events):
-                if binary_event.env:
-                    env = BinProvider.build_exec_env(
-                        base_env=env,
-                        extra_env=binary_event.env,
-                    )
-            env = BinProvider.build_exec_env(base_env=env, extra_env=runtime_env)
             env["SNAP_DIR"] = str(self.output_dir)
             if str(env.get("CHROME_ISOLATION") or "").lower() == "snapshot":
                 active_persona = str(env.get("ACTIVE_PERSONA") or "Default")

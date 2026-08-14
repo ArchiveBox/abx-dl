@@ -14,15 +14,39 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from abxbus import BaseEvent, EventBus
-from abxpkg import Binary as AbxBinary, prepare_script_exec_plan
-from abxpkg.binary_service import BinaryRequestEvent
+from abxpkg import BinProvider, Binary as AbxBinary, prepare_script_exec_plan
+from abxpkg.binary_service import BinaryEvent, BinaryRequestEvent
 
 from ..config import RuntimeConfig, get_config, get_plugin_env, get_required_binary_requests, is_path_like_env_value
 from ..events import CrawlAbortEvent, InstallEvent, MachineEvent
-from ..models import Plugin, Snapshot, uuid7
+from ..models import Plugin, Snapshot, filter_plugins, uuid7
 from .base import BaseService
 
 _TEMPLATE_NAME_RE = re.compile(r"^\{([A-Z0-9_]+)\}$")
+
+
+async def build_plugin_process_env(
+    bus: EventBus,
+    *,
+    plugins: dict[str, Plugin],
+    plugin: Plugin,
+    runtime_env: dict[str, str],
+) -> dict[str, str]:
+    """Project resolved binary environments exactly as hook processes receive them."""
+    env = runtime_env
+    env_plugin_names = set(filter_plugins(plugins, [plugin.name], include_providers=True))
+    binary_events = await bus.filter(
+        BinaryEvent,
+        past=True,
+        where=lambda candidate: str(candidate.extra_context.get("plugin_name") or "") in env_plugin_names,
+    )
+    for binary_event in reversed(binary_events):
+        if binary_event.env:
+            env = BinProvider.build_exec_env(
+                base_env=env,
+                extra_env=binary_event.env,
+            )
+    return BinProvider.build_exec_env(base_env=env, extra_env=runtime_env)
 
 
 def _is_app_bundle_binary(path: Path) -> bool:
@@ -272,7 +296,13 @@ class PluginBinariesService(BaseService):
             )
             # BinaryEvents are process-local install state. Prepared plans must
             # match the persisted environment available after a cold restart.
-            env = runtime.to_env()
+            runtime_env = runtime.to_env()
+            env = await build_plugin_process_env(
+                self.bus,
+                plugins=self.plugins,
+                plugin=plugin,
+                runtime_env=runtime_env,
+            )
             if plugin.path.is_dir():
                 for script_path in plugin.path.iterdir():
                     if script_path.is_file() and os.access(script_path, os.X_OK):
