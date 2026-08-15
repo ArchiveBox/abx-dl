@@ -108,10 +108,13 @@ RUN export PATH="/opt/node/bin:$PATH" \
 
 RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | env UV_INSTALL_DIR=/bin sh
 
+# Normalize the managed interpreter in its creation layer so cache fingerprints
+# survive OCI layer materialization without copying the Python tree up later.
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
     echo "[+] UV Creating /venv using python ${PYTHON_VERSION} for ${TARGETPLATFORM}..." \
     && uv venv /venv --python "${PYTHON_VERSION}" \
     && uv pip install setuptools pip wheel \
+    && touch -h -d "@$(date +%s)" "$(readlink -f /venv/bin/python)" \
     && (which python3 && which uv && uv python find) | tee -a /VERSION.txt
 
 ########################################################################################################
