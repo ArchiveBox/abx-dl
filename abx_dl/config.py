@@ -257,17 +257,6 @@ def _load_plugin_config_model(
                 user_value = str(global_config.get(key, "")).strip()
                 if user_value and is_path_like_env_value(user_value):
                     continue
-                configured_value = str(global_config.get(key, "")).strip()
-                derived_value = str(value).strip()
-                if not derived_value:
-                    continue
-                if not is_path_like_env_value(derived_value):
-                    continue
-                derived_path = Path(derived_value).expanduser()
-                if not derived_path.exists():
-                    continue
-                if configured_value and derived_path.name != configured_value:
-                    continue
             global_config[key] = value
     explicit_user_config = {
         key: dump_to_dotenv_format(value) for key, value in global_config.items() if key in explicit_config_keys and value is not None

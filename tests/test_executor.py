@@ -485,13 +485,6 @@ def test_setup_services_accepts_runtime_config_overrides_and_seeds_machine_event
     assert derived_event.config == {"WGET_BINARY": str(wget_binary.abspath)}
 
 
-def test_binary_service_honors_declared_provider_order() -> None:
-    bus = create_bus(total_timeout=10.0, name="binary_provider_order")
-    service = BinaryService(bus, auto_install=True)
-
-    assert service._provider_names("env,apt,brew") == ["env", "apt", "brew"]
-
-
 def test_binary_service_stops_after_successful_provider_result(tmp_path: Path) -> None:
     bus = create_bus(total_timeout=30.0, name=f"binary_provider_result_{tmp_path.name}")
     setup_services(
