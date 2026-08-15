@@ -345,8 +345,9 @@ class ProcessStdoutEvent(BaseEvent):
     Context fields from the parent ProcessEvent are passed through for
     services that need them.
 
-    Uses ``await bus.emit(...).now()`` (queue-jump) so the emitted typed event and its
-    entire handler chain complete before the next stdout line is read.
+    Uses ``await bus.emit(...).now()`` (queue-jump) so direct stdout consumers
+    finish before the next line is read. Consumers may enqueue downstream domain
+    events without holding the subprocess open while those event handlers run.
     """
 
     line: str

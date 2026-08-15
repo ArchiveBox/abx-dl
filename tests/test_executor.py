@@ -2269,9 +2269,14 @@ def test_download_can_suppress_jsonl_stdout(tmp_path: Path, capsys) -> None:
 def test_nested_snapshot_events_are_emitted_but_ignored_by_snapshot_hooks(tmp_path: Path) -> None:
     bus = create_bus(total_timeout=60.0, name=f"nested_snapshot_events_{tmp_path.name}")
     seen_snapshot_events: list[tuple[int, str]] = []
+    child_listener_started = asyncio.Event()
+    release_child_listener = asyncio.Event()
 
     async def on_SnapshotEvent(event: SnapshotEvent) -> None:
         seen_snapshot_events.append((event.depth, event.url))
+        if event.depth > 0:
+            child_listener_started.set()
+            await release_child_listener.wait()
 
     bus.on(SnapshotEvent, on_SnapshotEvent)
     ProcessService(bus, emit_jsonl=False, interactive_tty=False)
@@ -2323,8 +2328,17 @@ def test_nested_snapshot_events_are_emitted_but_ignored_by_snapshot_hooks(tmp_pa
         await bus.emit(crawl_start_event).now()
         await bus.emit(root_event).now()
         await bus.emit(process_event).now()
-        await bus.emit(stdout_event).now()
+        stdout_task = asyncio.create_task(bus.emit(stdout_event).now())
+        await asyncio.wait_for(child_listener_started.wait(), timeout=5.0)
+        completed_without_waiting = False
+        try:
+            await asyncio.wait_for(asyncio.shield(stdout_task), timeout=1.0)
+            completed_without_waiting = True
+        finally:
+            release_child_listener.set()
+            await stdout_task
         await bus.wait_until_idle()
+        assert completed_without_waiting
 
     asyncio.run(run())
     assert seen_snapshot_events == [(0, "https://example.com"), (1, "https://example.com/child")]

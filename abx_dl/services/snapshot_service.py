@@ -345,7 +345,7 @@ class SnapshotService(BaseService):
         if parent_snapshot is None:
             return
         assert isinstance(parent_snapshot, SnapshotEvent)
-        await event.emit(
+        event.emit(
             SnapshotEvent(
                 url=discovered_snapshot.url,
                 snapshot_id=discovered_snapshot.id,
@@ -354,7 +354,7 @@ class SnapshotService(BaseService):
                 event_timeout=event.event_timeout,
                 event_handler_slow_timeout=slow_warning_timeout(event.event_timeout),
             ),
-        ).now()
+        )
 
     async def on_SnapshotEvent(self, event: SnapshotEvent) -> None:
         """Run snapshot hooks in sort order, then emit cleanup and completion.
