@@ -214,7 +214,7 @@ jobs:
 
           "${DOCKER_BINARY}" run --rm --user 911:911 --platform '${{ matrix.platform }}' \
             --workdir /out --entrypoint /bin/bash '${{ matrix.local_tag }}' -c \
-            'set -Eeuo pipefail; find /opt/archivebox/lib -name derived.env -type f -exec sha256sum {} + | sort > /tmp/cache-before; abx-dl install >/dev/null; find /opt/archivebox/lib -name derived.env -type f -exec sha256sum {} + | sort > /tmp/cache-after; cmp /tmp/cache-before /tmp/cache-after'
+            'set -Eeuo pipefail; find /opt/archivebox/lib -name derived.env -type f -exec sha256sum {} + | sort > /tmp/cache-before; abx-dl install >/dev/null; find /opt/archivebox/lib -name derived.env -type f -exec sha256sum {} + | sort > /tmp/cache-after; diff -u /tmp/cache-before /tmp/cache-after'
 
           IMPORT_PROFILE="$(${DOCKER_BINARY} run --rm --user 911:911 --platform '${{ matrix.platform }}' \
             --workdir /venv/lib/python3.13/site-packages/abx_plugins/plugins/archivewebpage \
