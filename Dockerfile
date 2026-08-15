@@ -184,7 +184,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && rm -f /venv/bin/uv /venv/bin/uvx \
     && find "$ABXPKG_LIB_DIR" \( ! -user "$DEFAULT_ARCHIVEBOX_UID" -o ! -group "$DEFAULT_ARCHIVEBOX_GID" \) -exec chown -h "$DEFAULT_ARCHIVEBOX_UID:$DEFAULT_ARCHIVEBOX_GID" {} + \
     && NORMALIZED_MTIME="@$(date +%s)" \
-    && find /venv "$ABXPKG_LIB_DIR" -exec touch -h -d "$NORMALIZED_MTIME" {} + \
+    && find /venv /opt/uv/python "$ABXPKG_LIB_DIR" -exec touch -h -d "$NORMALIZED_MTIME" {} + \
     && STDLIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("stdlib"))')" \
     && PURELIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
     && /venv/bin/python -m compileall -q "$STDLIB_DIR" "$PURELIB_DIR" \
