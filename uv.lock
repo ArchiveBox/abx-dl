@@ -3,18 +3,18 @@ revision = 3
 requires-python = ">=3.12, <3.15"
 
 [options]
-exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
+exclude-newer = "2026-08-10T02:47:26.592501249Z"
 exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
-abxbus = { timestamp = "0001-01-01T00:00:00Z", span = "PT1S" }
+abxbus = { timestamp = "2026-08-15T02:47:25.592515105Z", span = "PT1S" }
 abx-dl = "2100-01-01T00:00:00Z"
 abx-plugins = "2100-01-01T00:00:00Z"
 abxpkg = "2100-01-01T00:00:00Z"
 
 [[package]]
 name = "abx-dl"
-version = "1.12.139"
+version = "1.12.140"
 source = { editable = "." }
 dependencies = [
     { name = "abx-plugins" },
@@ -50,7 +50,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "abx-plugins", specifier = "==1.12.127" },
+    { name = "abx-plugins", specifier = "==1.12.128" },
     { name = "abxbus" },
     { name = "abxpkg" },
     { name = "platformdirs", specifier = ">=4.0.0" },
@@ -83,7 +83,7 @@ dev = [
 
 [[package]]
 name = "abx-plugins"
-version = "1.12.127"
+version = "1.12.128"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "abxbus" },
@@ -92,9 +92,9 @@ dependencies = [
     { name = "rich-click" },
     { name = "uv" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1c/58/936a5a11507be4fd4df4a8ebd467022445f186ff215e751b8f133b27e499/abx_plugins-1.12.127.tar.gz", hash = "sha256:701e1515a0c0a5a374820b1e76b460a06552725d0df97e7b166500d18871f2f3", size = 255710, upload-time = "2026-08-15T01:26:46.554Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/13/f8/f6ac865e821930de5efe5fa99bd5a1f8f061a584ee5a577dde68f17e359d/abx_plugins-1.12.128.tar.gz", hash = "sha256:f0cb00047bbfd1d20c91637fa03d4bc714ce9ccdccb0374c6d3b7e5d973e386b", size = 255700, upload-time = "2026-08-15T02:45:21.517025Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3c/1b/df071cb991ec0ebdcfa79778b01336a6db9c2b1b4a4354472baecab06ac5/abx_plugins-1.12.127-py3-none-any.whl", hash = "sha256:e41643260b423f730934ccf9c61a403c8da753cc3c6f53b62775bf1e677c95e2", size = 407215, upload-time = "2026-08-15T01:26:45.135Z" },
+    { url = "https://files.pythonhosted.org/packages/47/ec/52e16b253c7f5d05c78e8401a2402adff8609558a724761cca8eb7d03fea/abx_plugins-1.12.128-py3-none-any.whl", hash = "sha256:0c04f023aca24e14524a75402cdcb1ba7b0d6db2ed7c9b7f86235f26398baf78", size = 407211, upload-time = "2026-08-15T02:45:20.289903Z" },
 ]
 
 [[package]]
