@@ -6,8 +6,8 @@ from abx_dl.config import get_initial_env
 from abx_dl.events import InstallEvent, MachineEvent
 from abx_dl.models import Plugin, PluginConfig, RequiredBinary, Snapshot, discover_plugins
 from abx_dl.orchestrator import compute_install_phase_timeout, create_bus
-from abx_dl.services.binary_service import AbxDlEnvConfigFileBinaryCacheBackend, PluginBinariesService
-from abxpkg.binary_service import BinaryCacheService, BinaryEvent, BinaryRequestEvent, BinaryService
+from abx_dl.services.binary_service import PluginBinariesService, PluginBinaryEnvService
+from abxpkg.binary_service import BinaryEvent, BinaryRequestEvent, BinaryService
 
 
 def test_install_phase_timeout_uses_largest_sequential_binary_lane_budget() -> None:
@@ -42,7 +42,7 @@ def test_install_event_resolves_plugin_binaries_through_abxpkg(tmp_path: Path) -
         output_dir=run_dir,
         snapshot=snapshot,
     )
-    BinaryCacheService(bus, backend=AbxDlEnvConfigFileBinaryCacheBackend(bus, plugins=selected))
+    PluginBinaryEnvService(bus, plugins=selected)
     BinaryService(bus, auto_install=True)
     request_events: list[BinaryRequestEvent] = []
     binary_events: list[BinaryEvent] = []
@@ -127,7 +127,7 @@ def test_install_event_resolves_plugin_binaries_in_config_order(tmp_path: Path) 
         output_dir=run_dir,
         snapshot=snapshot,
     )
-    BinaryCacheService(bus, backend=AbxDlEnvConfigFileBinaryCacheBackend(bus, plugins=plugins))
+    PluginBinaryEnvService(bus, plugins=plugins)
     BinaryService(bus, auto_install=True)
     events_seen: list[tuple[str, str]] = []
 
@@ -308,7 +308,7 @@ def test_install_event_revalidates_derived_binary_requests_for_persistence(tmp_p
         output_dir=run_dir,
         snapshot=snapshot,
     )
-    BinaryCacheService(bus, backend=AbxDlEnvConfigFileBinaryCacheBackend(bus, plugins={"wget": plugin}))
+    PluginBinaryEnvService(bus, plugins={"wget": plugin})
     BinaryService(bus, auto_install=True)
     request_events: list[BinaryRequestEvent] = []
     binary_events: list[BinaryEvent] = []
@@ -440,7 +440,7 @@ def test_chromewebstore_install_preflight_uses_shared_cache_without_persona_dupl
         output_dir=run_dir,
         snapshot=snapshot,
     )
-    BinaryCacheService(bus, backend=AbxDlEnvConfigFileBinaryCacheBackend(bus, plugins={"archivewebpage": plugin}))
+    PluginBinaryEnvService(bus, plugins={"archivewebpage": plugin})
     BinaryService(bus, auto_install=True)
     binary_events: list[BinaryEvent] = []
 

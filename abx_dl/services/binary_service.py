@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from abxbus import BaseEvent, EventBus
-from abxpkg import BinProvider, Binary as AbxBinary
+from abxpkg import BinProvider
 from abxpkg.binary_service import BinaryEvent, BinaryRequestEvent
 
 from ..config import RuntimeConfig, get_config, get_plugin_env, get_required_binary_requests, is_path_like_env_value
@@ -173,44 +173,34 @@ class PluginBinariesService(BaseService):
             await completed_request.event_results_list(raise_if_none=False)
 
 
-class AbxDlEnvConfigFileBinaryCacheBackend:
-    """Project abxpkg Binary events onto abx-dl derived config."""
+class PluginBinaryEnvService(BaseService):
+    """Project resolved abxpkg binaries into the current plugin environment."""
+
+    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [BinaryEvent]
+    EMITS: ClassVar[list[type[BaseEvent]]] = [MachineEvent]
 
     def __init__(self, bus: EventBus, *, plugins: dict[str, Plugin]):
         self.bus = bus
         self.plugins = plugins
+        super().__init__(bus)
+        self.bus.on(BinaryEvent, self.on_BinaryEvent)
 
-    def get(self, request: BinaryRequestEvent) -> AbxBinary | None:
-        return None
-
-    async def set(self, request: BinaryRequestEvent | None, binary: AbxBinary) -> None:
+    async def on_BinaryEvent(self, event: BinaryEvent) -> None:
         current_config = await get_config(self.bus)
-        if binary.loaded_abspath and request is not None:
-            await self._persist_binary_abspath_in_config(request, str(binary.loaded_abspath), config=current_config)
-
-    async def invalidate(self, request: BinaryRequestEvent, binary: AbxBinary, reason: str) -> None:
-        current_config = await get_config(self.bus)
-        for config_key in await self._config_keys_for_binary_request(request, config=current_config):
-            await request.emit(
-                MachineEvent(
-                    method="unset",
-                    key=f"config/{config_key}",
-                    config_type="derived",
-                ),
-            ).now()
+        await self._project_binary_abspath(event, event.abspath, config=current_config)
 
     def _request_run_output_dir(self, output_dir: str, plugin_name: str) -> Path:
         path = Path(output_dir).expanduser()
         return path.parent if plugin_name and path.name == plugin_name else path
 
-    async def _config_keys_for_binary_request(
+    async def _config_keys_for_binary_event(
         self,
-        request: BinaryRequestEvent,
+        event: BinaryEvent,
         *,
         config: RuntimeConfig | None = None,
     ) -> list[str]:
-        plugin_name = str(request.extra_context.get("plugin_name") or "")
-        output_dir = str(request.extra_context.get("output_dir") or "")
+        plugin_name = str(event.extra_context.get("plugin_name") or "")
+        output_dir = str(event.extra_context.get("output_dir") or "")
         plugin = self.plugins.get(plugin_name)
         if plugin is None:
             return []
@@ -236,7 +226,7 @@ class AbxDlEnvConfigFileBinaryCacheBackend:
                 hydrated_name = template_name.format(**runtime_env)
             except KeyError:
                 continue
-            if hydrated_name == request.name:
+            if hydrated_name == event.name:
                 matching_keys.append(key)
         if matching_keys:
             return list(dict.fromkeys(matching_keys))
@@ -246,23 +236,23 @@ class AbxDlEnvConfigFileBinaryCacheBackend:
             configured_value = str(runtime_env[key] or prop.get("default") or "").strip()
             if not configured_value:
                 continue
-            if configured_value == request.name:
+            if configured_value == event.name:
                 matching_keys.append(key)
                 continue
-            if is_path_like_env_value(configured_value) and Path(configured_value).expanduser().name == request.name:
+            if is_path_like_env_value(configured_value) and Path(configured_value).expanduser().name == event.name:
                 matching_keys.append(key)
         return list(dict.fromkeys(matching_keys))
 
-    async def _persist_binary_abspath_in_config(
+    async def _project_binary_abspath(
         self,
-        request: BinaryRequestEvent,
+        event: BinaryEvent,
         abspath: str,
         *,
         config: RuntimeConfig | None = None,
     ) -> None:
         current_config = config or await get_config(self.bus)
-        for config_key in await self._config_keys_for_binary_request(request, config=current_config):
-            await request.emit(
+        for config_key in await self._config_keys_for_binary_event(event, config=current_config):
+            await event.emit(
                 MachineEvent(
                     method="update",
                     key=f"config/{config_key}",

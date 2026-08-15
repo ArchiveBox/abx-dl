@@ -30,12 +30,12 @@ from abx_dl.limits import CrawlLimitState
 from abx_dl.models import Snapshot, discover_plugins, filter_plugins
 from abx_dl.orchestrator import create_bus, download, setup_services
 from abx_dl.services.archive_result_service import ArchiveResultService
-from abx_dl.services.binary_service import AbxDlEnvConfigFileBinaryCacheBackend
+from abx_dl.services.binary_service import PluginBinaryEnvService
 from abx_dl.services.crawl_service import CrawlService
 from abx_dl.services.machine_service import MachineService
 from abx_dl.services.process_service import ProcessService, _process_command
 from abx_dl.services.snapshot_service import SnapshotService
-from abxpkg.binary_service import BinaryCacheService, BinaryEvent, BinaryRequestEvent, BinaryService
+from abxpkg.binary_service import BinaryEvent, BinaryRequestEvent, BinaryService
 from pytest_httpserver import HTTPServer
 from werkzeug import Response
 
@@ -232,10 +232,7 @@ def test_binary_installed_event_uses_machine_config_seeded_from_persistent_confi
     async def run() -> list[BinaryEvent]:
         bus = create_bus(total_timeout=10.0, name=f"machine_config_seeded_{tmp_path.name}")
         MachineService(bus)
-        BinaryCacheService(
-            bus,
-            backend=AbxDlEnvConfigFileBinaryCacheBackend(bus, plugins={"wget": plugins["wget"]}),
-        )
+        PluginBinaryEnvService(bus, plugins={"wget": plugins["wget"]})
         BinaryService(bus, auto_install=True)
         installed_events: list[BinaryEvent] = []
 
@@ -270,10 +267,7 @@ def test_binary_installed_event_resolves_config_backed_command_name(tmp_path: Pa
     async def run() -> list[BinaryEvent]:
         bus = create_bus(total_timeout=10.0, name=f"config_backed_command_{tmp_path.name}")
         MachineService(bus)
-        BinaryCacheService(
-            bus,
-            backend=AbxDlEnvConfigFileBinaryCacheBackend(bus, plugins={"wget": plugins["wget"]}),
-        )
+        PluginBinaryEnvService(bus, plugins={"wget": plugins["wget"]})
         BinaryService(bus, auto_install=True)
         installed_events: list[BinaryEvent] = []
 
@@ -310,10 +304,7 @@ def test_binary_installed_event_uses_user_absolute_path_for_real_plugin(tmp_path
     async def run() -> list[BinaryEvent]:
         bus = create_bus(total_timeout=10.0, name=f"user_absolute_path_{tmp_path.name}")
         MachineService(bus)
-        BinaryCacheService(
-            bus,
-            backend=AbxDlEnvConfigFileBinaryCacheBackend(bus, plugins={"wget": plugins["wget"]}),
-        )
+        PluginBinaryEnvService(bus, plugins={"wget": plugins["wget"]})
         BinaryService(bus, auto_install=True)
         installed_events: list[BinaryEvent] = []
 
@@ -349,10 +340,7 @@ def test_binary_installed_event_validates_real_plugin_derived_paths_through_abxp
     async def run() -> list[BinaryEvent]:
         bus = create_bus(total_timeout=10.0, name=f"reuses_cached_paths_{tmp_path.name}")
         MachineService(bus)
-        BinaryCacheService(
-            bus,
-            backend=AbxDlEnvConfigFileBinaryCacheBackend(bus, plugins={"wget": plugins["wget"]}),
-        )
+        PluginBinaryEnvService(bus, plugins={"wget": plugins["wget"]})
         BinaryService(bus, auto_install=True)
         installed_events: list[BinaryEvent] = []
 
@@ -603,10 +591,7 @@ def test_binary_event_ignores_unknown_request_plugin_when_persisting_config(tmp_
     async def run() -> list[BinaryEvent]:
         bus = create_bus(total_timeout=10.0, name=f"unknown_binary_request_plugin_{tmp_path.name}")
         MachineService(bus)
-        BinaryCacheService(
-            bus,
-            backend=AbxDlEnvConfigFileBinaryCacheBackend(bus, plugins={}),
-        )
+        PluginBinaryEnvService(bus, plugins={})
         BinaryService(bus, auto_install=True)
         installed_events: list[BinaryEvent] = []
 
