@@ -1,0 +1,16 @@
+Dockerfile
+  h_923c208e183a7b 187
+pyproject.toml
+  h_923c208e183a7b 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "8fb8e931522c07923cda3c1434436bcc6204cb98",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
