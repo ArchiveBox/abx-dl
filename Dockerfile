@@ -98,7 +98,7 @@ RUN (echo "[i] Docker build for abx-dl starting..." \
 RUN echo "[+] APT Installing abx-dl bootstrap dependencies for $TARGETPLATFORM..." \
     && apt-get update -qq \
     && apt-get install -qq -y \
-        ca-certificates curl dumb-init util-linux procps openssl unzip xz-utils zlib1g \
+        ca-certificates curl dumb-init findutils util-linux procps openssl unzip xz-utils zlib1g \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=node-runtime /usr/local /opt/node
@@ -175,8 +175,6 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=abxpkg-tmp-$TARGETARCH$TARGETVARIANT \
     echo "[+] Installing Chrome and plugin dependencies..." \
     && export HOME=/var/tmp/abxpkg-cache ABXPKG_TMP_CACHE_DIR=/var/tmp/abxpkg-cache \
-    && abxpkg env --install --binproviders=env,apt --lib="$ABXPKG_LIB_DIR" git >/dev/null \
-    && abxpkg env --install --binproviders=env,apt --lib="$ABXPKG_LIB_DIR" --overrides='{"apt":{"install_args":["findutils"]}}' find >/dev/null \
     && abx-dl install chrome \
     && abx-dl install \
     && rm -rf /usr/lib/*-linux-gnu/dri /usr/lib/*-linux-gnu/libLLVM*.so* /usr/lib/*-linux-gnu/libz3.so.* \
@@ -184,8 +182,7 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && install -d -m 755 /usr/share/man/man1 \
     && rm -f /usr/lib/jvm/java-*-openjdk-*/lib/server/classes*.jsa \
     && rm -f /venv/bin/uv /venv/bin/uvx \
-    && find "$XDG_CACHE_HOME" -mindepth 1 -maxdepth 1 -exec rm -rf {} + \
-    && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR" \( ! -user "$DEFAULT_ARCHIVEBOX_UID" -o ! -group "$DEFAULT_ARCHIVEBOX_GID" \) -exec chown -h "$DEFAULT_ARCHIVEBOX_UID:$DEFAULT_ARCHIVEBOX_GID" {} + \
+    && find "$ABXPKG_LIB_DIR" \( ! -user "$DEFAULT_ARCHIVEBOX_UID" -o ! -group "$DEFAULT_ARCHIVEBOX_GID" \) -exec chown -h "$DEFAULT_ARCHIVEBOX_UID:$DEFAULT_ARCHIVEBOX_GID" {} + \
     && NORMALIZED_MTIME="@$(date +%s)" \
     && find /venv -exec touch -h -d "$NORMALIZED_MTIME" {} + \
     && env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups abx-dl install \
@@ -201,10 +198,10 @@ RUN env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox \
         && test -f "$(/venv/bin/python -c "import json; print(json.__cached__)")" \
         && test -f "$(/venv/bin/python -c "import abxpkg.cli; print(abxpkg.cli.__cached__)")" \
         && test -f "$(/venv/bin/python -c "import pydantic; print(pydantic.__cached__)")" \
-        && abxpkg load --binproviders=env /opt/node/bin/node \
-        && abxpkg load --binproviders=env /venv/bin/python3 \
+        && abxpkg load /opt/node/bin/node \
+        && abxpkg load /venv/bin/python3 \
         && abx-dl plugins \
-        && abxpkg load --binproviders=env rg \
+        && abxpkg load rg \
         && ! command -v gcc \
         && ! command -v g++ \
         && ! command -v make \
