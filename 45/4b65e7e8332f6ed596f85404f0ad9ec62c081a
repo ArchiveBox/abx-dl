@@ -1,0 +1,22 @@
+abx_dl/orchestrator.py
+  h_923c208e183a7b 88,104,139,192-193,323,388,545,682
+abx_dl/services/__init__.py
+  h_923c208e183a7b 5,15
+abx_dl/services/binary_service.py
+  h_923c208e183a7b 12,176-180,185-186,188,190,196,198,202-203,229,239,242,246,248,254-255
+tests/test_executor.py
+  h_923c208e183a7b 33,38,235,270,307,343,594
+tests/test_install_phase.py
+  h_923c208e183a7b 9-10,45,130,311,443
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "454b65e7e8332f6ed596f85404f0ad9ec62c081a",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
