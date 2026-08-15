@@ -179,27 +179,19 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && abxpkg env --install --binproviders=env,apt --lib="$ABXPKG_LIB_DIR" --overrides='{"apt":{"install_args":["findutils"]}}' find >/dev/null \
     && abx-dl install chrome \
     && abx-dl install \
-    && abxpkg env --install --binproviders=env,apt --lib="$ABXPKG_LIB_DIR" --overrides='{"apt":{"install_args":["binutils"]}}' strip >/dev/null \
-    && "$ABXPKG_LIB_DIR/env/bin/find" /opt/node -type f -name '*.map' -delete \
     && rm -rf /usr/lib/*-linux-gnu/dri /usr/lib/*-linux-gnu/libLLVM*.so* /usr/lib/*-linux-gnu/libz3.so.* \
     && rm -rf /usr/share/icons /usr/share/doc /usr/share/man /usr/share/bash-completion /usr/share/zsh /usr/share/info /usr/share/lintian /usr/share/bug \
     && install -d -m 755 /usr/share/man/man1 \
-    && rm -rf /opt/node/include /opt/node/share/doc /opt/node/share/man \
-    && rm -f /opt/node/CHANGELOG.md /opt/node/README.md /opt/node/LICENSE \
     && rm -f /usr/lib/jvm/java-*-openjdk-*/lib/server/classes*.jsa \
-    && abxpkg run --binproviders=env --lib="$ABXPKG_LIB_DIR" apt-get purge -y --auto-remove binutils \
-    && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR/env/bin" -maxdepth 1 -type l -name strip -delete \
     && rm -f /venv/bin/uv /venv/bin/uvx \
     && find "$XDG_CACHE_HOME" -mindepth 1 -maxdepth 1 -exec rm -rf {} + \
-    && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR" \( ! -user "$DEFAULT_ARCHIVEBOX_UID" -o ! -group "$DEFAULT_ARCHIVEBOX_GID" \) -exec chown "$DEFAULT_ARCHIVEBOX_UID:$DEFAULT_ARCHIVEBOX_GID" {} + \
+    && "$ABXPKG_LIB_DIR/env/bin/find" "$ABXPKG_LIB_DIR" \( ! -user "$DEFAULT_ARCHIVEBOX_UID" -o ! -group "$DEFAULT_ARCHIVEBOX_GID" \) -exec chown -h "$DEFAULT_ARCHIVEBOX_UID:$DEFAULT_ARCHIVEBOX_GID" {} + \
     && NORMALIZED_MTIME="@$(date +%s)" \
-    && find /venv /opt/node /opt/uv -exec touch -h -d "$NORMALIZED_MTIME" {} + \
+    && find /venv -exec touch -h -d "$NORMALIZED_MTIME" {} + \
     && env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups abx-dl install \
     && STDLIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("stdlib"))')" \
     && PURELIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
     && /venv/bin/python -m compileall -q "$STDLIB_DIR" "$PURELIB_DIR" \
-    && env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups \
-        /venv/bin/python -m compileall -q "$ABXPKG_LIB_DIR/pip" "$ABXPKG_LIB_DIR/uv" \
     && rm -rf /var/lib/apt/lists/* /tmp/*
 
 RUN env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox \
