@@ -212,6 +212,10 @@ jobs:
               path.mkdir(parents=True)
           PY
 
+          "${DOCKER_BINARY}" run --rm --user 911:911 --platform '${{ matrix.platform }}' \
+            --workdir /out --entrypoint /bin/bash '${{ matrix.local_tag }}' -c \
+            'set -Eeuo pipefail; cache=/opt/archivebox/lib/env/derived.env; before="$(sha256sum "$cache")"; abx-dl install >/dev/null; test "$before" = "$(sha256sum "$cache")"'
+
           IMPORT_PROFILE="$(${DOCKER_BINARY} run --rm --user 911:911 --platform '${{ matrix.platform }}' \
             --workdir /venv/lib/python3.13/site-packages/abx_plugins/plugins/archivewebpage \
             --entrypoint /bin/bash '${{ matrix.local_tag }}' -c \

@@ -3,18 +3,18 @@ revision = 3
 requires-python = ">=3.12, <3.15"
 
 [options]
-exclude-newer = "2026-08-10T06:44:37.338463027Z"
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
-abxbus = { timestamp = "2026-08-15T06:44:36.338480293Z", span = "PT1S" }
+abxbus = { timestamp = "0001-01-01T00:00:00Z", span = "PT1S" }
 abx-dl = "2100-01-01T00:00:00Z"
 abx-plugins = "2100-01-01T00:00:00Z"
 abxpkg = "2100-01-01T00:00:00Z"
 
 [[package]]
 name = "abx-dl"
-version = "1.12.145"
+version = "1.12.146"
 source = { editable = "." }
 dependencies = [
     { name = "abx-plugins" },
@@ -92,9 +92,9 @@ dependencies = [
     { name = "rich-click" },
     { name = "uv" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c9/0f/ecdeea76b8751443aeb948a93a0f9c8a21c3227c98f3a0cc77c071cbee58/abx_plugins-1.12.134.tar.gz", hash = "sha256:79e9b8300ee10913ba859cee0cdc7fba7528c06174ff37781032e2d089772187", size = 256151, upload-time = "2026-08-15T06:43:07.796218Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c9/0f/ecdeea76b8751443aeb948a93a0f9c8a21c3227c98f3a0cc77c071cbee58/abx_plugins-1.12.134.tar.gz", hash = "sha256:79e9b8300ee10913ba859cee0cdc7fba7528c06174ff37781032e2d089772187", size = 256151, upload-time = "2026-08-15T06:43:07.796Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/49/2c/27344932e1f8e1c4eeb18679a1ed1319f667fa016a6af777998737ade6da/abx_plugins-1.12.134-py3-none-any.whl", hash = "sha256:7acf3740d9d64081e2889edc76b0d29544356be943de5de482c1e80cd847a97b", size = 407645, upload-time = "2026-08-15T06:43:06.492703Z" },
+    { url = "https://files.pythonhosted.org/packages/49/2c/27344932e1f8e1c4eeb18679a1ed1319f667fa016a6af777998737ade6da/abx_plugins-1.12.134-py3-none-any.whl", hash = "sha256:7acf3740d9d64081e2889edc76b0d29544356be943de5de482c1e80cd847a97b", size = 407645, upload-time = "2026-08-15T06:43:06.492Z" },
 ]
 
 [[package]]
