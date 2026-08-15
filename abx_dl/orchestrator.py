@@ -87,7 +87,7 @@ from typing import Any
 from abxbus import EventBus, EventBusMiddleware, EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode
 from abxpkg.binary_service import BinaryRequestEvent, BinaryService
 
-from .config import GlobalConfig, RuntimeConfig, ensure_default_persona_dir, get_derived_config, get_explicit_user_env, get_initial_env
+from .config import GlobalConfig, RuntimeConfig, ensure_default_persona_dir, get_explicit_user_env, get_initial_env
 from .events import (
     CrawlEvent,
     InstallEvent,
@@ -99,7 +99,6 @@ from .models import Hook, Plugin, RequiredBinary, Snapshot, discover_plugins, fi
 from .services import (
     ArchiveResultService,
     CrawlService,
-    MachineService,
     PluginBinariesService,
     PluginBinaryEnvService,
     ProcessService,
@@ -129,12 +128,10 @@ def setup_services(
     snapshot_phase_timeout: float = 300.0,
     snapshot_cleanup_phase_timeout: float = 300.0,
     crawl_cleanup_phase_timeout: float = 300.0,
-    persist_derived: bool = True,
     auto_install: bool = True,
     emit_jsonl: bool = True,
     interactive_tty: bool | None = None,
     abort_requested: Any | None = None,
-    MachineService: type[MachineService] | None = MachineService,
     PluginBinariesService: type[PluginBinariesService] | None = PluginBinariesService,
     PluginBinaryEnvService: type[PluginBinaryEnvService] | None = PluginBinaryEnvService,
     BinaryService: type[BinaryService] | None = BinaryService,
@@ -162,12 +159,9 @@ def setup_services(
         if config_overrides:
             initial_user_config.update(config_overrides)
             explicit_user_config.update(config_overrides)
-        initial_derived_config = get_derived_config(initial_user_config)
+        initial_derived_config = {}
         if derived_config_overrides:
             initial_derived_config.update(derived_config_overrides)
-
-    if MachineService is not None:
-        MachineService(bus, persist_derived=persist_derived)
 
     if explicit_user_config is not None:
         try:
@@ -318,7 +312,6 @@ async def install_plugins(
     emit_jsonl: bool = False,
     bus: EventBus | None = None,
     dry_run: bool = False,
-    MachineService: type[MachineService] | None = MachineService,
     PluginBinariesService: type[PluginBinariesService] | None = PluginBinariesService,
     PluginBinaryEnvService: type[PluginBinaryEnvService] | None = PluginBinaryEnvService,
     BinaryService: type[BinaryService] | None = BinaryService,
@@ -350,7 +343,7 @@ async def install_plugins(
     initial_user_config.update(merged_config)
     explicit_user_config = get_explicit_user_env()
     explicit_user_config.update(merged_config)
-    initial_derived_config = get_derived_config(initial_user_config)
+    initial_derived_config: dict[str, Any] = {}
     if derived_config_overrides:
         initial_derived_config.update(derived_config_overrides)
 
@@ -379,11 +372,9 @@ async def install_plugins(
             snapshot_phase_timeout=60.0,
             snapshot_cleanup_phase_timeout=60.0,
             crawl_cleanup_phase_timeout=60.0,
-            persist_derived=True,
             auto_install=True,
             emit_jsonl=emit_jsonl,
             interactive_tty=sys.stdout.isatty() or sys.stderr.isatty(),
-            MachineService=MachineService,
             PluginBinariesService=PluginBinariesService,
             PluginBinaryEnvService=PluginBinaryEnvService,
             BinaryService=BinaryService,
@@ -540,7 +531,6 @@ async def download(
     crawl_completed_enabled: bool = True,
     crawl_event_enabled: bool = True,
     dry_run: bool = False,
-    MachineService: type[MachineService] | None = MachineService,
     PluginBinariesService: type[PluginBinariesService] | None = PluginBinariesService,
     PluginBinaryEnvService: type[PluginBinaryEnvService] | None = PluginBinaryEnvService,
     BinaryService: type[BinaryService] | None = BinaryService,
@@ -580,7 +570,7 @@ async def download(
     initial_user_config.update(config_overrides)
     explicit_user_config = get_explicit_user_env()
     explicit_user_config.update(config_overrides)
-    initial_derived_config = get_derived_config(initial_user_config)
+    initial_derived_config: dict[str, Any] = {}
     if derived_config_overrides:
         initial_derived_config.update(derived_config_overrides)
     ensure_default_persona_dir()
@@ -673,11 +663,9 @@ async def download(
         snapshot_phase_timeout=snapshot_phase_timeout,
         snapshot_cleanup_phase_timeout=snapshot_cleanup_phase_timeout,
         crawl_cleanup_phase_timeout=crawl_cleanup_phase_timeout,
-        persist_derived=True,
         auto_install=auto_install,
         emit_jsonl=emit_jsonl,
         interactive_tty=interactive_tty,
-        MachineService=MachineService,
         PluginBinariesService=PluginBinariesService,
         PluginBinaryEnvService=PluginBinaryEnvService,
         BinaryService=BinaryService,

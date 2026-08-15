@@ -365,10 +365,8 @@ class ProcessStdoutEvent(BaseEvent):
 class MachineEvent(BaseEvent):
     """Update runtime machine config.
 
-    Emitted internally by services like ``BinaryService``. Handled by
-    ``MachineService.on_MachineEvent``, which updates either runtime
-    ``user_config`` or ``derived_config`` and persists derived values to
-    ``derived.env`` for future runs.
+    Consumers reconstruct the current runtime config from these events in bus
+    history. No machine config derived during a run is persisted by abx-dl.
     """
 
     model_config = ConfigDict(populate_by_name=True)

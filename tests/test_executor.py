@@ -32,7 +32,6 @@ from abx_dl.orchestrator import create_bus, download, setup_services
 from abx_dl.services.archive_result_service import ArchiveResultService
 from abx_dl.services.binary_service import PluginBinaryEnvService
 from abx_dl.services.crawl_service import CrawlService
-from abx_dl.services.machine_service import MachineService
 from abx_dl.services.process_service import ProcessService, _process_command
 from abx_dl.services.snapshot_service import SnapshotService
 from abxpkg.binary_service import BinaryEvent, BinaryRequestEvent, BinaryService
@@ -137,7 +136,7 @@ def _resolve_real_wget_binary(tmp_path: Path) -> BinaryEvent:
     plugins = discover_plugins()
     selected = {"wget": plugins["wget"]}
     bus = create_bus(total_timeout=30.0, name=f"resolve_real_wget_binary_{tmp_path.name}")
-    setup_services(bus, plugins=selected, auto_install=True, emit_jsonl=False, persist_derived=False)
+    setup_services(bus, plugins=selected, auto_install=True, emit_jsonl=False)
     installed_events: list[BinaryEvent] = []
 
     async def on_BinaryEvent(event: BinaryEvent) -> None:
@@ -193,7 +192,7 @@ def test_binary_installed_event_preserves_child_provider_metadata(tmp_path: Path
     plugins = discover_plugins()
     selected = {"wget": plugins["wget"]}
     bus = create_bus(total_timeout=30.0, name=f"binary_installed_metadata_{tmp_path.name}")
-    setup_services(bus, plugins=selected, auto_install=True, emit_jsonl=False, persist_derived=False)
+    setup_services(bus, plugins=selected, auto_install=True, emit_jsonl=False)
     installed_events: list[BinaryEvent] = []
 
     async def on_BinaryEvent(event: BinaryEvent) -> None:
@@ -231,7 +230,6 @@ def test_binary_installed_event_uses_machine_config_seeded_from_persistent_confi
 
     async def run() -> list[BinaryEvent]:
         bus = create_bus(total_timeout=10.0, name=f"machine_config_seeded_{tmp_path.name}")
-        MachineService(bus)
         PluginBinaryEnvService(bus, plugins={"wget": plugins["wget"]})
         BinaryService(bus, auto_install=True)
         installed_events: list[BinaryEvent] = []
@@ -266,7 +264,6 @@ def test_binary_installed_event_resolves_config_backed_command_name(tmp_path: Pa
 
     async def run() -> list[BinaryEvent]:
         bus = create_bus(total_timeout=10.0, name=f"config_backed_command_{tmp_path.name}")
-        MachineService(bus)
         PluginBinaryEnvService(bus, plugins={"wget": plugins["wget"]})
         BinaryService(bus, auto_install=True)
         installed_events: list[BinaryEvent] = []
@@ -303,7 +300,6 @@ def test_binary_installed_event_uses_user_absolute_path_for_real_plugin(tmp_path
 
     async def run() -> list[BinaryEvent]:
         bus = create_bus(total_timeout=10.0, name=f"user_absolute_path_{tmp_path.name}")
-        MachineService(bus)
         PluginBinaryEnvService(bus, plugins={"wget": plugins["wget"]})
         BinaryService(bus, auto_install=True)
         installed_events: list[BinaryEvent] = []
@@ -339,7 +335,6 @@ def test_binary_installed_event_validates_real_plugin_derived_paths_through_abxp
 
     async def run() -> list[BinaryEvent]:
         bus = create_bus(total_timeout=10.0, name=f"reuses_cached_paths_{tmp_path.name}")
-        MachineService(bus)
         PluginBinaryEnvService(bus, plugins={"wget": plugins["wget"]})
         BinaryService(bus, auto_install=True)
         installed_events: list[BinaryEvent] = []
@@ -380,7 +375,6 @@ def test_binary_event_validates_derived_config_binary_through_abxpkg_resolution(
         plugins=selected,
         auto_install=True,
         emit_jsonl=False,
-        persist_derived=False,
     )
     installed_events: list[BinaryEvent] = []
     process_events: list[ProcessEvent] = []
@@ -470,7 +464,6 @@ def test_setup_services_accepts_runtime_config_overrides_and_seeds_machine_event
                 plugins={},
                 config_overrides={"TIMEOUT": 123, "DRY_RUN": True},
                 derived_config_overrides={"WGET_BINARY": str(wget_binary.abspath)},
-                MachineService=MachineService,
                 PluginBinariesService=None,
                 ProcessService=None,
                 ArchiveResultService=None,
@@ -506,7 +499,6 @@ def test_binary_service_stops_after_successful_provider_result(tmp_path: Path) -
         plugins={},
         auto_install=True,
         emit_jsonl=False,
-        persist_derived=False,
     )
     process_events: list[ProcessEvent] = []
     binary_events: list[BinaryEvent] = []
@@ -545,7 +537,6 @@ def test_binary_service_stops_after_successful_provider_result(tmp_path: Path) -
 def test_binary_service_concurrent_real_requests_preserve_env_projection(tmp_path: Path) -> None:
     async def run() -> list[BinaryEvent]:
         bus = create_bus(total_timeout=10.0, name=f"binary_install_lock_{tmp_path.name}")
-        MachineService(bus)
         BinaryService(bus, auto_install=True)
         binary_events: list[BinaryEvent] = []
 
@@ -587,10 +578,9 @@ def test_binary_service_concurrent_real_requests_preserve_env_projection(tmp_pat
         assert binary_path.is_symlink()
 
 
-def test_binary_event_ignores_unknown_request_plugin_when_persisting_config(tmp_path: Path) -> None:
+def test_binary_event_ignores_unknown_request_plugin_when_projecting_config(tmp_path: Path) -> None:
     async def run() -> list[BinaryEvent]:
         bus = create_bus(total_timeout=10.0, name=f"unknown_binary_request_plugin_{tmp_path.name}")
-        MachineService(bus)
         PluginBinaryEnvService(bus, plugins={})
         BinaryService(bus, auto_install=True)
         installed_events: list[BinaryEvent] = []
@@ -652,7 +642,6 @@ def test_binary_event_delegates_stale_cached_config_binary_to_abxpkg_resolution(
         plugins=selected,
         auto_install=True,
         emit_jsonl=False,
-        persist_derived=False,
     )
     installed_events: list[BinaryEvent] = []
     process_events: list[ProcessEvent] = []
@@ -711,7 +700,6 @@ def test_binary_event_delegates_missing_user_binary_abspath_override_to_abxpkg(t
         plugins=selected,
         auto_install=True,
         emit_jsonl=False,
-        persist_derived=False,
     )
     installed_events: list[BinaryEvent] = []
     process_events: list[ProcessEvent] = []
@@ -962,7 +950,6 @@ def test_snapshot_service_selected_hooks_by_plugin_runs_only_named_hooks(tmp_pat
     plugin = discover_plugins()["chrome"]
     selected_hook = next(hook for hook in plugin.hooks if hook.name == "on_Snapshot__11_chrome_wait")
     bus = create_bus(total_timeout=20.0, name=f"selected_snapshot_hooks_{tmp_path.name}")
-    MachineService(bus, persist_derived=False)
     ProcessService(bus, emit_jsonl=False, interactive_tty=False)
     snapshot = Snapshot(url="https://example.com", id="snap-123")
     SnapshotService(
@@ -998,7 +985,6 @@ def test_snapshot_service_selected_hooks_by_plugin_runs_only_named_hooks(tmp_pat
 
 def test_snapshot_service_repins_snapshot_persona_after_global_config_merge(tmp_path: Path) -> None:
     bus = create_bus(total_timeout=30.0, name=f"snapshot_chrome_env_{tmp_path.name}")
-    MachineService(bus, persist_derived=False)
     output_dir = tmp_path / "archive" / "users" / "system" / "snapshots" / "20260603" / "example.com" / "current"
     stale_dir = tmp_path / "archive" / "users" / "system" / "snapshots" / "20260603" / "example.com" / "stale"
     plugin = discover_plugins()["chrome"]
@@ -1075,7 +1061,6 @@ def test_snapshot_service_repins_snapshot_persona_after_global_config_merge(tmp_
 
 def test_concurrent_snapshot_services_use_their_injected_runtime_config(tmp_path: Path) -> None:
     bus = create_bus(total_timeout=30.0, name=f"snapshot_config_isolation_{tmp_path.name}")
-    MachineService(bus, persist_derived=False)
     ProcessService(bus, emit_jsonl=False, interactive_tty=False)
     plugin = discover_plugins()["parse_txt_urls"]
     snapshots = [
@@ -1161,7 +1146,6 @@ def test_snapshot_limit_admission_uses_stable_snapshot_id_across_retries(tmp_pat
     assert limit_state.admit_snapshot(snapshot.id).allowed is True
 
     bus = create_bus(total_timeout=10.0, name=f"snapshot_limit_stable_id_{tmp_path.name}")
-    MachineService(bus, persist_derived=False)
     SnapshotService(
         bus,
         url=snapshot.url,
@@ -1214,7 +1198,6 @@ def test_snapshot_hook_binary_event_env_replay_applies_newest_last(tmp_path: Pat
     snapshot = Snapshot(url="https://example.com", id="snap-env-check")
     output_dir = tmp_path / "run"
     bus = create_bus(total_timeout=30.0, name=f"snapshot_binary_env_order_{tmp_path.name}")
-    MachineService(bus, persist_derived=False)
     ProcessService(bus, emit_jsonl=False, interactive_tty=False)
     SnapshotService(
         bus,
@@ -1270,7 +1253,6 @@ def test_crawl_setup_hook_binary_event_env_replay_applies_newest_last(tmp_path: 
     snapshot = Snapshot(url="https://example.com", id="snap-setup-env-check")
     output_dir = tmp_path / "run"
     bus = create_bus(total_timeout=30.0, name=f"crawl_setup_binary_env_order_{tmp_path.name}")
-    MachineService(bus, persist_derived=False)
     ProcessService(bus, emit_jsonl=False, interactive_tty=False)
     CrawlService(
         bus,
@@ -1468,7 +1450,6 @@ def test_snapshot_completed_waits_for_cleanup_process_listeners(tmp_path: Path) 
     output_dir = tmp_path / "run"
     side_effect = output_dir / "process-completed-listener.txt"
     bus = create_bus(total_timeout=20.0, name=f"snapshot_cleanup_wait_{tmp_path.name}")
-    MachineService(bus, persist_derived=False)
     ProcessService(bus, emit_jsonl=False, interactive_tty=False)
     SnapshotService(
         bus,
@@ -2300,7 +2281,6 @@ def test_nested_snapshot_events_are_emitted_but_ignored_by_snapshot_hooks(tmp_pa
         seen_snapshot_events.append((event.depth, event.url))
 
     bus.on(SnapshotEvent, on_SnapshotEvent)
-    MachineService(bus, persist_derived=False)
     ProcessService(bus, emit_jsonl=False, interactive_tty=False)
     snapshot = Snapshot(url="https://example.com", depth=0, id="root-depth-0")
     SnapshotService(
@@ -2365,7 +2345,6 @@ def test_discovered_snapshot_depth_increments_from_parent_snapshot(tmp_path: Pat
         seen_snapshot_events.append((event.depth, event.url))
 
     bus.on(SnapshotEvent, on_SnapshotEvent)
-    MachineService(bus, persist_derived=False)
     ProcessService(bus, emit_jsonl=False, interactive_tty=False)
     snapshot = Snapshot(url="https://example.com/parent", depth=2, id="parent-depth-2")
     SnapshotService(

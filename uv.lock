@@ -3,18 +3,18 @@ revision = 3
 requires-python = ">=3.12, <3.15"
 
 [options]
-exclude-newer = "2026-08-10T01:28:23.63927601Z"
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
-abxbus = { timestamp = "2026-08-15T01:28:22.639288304Z", span = "PT1S" }
+abxbus = { timestamp = "0001-01-01T00:00:00Z", span = "PT1S" }
 abx-dl = "2100-01-01T00:00:00Z"
 abx-plugins = "2100-01-01T00:00:00Z"
 abxpkg = "2100-01-01T00:00:00Z"
 
 [[package]]
 name = "abx-dl"
-version = "1.12.137"
+version = "1.12.138"
 source = { editable = "." }
 dependencies = [
     { name = "abx-plugins" },
@@ -92,9 +92,9 @@ dependencies = [
     { name = "rich-click" },
     { name = "uv" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1c/58/936a5a11507be4fd4df4a8ebd467022445f186ff215e751b8f133b27e499/abx_plugins-1.12.127.tar.gz", hash = "sha256:701e1515a0c0a5a374820b1e76b460a06552725d0df97e7b166500d18871f2f3", size = 255710, upload-time = "2026-08-15T01:26:46.554455Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/1c/58/936a5a11507be4fd4df4a8ebd467022445f186ff215e751b8f133b27e499/abx_plugins-1.12.127.tar.gz", hash = "sha256:701e1515a0c0a5a374820b1e76b460a06552725d0df97e7b166500d18871f2f3", size = 255710, upload-time = "2026-08-15T01:26:46.554Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/3c/1b/df071cb991ec0ebdcfa79778b01336a6db9c2b1b4a4354472baecab06ac5/abx_plugins-1.12.127-py3-none-any.whl", hash = "sha256:e41643260b423f730934ccf9c61a403c8da753cc3c6f53b62775bf1e677c95e2", size = 407215, upload-time = "2026-08-15T01:26:45.135142Z" },
+    { url = "https://files.pythonhosted.org/packages/3c/1b/df071cb991ec0ebdcfa79778b01336a6db9c2b1b4a4354472baecab06ac5/abx_plugins-1.12.127-py3-none-any.whl", hash = "sha256:e41643260b423f730934ccf9c61a403c8da753cc3c6f53b62775bf1e677c95e2", size = 407215, upload-time = "2026-08-15T01:26:45.135Z" },
 ]
 
 [[package]]

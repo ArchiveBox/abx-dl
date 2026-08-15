@@ -37,7 +37,6 @@ from .config import (
     CONFIG_FILE,
     GlobalConfig,
     _load_plugin_config_model,
-    get_derived_config,
     get_initial_env,
     get_required_binary_requests,
     set_user_config,
@@ -463,7 +462,7 @@ def _plugin_enabled_for_install(
         _load_plugin_config_model(
             plugin,
             user_env=initial_user_env,
-            derived_env=initial_derived_env if initial_derived_env is not None else get_derived_config(initial_user_env),
+            derived_env=initial_derived_env or {},
             hydrate_binaries=False,
         ),
         run_output_dir=Path.cwd(),
@@ -474,7 +473,7 @@ def _plugin_enabled_for_install(
 def _count_install_requests(plugins: Mapping[str, Plugin]) -> int:
     seen: set[str] = set()
     initial_user_env = get_initial_env()
-    initial_derived_env = get_derived_config(initial_user_env)
+    initial_derived_env: dict[str, object] = {}
     for plugin in get_install_plugins(dict(plugins)):
         if not _plugin_enabled_for_install(
             plugin,
@@ -1787,7 +1786,7 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
     else:
         # Check + info mode (default)
         initial_user_env = get_initial_env()
-        initial_derived_env = get_derived_config(initial_user_env)
+        initial_derived_env: dict[str, object] = {}
         rows: list[dict[str, str]] = []
         declared_binary_specs: dict[str, dict[str, object]] = {}
         for plugin in selected.values():

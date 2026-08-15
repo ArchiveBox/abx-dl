@@ -1,9 +1,7 @@
 """Configuration management for abx-dl.
 
-``config.env`` stores only user-provided values.
-Runtime-derived binary state is kept in the event bus for the active run and in
-abxpkg's provider caches across runs. It is not projected into a persistent
-``derived.env`` config surface.
+``config.env`` stores only user-provided values. Runtime-derived values are
+kept in the event bus for the active run.
 """
 
 import json
@@ -45,7 +43,6 @@ BOOTSTRAP_CONFIG = BootstrapConfig()
 # Paths
 CONFIG_DIR = BOOTSTRAP_CONFIG.CONFIG_DIR
 CONFIG_FILE = CONFIG_DIR / "config.env"
-DERIVED_CONFIG_FILE = CONFIG_DIR / "derived.env"
 DATA_DIR = BOOTSTRAP_CONFIG.DATA_DIR
 
 
@@ -148,11 +145,6 @@ class RuntimeConfig:
 def _config_file(settings: GlobalConfig | None = None) -> Path:
     runtime_settings = settings or _global_config()
     return runtime_settings.CONFIG_DIR / "config.env"
-
-
-def _derived_config_file(settings: GlobalConfig | None = None) -> Path:
-    runtime_settings = settings or _global_config()
-    return runtime_settings.CONFIG_DIR / "derived.env"
 
 
 def ensure_default_persona_dir() -> Path:
@@ -315,8 +307,7 @@ async def get_config(bus: EventBus | None = None, *, include_derived: bool = Tru
     """
     if bus is None:
         user_config = GlobalConfig()
-        derived_config = get_derived_config(user_config.model_dump(mode="json")) if include_derived else {}
-        return RuntimeConfig(user=user_config, derived=derived_config)
+        return RuntimeConfig(user=user_config, derived={})
 
     current_user_config: dict[str, Any] = {}
     current_derived_config: dict[str, Any] = {}
@@ -370,8 +361,7 @@ async def get_plugin_env(
 def get_initial_env(*keys: str, plugin_schemas: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     """Load persisted user config before a bus exists.
 
-    This is bootstrap-only state from ``config.env``. It intentionally excludes
-    ``derived.env`` because derived cache is reconstructed separately at runtime.
+    This is bootstrap-only state from ``config.env``.
     """
     settings = _global_config()
     all_config = dict(settings.model_dump(mode="json"))
@@ -475,29 +465,6 @@ def unset_user_config(*keys: str) -> list[str]:
     _write_env_file(config_file, config)
     _global_config.cache_clear()
     return removed
-
-
-def get_derived_config(current_config: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Return sparse runtime-derived config.
-
-    Persistent ``derived.env`` was a binary cache projection. Binaries now use
-    abxpkg's provider caches directly, while active runs replay in-memory
-    ``MachineEvent(config_type="derived")`` records from the bus.
-    """
-    del current_config
-    return {}
-
-
-def set_derived_config(current_config: dict[str, Any] | None = None, **kwargs: Any) -> dict[str, Any]:
-    """Do not persist runtime-derived cache values as config."""
-    del current_config
-    return {key: value for key, value in kwargs.items() if value is not None}
-
-
-def unset_derived_config(*keys: str, current_config: dict[str, Any] | None = None) -> list[str]:
-    """No-op for the removed persistent derived config projection."""
-    del current_config
-    return list(keys)
 
 
 GLOBAL_DEFAULT_KEYS = (
