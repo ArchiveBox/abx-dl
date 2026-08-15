@@ -87,7 +87,7 @@ class RequiredBinary(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
     name: str
-    binproviders: str = "env"
+    binproviders: str | None = None
     min_version: str | None = None
     overrides: BinaryOverrides = Field(default_factory=dict)
 

@@ -560,7 +560,7 @@ def get_required_binary_requests(
     ).to_env()
     requests: list[dict[str, Any]] = []
     for spec in binaries:
-        record = spec.model_dump(mode="json")
+        record = spec.model_dump(mode="json", exclude_none=True)
         name_template = record.get("name")
 
         def hydrate(value: Any, source_env: dict[str, str]) -> Any:

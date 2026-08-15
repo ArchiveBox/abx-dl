@@ -2,7 +2,7 @@ import asyncio
 import json
 from pathlib import Path
 
-from abx_dl.config import get_initial_env
+from abx_dl.config import get_initial_env, get_required_binary_requests
 from abx_dl.events import InstallEvent, MachineEvent
 from abx_dl.models import Plugin, PluginConfig, RequiredBinary, Snapshot, discover_plugins
 from abx_dl.orchestrator import compute_install_phase_timeout, create_bus
@@ -109,11 +109,20 @@ def test_install_event_resolves_plugin_binaries_in_config_order(tmp_path: Path) 
         path=plugin_dir,
         config=PluginConfig(
             required_binaries=[
-                RequiredBinary(name="bash", binproviders="env"),
+                RequiredBinary(name="bash"),
                 RequiredBinary(name="sh", binproviders="env"),
             ],
         ),
     )
+    request_records = get_required_binary_requests(
+        plugin,
+        plugin.config.required_binaries,
+        overrides=get_initial_env(),
+        derived_overrides={},
+        run_output_dir=tmp_path / "run",
+    )
+    assert "binproviders" not in request_records[0]
+    assert request_records[1]["binproviders"] == "env"
     plugins = {plugin.name: plugin}
     snapshot = Snapshot(url="")
     run_dir = tmp_path / "run"
