@@ -208,6 +208,7 @@ RUN env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox \
         && ! command -v cargo \
         && ! command -v sonic \
         && ! command -v supervisord \
+        && abx-dl install \
         && echo -e "\n\n[√] Finished abx-dl Docker build successfully." \
         && echo -e "BUILD_END_TIME=$(date +"%Y-%m-%d %H:%M:%S %s")\n\n" \
         )' | tee -a /VERSION.txt
