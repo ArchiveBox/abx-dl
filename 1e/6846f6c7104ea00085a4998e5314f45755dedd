@@ -1,0 +1,16 @@
+abx_dl/services/snapshot_service.py
+  h_923c208e183a7b 61,182,273-275,278,280-284,403
+tests/test_executor.py
+  h_923c208e183a7b 1328,1368-1369,1392,1416
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "1e6846f6c7104ea00085a4998e5314f45755dedd",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
