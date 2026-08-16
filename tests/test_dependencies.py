@@ -1,5 +1,6 @@
 import asyncio
 import subprocess
+import sys
 from pathlib import Path
 
 from abxpkg.binary_service import BinaryService
@@ -8,7 +9,7 @@ from abx_dl.dependencies import resolve_binary_requests
 from abx_dl.orchestrator import create_bus
 
 
-def test_resolve_binary_requests_uses_real_abxpkg_env_projection(tmp_path: Path) -> None:
+def test_resolve_binary_requests_preserves_active_python_runtime(tmp_path: Path) -> None:
     lib_dir = tmp_path / "lib"
     bus = create_bus(name=f"dependencies_real_python_{tmp_path.name}")
     BinaryService(bus, auto_install=False, lib_dir=lib_dir)
@@ -39,8 +40,7 @@ def test_resolve_binary_requests_uses_real_abxpkg_env_projection(tmp_path: Path)
     assert python_event is not None
     assert python_event.name == "python3"
     assert python_event.binprovider == "env"
-    assert Path(python_event.abspath) == lib_dir / "env" / "bin" / "python3"
-    assert Path(python_event.abspath).is_symlink()
+    assert Path(python_event.abspath).samefile(sys.executable)
     result = subprocess.run(
         [python_event.abspath, "-c", "print('canonical-abxpkg')"],
         check=True,
