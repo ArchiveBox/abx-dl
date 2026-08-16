@@ -1325,27 +1325,12 @@ def test_snapshot_background_daemon_stays_alive_until_cleanup(tmp_path: Path) ->
     assert not _pid_is_alive(started[0].pid)
 
 
-def test_snapshot_abort_interrupts_concurrently_running_hooks(tmp_path: Path, httpserver: HTTPServer) -> None:
+def test_snapshot_abort_stops_scheduling_later_hooks(tmp_path: Path, httpserver: HTTPServer) -> None:
     stream_url, response_started, release_response = _streaming_http_response(httpserver, "/snapshot-abort")
     plugins = discover_plugins()
     selected = {name: plugins[name] for name in ("chrome", "title")}
     output_dir = tmp_path / "run"
     bus = create_bus(total_timeout=300.0, name=f"snapshot_abort_{tmp_path.name}")
-    title_started_after_navigate_ready: list[bool] = []
-
-    async def on_ProcessStartedEvent(event: ProcessStartedEvent) -> None:
-        if event.hook_name != "on_Snapshot__54_title":
-            return
-        navigate_started = await bus.find(
-            ProcessStartedEvent,
-            past=True,
-            future=False,
-            hook_name="on_Snapshot__30_chrome_navigate",
-        )
-        assert isinstance(navigate_started, ProcessStartedEvent)
-        title_started_after_navigate_ready.append(navigate_started.stdout_file.stat().st_size > 0)
-
-    bus.on(ProcessStartedEvent, on_ProcessStartedEvent)
 
     async def run() -> tuple[
         ProcessCompletedEvent | None,
@@ -1380,13 +1365,9 @@ def test_snapshot_abort_interrupts_concurrently_running_hooks(tmp_path: Path, ht
             hook_name="on_Snapshot__10_chrome_tab.daemon.bg",
         )
         assert isinstance(tab_started, ProcessStartedEvent)
+        assert tab_started.stdout_file.stat().st_size > 0
+        assert _pid_is_alive(tab_started.pid)
         assert await asyncio.to_thread(response_started.wait, 60.0)
-        second_started = await bus.find(
-            ProcessStartedEvent,
-            past=True,
-            future=60.0,
-            hook_name="on_Snapshot__54_title",
-        )
         crawl = await bus.find(CrawlEvent, past=True, future=False)
         assert isinstance(crawl, CrawlEvent)
         await bus.emit(CrawlAbortEvent(event_parent_id=crawl.event_id)).now()
@@ -1408,6 +1389,7 @@ def test_snapshot_abort_interrupts_concurrently_running_hooks(tmp_path: Path, ht
             past=True,
             future=False,
         )
+        second_started = await bus.find(ProcessStartedEvent, past=True, future=False, hook_name="on_Snapshot__54_title")
         await bus.wait_until_idle()
         return (
             first_completed if isinstance(first_completed, ProcessCompletedEvent) else None,
@@ -1431,9 +1413,7 @@ def test_snapshot_abort_interrupts_concurrently_running_hooks(tmp_path: Path, ht
     assert not (output_dir / "chrome" / "target_id.txt").exists()
     assert not (output_dir / "chrome" / "url.txt").exists()
     assert snapshot_completed is not None
-    assert second_started is not None
-    assert title_started_after_navigate_ready == [True]
-    assert second_started.start_ts < first_completed.end_ts
+    assert second_started is None
 
 
 def test_snapshot_completed_waits_for_cleanup_process_listeners(tmp_path: Path) -> None:
