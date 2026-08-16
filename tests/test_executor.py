@@ -537,7 +537,7 @@ def test_binary_service_stops_after_successful_provider_result(tmp_path: Path) -
     python_events = [event for event in binary_events if event.name == "python3"]
     assert python_events
     assert python_events[-1].binprovider == "env"
-    assert Path(python_events[-1].abspath).name == "python3"
+    assert Path(python_events[-1].abspath).samefile(sys.executable)
 
 
 def test_binary_service_concurrent_real_requests_preserve_env_projection(tmp_path: Path) -> None:
