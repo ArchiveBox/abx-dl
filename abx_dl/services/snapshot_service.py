@@ -68,7 +68,7 @@ class SnapshotService(BaseService):
         │       │       │   └── ArchiveResultEvent (inline)
         │       │       └── ProcessCompletedEvent
         │       │           └── ArchiveResultEvent (enriched)
-        │       ├── on_Snapshot__09_chrome_launch.daemon.bg
+        │       ├── on_Snapshot__00_chrome_launch.daemon.bg
         │       ├── on_Snapshot__54_title
         │       ├── on_Snapshot__93_hashes
         │       │

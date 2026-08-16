@@ -12,7 +12,7 @@ from abx_dl.models import discover_plugins
 
 
 SUCCESS_STATUSES = {"succeeded", "noresult", "noresults"}
-CHROME_SNAPSHOT_OWNER = ("chrome", "on_Snapshot__09_chrome_launch.daemon.bg")
+CHROME_SNAPSHOT_OWNER = ("chrome", "on_Snapshot__00_chrome_launch.daemon.bg")
 CHROME_CRAWL_SETUP_HOOK = "on_CrawlSetup__90_chrome_launch.daemon.bg"
 CHROME_CRAWL_WAIT_HOOK = "on_CrawlSetup__91_chrome_wait"
 

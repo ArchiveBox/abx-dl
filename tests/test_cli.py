@@ -723,14 +723,14 @@ def test_format_archive_result_line_includes_requested_fields() -> None:
     result = ArchiveResult(
         snapshot_id="snap",
         plugin="chrome",
-        hook_name="on_Snapshot__10_chrome_tab.bg",
+        hook_name="on_Snapshot__01_chrome_tab.bg",
         status="failed",
         output_str="",
         error="No Chrome session found",
     )
     line = _format_archive_result_line(result)
     assert "ArchiveResult" in line
-    assert "on_Snapshot__10_chrome_tab.bg" in line
+    assert "on_Snapshot__01_chrome_tab.bg" in line
     assert "failed" in line
     assert "No Chrome session found" in line
 
@@ -760,7 +760,7 @@ def test_build_archive_results_table_includes_elapsed_column() -> None:
     result = ArchiveResult(
         snapshot_id="snap",
         plugin="chrome",
-        hook_name="on_Snapshot__10_chrome_tab.bg",
+        hook_name="on_Snapshot__01_chrome_tab.bg",
         status="started",
         start_ts="2026-03-11T12:00:00",
     )
@@ -774,7 +774,7 @@ def test_record_status_style_uses_darker_started_color_for_background_hooks() ->
     bg_record = cli_module._LiveProcessRecord(
         id="proc-1",
         plugin="chrome",
-        hook_name="on_Snapshot__09_chrome_launch.daemon.bg",
+        hook_name="on_Snapshot__00_chrome_launch.daemon.bg",
         timeout=60,
         status="started",
     )

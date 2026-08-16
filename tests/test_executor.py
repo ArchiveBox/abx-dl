@@ -107,7 +107,7 @@ def test_process_command_executes_hooks_through_declared_shebang(tmp_path: Path)
     assert _process_command(node_event) == [str(node_hook_path), "--url=https://example.com"]
 
 
-def test_archivewebpage_extension_prepare_runs_before_chrome_launch() -> None:
+def test_runtime_setup_hooks_run_before_dependent_extractors() -> None:
     plugins = filter_plugins(discover_plugins(), ["archivewebpage"])
     setup_hooks = [
         (plugin.name, hook.name)
@@ -120,6 +120,20 @@ def test_archivewebpage_extension_prepare_runs_before_chrome_launch() -> None:
     assert setup_hooks.index(("archivewebpage", "on_CrawlSetup__80_archivewebpage_prepare")) < setup_hooks.index(
         ("chrome", "on_CrawlSetup__90_chrome_launch.daemon.bg"),
     )
+
+    snapshot_hooks = [
+        (plugin.name, hook.name)
+        for plugin, hook in sorted(
+            ((plugin, hook) for plugin in discover_plugins().values() for hook in plugin.filter_hooks("Snapshot")),
+            key=lambda item: item[1].sort_key,
+        )
+    ]
+    assert snapshot_hooks[:4] == [
+        ("chrome", "on_Snapshot__00_chrome_launch.daemon.bg"),
+        ("chrome", "on_Snapshot__01_chrome_tab.daemon.bg"),
+        ("chrome", "on_Snapshot__01_chrome_wait"),
+        ("chrome_screencast", "on_Snapshot__02_chrome_screencast.daemon.bg"),
+    ]
 
 
 def _pid_is_alive(pid: int) -> bool:
@@ -941,7 +955,7 @@ def test_download_does_not_spawn_disabled_plugin_hooks(tmp_path: Path) -> None:
 
 def test_snapshot_service_selected_hooks_by_plugin_runs_only_named_hooks(tmp_path: Path) -> None:
     plugin = discover_plugins()["chrome"]
-    selected_hook = next(hook for hook in plugin.hooks if hook.name == "on_Snapshot__11_chrome_wait")
+    selected_hook = next(hook for hook in plugin.hooks if hook.name == "on_Snapshot__01_chrome_wait")
     bus = create_bus(total_timeout=20.0, name=f"selected_snapshot_hooks_{tmp_path.name}")
     ProcessService(bus, emit_jsonl=False, interactive_tty=False)
     snapshot = Snapshot(url="https://example.com", id="snap-123")
@@ -981,7 +995,7 @@ def test_snapshot_service_repins_snapshot_persona_after_global_config_merge(tmp_
     output_dir = tmp_path / "archive" / "users" / "system" / "snapshots" / "20260603" / "example.com" / "current"
     stale_dir = tmp_path / "archive" / "users" / "system" / "snapshots" / "20260603" / "example.com" / "stale"
     plugin = discover_plugins()["chrome"]
-    real_hook = next(hook for hook in plugin.hooks if hook.name == "on_Snapshot__11_chrome_wait")
+    real_hook = next(hook for hook in plugin.hooks if hook.name == "on_Snapshot__01_chrome_wait")
     snapshot = Snapshot(url="https://example.com", id="snap-current")
     ProcessService(bus, emit_jsonl=False, interactive_tty=False)
     SnapshotService(
@@ -1362,7 +1376,7 @@ def test_snapshot_abort_stops_scheduling_later_hooks(tmp_path: Path, httpserver:
             ProcessStartedEvent,
             past=True,
             future=False,
-            hook_name="on_Snapshot__10_chrome_tab.daemon.bg",
+            hook_name="on_Snapshot__01_chrome_tab.daemon.bg",
         )
         assert isinstance(tab_started, ProcessStartedEvent)
         assert tab_started.stdout_file.stat().st_size > 0
@@ -1382,7 +1396,7 @@ def test_snapshot_abort_stops_scheduling_later_hooks(tmp_path: Path, httpserver:
             ProcessCompletedEvent,
             past=True,
             future=False,
-            hook_name="on_Snapshot__10_chrome_tab.daemon.bg",
+            hook_name="on_Snapshot__01_chrome_tab.daemon.bg",
         )
         snapshot_completed = await bus.find(
             SnapshotCompletedEvent,
@@ -1735,7 +1749,7 @@ def test_crawl_abort_cleans_real_chrome_process_tree_and_foreground_hook(
             ProcessStartedEvent,
             past=True,
             future=False,
-            hook_name="on_Snapshot__10_chrome_tab.daemon.bg",
+            hook_name="on_Snapshot__01_chrome_tab.daemon.bg",
         )
         assert isinstance(launch_started, ProcessStartedEvent)
         assert isinstance(tab_started, ProcessStartedEvent)
@@ -1758,7 +1772,7 @@ def test_crawl_abort_cleans_real_chrome_process_tree_and_foreground_hook(
 
     by_hook = {event.hook_name: event for event in completed}
     launch_completed = by_hook["on_CrawlSetup__90_chrome_launch.daemon.bg"]
-    tab_completed = by_hook["on_Snapshot__10_chrome_tab.daemon.bg"]
+    tab_completed = by_hook["on_Snapshot__01_chrome_tab.daemon.bg"]
     navigate_completed = by_hook["on_Snapshot__30_chrome_navigate"]
     assert launch_completed.status == "succeeded"
     assert launch_completed.exit_code == 0
@@ -1768,7 +1782,7 @@ def test_crawl_abort_cleans_real_chrome_process_tree_and_foreground_hook(
     assert navigate_completed.stderr == "Hook interrupted by user"
     assert {event.hook_name for event in kills} >= {
         "on_CrawlSetup__90_chrome_launch.daemon.bg",
-        "on_Snapshot__10_chrome_tab.daemon.bg",
+        "on_Snapshot__01_chrome_tab.daemon.bg",
         "on_Snapshot__30_chrome_navigate",
     }
     assert not any(_pid_is_alive(pid) for pid in (launch_pid, chrome_pid, navigate_pid))
