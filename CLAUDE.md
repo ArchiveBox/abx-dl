@@ -21,7 +21,7 @@ grep -q 'Usage:' <<<"$help_output"
 set -Eeuo pipefail
 plugin_info="$(uv run --no-sync --no-sources abx-dl plugins wget)"
 grep -q 'WGET_BINARY=wget' <<<"$plugin_info"
-grep -q 'on_Snapshot__06_wget' <<<"$plugin_info"
+grep -q 'on_Snapshot__35_wget' <<<"$plugin_info"
 ```
 
 ## Verification

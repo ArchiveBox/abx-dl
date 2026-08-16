@@ -61,7 +61,7 @@ class SnapshotService(BaseService):
         │       │  ── Snapshot hook handlers run serially ──
         │       │  (only root SnapshotEvents emitted by CrawlStartEvent)
         │       │
-        │       ├── on_Snapshot__06_wget.finite.bg
+        │       ├── on_Snapshot__35_wget.finite.bg
         │       │   └── ProcessEvent
         │       │       ├── ProcessStdoutEvent
         │       │       │   ├── SnapshotEvent (discovered URL)

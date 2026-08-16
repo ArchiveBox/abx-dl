@@ -371,7 +371,7 @@ def test_plugin_env_accepts_structured_extra_context_from_machine_events(tmp_pat
                 bus,
                 plugin=plugins["favicon"],
                 run_output_dir=tmp_path,
-                extra_context={"plugin": "favicon", "hook_name": "on_Snapshot__11_favicon.finite.bg"},
+                extra_context={"plugin": "favicon", "hook_name": "on_Snapshot__37_favicon.finite.bg"},
             ),
         ).to_env()
     finally:

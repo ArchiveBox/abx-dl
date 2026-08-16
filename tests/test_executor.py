@@ -128,10 +128,9 @@ def test_runtime_setup_hooks_run_before_dependent_extractors() -> None:
             key=lambda item: item[1].sort_key,
         )
     ]
-    assert snapshot_hooks[:4] == [
+    assert snapshot_hooks[:3] == [
         ("chrome", "on_Snapshot__00_chrome_launch.daemon.bg"),
         ("chrome", "on_Snapshot__01_chrome_tab.daemon.bg"),
-        ("chrome", "on_Snapshot__01_chrome_wait"),
         ("chrome_screencast", "on_Snapshot__02_chrome_screencast.daemon.bg"),
     ]
 
@@ -758,7 +757,7 @@ def test_download_sets_plugin_specific_binary_env_from_binary_default(tmp_path: 
     snapshot_processes: list[ProcessEvent] = []
 
     async def on_ProcessEvent(event: ProcessEvent) -> None:
-        if event.plugin_name == "wget" and event.hook_name == "on_Snapshot__06_wget.finite.bg":
+        if event.plugin_name == "wget" and event.hook_name == "on_Snapshot__35_wget.finite.bg":
             snapshot_processes.append(event)
 
     bus.on(ProcessEvent, on_ProcessEvent)
@@ -781,7 +780,7 @@ def test_snapshot_background_only_hook_finishes_before_cleanup_without_filename_
     completed_processes: list[ProcessCompletedEvent] = []
 
     async def on_ProcessCompletedEvent(event: ProcessCompletedEvent) -> None:
-        if event.plugin_name == "wget" and event.hook_name == "on_Snapshot__06_wget.finite.bg":
+        if event.plugin_name == "wget" and event.hook_name == "on_Snapshot__35_wget.finite.bg":
             completed_processes.append(event)
 
     bus.on(ProcessCompletedEvent, on_ProcessCompletedEvent)
@@ -795,7 +794,7 @@ def test_snapshot_background_only_hook_finishes_before_cleanup_without_filename_
     )
 
     result = next(r for r in results if r.plugin == "wget")
-    assert result.hook_name == "on_Snapshot__06_wget.finite.bg"
+    assert result.hook_name == "on_Snapshot__35_wget.finite.bg"
     assert result.status == "succeeded"
     assert result.output_str == "wget/example.com/index.html"
     assert completed_processes
@@ -955,7 +954,7 @@ def test_download_does_not_spawn_disabled_plugin_hooks(tmp_path: Path) -> None:
 
 def test_snapshot_service_selected_hooks_by_plugin_runs_only_named_hooks(tmp_path: Path) -> None:
     plugin = discover_plugins()["chrome"]
-    selected_hook = next(hook for hook in plugin.hooks if hook.name == "on_Snapshot__01_chrome_wait")
+    selected_hook = next(hook for hook in plugin.hooks if hook.name == "on_Snapshot__30_chrome_navigate")
     bus = create_bus(total_timeout=20.0, name=f"selected_snapshot_hooks_{tmp_path.name}")
     ProcessService(bus, emit_jsonl=False, interactive_tty=False)
     snapshot = Snapshot(url="https://example.com", id="snap-123")
@@ -995,7 +994,7 @@ def test_snapshot_service_repins_snapshot_persona_after_global_config_merge(tmp_
     output_dir = tmp_path / "archive" / "users" / "system" / "snapshots" / "20260603" / "example.com" / "current"
     stale_dir = tmp_path / "archive" / "users" / "system" / "snapshots" / "20260603" / "example.com" / "stale"
     plugin = discover_plugins()["chrome"]
-    real_hook = next(hook for hook in plugin.hooks if hook.name == "on_Snapshot__01_chrome_wait")
+    real_hook = next(hook for hook in plugin.hooks if hook.name == "on_Snapshot__30_chrome_navigate")
     snapshot = Snapshot(url="https://example.com", id="snap-current")
     ProcessService(bus, emit_jsonl=False, interactive_tty=False)
     SnapshotService(

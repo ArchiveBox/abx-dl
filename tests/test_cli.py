@@ -224,7 +224,7 @@ def test_build_archive_results_table_shows_output_size_column() -> None:
     record = ArchiveResult(
         snapshot_id="snap-1",
         plugin="wget",
-        hook_name="on_Snapshot__06_wget.finite.bg",
+        hook_name="on_Snapshot__35_wget.finite.bg",
         status="succeeded",
         output_str="wget/example.com/index.html",
         output_files=[
@@ -618,7 +618,7 @@ def test_render_record_output_relativizes_live_archive_result_absolute_path(tmp_
         record = cli_module._LiveProcessRecord(
             id="proc-1",
             plugin="wget",
-            hook_name="on_Snapshot__06_wget.finite.bg",
+            hook_name="on_Snapshot__35_wget.finite.bg",
             timeout=60,
             output=str(output_path),
             final_output=str(output_path),
@@ -635,7 +635,7 @@ def test_phase_label_for_event_uses_ancestor_phase_event() -> None:
     process_event = ProcessEvent(
         plugin_name="wget",
         hook_name="install",
-        hook_path=_real_hook_path("wget", "on_Snapshot__06_wget.finite.bg"),
+        hook_path=_real_hook_path("wget", "on_Snapshot__35_wget.finite.bg"),
         hook_args=["wget"],
         is_background=False,
         output_dir="/tmp",
@@ -781,7 +781,7 @@ def test_record_status_style_uses_darker_started_color_for_background_hooks() ->
     fg_record = cli_module._LiveProcessRecord(
         id="proc-2",
         plugin="wget",
-        hook_name="on_Snapshot__06_wget",
+        hook_name="on_Snapshot__35_wget",
         timeout=60,
         status="started",
     )
@@ -991,7 +991,7 @@ def test_readme_dl_command_downloads_example_dot_com_with_real_output(tmp_path: 
     wget_processes = [
         record
         for record in index_records
-        if record["type"] == "Process" and record.get("plugin") == "wget" and record.get("hook_name") == "on_Snapshot__06_wget.finite.bg"
+        if record["type"] == "Process" and record.get("plugin") == "wget" and record.get("hook_name") == "on_Snapshot__35_wget.finite.bg"
     ]
     assert wget_processes
     reported_results = [
