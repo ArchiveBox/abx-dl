@@ -1,0 +1,24 @@
+CLAUDE.md
+  h_923c208e183a7b 24
+tests/test_config.py
+  h_923c208e183a7b 374
+tests/test_cli.py
+  h_923c208e183a7b 227,621,638,784,994
+abx_dl/services/snapshot_service.py
+  h_923c208e183a7b 64
+tests/test_executor.py
+  h_923c208e183a7b 131,760,783,797,957,997
+AGENTS.md
+  h_923c208e183a7b 40
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "9fba3ce270a70b61050cbd95fe59801f0c483382",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
