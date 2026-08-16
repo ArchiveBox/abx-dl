@@ -3,18 +3,18 @@ revision = 3
 requires-python = ">=3.12, <3.15"
 
 [options]
-exclude-newer = "2026-08-11T08:55:12.893792654Z"
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
-abxbus = { timestamp = "2026-08-16T08:55:11.89381002Z", span = "PT1S" }
+abxbus = { timestamp = "0001-01-01T00:00:00Z", span = "PT1S" }
 abx-dl = "2100-01-01T00:00:00Z"
 abx-plugins = "2100-01-01T00:00:00Z"
 abxpkg = "2100-01-01T00:00:00Z"
 
 [[package]]
 name = "abx-dl"
-version = "1.12.173"
+version = "1.12.174"
 source = { editable = "." }
 dependencies = [
     { name = "abx-plugins" },
@@ -92,9 +92,9 @@ dependencies = [
     { name = "rich-click" },
     { name = "uv" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/2d/a0/e8c4eaa18de905920c4927c088bd5e3845e2e830da6916e6d3d74ca7f9af/abx_plugins-1.12.161.tar.gz", hash = "sha256:63f4dd0421a446721cd11ded0f5ce5d182dc26f18d0630424e6a8c2a4796c88e", size = 254110, upload-time = "2026-08-16T08:50:09.002011Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/2d/a0/e8c4eaa18de905920c4927c088bd5e3845e2e830da6916e6d3d74ca7f9af/abx_plugins-1.12.161.tar.gz", hash = "sha256:63f4dd0421a446721cd11ded0f5ce5d182dc26f18d0630424e6a8c2a4796c88e", size = 254110, upload-time = "2026-08-16T08:50:09.002Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/30/84/222060d2051ebf0a9c1e0c3cc35c415e0dd2a4f00380f267bd1842a08f48/abx_plugins-1.12.161-py3-none-any.whl", hash = "sha256:12a9936ab8c26f32ce5eee4a6346a5bc390620c6849932907f8fd0ff6ba51bbe", size = 405046, upload-time = "2026-08-16T08:50:10.540692Z" },
+    { url = "https://files.pythonhosted.org/packages/30/84/222060d2051ebf0a9c1e0c3cc35c415e0dd2a4f00380f267bd1842a08f48/abx_plugins-1.12.161-py3-none-any.whl", hash = "sha256:12a9936ab8c26f32ce5eee4a6346a5bc390620c6849932907f8fd0ff6ba51bbe", size = 405046, upload-time = "2026-08-16T08:50:10.54Z" },
 ]
 
 [[package]]
