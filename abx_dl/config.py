@@ -210,7 +210,6 @@ def _load_plugin_config_model(
     *,
     user_env: GlobalConfig | Mapping[str, Any] | None = None,
     derived_env: GlobalConfig | Mapping[str, Any] | None = None,
-    hydrate_binaries: bool = True,
 ) -> Any:
     """Resolve one plugin's typed config model from the final effective env.
 
@@ -270,7 +269,7 @@ def _load_plugin_config_model(
         global_config=global_config,
         user_config=user_config,
         environ={},
-        hydrate_binaries=hydrate_binaries,
+        hydrate_binaries=False,
     )
     return resolved_config
 
@@ -328,7 +327,6 @@ async def get_plugin_env(
     plugin: Plugin,
     run_output_dir: Path,
     include_derived: bool = True,
-    hydrate_binaries: bool = True,
     extra_context: dict[str, Any] | None = None,
     config: RuntimeConfig | None = None,
 ) -> PluginEnv:
@@ -342,7 +340,6 @@ async def get_plugin_env(
         plugin,
         user_env=runtime_config.user,
         derived_env=runtime_config.derived if include_derived else None,
-        hydrate_binaries=hydrate_binaries,
     )
     return PluginEnv.from_config(plugin_config, run_output_dir=run_output_dir, extra_context=extra_context)
 
@@ -499,12 +496,10 @@ def get_required_binary_requests(
         plugin,
         user_env=overrides,
         derived_env=derived_overrides,
-        hydrate_binaries=False,
     )
     request_config = _load_plugin_config_model(
         plugin,
         user_env=overrides,
-        hydrate_binaries=False,
     )
     env = PluginEnv.from_config(
         plugin_config,

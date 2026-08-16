@@ -463,7 +463,6 @@ def _plugin_enabled_for_install(
             plugin,
             user_env=initial_user_env,
             derived_env=initial_derived_env or {},
-            hydrate_binaries=False,
         ),
         run_output_dir=Path.cwd(),
     )
