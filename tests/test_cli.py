@@ -3,6 +3,7 @@ import importlib.metadata
 import io
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
@@ -1003,6 +1004,37 @@ def test_readme_dl_command_downloads_example_dot_com_with_real_output(tmp_path: 
     assert any(
         record.get("status") == "succeeded" and record.get("output_str") == "wget/example.com/index.html" for record in reported_results
     )
+
+
+def test_dl_hooks_find_dependency_commands_inside_active_install(tmp_path: Path) -> None:
+    output_dir = tmp_path / "downloads"
+    env = _cli_env(tmp_path)
+    env["PATH"] = os.pathsep.join(entry for entry in env["PATH"].split(os.pathsep) if entry and not (Path(entry) / "abxpkg").exists())
+    assert shutil.which("abxpkg", path=env["PATH"]) is None
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "abx_dl",
+            "dl",
+            "--plugins=parse_txt_urls",
+            f"--dir={output_dir}",
+            "https://example.com",
+        ],
+        cwd=tmp_path,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    records = [json.loads(line) for line in (output_dir / "index.jsonl").read_text().splitlines()]
+    process = next(record for record in records if record["type"] == "Process" and record["plugin"] == "parse_txt_urls")
+    assert process["status"] == "succeeded"
+    assert "No such file or directory" not in process["stderr"]
 
 
 def test_dl_max_urls_is_scoped_to_each_output_dir(tmp_path: Path) -> None:

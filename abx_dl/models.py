@@ -12,6 +12,7 @@ import os
 import platform
 import re
 import socket
+import sysconfig
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -228,6 +229,11 @@ class PluginEnv(BaseModel):
         for key, value in payload.items():
             if value is not None:
                 env[key] = dump_to_dotenv_format(value)
+
+        scripts_dir = sysconfig.get_path("scripts")
+        path_entries = [entry for entry in env.get("PATH", "").split(os.pathsep) if entry]
+        if scripts_dir and scripts_dir not in path_entries:
+            env["PATH"] = os.pathsep.join([scripts_dir, *path_entries])
 
         return env
 

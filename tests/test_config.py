@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import shutil
+import sysconfig
 from pathlib import Path
 from typing import Any
 
@@ -67,7 +68,10 @@ def test_plugin_env_sets_run_dirs_without_projecting_binary_paths(tmp_path: Path
     assert "NPM_BIN_DIR" not in env
     assert "PUPPETEER_CACHE_DIR" not in env
     assert "VIRTUAL_ENV" not in env
-    assert env["PATH"] == os.environ["PATH"]
+    expected_path = [entry for entry in os.environ["PATH"].split(os.pathsep) if entry]
+    if sysconfig.get_path("scripts") not in expected_path:
+        expected_path.insert(0, sysconfig.get_path("scripts"))
+    assert env["PATH"].split(os.pathsep) == expected_path
 
 
 def test_plugin_timeout_defaults_only_yield_to_explicit_global_timeout(tmp_path: Path) -> None:
