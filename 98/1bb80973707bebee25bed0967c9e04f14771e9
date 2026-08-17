@@ -1,0 +1,22 @@
+abx_dl/models.py
+  h_923c208e183a7b 15,233-237
+pyproject.toml
+  h_923c208e183a7b 3
+tests/test_cli.py
+  h_923c208e183a7b 6,1009-1039
+tests/test_config.py
+  h_923c208e183a7b 5,71-74
+uv.lock
+  h_923c208e183a7b 17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "981bb80973707bebee25bed0967c9e04f14771e9",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
