@@ -176,6 +176,30 @@ class SnapshotService(BaseService):
             return True
         return False
 
+    async def wait_for_plugin_outputs(self, event: SnapshotEvent, plugin: Plugin) -> None:
+        """Wait for already-started optional producer plugins before consuming their files."""
+        dependency_names = set(plugin.config.wait_for_plugins)
+        if not dependency_names:
+            return
+        process_events = await self.bus.filter(
+            ProcessEvent,
+            child_of=event,
+            past=True,
+            future=False,
+            where=lambda candidate: candidate.plugin_name in dependency_names,
+        )
+        for process_event in process_events:
+            timeout = float(self._hook_timeouts.get((process_event.plugin_name, process_event.hook_name), 60)) + 30.0
+            completed_process = await self.bus.find(
+                ProcessCompletedEvent,
+                child_of=process_event,
+                past=True,
+                future=timeout,
+            )
+            if completed_process is None:
+                raise RuntimeError(f"Plugin output dependency {process_event.plugin_name} did not complete")
+            await _wait_for_process_completed(completed_process, timeout)
+
     def on_SnapshotEvent__for_hook(self, plugin: Plugin, hook: Hook):
         """Create the concrete SnapshotEvent handler for one snapshot hook."""
 
@@ -190,6 +214,9 @@ class SnapshotService(BaseService):
             )
             if not isinstance(parent_event, CrawlStartEvent):
                 return
+            if await self.should_abort():
+                return
+            await self.wait_for_plugin_outputs(event, plugin)
             if await self.should_abort():
                 return
             assert self.limit_state is not None

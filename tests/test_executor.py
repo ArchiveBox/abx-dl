@@ -1338,6 +1338,64 @@ def test_snapshot_background_daemon_stays_alive_until_cleanup(tmp_path: Path) ->
     assert not _pid_is_alive(started[0].pid)
 
 
+def test_snapshot_hook_waits_for_selected_plugin_outputs(tmp_path: Path, httpserver: HTTPServer) -> None:
+    stream_url, response_started, release_response = _streaming_http_response(httpserver, "/plugin-output-dependency")
+    plugins = discover_plugins()
+    wget = plugins["wget"]
+    consumer = plugins["parse_txt_urls"].model_copy(deep=True)
+    consumer.config = consumer.config.model_copy(update={"wait_for_plugins": ["wget"]})
+    selected = {wget.name: wget, consumer.name: consumer}
+    output_dir = tmp_path / "run"
+    bus = create_bus(total_timeout=120.0, name=f"snapshot_output_dependency_{tmp_path.name}")
+
+    async def run() -> None:
+        download_task = asyncio.create_task(
+            download(
+                stream_url,
+                plugins=selected,
+                output_dir=output_dir,
+                selected_plugins=list(selected),
+                auto_install=True,
+                emit_jsonl=False,
+                interactive_tty=False,
+                bus=bus,
+            ),
+        )
+        try:
+            assert await asyncio.to_thread(response_started.wait, 30.0)
+            assert (
+                await bus.find(
+                    ProcessStartedEvent,
+                    past=True,
+                    future=False,
+                    plugin_name=consumer.name,
+                )
+                is None
+            )
+        finally:
+            release_response.set()
+
+        await download_task
+        wget_completed = await bus.find(
+            ProcessCompletedEvent,
+            past=True,
+            future=False,
+            plugin_name=wget.name,
+        )
+        consumer_started = await bus.find(
+            ProcessStartedEvent,
+            past=True,
+            future=False,
+            plugin_name=consumer.name,
+        )
+        assert isinstance(wget_completed, ProcessCompletedEvent)
+        assert isinstance(consumer_started, ProcessStartedEvent)
+        assert wget_completed.event_created_at <= consumer_started.event_created_at
+        await bus.wait_until_idle()
+
+    asyncio.run(run())
+
+
 def test_snapshot_abort_stops_scheduling_later_hooks(tmp_path: Path, httpserver: HTTPServer) -> None:
     stream_url, response_started, release_response = _streaming_http_response(httpserver, "/snapshot-abort")
     plugins = discover_plugins()
