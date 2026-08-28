@@ -1536,7 +1536,9 @@ def test_crawl_setup_background_daemon_survives_until_explicit_cleanup(tmp_path:
     daemon_completed = asyncio.run(run())
 
     assert daemon_completed is not None
-    assert daemon_completed.status == "succeeded"
+    assert daemon_completed.status == "succeeded", (
+        f"exit_code={daemon_completed.exit_code} stdout={daemon_completed.stdout!r} stderr={daemon_completed.stderr!r}"
+    )
     assert daemon_completed.exit_code == 0
     cleanup_records = []
     for line in daemon_completed.stdout.splitlines():
