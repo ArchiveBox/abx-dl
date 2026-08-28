@@ -31,7 +31,18 @@ updated, count = re.subn(r'^version = "[^"]+"$', f'version = "{version}"', text,
 if count != 1:
     raise SystemExit('Failed to update version in pyproject.toml')
 path.write_text(updated)
+
+lock_path = Path('uv.lock')
+lock, count = re.subn(
+    r'(?m)^(name = "abx-dl"\nversion = ")[^"]+("$)',
+    rf'\g<1>{version}\2',
+    lock_path.read_text(),
+    count=1,
+)
+if count != 1:
+    raise SystemExit('Failed to update abx-dl version in uv.lock')
+lock_path.write_text(lock)
 print(version)
 PY
 
-uv lock --no-cache
+uv lock --check --offline --no-cache
