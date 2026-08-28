@@ -286,8 +286,8 @@ require_clean_exact_checkout() {
     [[ -z "$("${GIT_BINARY}" status --short)" ]] || { echo "Refusing to release from a dirty worktree" >&2; return 1; }
     "${GIT_BINARY}" fetch --quiet --no-tags origin "+refs/heads/${branch}:refs/remotes/origin/${branch}"
     [[ "$("${GIT_BINARY}" rev-parse "refs/remotes/origin/${branch}")" == "${sha}" ]] || {
-        echo "${sha} is not the current origin/${branch} HEAD" >&2
-        return 1
+        echo "Skipping obsolete release ${sha}: current origin/${branch} has advanced" >&2
+        exit 0
     }
 }
 
