@@ -3,8 +3,6 @@ name: CI
 on:
   pull_request:
     branches: [main]
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -18,13 +16,11 @@ concurrency:
 
 jobs:
   tests:
-    if: github.event_name != 'push' || github.event.head_commit.author.email != 'release-bot@archivebox.io'
     name: Full test suite
     uses: ./.github/workflows/test.yml
     secrets: inherit
 
   docker:
-    if: github.event_name != 'push' || github.event.head_commit.author.email != 'release-bot@archivebox.io'
     name: Docker build and test
     uses: ./.github/workflows/docker.yml
     with:
