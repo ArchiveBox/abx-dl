@@ -1,4 +1,5 @@
 import asyncio
+import importlib.metadata
 import json
 from pathlib import Path
 
@@ -232,15 +233,16 @@ def test_install_event_preserves_binary_overrides_and_plugin_context(tmp_path: P
     abxbus_request = next(event for event in request_events if event.name == "abxbus")
     assert abxbus_request.no_cache is None
     assert abxbus_request.binproviders == "pnpm"
-    assert abxbus_request.min_version == "2.5.45"
+    abxbus_version = importlib.metadata.version("abxbus")
+    assert abxbus_request.min_version == abxbus_version
     assert abxbus_request.min_release_age == 0
     assert abxbus_request.overrides == {
         "pnpm": {
             "install_root": str(managed_lib_dir / "pnpm" / "packages" / "abxbus"),
             "min_release_age": 0,
-            "install_args": ["abxbus@2.5.45"],
+            "install_args": [f"abxbus@{abxbus_version}"],
             "abspath": str(managed_lib_dir / "pnpm" / "packages" / "abxbus" / "node_modules" / "abxbus" / "dist" / "cjs" / "index.js"),
-            "version": "2.5.45",
+            "version": abxbus_version,
             "postinstall_scripts": True,
         },
     }

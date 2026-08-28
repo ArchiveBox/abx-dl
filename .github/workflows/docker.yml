@@ -311,12 +311,19 @@ jobs:
 
           "${DOCKER_BINARY}" image tag "${{ matrix.local_tag }}" "$DOCKERHUB_REF"
           "${DOCKER_BINARY}" image tag "${{ matrix.local_tag }}" "$GHCR_REF"
-          DOCKERHUB_PUSH_OUTPUT="$("${DOCKER_BINARY}" image push "$DOCKERHUB_REF")"
+          "${DOCKER_BINARY}" image push "$DOCKERHUB_REF" > "$RUNNER_TEMP/dockerhub-push.txt" &
+          DOCKERHUB_PUSH_PID=$!
+          "${DOCKER_BINARY}" image push "$GHCR_REF" > "$RUNNER_TEMP/ghcr-push.txt" &
+          GHCR_PUSH_PID=$!
+          wait "$DOCKERHUB_PUSH_PID"
+          wait "$GHCR_PUSH_PID"
+
+          DOCKERHUB_PUSH_OUTPUT="$(< "$RUNNER_TEMP/dockerhub-push.txt")"
           printf '%s\n' "$DOCKERHUB_PUSH_OUTPUT"
           [[ "$DOCKERHUB_PUSH_OUTPUT" =~ digest:[[:space:]](sha256:[0-9a-f]{64})[[:space:]]size: ]]
           DOCKERHUB_DIGEST="${BASH_REMATCH[1]}"
 
-          GHCR_PUSH_OUTPUT="$("${DOCKER_BINARY}" image push "$GHCR_REF")"
+          GHCR_PUSH_OUTPUT="$(< "$RUNNER_TEMP/ghcr-push.txt")"
           printf '%s\n' "$GHCR_PUSH_OUTPUT"
           [[ "$GHCR_PUSH_OUTPUT" =~ digest:[[:space:]](sha256:[0-9a-f]{64})[[:space:]]size: ]]
           GHCR_DIGEST="${BASH_REMATCH[1]}"
