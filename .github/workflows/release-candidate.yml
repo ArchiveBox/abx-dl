@@ -26,7 +26,7 @@ jobs:
           token: ${{ secrets.RELEASE_GH_TOKEN }}
 
       - id: version
-        uses: ArchiveBox/monorepo/.github/actions/prepare-release-version@afb379c6279fdeeca7aa4408d9589cd969b64ae7
+        uses: ArchiveBox/monorepo/.github/actions/prepare-release-version@88995501da28f05fdac2df2fab235cd79cd92a3f
         with:
           package: abx-dl
           branch: main
@@ -44,11 +44,11 @@ jobs:
           set -Eeuo pipefail
           uv build --no-cache --no-sources --out-dir dist --clear
           wheel=(dist/abx_dl-*.whl)
-          smoke_env="$(mktemp -d)/.venv"
-          uv venv --python 3.13 "$smoke_env"
-          uv pip install --no-cache --python "$smoke_env" "${wheel[0]}"
-          VIRTUAL_ENV="$smoke_env" uv run --no-cache --active --no-project python -c 'import abx_dl'
-          VIRTUAL_ENV="$smoke_env" uv run --no-cache --active --no-project abx-dl --version
+          uv sync --locked --no-cache --no-sources --no-dev --no-install-project
+          uv pip install --no-cache --no-deps --python .venv/bin/python "${wheel[0]}"
+          smoke_dir="$(mktemp -d)"
+          (cd "$smoke_dir" && VIRTUAL_ENV="$GITHUB_WORKSPACE/.venv" uv run --no-cache --active --no-project python -c 'import abx_dl')
+          (cd "$smoke_dir" && VIRTUAL_ENV="$GITHUB_WORKSPACE/.venv" uv run --no-cache --active --no-project abx-dl --version)
           uv run --no-cache --no-project python - <<'PY' > dist/SHA256SUMS
           from hashlib import sha256
           from pathlib import Path

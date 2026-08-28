@@ -11,21 +11,9 @@ TAG_PREFIX="v"
 PYPI_PACKAGE="abx-dl"
 
 pypi_release_json() {
-    "${CURL_BINARY}" -fsSL --retry 30 --retry-all-errors --retry-delay 2 --retry-max-time 60 \
+    "${CURL_BINARY}" -fsSL \
         -H 'Cache-Control: no-cache, no-store, max-age=0' -H 'Pragma: no-cache' \
         "https://pypi.org/pypi/${PYPI_PACKAGE}/$1/json?cache_bust=$(date +%s)-${RANDOM}"
-}
-
-pypi_wait_for_release() {
-    local version="$1"
-    pypi_release_json "${version}" >/dev/null
-    for _ in {1..30}; do
-        "${CURL_BINARY}" -fsSL -H 'Cache-Control: no-cache, no-store, max-age=0' -H 'Pragma: no-cache' \
-            "https://pypi.org/simple/${PYPI_PACKAGE}/?cache_bust=$(date +%s)-${RANDOM}" | \
-            grep -Fq ">abx_dl-${version}-py3-none-any.whl<" && return
-        sleep 2
-    done
-    return 1
 }
 ARTIFACT_DIR_TO_CLEAN=""
 VERIFY_DIR_TO_CLEAN=""
@@ -133,7 +121,7 @@ PY
 
 pypi_artifact_status() {
     local version="$1" artifact_dir="$2" pypi_urls
-    pypi_urls="$("${CURL_BINARY}" -fsSL "https://pypi.org/pypi/${PYPI_PACKAGE}/json" | "${JQ_BINARY}" -c --arg version "${version}" ".releases[\$version] // []")" || return 1
+    pypi_urls="$(pypi_release_json "${version}" | "${JQ_BINARY}" -c '.urls')" || pypi_urls='[]'
     PYPI_URLS="${pypi_urls}" ARTIFACT_DIR="${artifact_dir}" EXPECTED_VERSION="${version}" "${UV_BINARY}" run --no-cache --no-project python - <<'PY'
 import hashlib
 import json
@@ -183,7 +171,7 @@ PY
 
 pypi_release_has_expected_files() {
     local version="$1" pypi_urls
-    pypi_urls="$("${CURL_BINARY}" -fsSL "https://pypi.org/pypi/${PYPI_PACKAGE}/json" | "${JQ_BINARY}" -c --arg version "${version}" ".releases[\$version] // []")" || return 1
+    pypi_urls="$(pypi_release_json "${version}" | "${JQ_BINARY}" -c '.urls')" || return 1
     PYPI_URLS="${pypi_urls}" EXPECTED_VERSION="${version}" "${UV_BINARY}" run --no-cache --no-project python - <<'PY'
 import json
 import os
@@ -364,7 +352,6 @@ publish_to_pypi() {
         artifacts+=("${artifact_dir}/${filename}")
     done
     "${UV_BINARY}" publish --no-cache --trusted-publishing always "${artifacts[@]}"
-    pypi_wait_for_release "${version}"
 }
 
 create_release() {
