@@ -15,6 +15,18 @@ pypi_release_json() {
         -H 'Cache-Control: no-cache, no-store, max-age=0' -H 'Pragma: no-cache' \
         "https://pypi.org/pypi/${PYPI_PACKAGE}/$1/json?cache_bust=$(date +%s)-${RANDOM}"
 }
+
+pypi_wait_for_release() {
+    local version="$1"
+    pypi_release_json "${version}" >/dev/null
+    for _ in {1..30}; do
+        "${CURL_BINARY}" -fsSL -H 'Cache-Control: no-cache, no-store, max-age=0' -H 'Pragma: no-cache' \
+            "https://pypi.org/simple/${PYPI_PACKAGE}/?cache_bust=$(date +%s)-${RANDOM}" | \
+            grep -Fq ">abx_dl-${version}-py3-none-any.whl<" && return
+        sleep 2
+    done
+    return 1
+}
 ARTIFACT_DIR_TO_CLEAN=""
 VERIFY_DIR_TO_CLEAN=""
 
@@ -352,7 +364,7 @@ publish_to_pypi() {
         artifacts+=("${artifact_dir}/${filename}")
     done
     "${UV_BINARY}" publish --no-cache --trusted-publishing always "${artifacts[@]}"
-    pypi_release_json "${version}" >/dev/null
+    pypi_wait_for_release "${version}"
 }
 
 create_release() {
