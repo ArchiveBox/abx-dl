@@ -1,6 +1,6 @@
 [project]
 name = "abx-dl"
-version = "1.12.199"
+version = "1.12.200"
 requires-python = ">=3.12,<3.15"
 description = "All-in-one CLI tool to download and extract content from URLs"
 authors = [{name = "Nick Sweeting"}, {name = "ArchiveBox"}]
