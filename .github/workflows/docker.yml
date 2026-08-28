@@ -209,6 +209,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           # zstd shrinks the binary-heavy runtime substantially and exports
           # faster than gzip; downstream ArchiveBox reuses these exact layers.
+          # Force it because BuildKit otherwise preserves inherited gzip layers.
           outputs: |
             ${{ inputs.push_digests && format('type=image,"name={0},{1}",push-by-digest=true,name-canonical=true,push=true,compression=zstd,compression-level=3,force-compression=true', env.DOCKERHUB_IMAGE, env.GHCR_IMAGE) || '' }}
           cache-from: type=gha,scope=${{ matrix.cache_scope }}
