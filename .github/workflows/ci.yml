@@ -27,5 +27,5 @@ jobs:
     uses: ./.github/workflows/docker.yml
     with:
       checkout_ref: ${{ github.sha }}
-      push_digests: ${{ github.event_name == 'push' }}
+      push_digests: false
     secrets: inherit

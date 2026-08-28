@@ -1,0 +1,78 @@
+name: Release candidate
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  actions: read
+  contents: write
+  packages: write
+
+concurrency:
+  group: release-candidate-main
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      action: ${{ steps.version.outputs.action }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_GH_TOKEN }}
+
+      - id: version
+        uses: ArchiveBox/monorepo/.github/actions/prepare-release-version@fcd68592e9300adacfc3fe1f12b86982413bd215
+        with:
+          package: abx-dl
+          branch: main
+          tag-prefix: v
+          version-scheme: patch
+
+  python-artifacts:
+    name: Build and smoke-test release artifacts
+    needs: prepare
+    if: needs.prepare.outputs.action == 'ready' || needs.prepare.outputs.action == 'reserved'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "0.10.6"
+          enable-cache: false
+      - name: Build and smoke-test the wheel
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          uv build --no-cache --no-sources --out-dir dist --clear
+          wheel=(dist/abx_dl-*.whl)
+          smoke_env="$(mktemp -d)/.venv"
+          uv venv --python 3.13 "$smoke_env"
+          uv pip install --no-cache --python "$smoke_env" "${wheel[0]}"
+          VIRTUAL_ENV="$smoke_env" uv run --no-cache --active --no-project python -c 'import abx_dl'
+          VIRTUAL_ENV="$smoke_env" uv run --no-cache --active --no-project abx-dl --version
+          uv run --no-cache --no-project python - <<'PY' > dist/SHA256SUMS
+          from hashlib import sha256
+          from pathlib import Path
+          for path in sorted((*Path("dist").glob("*.whl"), *Path("dist").glob("*.tar.gz"))):
+              print(f"{sha256(path.read_bytes()).hexdigest()}  {path.name}")
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: python-dist-${{ github.sha }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  docker-digests:
+    needs: prepare
+    if: needs.prepare.outputs.action == 'ready' || needs.prepare.outputs.action == 'reserved'
+    uses: ./.github/workflows/docker.yml
+    with:
+      checkout_ref: ${{ github.sha }}
+      push_digests: true
+      full_tests: false
+    secrets: inherit

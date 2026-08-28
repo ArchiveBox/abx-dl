@@ -13,6 +13,11 @@ on:
         required: false
         default: false
         type: boolean
+      full_tests:
+        description: Run documentation and real-crawl validation in addition to release smoke checks
+        required: false
+        default: true
+        type: boolean
 
 env:
   DOCKERHUB_IMAGE: archivebox/abx-dl
@@ -103,6 +108,7 @@ jobs:
           done
 
       - name: Install documentation test dependencies
+        if: inputs.full_tests
         run: $UV_BINARY sync --no-cache --locked --group dev --no-sources
 
       - name: Resolve Docker through abxpkg
@@ -185,13 +191,14 @@ jobs:
           platforms: ${{ matrix.platform }}
 
       - name: Test Docker documentation commands
-        if: matrix.platform == 'linux/amd64'
+        if: inputs.full_tests && matrix.platform == 'linux/amd64'
         env:
           ABXDL_IMAGE: ${{ matrix.local_tag }}
         run: $UV_BINARY run --no-cache --no-sync --no-sources pytest -vv --tb=long -m docker_required README.md AGENTS.md CLAUDE.md skills
 
       - name: Validate real crawl inside Docker image
         id: real_crawl
+        if: inputs.full_tests
         shell: bash
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -252,7 +259,7 @@ jobs:
           PY
 
       - name: Upload failed crawl diagnostics
-        if: failure() && steps.real_crawl.outcome == 'failure'
+        if: inputs.full_tests && failure() && steps.real_crawl.outcome == 'failure'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: crawl-diagnostics-${{ matrix.artifact_name }}

@@ -2,7 +2,7 @@ name: Release
 
 on:
   workflow_run:
-    workflows: [CI]
+    workflows: [Release candidate]
     types: [completed]
     branches: [main]
 
@@ -20,9 +20,27 @@ env:
   CI_RUN_ID: ${{ github.event.workflow_run.id }}
 
 jobs:
+  candidate:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-24.04
+    outputs:
+      ready: ${{ steps.owner.outputs.ready }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          ref: ${{ env.RELEASE_SHA }}
+      - id: owner
+        shell: bash
+        run: |
+          VERSION="$(sed -nE 's/^version = "([^"]+)".*/\1/p' pyproject.toml | head -n 1)"
+          TARGET="$(git ls-remote origin "refs/tags/release-candidate/$VERSION" | awk '{print $1}')"
+          [[ "$TARGET" == "$RELEASE_SHA" ]] && echo 'ready=true' >> "$GITHUB_OUTPUT" || echo 'ready=false' >> "$GITHUB_OUTPUT"
+
   python-release:
     name: Publish tested Python artifacts
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    needs: candidate
+    if: needs.candidate.outputs.ready == 'true'
     runs-on: ubuntu-24.04
     environment: pypi
     permissions:
@@ -92,31 +110,6 @@ jobs:
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
           fi
-
-      - name: Verify published PyPI package installs and runs
-        if: steps.cascade-state.outputs.ready == 'true'
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          sleep 60
-          VERSION='${{ steps.version.outputs.version }}'
-          TOOL_ROOT="$(mktemp -d)"
-          export UV_TOOL_DIR="$TOOL_ROOT/tools"
-          export UV_TOOL_BIN_DIR="$TOOL_ROOT/bin"
-          WHEEL_URL="$("$UV_BINARY" run --no-cache --no-project python - "$VERSION" <<'PY'
-          import json
-          import sys
-          import urllib.request
-
-          version = sys.argv[1]
-          with urllib.request.urlopen(f"https://pypi.org/pypi/abx-dl/{version}/json", timeout=20) as response:
-              data = json.load(response)
-          print(next(url["url"] for url in data["urls"] if url["filename"].endswith(".whl")))
-          PY
-          )"
-          "$UV_BINARY" tool install --no-cache --force "$WHEEL_URL"
-          INSTALLED_VERSION="$("$UV_TOOL_BIN_DIR/abx-dl" --version)"
-          test "$INSTALLED_VERSION" = "$VERSION"
 
   docker-release:
     name: Publish tested multiarch image
