@@ -92,7 +92,11 @@ class ArchiveResultService(BaseService):
         )
         assert isinstance(snapshot_event, SnapshotEvent)
 
-        output_files = scan_output_files(Path(event.output_dir))
+        output_dir = Path(event.output_dir)
+        output_files = scan_output_files(
+            output_dir,
+            containment_root=output_dir.parent,
+        )
         archive_result_payload["snapshot_id"] = snapshot_event.snapshot_id
         archive_result_payload["plugin"] = event.plugin_name
         archive_result_payload["hook_name"] = event.hook_name

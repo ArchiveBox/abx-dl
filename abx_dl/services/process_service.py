@@ -593,6 +593,7 @@ class ProcessService(BaseService):
         new_files = scan_output_files(
             plugin_output_dir,
             file_paths=files_after - files_before,
+            containment_root=plugin_output_dir.parent,
         )
         if returncode == 0 and not stdout.strip() and (signal_match := SHELL_SIGNAL_STDERR_RE.search(stderr)):
             returncode = 128 + int(signal_match.group(1))

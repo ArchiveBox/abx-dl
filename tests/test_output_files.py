@@ -63,6 +63,28 @@ def test_scan_output_files_leaves_internal_symlinks_alone(tmp_path: Path) -> Non
     assert not (tmp_path / "alias.broken-symlink").exists()
 
 
+def test_scan_output_files_allows_symlinks_within_snapshot(tmp_path: Path) -> None:
+    snap_dir = tmp_path / "snap"
+    plugin_dir = snap_dir / "readability"
+    response = snap_dir / "responses" / "image.svg"
+    plugin_dir.mkdir(parents=True)
+    response.parent.mkdir()
+    response.write_text("<svg></svg>")
+    link = plugin_dir / "image.svg"
+    link.symlink_to(os.path.relpath(response, plugin_dir))
+    outside = tmp_path / "outside.svg"
+    outside.write_text("<svg></svg>")
+    escaping_link = plugin_dir / "outside.svg"
+    escaping_link.symlink_to(outside)
+
+    scan_output_files(plugin_dir, containment_root=snap_dir)
+
+    assert link.is_symlink()
+    assert link.resolve() == response.resolve()
+    assert not escaping_link.exists() and not escaping_link.is_symlink()
+    assert (plugin_dir / "outside.svg.broken-symlink.txt").is_file()
+
+
 def test_scan_output_files_symlink_neutralization_is_idempotent(tmp_path: Path) -> None:
     outside = tmp_path / "outside.txt"
     outside.write_text("x")

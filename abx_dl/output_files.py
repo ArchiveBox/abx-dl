@@ -62,11 +62,16 @@ def output_file_from_path(file_path: Path, *, relative_to: Path) -> OutputFile:
     )
 
 
-def scan_output_files(output_dir: Path, file_paths: Iterable[Path] | None = None) -> list[OutputFile]:
+def scan_output_files(
+    output_dir: Path,
+    file_paths: Iterable[Path] | None = None,
+    *,
+    containment_root: Path | None = None,
+) -> list[OutputFile]:
     """Collect metadata for real hook output files, excluding process artifacts.
 
     Also sanitizes the tree as it walks: strips +x from regular files, and
-    replaces symlinks whose target escapes ``output_dir`` with a plain-text
+    replaces symlinks whose target escapes ``containment_root`` with a plain-text
     ``{name}.broken-symlink.txt`` sibling holding the original target string.
     Both operations are naturally idempotent.
     """
@@ -74,9 +79,9 @@ def scan_output_files(output_dir: Path, file_paths: Iterable[Path] | None = None
         return []
 
     try:
-        containment_root = output_dir.resolve()
+        containment_root = (containment_root or output_dir).resolve()
     except OSError:
-        containment_root = output_dir
+        containment_root = containment_root or output_dir
 
     paths = output_dir.rglob("*") if file_paths is None else file_paths
     output_files = []
