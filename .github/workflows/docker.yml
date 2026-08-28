@@ -175,22 +175,44 @@ jobs:
 
           echo "[+] Building ${{ matrix.platform }} for abx-dl ${VERSION} branch=${BRANCH_TAG} sha=${SHORT_SHA}"
 
-      - name: Build local image for smoke test
+      - name: Login to Docker Hub
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        if: inputs.push_digests
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        if: inputs.push_digests
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Push directly from BuildKit so release builds do not load, recompress,
+      # retag, and upload the same multi-hundred-MiB image a second time.
+      - name: Build image
+        id: docker_build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: ./Dockerfile
           builder: ${{ steps.buildx.outputs.name }}
-          load: true
-          tags: ${{ matrix.local_tag }}
+          load: ${{ !inputs.push_digests }}
+          tags: ${{ !inputs.push_digests && matrix.local_tag || '' }}
           labels: ${{ steps.docker_meta.outputs.labels }}
           build-contexts: |
             abxbus=${{ runner.temp }}/abxbus
             abxpkg=${{ runner.temp }}/abxpkg
             abx-plugins=${{ runner.temp }}/abx-plugins
           platforms: ${{ matrix.platform }}
+          outputs: |
+            ${{ inputs.push_digests && format('type=image,"name={0},{1}",push-by-digest=true,name-canonical=true,push=true', env.DOCKERHUB_IMAGE, env.GHCR_IMAGE) || '' }}
           cache-from: type=gha,scope=${{ matrix.cache_scope }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.cache_scope }}
+          # Candidate builds still consume the full-CI cache. Only full CI
+          # refreshes it, because exporting unchanged layers used to add ~100s.
+          cache-to: ${{ inputs.full_tests && format('type=gha,mode=max,scope={0}', matrix.cache_scope) || '' }}
 
       - name: Test Docker documentation commands
         if: inputs.full_tests && matrix.platform == 'linux/amd64'
@@ -274,6 +296,7 @@ jobs:
           retention-days: 7
 
       - name: Validate image version and commit
+        if: ${{ !inputs.push_digests }}
         shell: bash
         run: |
           set -Eeuo pipefail
@@ -284,59 +307,25 @@ jobs:
           "${DOCKER_BINARY}" run --rm --platform '${{ matrix.platform }}' --entrypoint bash '${{ matrix.local_tag }}' -lc \
             '/venv/bin/python -c '\''import pathlib, sys; expected = "COMMIT_HASH='"${GITHUB_SHA}"'"; sys.exit(expected not in pathlib.Path("/VERSION.txt").read_text().splitlines())'\'''
 
-      - name: Login to Docker Hub
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
-        if: inputs.push_digests
-        with:
-          username: ${{ secrets.DOCKER_USERNAME }}
-          password: ${{ secrets.DOCKER_PASSWORD }}
-
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
-        if: inputs.push_digests
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Push the exact tested image by digest
-        id: push_tested
+      - name: Validate compressed candidate size
         if: inputs.push_digests
         shell: bash
         run: |
           set -Eeuo pipefail
-          TEMP_TAG="sha-${{ steps.docker_meta.outputs.short_sha }}-${{ matrix.artifact_name }}"
-          DOCKERHUB_REF="${DOCKERHUB_IMAGE}:${TEMP_TAG}"
-          GHCR_REF="${GHCR_IMAGE}:${TEMP_TAG}"
-
-          "${DOCKER_BINARY}" image tag "${{ matrix.local_tag }}" "$DOCKERHUB_REF"
-          "${DOCKER_BINARY}" image tag "${{ matrix.local_tag }}" "$GHCR_REF"
-          "${DOCKER_BINARY}" image push "$DOCKERHUB_REF" > "$RUNNER_TEMP/dockerhub-push.txt" &
-          DOCKERHUB_PUSH_PID=$!
-          "${DOCKER_BINARY}" image push "$GHCR_REF" > "$RUNNER_TEMP/ghcr-push.txt" &
-          GHCR_PUSH_PID=$!
-          wait "$DOCKERHUB_PUSH_PID"
-          wait "$GHCR_PUSH_PID"
-
-          DOCKERHUB_PUSH_OUTPUT="$(< "$RUNNER_TEMP/dockerhub-push.txt")"
-          printf '%s\n' "$DOCKERHUB_PUSH_OUTPUT"
-          [[ "$DOCKERHUB_PUSH_OUTPUT" =~ digest:[[:space:]](sha256:[0-9a-f]{64})[[:space:]]size: ]]
-          DOCKERHUB_DIGEST="${BASH_REMATCH[1]}"
-
-          GHCR_PUSH_OUTPUT="$(< "$RUNNER_TEMP/ghcr-push.txt")"
-          printf '%s\n' "$GHCR_PUSH_OUTPUT"
-          [[ "$GHCR_PUSH_OUTPUT" =~ digest:[[:space:]](sha256:[0-9a-f]{64})[[:space:]]size: ]]
-          GHCR_DIGEST="${BASH_REMATCH[1]}"
-
-          test "$DOCKERHUB_DIGEST" = "$GHCR_DIGEST"
-          echo "digest=$DOCKERHUB_DIGEST" >> "$GITHUB_OUTPUT"
+          DIGEST='${{ steps.docker_build.outputs.digest }}'
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
+          MANIFEST="$("${DOCKER_BINARY}" buildx imagetools inspect --raw "${DOCKERHUB_IMAGE}@${DIGEST}")"
+          COMPRESSED_SIZE="$(MANIFEST="$MANIFEST" "$UV_BINARY" run --no-cache --no-project python -c 'import json, os; manifest = json.loads(os.environ["MANIFEST"]); print(manifest["config"]["size"] + sum(layer["size"] for layer in manifest["layers"]))')"
+          LIMIT=$((750 * 1024 * 1024))
+          echo "${DIGEST} compressed_size=$((COMPRESSED_SIZE / 1024 / 1024)) MiB limit=750 MiB"
+          (( COMPRESSED_SIZE < LIMIT ))
 
       - name: Export digest
         if: inputs.push_digests
         shell: bash
         run: |
           set -Eeuo pipefail
-          digest="${{ steps.push_tested.outputs.digest }}"
+          digest="${{ steps.docker_build.outputs.digest }}"
           test -n "$digest"
           DIGEST="${digest#sha256:}" "$UV_BINARY" run --no-cache --no-project python - <<'PY'
           import os

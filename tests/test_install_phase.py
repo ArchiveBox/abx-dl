@@ -174,6 +174,76 @@ def test_install_event_resolves_plugin_binaries_in_config_order(tmp_path: Path) 
     assert events_seen.index(("binary", "bash")) < events_seen.index(("request", "sh"))
 
 
+def test_install_event_does_not_feed_derived_binary_paths_back_into_requests(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "derived_order"
+    plugin_dir.mkdir()
+    properties = {
+        "DERIVED_ORDER_ENABLED": {"type": "boolean", "default": True},
+        "BASH_BINARY": {"type": "string", "default": "bash"},
+    }
+    (plugin_dir / "config.json").write_text(
+        json.dumps({"type": "object", "properties": properties}) + "\n",
+    )
+    plugin = Plugin(
+        name="derived_order",
+        path=plugin_dir,
+        config=PluginConfig(
+            properties=properties,
+            required_binaries=[
+                RequiredBinary(name="{BASH_BINARY}", binproviders="env"),
+                RequiredBinary(name="{BASH_BINARY}", binproviders="env"),
+            ],
+        ),
+    )
+    snapshot = Snapshot(url="")
+    run_dir = tmp_path / "run"
+    managed_lib_dir = tmp_path / "lib"
+    bus = create_bus(total_timeout=60.0, name=f"install_phase_derived_order_{tmp_path.name}")
+    PluginBinariesService(
+        bus,
+        plugins={plugin.name: plugin},
+        auto_install=True,
+        install_plugins=[plugin],
+        output_dir=run_dir,
+        snapshot=snapshot,
+    )
+    PluginBinaryEnvService(bus, plugins={plugin.name: plugin})
+    BinaryService(bus, auto_install=True)
+    request_events: list[BinaryRequestEvent] = []
+
+    async def on_BinaryRequestEvent(event: BinaryRequestEvent) -> None:
+        request_events.append(event)
+
+    bus.on(BinaryRequestEvent, on_BinaryRequestEvent)
+
+    async def run() -> None:
+        await bus.emit(
+            MachineEvent(
+                config={
+                    **get_initial_env(),
+                    "ABXPKG_LIB_DIR": str(managed_lib_dir),
+                },
+                config_type="user",
+            ),
+        ).now()
+        await bus.emit(
+            InstallEvent(
+                url="",
+                snapshot_id=snapshot.id,
+                output_dir=str(run_dir),
+            ),
+        ).now()
+        await bus.wait_until_idle()
+
+    asyncio.run(run())
+
+    assert len(request_events) == 2
+    assert request_events[0].base_env is not None
+    assert request_events[1].base_env is not None
+    assert request_events[0].base_env["BASH_BINARY"] == "bash"
+    assert request_events[1].base_env["BASH_BINARY"] == "bash"
+
+
 def test_install_event_preserves_binary_overrides_and_plugin_context(tmp_path: Path) -> None:
     plugins = discover_plugins()
     plugin = plugins["chrome"]

@@ -125,11 +125,15 @@ class PluginBinariesService(BaseService):
                 break
             if not _plugin_enabled_from_user_config(plugin, current_config):
                 continue
+            # Resolved *_BINARY paths are outputs of this phase, not inputs to
+            # it. Feeding process-local derived values back into base_env makes
+            # identical invocations alternate between two cache projections.
             plugin_base_env = (
                 await get_plugin_env(
                     self.bus,
                     plugin=plugin,
                     run_output_dir=self.output_dir,
+                    include_derived=False,
                     config=current_config,
                 )
             ).to_env()

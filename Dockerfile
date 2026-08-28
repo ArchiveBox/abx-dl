@@ -170,14 +170,21 @@ RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_ARCHIVEBOX_UID}..."
     && install -d -o "$DEFAULT_ARCHIVEBOX_UID" -g "$DEFAULT_ARCHIVEBOX_GID" "$DATA_DIR" "$CONFIG_DIR" "$ABXPKG_LIB_DIR" \
     && echo "ARCHIVEBOX_USER=$ARCHIVEBOX_USER ARCHIVEBOX_UID=$(id -u "$ARCHIVEBOX_USER") ARCHIVEBOX_GID=$(id -g "$ARCHIVEBOX_USER")" | tee -a /VERSION.txt
 
-RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.npm,sharing=locked,id=npm-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/npm,sharing=locked,id=abxpkg-npm-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/pnpm,sharing=locked,id=abxpkg-pnpm-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/pip,sharing=locked,id=pip-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=abxpkg-tmp-$TARGETARCH$TARGETVARIANT \
+# abxpkg fingerprints installed files by size, mode, owner, and nanosecond
+# mtime. Install and compile everything first, then canonicalize mtimes to a
+# fixed epoch because OCI layer materialization cannot preserve arbitrary
+# installer mtimes consistently. checked-hash pycs remain valid after the
+# normalization. This one scratch mount intentionally backs HOME,
+# XDG_CACHE_HOME, and ABXPKG_TMP_CACHE_DIR: package managers disagree about
+# cache locations, and leaving XDG pointed at /opt would silently bake their
+# downloads into the runtime image despite the BuildKit mount. Installed tools
+# and abxpkg's derived state remain under ABXPKG_LIB_DIR; only disposable
+# download state goes into this mount. After cleanup, the last in-layer install
+# uses the real runtime cache path once so uv may seed its tiny interpreter
+# index; a strict size cap prevents package payloads from slipping back in.
+RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=abxpkg-tmp-$TARGETARCH$TARGETVARIANT \
     echo "[+] Installing Chrome and plugin dependencies..." \
-    && export HOME=/var/tmp/abxpkg-cache ABXPKG_TMP_CACHE_DIR=/var/tmp/abxpkg-cache \
+    && export HOME=/var/tmp/abxpkg-cache XDG_CACHE_HOME=/var/tmp/abxpkg-cache ABXPKG_TMP_CACHE_DIR=/var/tmp/abxpkg-cache \
     && abx-dl install chrome \
     && abx-dl install \
     && rm -rf /usr/lib/*-linux-gnu/dri /usr/lib/*-linux-gnu/libLLVM*.so* /usr/lib/*-linux-gnu/libz3.so.* \
@@ -186,15 +193,25 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && rm -f /usr/lib/jvm/java-*-openjdk-*/lib/server/classes*.jsa \
     && rm -f /venv/bin/uv /venv/bin/uvx \
     && find "$ABXPKG_LIB_DIR" \( ! -user "$DEFAULT_ARCHIVEBOX_UID" -o ! -group "$DEFAULT_ARCHIVEBOX_GID" \) -exec chown -h "$DEFAULT_ARCHIVEBOX_UID:$DEFAULT_ARCHIVEBOX_GID" {} + \
-    && NORMALIZED_MTIME="@$(date +%s)" \
-    && find /venv "$ABXPKG_LIB_DIR" -exec touch -h -d "$NORMALIZED_MTIME" {} + \
     && STDLIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("stdlib"))')" \
     && PURELIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
-    && /venv/bin/python -m compileall -q "$STDLIB_DIR" "$PURELIB_DIR" \
-    && env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups abx-dl install \
+    && /venv/bin/python -m compileall --invalidation-mode checked-hash -q "$STDLIB_DIR" "$PURELIB_DIR" \
+    && env HOME=/home/archivebox XDG_CACHE_HOME=/var/tmp/abxpkg-cache setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups abx-dl install \
+    && find /venv "$ABXPKG_LIB_DIR" -exec touch -h -d '@946684800' {} + \
+    && find "$ABXPKG_LIB_DIR/cache" -mindepth 1 -maxdepth 1 -exec rm -rf {} + \
+    && env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox XDG_CACHE_HOME="$ABXPKG_LIB_DIR/cache" setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups abx-dl install \
+    && CACHE_BYTES="$(du -sb "$ABXPKG_LIB_DIR/cache" | cut -f1)" \
+    && (( CACHE_BYTES < 1048576 )) \
     && rm -rf /var/lib/apt/lists/* /tmp/*
 
-RUN env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox \
+# The diagnostics below do not install binaries, but they exercise both
+# check-mode and install-mode projections, whose derived cache shapes differ.
+# Stabilize once after all checks and only then take the baseline hash. The
+# final install is intentional and must not be removed as redundant: with
+# networking disabled, both abxpkg's derived records and uv's small runtime
+# index must remain byte-for-byte unchanged. If it repairs metadata or attempts
+# an install, the image build fails.
+RUN --network=none env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox \
     setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups \
     bash -c '(echo -e "\n\n[+] abx-dl runtime versions" \
         && abx-dl version \
@@ -212,6 +229,11 @@ RUN env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox \
         && ! command -v sonic \
         && ! command -v supervisord \
         && abx-dl install \
+        && (find "$ABXPKG_LIB_DIR" -name derived.env -type f -exec sha256sum {} +; find "$XDG_CACHE_HOME" -type f -exec sha256sum {} +) | sort > /tmp/cache-before \
+        && abx-dl install \
+        && (find "$ABXPKG_LIB_DIR" -name derived.env -type f -exec sha256sum {} +; find "$XDG_CACHE_HOME" -type f -exec sha256sum {} +) | sort > /tmp/cache-after \
+        && diff -u /tmp/cache-before /tmp/cache-after \
+        && rm -f /tmp/cache-before /tmp/cache-after \
         && echo -e "\n\n[√] Finished abx-dl Docker build successfully." \
         && echo -e "BUILD_END_TIME=$(date +"%Y-%m-%d %H:%M:%S %s")\n\n" \
         )' | tee -a /VERSION.txt
