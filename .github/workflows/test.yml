@@ -34,9 +34,9 @@ jobs:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
         run: |
           set -Eeuo pipefail
-          ABXPKG_VERSION="$(uv run --no-cache --no-project python -c 'import tomllib; print(next(package["version"] for package in tomllib.load(open("uv.lock", "rb"))["package"] if package["name"] == "abxpkg"))')"
-          test -n "$ABXPKG_VERSION"
-          uv run --no-cache --no-project --with "abxpkg==$ABXPKG_VERSION" abxpkg env --install \
+          ABXPKG_SPEC="$(uv run --no-cache --no-project python -c 'import tomllib; package = next(item for item in tomllib.load(open("uv.lock", "rb"))["package"] if item["name"] == "abxpkg"); wheel = package["wheels"][0]; print("abxpkg @ {}#{}".format(wheel["url"], wheel["hash"].replace(":", "=")))')"
+          test -n "$ABXPKG_SPEC"
+          uv run --no-cache --no-project --with "$ABXPKG_SPEC" abxpkg env --install \
             --lib="$ABXPKG_LIB_DIR" \
             --deps-from="$GITHUB_WORKSPACE/.github/configs/ci-tooling.json:orchestration_binaries" >> "$GITHUB_ENV"
           echo "$ABXPKG_LIB_DIR/env/bin" >> "$GITHUB_PATH"
@@ -134,9 +134,9 @@ jobs:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
         run: |
           set -Eeuo pipefail
-          ABXPKG_VERSION="$(uv run --no-cache --no-project python -c 'import tomllib; print(next(package["version"] for package in tomllib.load(open("uv.lock", "rb"))["package"] if package["name"] == "abxpkg"))')"
-          test -n "$ABXPKG_VERSION"
-          uv run --no-cache --no-project --with "abxpkg==$ABXPKG_VERSION" abxpkg env --install \
+          ABXPKG_SPEC="$(uv run --no-cache --no-project python -c 'import tomllib; package = next(item for item in tomllib.load(open("uv.lock", "rb"))["package"] if item["name"] == "abxpkg"); wheel = package["wheels"][0]; print("abxpkg @ {}#{}".format(wheel["url"], wheel["hash"].replace(":", "=")))')"
+          test -n "$ABXPKG_SPEC"
+          uv run --no-cache --no-project --with "$ABXPKG_SPEC" abxpkg env --install \
             --lib="$ABXPKG_LIB_DIR" \
             --deps-from="$GITHUB_WORKSPACE/.github/configs/ci-tooling.json:orchestration_binaries" >> "$GITHUB_ENV"
           echo "$ABXPKG_LIB_DIR/env/bin" >> "$GITHUB_PATH"
@@ -174,9 +174,9 @@ jobs:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
         run: |
           set -Eeuo pipefail
-          ABXPKG_VERSION="$(uv run --no-cache --no-project python -c 'import tomllib; print(next(package["version"] for package in tomllib.load(open("uv.lock", "rb"))["package"] if package["name"] == "abxpkg"))')"
-          test -n "$ABXPKG_VERSION"
-          uv run --no-cache --no-project --with "abxpkg==$ABXPKG_VERSION" abxpkg env --install \
+          ABXPKG_SPEC="$(uv run --no-cache --no-project python -c 'import tomllib; package = next(item for item in tomllib.load(open("uv.lock", "rb"))["package"] if item["name"] == "abxpkg"); wheel = package["wheels"][0]; print("abxpkg @ {}#{}".format(wheel["url"], wheel["hash"].replace(":", "=")))')"
+          test -n "$ABXPKG_SPEC"
+          uv run --no-cache --no-project --with "$ABXPKG_SPEC" abxpkg env --install \
             --lib="$ABXPKG_LIB_DIR" \
             --deps-from="$GITHUB_WORKSPACE/.github/configs/ci-tooling.json:orchestration_binaries" >> "$GITHUB_ENV"
           echo "$ABXPKG_LIB_DIR/env/bin" >> "$GITHUB_PATH"
@@ -218,9 +218,9 @@ jobs:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
         run: |
           set -Eeuo pipefail
-          ABXPKG_VERSION="$(uv run --no-cache --no-project python -c 'import tomllib; print(next(package["version"] for package in tomllib.load(open("uv.lock", "rb"))["package"] if package["name"] == "abxpkg"))')"
-          test -n "$ABXPKG_VERSION"
-          uv run --no-cache --no-project --with "abxpkg==$ABXPKG_VERSION" abxpkg env --install \
+          ABXPKG_SPEC="$(uv run --no-cache --no-project python -c 'import tomllib; package = next(item for item in tomllib.load(open("uv.lock", "rb"))["package"] if item["name"] == "abxpkg"); wheel = package["wheels"][0]; print("abxpkg @ {}#{}".format(wheel["url"], wheel["hash"].replace(":", "=")))')"
+          test -n "$ABXPKG_SPEC"
+          uv run --no-cache --no-project --with "$ABXPKG_SPEC" abxpkg env --install \
             --lib="$ABXPKG_LIB_DIR" \
             --deps-from="$GITHUB_WORKSPACE/.github/configs/ci-tooling.json:orchestration_binaries" >> "$GITHUB_ENV"
           echo "$ABXPKG_LIB_DIR/env/bin" >> "$GITHUB_PATH"
@@ -300,9 +300,9 @@ jobs:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
         run: |
           set -Eeuo pipefail
-          ABXPKG_VERSION="$(uv run --no-cache --no-project python -c 'import tomllib; print(next(package["version"] for package in tomllib.load(open("uv.lock", "rb"))["package"] if package["name"] == "abxpkg"))')"
-          test -n "$ABXPKG_VERSION"
-          uv run --no-cache --no-project --with "abxpkg==$ABXPKG_VERSION" abxpkg env --install \
+          ABXPKG_SPEC="$(uv run --no-cache --no-project python -c 'import tomllib; package = next(item for item in tomllib.load(open("uv.lock", "rb"))["package"] if item["name"] == "abxpkg"); wheel = package["wheels"][0]; print("abxpkg @ {}#{}".format(wheel["url"], wheel["hash"].replace(":", "=")))')"
+          test -n "$ABXPKG_SPEC"
+          uv run --no-cache --no-project --with "$ABXPKG_SPEC" abxpkg env --install \
             --lib="$ABXPKG_LIB_DIR" \
             --deps-from="$GITHUB_WORKSPACE/.github/configs/ci-tooling.json:orchestration_binaries" >> "$GITHUB_ENV"
           echo "$ABXPKG_LIB_DIR/env/bin" >> "$GITHUB_PATH"
@@ -366,9 +366,9 @@ jobs:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
         run: |
           set -Eeuo pipefail
-          ABXPKG_VERSION="$(uv run --no-cache --no-project python -c 'import tomllib; print(next(package["version"] for package in tomllib.load(open("uv.lock", "rb"))["package"] if package["name"] == "abxpkg"))')"
-          test -n "$ABXPKG_VERSION"
-          uv run --no-cache --no-project --with "abxpkg==$ABXPKG_VERSION" abxpkg env --install \
+          ABXPKG_SPEC="$(uv run --no-cache --no-project python -c 'import tomllib; package = next(item for item in tomllib.load(open("uv.lock", "rb"))["package"] if item["name"] == "abxpkg"); wheel = package["wheels"][0]; print("abxpkg @ {}#{}".format(wheel["url"], wheel["hash"].replace(":", "=")))')"
+          test -n "$ABXPKG_SPEC"
+          uv run --no-cache --no-project --with "$ABXPKG_SPEC" abxpkg env --install \
             --lib="$ABXPKG_LIB_DIR" \
             --deps-from="$GITHUB_WORKSPACE/.github/configs/ci-tooling.json:orchestration_binaries" >> "$GITHUB_ENV"
           echo "$ABXPKG_LIB_DIR/env/bin" >> "$GITHUB_PATH"
