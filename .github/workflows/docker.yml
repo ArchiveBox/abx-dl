@@ -189,6 +189,8 @@ jobs:
             abxpkg=${{ runner.temp }}/abxpkg
             abx-plugins=${{ runner.temp }}/abx-plugins
           platforms: ${{ matrix.platform }}
+          cache-from: type=gha,scope=${{ matrix.cache_scope }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.cache_scope }}
 
       - name: Test Docker documentation commands
         if: inputs.full_tests && matrix.platform == 'linux/amd64'
@@ -227,7 +229,9 @@ jobs:
             --workdir /venv/lib/python3.13/site-packages/abx_plugins/plugins/archivewebpage \
             --entrypoint /bin/bash '${{ matrix.local_tag }}' -c \
             'PYTHONPROFILEIMPORTTIME=1 ./on_CrawlSetup__80_archivewebpage_prepare.py --url=https://example.com >/dev/null' 2>&1)"
-          ! grep -Eq 'rich_click|pydantic' <<< "$IMPORT_PROFILE"
+          if grep -Eq 'rich_click|pydantic' <<< "$IMPORT_PROFILE"; then
+            exit 1
+          fi
 
           "$SCRIPT_BINARY" -q -e -c \
             "\"${DOCKER_BINARY}\" run --rm -it --platform '${{ matrix.platform }}' --env ANTHROPIC_API_KEY --env CLAUDE_CODE_OAUTH_TOKEN --env TWOCAPTCHA_API_KEY --volume '$OUT_DIR:/out' --volume '$PERSONAS_DIR:/data/personas' '${{ matrix.local_tag }}' https://sweeting.me" \
