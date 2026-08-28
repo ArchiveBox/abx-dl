@@ -9,6 +9,12 @@ cd "${REPO_DIR}"
 
 TAG_PREFIX="v"
 PYPI_PACKAGE="abx-dl"
+
+pypi_release_json() {
+    "${CURL_BINARY}" -fsSL --retry 30 --retry-all-errors --retry-delay 2 --retry-max-time 60 \
+        -H 'Cache-Control: no-cache, no-store, max-age=0' -H 'Pragma: no-cache' \
+        "https://pypi.org/pypi/${PYPI_PACKAGE}/$1/json?cache_bust=$(date +%s)-${RANDOM}"
+}
 ARTIFACT_DIR_TO_CLEAN=""
 VERIFY_DIR_TO_CLEAN=""
 
@@ -334,8 +340,8 @@ PY
 }
 
 publish_to_pypi() {
-    local artifact_dir="$1"
-    shift
+    local version="$1" artifact_dir="$2"
+    shift 2
     local filenames=("$@") artifacts=() filename
     [[ "${#filenames[@]}" -gt 0 ]] || { echo "No missing PyPI artifacts were selected for publication" >&2; return 1; }
     for filename in "${filenames[@]}"; do
@@ -346,6 +352,7 @@ publish_to_pypi() {
         artifacts+=("${artifact_dir}/${filename}")
     done
     "${UV_BINARY}" publish --no-cache --trusted-publishing always "${artifacts[@]}"
+    pypi_release_json "${version}" >/dev/null
 }
 
 create_release() {
@@ -436,7 +443,7 @@ main() {
         return 1
     fi
     create_release_tag "${version}" "${release_sha}"
-    [[ "${pypi_state}" == "complete" ]] || publish_to_pypi "${artifact_dir}" "${pypi_missing[@]}"
+    [[ "${pypi_state}" == "complete" ]] || publish_to_pypi "${version}" "${artifact_dir}" "${pypi_missing[@]}"
     create_release "${slug}" "${version}" "${release_sha}"
     "${GH_BINARY}" release upload "${TAG_PREFIX}${version}" --repo "${slug}" \
         "${artifact_dir}"/*.whl "${artifact_dir}"/*.tar.gz "${artifact_dir}"/SHA256SUMS --clobber
