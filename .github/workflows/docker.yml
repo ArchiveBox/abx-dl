@@ -207,8 +207,10 @@ jobs:
             abxpkg=${{ runner.temp }}/abxpkg
             abx-plugins=${{ runner.temp }}/abx-plugins
           platforms: ${{ matrix.platform }}
+          # zstd shrinks the binary-heavy runtime substantially and exports
+          # faster than gzip; downstream ArchiveBox reuses these exact layers.
           outputs: |
-            ${{ inputs.push_digests && format('type=image,"name={0},{1}",push-by-digest=true,name-canonical=true,push=true', env.DOCKERHUB_IMAGE, env.GHCR_IMAGE) || '' }}
+            ${{ inputs.push_digests && format('type=image,"name={0},{1}",push-by-digest=true,name-canonical=true,push=true,compression=zstd,compression-level=3,force-compression=true', env.DOCKERHUB_IMAGE, env.GHCR_IMAGE) || '' }}
           cache-from: type=gha,scope=${{ matrix.cache_scope }}
           # Candidate builds still consume the full-CI cache. Only full CI
           # refreshes it, because exporting unchanged layers used to add ~100s.
