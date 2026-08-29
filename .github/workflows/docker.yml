@@ -38,12 +38,10 @@ jobs:
         include:
           - platform: linux/amd64
             runner: ubuntu-24.04
-            cache_scope: docker-amd64
             artifact_name: digest-linux-amd64
             local_tag: archivebox/abx-dl:test-amd64
           - platform: linux/arm64
             runner: ubuntu-24.04-arm
-            cache_scope: docker-arm64
             artifact_name: digest-linux-arm64
             local_tag: archivebox/abx-dl:test-arm64
 
@@ -207,24 +205,24 @@ jobs:
             abxpkg=${{ runner.temp }}/abxpkg
             abx-plugins=${{ runner.temp }}/abx-plugins
           platforms: ${{ matrix.platform }}
-          # zstd keeps this binary-heavy runtime and downstream ArchiveBox under
-          # their size limits. Do not force recompression here: :main was seeded
-          # once with all-zstd layers plus inline metadata, so BuildKit can now
-          # reuse those exact compressed blobs. force-compression would discard
-          # that reuse and recompress ~700 MiB on every no-op release.
+          # One-time repair: the retired GHA cache contaminated :main with gzip
+          # variants, so this release must replace every layer with zstd before
+          # :main becomes the only cache authority. Remove force-compression
+          # immediately after that seed; leaving it on would recompress ~700 MiB
+          # on every no-op release and defeat the registry cache below.
           outputs: |
-            ${{ inputs.push_digests && format('type=image,"name={0},{1}",push-by-digest=true,name-canonical=true,push=true,compression=zstd,compression-level=3', env.DOCKERHUB_IMAGE, env.GHCR_IMAGE) || '' }}
-          cache-from: |
-            type=gha,scope=${{ matrix.cache_scope }}
-            type=registry,ref=${{ env.DOCKERHUB_IMAGE }}:main
-          # Inline metadata makes the already-published compressed blobs the
-          # candidate cache; unlike a separate max-mode export, it adds no
-          # second layer upload. :main only advances after both architectures
-          # pass the release checks, so this never imports an untested local
-          # build. Full CI also refreshes the deeper GHA cache.
+            ${{ inputs.push_digests && format('type=image,"name={0},{1}",push-by-digest=true,name-canonical=true,push=true,compression=zstd,compression-level=3,force-compression=true', env.DOCKERHUB_IMAGE, env.GHCR_IMAGE) || '' }}
+          # Keep one cache authority. A separate GHA cache can retain gzip
+          # variants of these same layers; BuildKit may then choose those over
+          # :main's zstd blobs, making an otherwise identical image larger and
+          # forcing downstream ArchiveBox over its compressed-size limit.
+          # :main only advances after both architectures pass release checks,
+          # so it is both the fastest and the last known-good cache source.
+          cache-from: type=registry,ref=${{ env.DOCKERHUB_IMAGE }}:main
+          # Inline metadata makes the published compressed blobs reusable
+          # without uploading a second copy to a hidden cache backend.
           cache-to: |
             ${{ inputs.push_digests && 'type=inline' || '' }}
-            ${{ inputs.full_tests && format('type=gha,mode=max,scope={0}', matrix.cache_scope) || '' }}
 
       - name: Test Docker documentation commands
         if: inputs.full_tests && matrix.platform == 'linux/amd64'
