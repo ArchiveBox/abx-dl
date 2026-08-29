@@ -207,14 +207,12 @@ jobs:
             abxpkg=${{ runner.temp }}/abxpkg
             abx-plugins=${{ runner.temp }}/abx-plugins
           platforms: ${{ matrix.platform }}
-          # zstd shrinks the binary-heavy runtime substantially and downstream
-          # ArchiveBox reuses these exact layers. Do not force recompression:
-          # the released image's inline cache lets BuildKit reuse existing zstd
-          # blobs, while force-compression would recompress ~700 MiB on every
-          # no-op release. Preserving small inherited gzip layers is cheaper,
-          # and the compressed-size gate below still catches size regressions.
+          # One-time cache seed: force every inherited layer to zstd while the
+          # image also gains inline metadata. The following steady-state commit
+          # removes force-compression so later releases can reuse these exact
+          # compressed blobs instead of recompressing ~700 MiB each time.
           outputs: |
-            ${{ inputs.push_digests && format('type=image,"name={0},{1}",push-by-digest=true,name-canonical=true,push=true,compression=zstd,compression-level=3', env.DOCKERHUB_IMAGE, env.GHCR_IMAGE) || '' }}
+            ${{ inputs.push_digests && format('type=image,"name={0},{1}",push-by-digest=true,name-canonical=true,push=true,compression=zstd,compression-level=3,force-compression=true', env.DOCKERHUB_IMAGE, env.GHCR_IMAGE) || '' }}
           cache-from: |
             type=gha,scope=${{ matrix.cache_scope }}
             type=registry,ref=${{ env.DOCKERHUB_IMAGE }}:main
