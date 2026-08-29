@@ -125,8 +125,16 @@ COPY --from=abxbus --chown=root:root --chmod=755 pyproject.toml README.md LICENS
 COPY --from=abxpkg --chown=root:root --chmod=755 pyproject.toml README.md LICENSE /src/abxpkg/
 COPY --from=abx-plugins --chown=root:root --chmod=755 pyproject.toml README.md LICENSE /src/abx-plugins/
 COPY --chown=root:root --chmod=755 pyproject.toml README.md LICENSE "$CODE_DIR/"
-RUN --mount=type=bind,source=pyproject.toml,target=/app/pyproject.toml \
-    --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
+# Release automation changes only these version fields on its follow-up commit.
+# Install a canonical version while building the expensive browser/tool layer so
+# that metadata-only bumps do not invalidate it; the real versions are overlaid
+# from the original contexts after every binary has been installed and checked.
+RUN sed -i -E 's/^version = "[^"]+"/version = "0.0.0"/' \
+        /src/abxbus/pyproject.toml \
+        /src/abxpkg/pyproject.toml \
+        /src/abx-plugins/pyproject.toml \
+        "$CODE_DIR/pyproject.toml"
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
     echo "[+] UV Installing external Python dependencies from local package metadata..." \
     && /venv/bin/python3 -c 'import re, tomllib; paths = ["/src/abxbus/pyproject.toml", "/src/abxpkg/pyproject.toml", "/src/abx-plugins/pyproject.toml", "/app/pyproject.toml"]; skip = {"abxbus", "abxpkg", "abx-plugins", "abx-dl"}; deps = []; [deps.extend(tomllib.load(open(path, "rb"))["project"].get("dependencies", [])) for path in paths]; seen = set(); print("\n".join(dep for dep in deps if (name := re.split(r"[<>=!~;\\[]", dep, 1)[0].strip().lower()) not in skip and not (dep in seen or seen.add(dep))))' > /tmp/abx-dl-requirements.txt \
     && uv pip install --refresh -r /tmp/abx-dl-requirements.txt
@@ -154,6 +162,20 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && rm -f /venv/bin/uv /venv/bin/uvx \
     && rm -rf /venv/lib/python3.*/site-packages/pip* /venv/lib/python3.*/site-packages/setuptools* /venv/lib/python3.*/site-packages/wheel* /venv/bin/pip /venv/bin/pip3 /venv/bin/pip3.* /venv/bin/wheel \
     && (which abx-dl && abx-dl --version) | tee -a /VERSION.txt
+
+########################################################################################################
+FROM scratch AS abx-dl-release-packages
+
+# Select only installable package inputs here. Mounting each repository root in
+# the final stage would make BuildKit upload unrelated local caches/workspaces.
+COPY --from=abxbus pyproject.toml README.md LICENSE /abxbus/
+COPY --from=abxbus abxbus /abxbus/abxbus
+COPY --from=abxpkg pyproject.toml README.md LICENSE /abxpkg/
+COPY --from=abxpkg abxpkg /abxpkg/abxpkg
+COPY --from=abx-plugins pyproject.toml README.md LICENSE /abx-plugins/
+COPY --from=abx-plugins abx_plugins /abx-plugins/abx_plugins
+COPY pyproject.toml README.md LICENSE /abx-dl/
+COPY abx_dl /abx-dl/abx_dl
 
 ########################################################################################################
 FROM abx-dl-runtime-base
@@ -203,6 +225,25 @@ RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=
     && CACHE_BYTES="$(du -sb "$ABXPKG_LIB_DIR/cache" | cut -f1)" \
     && (( CACHE_BYTES < 1048576 )) \
     && rm -rf /var/lib/apt/lists/* /tmp/*
+
+# Overlay the exact released package metadata only after the expensive toolchain
+# layer. Source changes still invalidate that layer because its canonical build
+# above contains the same source; a version-only autobump now changes just this
+# small layer. The selected sources are copied to writable scratch space because
+# build backends create temporary files beside pyproject.toml, then removed in
+# this same layer so no second source tree is baked into the image.
+RUN --mount=type=bind,from=abx-dl-release-packages,source=/,target=/src/actual,ro \
+    --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
+    cp -a /src/actual /tmp/actual \
+    && /usr/bin/uv pip install --no-deps \
+        /tmp/actual/abxbus /tmp/actual/abxpkg /tmp/actual/abx-plugins /tmp/actual/abx-dl \
+    && rm -rf /tmp/actual \
+    && PURELIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
+    && /venv/bin/python -m compileall --invalidation-mode checked-hash -q \
+        "$PURELIB_DIR/abxbus" "$PURELIB_DIR/abxpkg" "$PURELIB_DIR/abx_plugins" "$PURELIB_DIR/abx_dl" \
+    && find "$PURELIB_DIR" -maxdepth 1 \( -name 'abxbus*' -o -name 'abxpkg*' -o -name 'abx_plugins*' -o -name 'abx_dl*' \) -exec touch -h -d '@946684800' {} + \
+    && find /venv/bin -maxdepth 1 -type f -name 'abx*' -exec touch -h -d '@946684800' {} + \
+    && /usr/bin/uv pip show abx-dl | tee -a /VERSION.txt
 
 # The diagnostics below do not install binaries, but they exercise both
 # check-mode and install-mode projections, whose derived cache shapes differ.
