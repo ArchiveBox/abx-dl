@@ -221,6 +221,7 @@ jobs:
           cache-from: type=registry,ref=${{ env.DOCKERHUB_IMAGE }}:main
           # Inline metadata makes the published compressed blobs reusable
           # without uploading a second copy to a hidden cache backend.
+          # Compression is part of blob identity, not exporter-only formatting.
           cache-to: |
             ${{ inputs.push_digests && 'type=inline' || '' }}
 
