@@ -207,15 +207,23 @@ jobs:
             abxpkg=${{ runner.temp }}/abxpkg
             abx-plugins=${{ runner.temp }}/abx-plugins
           platforms: ${{ matrix.platform }}
-          # zstd shrinks the binary-heavy runtime substantially and exports
-          # faster than gzip; downstream ArchiveBox reuses these exact layers.
-          # Force it because BuildKit otherwise preserves inherited gzip layers.
+          # zstd shrinks the binary-heavy runtime substantially and downstream
+          # ArchiveBox reuses these exact layers. Do not force recompression:
+          # the released image's inline cache lets BuildKit reuse existing zstd
+          # blobs, while force-compression would recompress ~700 MiB on every
+          # no-op release. Preserving small inherited gzip layers is cheaper,
+          # and the compressed-size gate below still catches size regressions.
           outputs: |
-            ${{ inputs.push_digests && format('type=image,"name={0},{1}",push-by-digest=true,name-canonical=true,push=true,compression=zstd,compression-level=3,force-compression=true', env.DOCKERHUB_IMAGE, env.GHCR_IMAGE) || '' }}
-          cache-from: type=gha,scope=${{ matrix.cache_scope }}
-          # Candidate builds still consume the full-CI cache. Only full CI
-          # refreshes it, because exporting unchanged layers used to add ~100s.
-          cache-to: ${{ inputs.full_tests && format('type=gha,mode=max,scope={0}', matrix.cache_scope) || '' }}
+            ${{ inputs.push_digests && format('type=image,"name={0},{1}",push-by-digest=true,name-canonical=true,push=true,compression=zstd,compression-level=3', env.DOCKERHUB_IMAGE, env.GHCR_IMAGE) || '' }}
+          cache-from: |
+            type=gha,scope=${{ matrix.cache_scope }}
+            type=registry,ref=${{ env.DOCKERHUB_IMAGE }}:main
+          # Inline metadata makes the already-published compressed blobs the
+          # candidate cache; unlike a separate max-mode export, it adds no
+          # second layer upload. Full CI also refreshes the deeper GHA cache.
+          cache-to: |
+            ${{ inputs.push_digests && 'type=inline' || '' }}
+            ${{ inputs.full_tests && format('type=gha,mode=max,scope={0}', matrix.cache_scope) || '' }}
 
       - name: Test Docker documentation commands
         if: inputs.full_tests && matrix.platform == 'linux/amd64'
