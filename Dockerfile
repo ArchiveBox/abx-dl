@@ -152,20 +152,6 @@ RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$T
     && (which abx-dl && abx-dl --version) | tee -a /VERSION.txt
 
 ########################################################################################################
-FROM scratch AS abx-dl-release-packages
-
-# Select only installable package inputs here. Mounting each repository root in
-# the final stage would make BuildKit upload unrelated local caches/workspaces.
-COPY --from=abxbus pyproject.toml README.md LICENSE /abxbus/
-COPY --from=abxbus abxbus /abxbus/abxbus
-COPY --from=abxpkg pyproject.toml README.md LICENSE /abxpkg/
-COPY --from=abxpkg abxpkg /abxpkg/abxpkg
-COPY --from=abx-plugins pyproject.toml README.md LICENSE /abx-plugins/
-COPY --from=abx-plugins abx_plugins /abx-plugins/abx_plugins
-COPY pyproject.toml README.md LICENSE /abx-dl/
-COPY abx_dl /abx-dl/abx_dl
-
-########################################################################################################
 FROM abx-dl-runtime-base
 
 COPY --from=abx-dl-builder /venv /venv
@@ -224,32 +210,32 @@ ARG ABX_PLUGINS_VERSION
 ARG ABX_DL_VERSION
 ARG ABX_DL_COMMIT_HASH
 
-# Overlay the exact released package metadata only after the expensive toolchain
-# layer. Source changes still invalidate that layer because its canonical build
-# above contains the same source; a version-only autobump now changes just this
-# small layer. The selected sources are copied to writable scratch space because
-# build backends create temporary files beside pyproject.toml, then removed in
-# this same layer so no second source tree is baked into the image.
-RUN --mount=type=bind,from=abx-dl-release-packages,source=/,target=/src/actual,ro \
-    --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
-    cp -a /src/actual /tmp/actual \
+# The canonical build already installed and compiled these exact source trees;
+# reinstalling them here just to change four version strings would duplicate
+# every package in a new OCI layer and make the ArchiveBox child image repeat
+# those bytes again when repairing ownership. Metadata readers disagree here:
+# importlib reads METADATA, while uv also trusts the dist-info directory name.
+# Therefore copy/rename only that tiny directory and adjust RECORD; package
+# code remains untouched. PEP 376 explicitly allows an empty hash/size for an
+# installed RECORD entry, so blank only the METADATA checksum we intentionally
+# mutate instead of adding checksum-recalculation machinery. overlayfs cannot
+# rename a directory out of a lower OCI layer, hence the small copy + whiteout.
+RUN PURELIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
     && for package_version in \
-        "/tmp/actual/abxbus/pyproject.toml|$ABXBUS_VERSION" \
-        "/tmp/actual/abxpkg/pyproject.toml|$ABXPKG_VERSION" \
-        "/tmp/actual/abx-plugins/pyproject.toml|$ABX_PLUGINS_VERSION" \
-        "/tmp/actual/abx-dl/pyproject.toml|$ABX_DL_VERSION"; do \
-        IFS='|' read -r package_file package_version <<< "$package_version"; \
-        if [[ -n "$package_version" ]]; then sed -i -E "s/^version = \"[^\"]+\"/version = \"$package_version\"/" "$package_file"; fi; \
-    done \
-    && /usr/bin/uv pip install --no-deps \
-        /tmp/actual/abxbus /tmp/actual/abxpkg /tmp/actual/abx-plugins /tmp/actual/abx-dl \
-    && rm -rf /tmp/actual \
-    && PURELIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
-    && /venv/bin/python -m compileall --invalidation-mode checked-hash -q \
-        "$PURELIB_DIR/abxbus" "$PURELIB_DIR/abxpkg" "$PURELIB_DIR/abx_plugins" "$PURELIB_DIR/abx_dl" \
-    && find "$PURELIB_DIR" -maxdepth 1 \( -name 'abxbus*' -o -name 'abxpkg*' -o -name 'abx_plugins*' -o -name 'abx_dl*' \) -exec touch -h -d '@946684800' {} + \
-    && find /venv/bin -maxdepth 1 -type f -name 'abx*' -exec touch -h -d '@946684800' {} + \
-    && /usr/bin/uv pip show abx-dl | tee -a /VERSION.txt \
+        "abxbus|$ABXBUS_VERSION" \
+        "abxpkg|$ABXPKG_VERSION" \
+        "abx_plugins|$ABX_PLUGINS_VERSION" \
+        "abx_dl|$ABX_DL_VERSION"; do \
+        IFS='|' read -r package version <<< "$package_version"; \
+        [[ -n "$version" ]] || continue; \
+        old_name="${package}-0.0.0.dist-info"; \
+        new_name="${package}-${version}.dist-info"; \
+        cp -a "$PURELIB_DIR/$old_name" "$PURELIB_DIR/$new_name"; \
+        sed -i -E "s/^Version: .*/Version: $version/; s|^$old_name/|$new_name/|" "$PURELIB_DIR/$new_name/METADATA" "$PURELIB_DIR/$new_name/RECORD"; \
+        sed -i -E "s|^($new_name/METADATA),.*$|\1,,|" "$PURELIB_DIR/$new_name/RECORD"; \
+        rm -rf "$PURELIB_DIR/$old_name"; \
+    done
+RUN /usr/bin/uv pip show abx-dl | tee -a /VERSION.txt \
     && if [[ "$ABX_DL_COMMIT_HASH" =~ ^[0-9a-fA-F]{40}$ ]]; then echo "COMMIT_HASH=$ABX_DL_COMMIT_HASH" | tee -a /VERSION.txt; fi
 
 # The diagnostics below do not install binaries, but they exercise both
