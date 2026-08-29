@@ -220,7 +220,9 @@ jobs:
             type=registry,ref=${{ env.DOCKERHUB_IMAGE }}:main
           # Inline metadata makes the already-published compressed blobs the
           # candidate cache; unlike a separate max-mode export, it adds no
-          # second layer upload. Full CI also refreshes the deeper GHA cache.
+          # second layer upload. :main only advances after both architectures
+          # pass the release checks, so this never imports an untested local
+          # build. Full CI also refreshes the deeper GHA cache.
           cache-to: |
             ${{ inputs.push_digests && 'type=inline' || '' }}
             ${{ inputs.full_tests && format('type=gha,mode=max,scope={0}', matrix.cache_scope) || '' }}
