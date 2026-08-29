@@ -176,7 +176,8 @@ jobs:
       # BuildKit keys downstream layers from COPY inputs, not merely from the
       # resulting files. Normalize release-only versions before it sees the
       # contexts; the Dockerfile restores these exact values after installing
-      # tools, so source changes still rebuild while an autobump does not.
+      # tools, so source changes still rebuild while an autobump does not. This
+      # mutates only the disposable per-job checkout and cloned build contexts.
       - name: Canonicalize release-only Docker metadata
         shell: bash
         run: |
