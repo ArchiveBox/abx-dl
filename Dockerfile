@@ -143,20 +143,8 @@ COPY --from=abxbus --chown=root:root --chmod=755 abxbus /src/abxbus/abxbus
 COPY --from=abxpkg --chown=root:root --chmod=755 abxpkg /src/abxpkg/abxpkg
 COPY --from=abx-plugins --chown=root:root --chmod=755 abx_plugins /src/abx-plugins/abx_plugins
 COPY --chown=root:root --chmod=755 abx_dl "$CODE_DIR/abx_dl"
-COPY --chown=root:root --chmod=755 .git "$CODE_DIR/.git"
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
     echo "[*] Installing local abxbus/abxpkg/abx-plugins/abx-dl Python source code..." \
-    && COMMIT_HASH="$( \
-        if [[ -f "$CODE_DIR/.git/HEAD" ]]; then \
-            HEAD_REF="$(cat "$CODE_DIR/.git/HEAD")"; \
-            if [[ "$HEAD_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then \
-                echo "$HEAD_REF"; \
-            elif [[ "$HEAD_REF" == ref:\ * ]]; then \
-                REF_PATH="${HEAD_REF#ref: }"; \
-                cat "$CODE_DIR/.git/$REF_PATH" 2>/dev/null || awk -v ref="$REF_PATH" '$2 == ref {print $1}' "$CODE_DIR/.git/packed-refs" 2>/dev/null || true; \
-            fi; \
-        fi)" \
-    && if [[ "$COMMIT_HASH" =~ ^[0-9a-fA-F]{40}$ ]]; then echo "COMMIT_HASH=$COMMIT_HASH" | tee -a /VERSION.txt; fi \
     && uv pip install --no-deps /src/abxbus /src/abxpkg /src/abx-plugins "$CODE_DIR" \
     && /usr/bin/uv pip show abx-dl | tee -a /VERSION.txt \
     && rm -f /venv/bin/uv /venv/bin/uvx \
@@ -226,6 +214,16 @@ RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=
     && (( CACHE_BYTES < 1048576 )) \
     && rm -rf /var/lib/apt/lists/* /tmp/*
 
+# These values are deliberately declared after the expensive tool layer. CI
+# canonicalizes version-only metadata before BuildKit hashes its contexts, then
+# supplies the exact released values here so autobumps invalidate only the
+# package overlay and provenance, never the installed browser/toolchain.
+ARG ABXBUS_VERSION
+ARG ABXPKG_VERSION
+ARG ABX_PLUGINS_VERSION
+ARG ABX_DL_VERSION
+ARG ABX_DL_COMMIT_HASH
+
 # Overlay the exact released package metadata only after the expensive toolchain
 # layer. Source changes still invalidate that layer because its canonical build
 # above contains the same source; a version-only autobump now changes just this
@@ -235,6 +233,14 @@ RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=
 RUN --mount=type=bind,from=abx-dl-release-packages,source=/,target=/src/actual,ro \
     --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
     cp -a /src/actual /tmp/actual \
+    && for package_version in \
+        "/tmp/actual/abxbus/pyproject.toml|$ABXBUS_VERSION" \
+        "/tmp/actual/abxpkg/pyproject.toml|$ABXPKG_VERSION" \
+        "/tmp/actual/abx-plugins/pyproject.toml|$ABX_PLUGINS_VERSION" \
+        "/tmp/actual/abx-dl/pyproject.toml|$ABX_DL_VERSION"; do \
+        IFS='|' read -r package_file package_version <<< "$package_version"; \
+        if [[ -n "$package_version" ]]; then sed -i -E "s/^version = \"[^\"]+\"/version = \"$package_version\"/" "$package_file"; fi; \
+    done \
     && /usr/bin/uv pip install --no-deps \
         /tmp/actual/abxbus /tmp/actual/abxpkg /tmp/actual/abx-plugins /tmp/actual/abx-dl \
     && rm -rf /tmp/actual \
@@ -243,7 +249,8 @@ RUN --mount=type=bind,from=abx-dl-release-packages,source=/,target=/src/actual,r
         "$PURELIB_DIR/abxbus" "$PURELIB_DIR/abxpkg" "$PURELIB_DIR/abx_plugins" "$PURELIB_DIR/abx_dl" \
     && find "$PURELIB_DIR" -maxdepth 1 \( -name 'abxbus*' -o -name 'abxpkg*' -o -name 'abx_plugins*' -o -name 'abx_dl*' \) -exec touch -h -d '@946684800' {} + \
     && find /venv/bin -maxdepth 1 -type f -name 'abx*' -exec touch -h -d '@946684800' {} + \
-    && /usr/bin/uv pip show abx-dl | tee -a /VERSION.txt
+    && /usr/bin/uv pip show abx-dl | tee -a /VERSION.txt \
+    && if [[ "$ABX_DL_COMMIT_HASH" =~ ^[0-9a-fA-F]{40}$ ]]; then echo "COMMIT_HASH=$ABX_DL_COMMIT_HASH" | tee -a /VERSION.txt; fi
 
 # The diagnostics below do not install binaries, but they exercise both
 # check-mode and install-mode projections, whose derived cache shapes differ.

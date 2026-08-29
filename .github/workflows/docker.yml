@@ -173,6 +173,26 @@ jobs:
 
           echo "[+] Building ${{ matrix.platform }} for abx-dl ${VERSION} branch=${BRANCH_TAG} sha=${SHORT_SHA}"
 
+      # BuildKit keys downstream layers from COPY inputs, not merely from the
+      # resulting files. Normalize release-only versions before it sees the
+      # contexts; the Dockerfile restores these exact values after installing
+      # tools, so source changes still rebuild while an autobump does not.
+      - name: Canonicalize release-only Docker metadata
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          normalize_version() {
+            local env_name="$1" package_file="$2" version
+            version="$(sed -nE 's/^version = "([^"]+)".*/\1/p' "$package_file" | head -n 1)"
+            test -n "$version"
+            echo "$env_name=$version" >> "$GITHUB_ENV"
+            sed -i -E 's/^version = "[^"]+"/version = "0.0.0"/' "$package_file"
+          }
+          normalize_version ABXBUS_VERSION "$RUNNER_TEMP/abxbus/pyproject.toml"
+          normalize_version ABXPKG_VERSION "$RUNNER_TEMP/abxpkg/pyproject.toml"
+          normalize_version ABX_PLUGINS_VERSION "$RUNNER_TEMP/abx-plugins/pyproject.toml"
+          normalize_version ABX_DL_VERSION pyproject.toml
+
       - name: Login to Docker Hub
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         if: inputs.push_digests
@@ -200,6 +220,12 @@ jobs:
           load: ${{ !inputs.push_digests }}
           tags: ${{ !inputs.push_digests && matrix.local_tag || '' }}
           labels: ${{ steps.docker_meta.outputs.labels }}
+          build-args: |
+            ABXBUS_VERSION=${{ env.ABXBUS_VERSION }}
+            ABXPKG_VERSION=${{ env.ABXPKG_VERSION }}
+            ABX_PLUGINS_VERSION=${{ env.ABX_PLUGINS_VERSION }}
+            ABX_DL_VERSION=${{ env.ABX_DL_VERSION }}
+            ABX_DL_COMMIT_HASH=${{ github.sha }}
           build-contexts: |
             abxbus=${{ runner.temp }}/abxbus
             abxpkg=${{ runner.temp }}/abxpkg
