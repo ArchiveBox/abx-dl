@@ -205,13 +205,13 @@ jobs:
             abxpkg=${{ runner.temp }}/abxpkg
             abx-plugins=${{ runner.temp }}/abx-plugins
           platforms: ${{ matrix.platform }}
-          # One-time repair: the retired GHA cache contaminated :main with gzip
-          # variants, so this release must replace every layer with zstd before
-          # :main becomes the only cache authority. Remove force-compression
-          # immediately after that seed; leaving it on would recompress ~700 MiB
-          # on every no-op release and defeat the registry cache below.
+          # zstd keeps this binary-heavy runtime and downstream ArchiveBox under
+          # their size limits. Do not force recompression: :main contains only
+          # zstd layers plus inline metadata, so BuildKit can reuse those exact
+          # compressed blobs. force-compression would discard that reuse and
+          # recompress ~700 MiB on every no-op release.
           outputs: |
-            ${{ inputs.push_digests && format('type=image,"name={0},{1}",push-by-digest=true,name-canonical=true,push=true,compression=zstd,compression-level=3,force-compression=true', env.DOCKERHUB_IMAGE, env.GHCR_IMAGE) || '' }}
+            ${{ inputs.push_digests && format('type=image,"name={0},{1}",push-by-digest=true,name-canonical=true,push=true,compression=zstd,compression-level=3', env.DOCKERHUB_IMAGE, env.GHCR_IMAGE) || '' }}
           # Keep one cache authority. A separate GHA cache can retain gzip
           # variants of these same layers; BuildKit may then choose those over
           # :main's zstd blobs, making an otherwise identical image larger and
