@@ -1,0 +1,25 @@
+abx_dl/cli.py
+  s_1f1593d0227984::t_429569692ad73f 895-908
+  s_1f1593d0227984::t_e758715a73298b 932,941-947,978-982,1033,1035,1072-1074,1121-1122,1229-1230
+  s_1f1593d0227984::t_10a641705f8bc2 1023,1032,1034
+  s_1f1593d0227984::t_8cb903126b410d 1404
+  s_1f1593d0227984::t_39359b377242f2 983
+tests/test_cli.py
+  s_1f1593d0227984::t_028dff9fbe9975 298-358
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "4a18fc5689a12182865e69a02826db7ec3bd341c",
+  "prompts": {},
+  "sessions": {
+    "s_1f1593d0227984": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a04f5c-f290-7ff3-a8d7-6c618f2d86ea",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
