@@ -886,24 +886,25 @@ class LiveBusUI:
                 transient=True,
                 vertical_overflow="visible",
             )
-            for event_cls, handler in (
-                (ProcessStartedEvent, self.on_ProcessStartedEvent),
-                (ProcessStdoutEvent, self.on_ProcessStdoutEvent),
-                (BinaryRequestEvent, self.on_BinaryRequestEvent),
-                (BinaryEvent, self.on_BinaryEvent),
-                (ArchiveResultEvent, self.on_ArchiveResultEvent),
-                (ProcessCompletedEvent, self.on_ProcessCompletedEvent),
-                (CrawlPauseEvent, self.on_CrawlPauseEvent),
-                (CrawlAbortEvent, self.on_CrawlControlEvent),
-                (CrawlResumeAndRetryEvent, self.on_CrawlControlEvent),
-                (CrawlResumeAndSkipEvent, self.on_CrawlControlEvent),
-            ):
-                self.bus.on(event_cls, handler)
         else:
             self.progress = None
             self.status_view = None
             self.task_id = None
             self.live = None
+
+        for event_cls, handler in (
+            (ProcessStartedEvent, self.on_ProcessStartedEvent),
+            (ProcessStdoutEvent, self.on_ProcessStdoutEvent),
+            (BinaryRequestEvent, self.on_BinaryRequestEvent),
+            (BinaryEvent, self.on_BinaryEvent),
+            (ArchiveResultEvent, self.on_ArchiveResultEvent),
+            (ProcessCompletedEvent, self.on_ProcessCompletedEvent),
+            (CrawlPauseEvent, self.on_CrawlPauseEvent),
+            (CrawlAbortEvent, self.on_CrawlControlEvent),
+            (CrawlResumeAndRetryEvent, self.on_CrawlControlEvent),
+            (CrawlResumeAndSkipEvent, self.on_CrawlControlEvent),
+        ):
+            self.bus.on(event_cls, handler)
 
     def __enter__(self):
         if self.live is not None:
@@ -928,6 +929,7 @@ class LiveBusUI:
 
     def print_intro(self, *, url: str, output_dir: Path, plugins_label: str) -> None:
         if not self.interactive_tty:
+            self.ui_console.print(f"[STARTED] {url} -> {_abbreviate_home_paths(str(output_dir.absolute()))}")
             return
         self.ui_console.print(f"[bold blue]Downloading:[/bold blue] {url}")
         self.ui_console.print(f"[dim]Output: {_abbreviate_home_paths(str(output_dir.absolute()))}[/dim]")
@@ -936,6 +938,13 @@ class LiveBusUI:
 
     def print_summary(self, *, output_dir: Path, archive_results: list[ArchiveResultEvent]) -> None:
         if not self.interactive_tty:
+            self.ui_console.print(
+                f"[COMPLETED] {sum(1 for result in archive_results if result.status == 'succeeded')} succeeded, "
+                f"{sum(1 for result in archive_results if result.status in ('noresult', 'noresults'))} noresult, "
+                f"{sum(1 for result in archive_results if result.status == 'failed')} failed, "
+                f"{sum(1 for result in archive_results if result.status == 'skipped')} skipped -> "
+                f"{_abbreviate_home_paths(str(output_dir.absolute()))}",
+            )
             return
         self.ui_console.print()
         self.ui_console.print(
@@ -965,6 +974,12 @@ class LiveBusUI:
             ),
         )
         self.streamed_header = True
+
+    def _print_started_row(self, record: _LiveProcessRecord) -> None:
+        line = Text()
+        line.append("[STARTED]", style="green bold")
+        line.append(f" {record.phase or '-'} {record.plugin or '-'} {record.hook_name or '-'}")
+        self.ui_console.print(line)
 
     def _match_row_key(
         self,
@@ -998,8 +1013,6 @@ class LiveBusUI:
             row.status = row.final_status or row.status
 
     async def on_ProcessStartedEvent(self, event: ProcessStartedEvent) -> None:
-        if self.progress is None or self.task_id is None:
-            return
         self.process_row_num += 1
         row_key = f"process:{self.process_row_num}"
         self.row_key_by_event_id[event.event_id] = row_key
@@ -1007,7 +1020,7 @@ class LiveBusUI:
             self.row_key_by_event_id[event.event_parent_id] = row_key
         self.process_event_by_row_key[row_key] = event
         self.active_row_keys.append(row_key)
-        self.live_results[row_key] = _LiveProcessRecord(
+        row = _LiveProcessRecord(
             id=row_key,
             plugin=event.plugin_name,
             hook_name=event.hook_name,
@@ -1016,6 +1029,10 @@ class LiveBusUI:
             started_at=event.start_ts or datetime.now(UTC).isoformat(),
             cmd=[event.hook_path, *event.hook_args],
         )
+        self.live_results[row_key] = row
+        if self.progress is None or self.task_id is None:
+            self._print_started_row(row)
+            return
         current_task = self.progress.tasks[self.task_id]
         seen_hooks = max(current_task.completed + len(self.active_row_keys), 1)
         self.progress.update(self.task_id, total=seen_hooks)
@@ -1023,8 +1040,6 @@ class LiveBusUI:
         self._refresh_live()
 
     async def on_BinaryRequestEvent(self, event: BinaryRequestEvent) -> None:
-        if self.progress is None or self.task_id is None:
-            return
         plugin_name = str(event.extra_context.get("plugin_name") or "")
         row_key = self._match_row_key(event)
         if row_key is None:
@@ -1054,6 +1069,9 @@ class LiveBusUI:
         row.output = _binary_event_output(event)
         row.status = "started"
         self.live_results[row_key] = row
+        if self.progress is None or self.task_id is None:
+            self._print_started_row(row)
+            return
         current_task = self.progress.tasks[self.task_id]
         seen_hooks = max(current_task.completed + len(self.active_row_keys), 1)
         self.progress.update(self.task_id, total=seen_hooks)
@@ -1061,8 +1079,6 @@ class LiveBusUI:
         self._refresh_live(force=True)
 
     async def on_BinaryEvent(self, event: BinaryEvent) -> None:
-        if self.progress is None or self.task_id is None:
-            return
         plugin_name = str(event.extra_context.get("plugin_name") or "")
         row_key = self._match_row_key(event)
         if row_key is None:
@@ -1102,6 +1118,8 @@ class LiveBusUI:
             self.active_row_keys.remove(row_key)
         self.live_results.pop(row_key, None)
         self._print_completed_row(row)
+        if self.progress is None or self.task_id is None:
+            return
         current_task = self.progress.tasks[self.task_id]
         self.progress.update(self.task_id, total=max(current_task.completed + len(self.active_row_keys), 1))
         _advance_progress(
@@ -1134,8 +1152,6 @@ class LiveBusUI:
             existing.output = line
 
     async def on_ProcessCompletedEvent(self, event: ProcessCompletedEvent) -> None:
-        if self.progress is None or self.task_id is None:
-            return
         row_key = self._match_row_key(event)
         if row_key is None:
             row_key = f"process:completed:{len(self.live_results) + 1}"
@@ -1210,6 +1226,8 @@ class LiveBusUI:
             self.active_row_keys.remove(row_key)
         self.live_results.pop(row_key, None)
         self._print_completed_row(row)
+        if self.progress is None or self.task_id is None:
+            return
         current_task = self.progress.tasks[self.task_id]
         self.progress.update(self.task_id, total=max(current_task.completed + len(self.active_row_keys), 1))
         _advance_progress(
@@ -1383,7 +1401,7 @@ def dl(
     stdout_is_tty = sys.stdout.isatty()
     stderr_is_tty = sys.stderr.isatty()
     interactive_tty = stdout_is_tty or stderr_is_tty
-    ui_console = stderr_console if stderr_is_tty else console
+    ui_console = stderr_console if stderr_is_tty or not stdout_is_tty else console
 
     selected_plugins = filter_plugins(plugins, selected if selected else None)
     if disable_list:
