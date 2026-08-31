@@ -223,7 +223,7 @@ jobs:
           labels: ${{ steps.docker_meta.outputs.labels }}
           build-args: |
             ABXBUS_VERSION=${{ env.ABXBUS_VERSION }}
-            ABXPKG_VERSION=${{ env.ABXPKG_VERSION }}
+            DIST_ABXPKG_VERSION=${{ env.ABXPKG_VERSION }}
             ABX_PLUGINS_VERSION=${{ env.ABX_PLUGINS_VERSION }}
             ABX_DL_VERSION=${{ env.ABX_DL_VERSION }}
             ABX_DL_COMMIT_HASH=${{ github.sha }}
