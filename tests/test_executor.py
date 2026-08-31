@@ -811,6 +811,7 @@ def test_real_js_snapshot_hook_replays_early_sigterm_to_late_cleanup_handler(tmp
     chrome = discover_plugins()["chrome"]
     selected = {chrome.name: chrome, plugin.name: plugin}
     hook = plugin.hooks[0]
+    navigate_hook = next(hook for hook in chrome.filter_hooks("Snapshot") if not hook.is_background)
     bus = create_bus(total_timeout=120.0, name=f"real_js_early_sigterm_{tmp_path.name}")
     output_dir = tmp_path / "run"
 
@@ -836,6 +837,18 @@ def test_real_js_snapshot_hook_replays_early_sigterm_to_late_cleanup_handler(tmp
             where=lambda event: event.line == "staticfile listener attached",
         )
         assert isinstance(ready, ProcessStdoutEvent)
+        # The hook-ready waiter above and SnapshotService both resume from the
+        # same stdout event. Wait until the next foreground hook is published
+        # so scheduler order cannot make cleanup misclassify this as a
+        # background-only snapshot and intentionally await its natural result.
+        foreground = await bus.find(
+            ProcessEvent,
+            past=True,
+            future=60.0,
+            plugin_name=chrome.name,
+            hook_name=navigate_hook.name,
+        )
+        assert isinstance(foreground, ProcessEvent)
         snapshot_event = await bus.find(SnapshotEvent, past=True, future=False)
         assert isinstance(snapshot_event, SnapshotEvent)
         crawl = await bus.find(CrawlEvent, past=True, future=False)

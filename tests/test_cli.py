@@ -356,6 +356,31 @@ def test_noninteractive_live_ui_streams_process_lifecycle() -> None:
     assert "succeeded" in rendered
 
 
+def test_noninteractive_intro_and_summary_preserve_literal_brackets() -> None:
+    bus = create_bus(total_timeout=10.0, name="noninteractive_literal_brackets")
+    output = io.StringIO()
+    live_ui = cli_module.LiveBusUI(
+        bus,
+        total_hooks=0,
+        timeout_seconds=60,
+        ui_console=Console(file=output, force_terminal=False, color_system=None, width=200),
+        interactive_tty=False,
+    )
+    # Non-TTY output is consumed as plain logs. Rich markup-like text can be
+    # supplied by both the URL and output path, so every bracket must survive.
+    output_dir = Path("/tmp/[bold]archive[/bold]")
+    live_ui.print_intro(
+        url="https://example.com/[red]literal[/red]",
+        output_dir=output_dir,
+        plugins_label="title",
+    )
+    live_ui.print_summary(output_dir=output_dir, archive_results=[])
+
+    rendered = output.getvalue()
+    assert "[STARTED] https://example.com/[red]literal[/red] -> /tmp/[bold]archive[/bold]" in rendered
+    assert "[COMPLETED] 0 succeeded, 0 noresult, 0 failed, 0 skipped -> /tmp/[bold]archive[/bold]" in rendered
+
+
 def test_process_completed_success_ignores_stderr_for_live_output() -> None:
     bus = create_bus(total_timeout=10.0, name="process_completed_success_stderr")
     output = io.StringIO()

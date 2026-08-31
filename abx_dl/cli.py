@@ -929,7 +929,9 @@ class LiveBusUI:
 
     def print_intro(self, *, url: str, output_dir: Path, plugins_label: str) -> None:
         if not self.interactive_tty:
-            self.ui_console.print(f"[STARTED] {url} -> {_abbreviate_home_paths(str(output_dir.absolute()))}")
+            self.ui_console.print(
+                Text(f"[STARTED] {url} -> {_abbreviate_home_paths(str(output_dir.absolute()))}"),
+            )
             return
         self.ui_console.print(f"[bold blue]Downloading:[/bold blue] {url}")
         self.ui_console.print(f"[dim]Output: {_abbreviate_home_paths(str(output_dir.absolute()))}[/dim]")
@@ -939,11 +941,13 @@ class LiveBusUI:
     def print_summary(self, *, output_dir: Path, archive_results: list[ArchiveResultEvent]) -> None:
         if not self.interactive_tty:
             self.ui_console.print(
-                f"[COMPLETED] {sum(1 for result in archive_results if result.status == 'succeeded')} succeeded, "
-                f"{sum(1 for result in archive_results if result.status in ('noresult', 'noresults'))} noresult, "
-                f"{sum(1 for result in archive_results if result.status == 'failed')} failed, "
-                f"{sum(1 for result in archive_results if result.status == 'skipped')} skipped -> "
-                f"{_abbreviate_home_paths(str(output_dir.absolute()))}",
+                Text(
+                    f"[COMPLETED] {sum(1 for result in archive_results if result.status == 'succeeded')} succeeded, "
+                    f"{sum(1 for result in archive_results if result.status in ('noresult', 'noresults'))} noresult, "
+                    f"{sum(1 for result in archive_results if result.status == 'failed')} failed, "
+                    f"{sum(1 for result in archive_results if result.status == 'skipped')} skipped -> "
+                    f"{_abbreviate_home_paths(str(output_dir.absolute()))}",
+                ),
             )
             return
         self.ui_console.print()
