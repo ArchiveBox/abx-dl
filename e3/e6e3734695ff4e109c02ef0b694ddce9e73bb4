@@ -1,0 +1,21 @@
+Dockerfile
+  s_ac1c5884810750::t_59646d04bece1e 208,226
+.github/workflows/docker.yml
+  s_ac1c5884810750::t_59646d04bece1e 226
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "e3e6e3734695ff4e109c02ef0b694ddce9e73bb4",
+  "prompts": {},
+  "sessions": {
+    "s_ac1c5884810750": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a05568-44f6-7352-ae9e-160e694f37af",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
