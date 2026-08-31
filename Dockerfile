@@ -205,7 +205,7 @@ RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=
 # supplies the exact released values here so autobumps invalidate only the
 # package overlay and provenance, never the installed browser/toolchain.
 ARG ABXBUS_VERSION
-ARG ABXPKG_VERSION
+ARG DIST_ABXPKG_VERSION
 ARG ABX_PLUGINS_VERSION
 ARG ABX_DL_VERSION
 ARG ABX_DL_COMMIT_HASH
@@ -223,7 +223,7 @@ ARG ABX_DL_COMMIT_HASH
 RUN PURELIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
     && for package_version in \
         "abxbus|$ABXBUS_VERSION" \
-        "abxpkg|$ABXPKG_VERSION" \
+        "abxpkg|$DIST_ABXPKG_VERSION" \
         "abx_plugins|$ABX_PLUGINS_VERSION" \
         "abx_dl|$ABX_DL_VERSION"; do \
         IFS='|' read -r package version <<< "$package_version"; \
