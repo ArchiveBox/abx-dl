@@ -295,6 +295,92 @@ def test_process_completed_uses_last_non_json_line_for_live_output() -> None:
     assert "Starting infinite scroll on https://yahoo.com" not in rendered
 
 
+def test_noninteractive_live_ui_streams_process_lifecycle() -> None:
+    bus = create_bus(total_timeout=10.0, name="noninteractive_process_lifecycle")
+    output = io.StringIO()
+    cli_module.LiveBusUI(
+        bus,
+        total_hooks=1,
+        timeout_seconds=60,
+        ui_console=Console(file=output, force_terminal=False, color_system=None),
+        interactive_tty=False,
+    )
+
+    async def run() -> None:
+        process = await _completed_real_hook_process()
+        started_event = ProcessStartedEvent(
+            plugin_name="parse_txt_urls",
+            hook_name="on_Snapshot__71_parse_txt_urls",
+            hook_path=_real_hook_path("parse_txt_urls", "on_Snapshot__71_parse_txt_urls"),
+            hook_args=["--url=https://example.com"],
+            output_dir="/tmp",
+            env={},
+            timeout=60,
+            pid=process.pid or 0,
+            subprocess=process,
+            stdout_file=Path("/tmp/noninteractive_process_lifecycle.stdout.log"),
+            stderr_file=Path("/tmp/noninteractive_process_lifecycle.stderr.log"),
+            pid_file=Path("/tmp/noninteractive_process_lifecycle.pid"),
+            cmd_file=Path("/tmp/noninteractive_process_lifecycle.sh"),
+            files_before=set(),
+            start_ts="2026-03-25T12:00:00",
+        )
+        completed_event = ProcessCompletedEvent(
+            plugin_name=started_event.plugin_name,
+            hook_name=started_event.hook_name,
+            hook_path=started_event.hook_path,
+            hook_args=started_event.hook_args,
+            env={},
+            timeout=60,
+            stdout='{"type":"ArchiveResult","status":"succeeded","output_str":"1 URL"}\n',
+            stderr="",
+            exit_code=0,
+            status="succeeded",
+            output_dir="/tmp",
+            output_files=[],
+            start_ts=started_event.start_ts,
+            end_ts="2026-03-25T12:00:01",
+            event_parent_id=started_event.event_id,
+        )
+        await bus.emit(started_event).now()
+        await bus.emit(completed_event).now()
+        await bus.wait_until_idle()
+        await bus.destroy(clear=False)
+
+    asyncio.run(run())
+
+    rendered = output.getvalue()
+    assert "STARTED" in rendered
+    assert "parse_txt_urls" in rendered
+    assert "on_Snapshot__71_parse_txt_urls" in rendered
+    assert "succeeded" in rendered
+
+
+def test_noninteractive_intro_and_summary_preserve_literal_brackets() -> None:
+    bus = create_bus(total_timeout=10.0, name="noninteractive_literal_brackets")
+    output = io.StringIO()
+    live_ui = cli_module.LiveBusUI(
+        bus,
+        total_hooks=0,
+        timeout_seconds=60,
+        ui_console=Console(file=output, force_terminal=False, color_system=None, width=200),
+        interactive_tty=False,
+    )
+    # Non-TTY output is consumed as plain logs. Rich markup-like text can be
+    # supplied by both the URL and output path, so every bracket must survive.
+    output_dir = Path("/tmp/[bold]archive[/bold]")
+    live_ui.print_intro(
+        url="https://example.com/[red]literal[/red]",
+        output_dir=output_dir,
+        plugins_label="title",
+    )
+    live_ui.print_summary(output_dir=output_dir, archive_results=[])
+
+    rendered = output.getvalue()
+    assert "[STARTED] https://example.com/[red]literal[/red] -> /tmp/[bold]archive[/bold]" in rendered
+    assert "[COMPLETED] 0 succeeded, 0 noresult, 0 failed, 0 skipped -> /tmp/[bold]archive[/bold]" in rendered
+
+
 def test_process_completed_success_ignores_stderr_for_live_output() -> None:
     bus = create_bus(total_timeout=10.0, name="process_completed_success_stderr")
     output = io.StringIO()
