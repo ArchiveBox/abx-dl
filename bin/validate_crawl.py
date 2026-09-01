@@ -15,6 +15,10 @@ SUCCESS_STATUSES = {"succeeded", "noresult", "noresults"}
 CHROME_SNAPSHOT_OWNER = ("chrome", "on_Snapshot__00_chrome_launch.daemon.bg")
 CHROME_CRAWL_SETUP_HOOK = "on_CrawlSetup__90_chrome_launch.daemon.bg"
 CHROME_CRAWL_WAIT_HOOK = "on_CrawlSetup__91_chrome_wait"
+UBLOCK_SNAPSHOT_CONFIG = ("ublock", "on_Snapshot__11_ublock_config")
+UBLOCK_CRAWL_SETUP_HOOK = "on_CrawlSetup__95_ublock_config"
+CRAWL_ISOLATION_NOOP = "CHROME_ISOLATION=crawl"
+UBLOCK_CONFIGURED_MESSAGE = "Disabled uBlock top-level strict blocking"
 
 
 def load_records(index_path: Path) -> list[dict[str, object]]:
@@ -30,6 +34,85 @@ def load_records(index_path: Path) -> list[dict[str, object]]:
             raise SystemExit(f"Expected an object at {index_path}:{line_number}")
         records.append(record)
     return records
+
+
+def validate_crawl_isolation(
+    records: list[dict[str, object]],
+    *,
+    snapshot_count: int,
+) -> None:
+    """Validate the ownership handoff for crawl-scoped browser setup."""
+    results = [record for record in records if record.get("type") == "ArchiveResult"]
+    unexpected_skips = []
+    chrome_owner_skips = []
+    ublock_config_skips = []
+    for record in results:
+        if record.get("status") != "skipped":
+            continue
+        owner = (str(record.get("plugin")), str(record.get("hook_name")))
+        if owner == CHROME_SNAPSHOT_OWNER and record.get("output_str") == CRAWL_ISOLATION_NOOP:
+            chrome_owner_skips.append(record)
+            continue
+        if owner == UBLOCK_SNAPSHOT_CONFIG and record.get("output_str") == CRAWL_ISOLATION_NOOP:
+            ublock_config_skips.append(record)
+            continue
+        unexpected_skips.append((*owner, record.get("output_str")))
+    if unexpected_skips:
+        raise SystemExit(f"Unexpected skipped ArchiveResult records: {unexpected_skips}")
+    if len(chrome_owner_skips) != snapshot_count:
+        raise SystemExit(
+            "Expected exactly one crawl-owned Chrome Snapshot no-op per Snapshot, "
+            f"got {len(chrome_owner_skips)} skips for {snapshot_count} Snapshots",
+        )
+    if len(ublock_config_skips) != snapshot_count:
+        raise SystemExit(
+            "Expected exactly one crawl-owned uBlock Snapshot no-op per Snapshot, "
+            f"got {len(ublock_config_skips)} skips for {snapshot_count} Snapshots",
+        )
+
+    processes = [record for record in records if record.get("type") == "Process"]
+
+    def require_process(
+        plugin_name: str,
+        hook_name: str,
+        label: str,
+    ) -> dict[str, object]:
+        matches = [record for record in processes if record.get("plugin") == plugin_name and record.get("hook_name") == hook_name]
+        if len(matches) != 1:
+            raise SystemExit(
+                f"Expected exactly one successful {label} process for {hook_name}, got {len(matches)}",
+            )
+        process = matches[0]
+        if process.get("status") != "succeeded" or process.get("exit_code") != 0:
+            raise SystemExit(
+                f"{label} process did not succeed: {hook_name}: "
+                f"status={process.get('status')} exit_code={process.get('exit_code')} "
+                f"stderr={process.get('stderr')}",
+            )
+        return process
+
+    setup_process = require_process("chrome", CHROME_CRAWL_SETUP_HOOK, "Chrome")
+    setup_records = []
+    for line in str(setup_process.get("stdout", "")).splitlines():
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict):
+            setup_records.append(record)
+    if {"succeeded": True, "skipped": False} not in setup_records:
+        raise SystemExit(
+            "Crawl-owned Chrome daemon did not report successful non-skipped cleanup",
+        )
+    wait_process = require_process("chrome", CHROME_CRAWL_WAIT_HOOK, "Chrome")
+    if " ready pid=" not in str(wait_process.get("stdout", "")):
+        raise SystemExit("Crawl-owned Chrome readiness hook did not observe a ready CDP session")
+
+    ublock_process = require_process("ublock", UBLOCK_CRAWL_SETUP_HOOK, "uBlock")
+    if UBLOCK_CONFIGURED_MESSAGE not in str(ublock_process.get("stderr", "")):
+        raise SystemExit(
+            "Crawl-owned uBlock setup did not confirm strict-blocking configuration",
+        )
 
 
 def main() -> None:
@@ -85,58 +168,7 @@ def main() -> None:
     if failures:
         raise SystemExit(f"Unsuccessful ArchiveResult records: {failures}")
 
-    unexpected_skips = []
-    chrome_owner_skips = []
-    for record in results:
-        if record.get("status") != "skipped":
-            continue
-        plugin_name = str(record.get("plugin"))
-        hook_name = str(record.get("hook_name"))
-        if (plugin_name, hook_name) == CHROME_SNAPSHOT_OWNER and record.get("output_str") == "CHROME_ISOLATION=crawl":
-            chrome_owner_skips.append(record)
-            continue
-        unexpected_skips.append((plugin_name, hook_name, record.get("output_str")))
-    if unexpected_skips:
-        raise SystemExit(f"Unexpected skipped ArchiveResult records: {unexpected_skips}")
-    if len(chrome_owner_skips) != len(snapshots):
-        raise SystemExit(
-            "Expected exactly one crawl-owned Chrome Snapshot no-op per Snapshot, "
-            f"got {len(chrome_owner_skips)} skips for {len(snapshots)} Snapshots",
-        )
-
-    processes = [record for record in records if record.get("type") == "Process"]
-
-    def require_chrome_process(hook_name: str) -> dict[str, object]:
-        matches = [record for record in processes if record.get("plugin") == "chrome" and record.get("hook_name") == hook_name]
-        if len(matches) != 1:
-            raise SystemExit(
-                f"Expected exactly one successful Chrome process for {hook_name}, got {len(matches)}",
-            )
-        process = matches[0]
-        if process.get("status") != "succeeded" or process.get("exit_code") != 0:
-            raise SystemExit(
-                f"Chrome process did not succeed: {hook_name}: "
-                f"status={process.get('status')} exit_code={process.get('exit_code')} "
-                f"stderr={process.get('stderr')}",
-            )
-        return process
-
-    setup_process = require_chrome_process(CHROME_CRAWL_SETUP_HOOK)
-    setup_records = []
-    for line in str(setup_process.get("stdout", "")).splitlines():
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(record, dict):
-            setup_records.append(record)
-    if {"succeeded": True, "skipped": False} not in setup_records:
-        raise SystemExit(
-            "Crawl-owned Chrome daemon did not report successful non-skipped cleanup",
-        )
-    wait_process = require_chrome_process(CHROME_CRAWL_WAIT_HOOK)
-    if " ready pid=" not in str(wait_process.get("stdout", "")):
-        raise SystemExit("Crawl-owned Chrome readiness hook did not observe a ready CDP session")
+    validate_crawl_isolation(records, snapshot_count=len(snapshots))
 
     for plugin_name, relative_paths in required_plugin_outputs.items():
         plugin_results = [record for record in results if record.get("plugin") == plugin_name and record.get("status") == "succeeded"]
