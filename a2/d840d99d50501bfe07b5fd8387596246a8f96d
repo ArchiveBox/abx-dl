@@ -1,0 +1,19 @@
+abx_dl/services/process_service.py
+  s_02306ff216bb4b::t_53d2afb710f087 890-893
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "a2d840d99d50501bfe07b5fd8387596246a8f96d",
+  "prompts": {},
+  "sessions": {
+    "s_02306ff216bb4b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e80fd-b459-7d81-95f7-c3397ecca326",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
