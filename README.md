@@ -106,6 +106,13 @@ Plugins are loaded from the installed [`abx-plugins`](https://pypi.org/project/a
 2. **CrawlSetup hooks** (`on_CrawlSetup__*`) launch/configure expensive crawl-scoped processes like chrome, or trigger side effects. background hooks use their first stdout line as the readiness boundary and emit no stdout JSONL records.
 3. **Snapshot hooks** (`on_Snapshot__*`) run per URL to extract content. background hooks use their first stdout line as the readiness boundary; JSONL records after that are `ArchiveResult`, `Snapshot`, and `Tag`.
 
+Applications embedding the runtime use the same framework-free interfaces as
+the CLI: `PluginCatalog` for inventory, `PluginConfigResolver` for config,
+`ExecutionPlan` for plugin selection/service setup, `execute_hook()` for a
+single finite hook, and `OutputManifest` for output metadata. These APIs accept
+plain mappings, filesystem paths, environment variables, and CLI arguments;
+they do not depend on Django or an application database.
+
 
 <br/>
 

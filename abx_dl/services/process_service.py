@@ -874,8 +874,6 @@ class ProcessService(BaseService):
         for line in lines:
             state.stdout_lines.append(line)
             stripped = line.strip()
-            if event.env.get("ABX_RUNTIME", "").lower() == "archivebox" and '"type": "Snapshot"' in stripped:
-                continue
             try:
                 await event.emit(
                     ProcessStdoutEvent(

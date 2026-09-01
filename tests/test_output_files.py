@@ -4,7 +4,7 @@ import stat
 from pathlib import Path
 
 from abx_dl.models import discover_plugins
-from abx_dl.output_files import scan_output_files
+from abx_dl.output_files import OutputManifest, scan_output_files
 
 
 def test_scan_output_files_excludes_symlinked_files_and_dirs(tmp_path: Path) -> None:
@@ -99,3 +99,15 @@ def test_scan_output_files_symlink_neutralization_is_idempotent(tmp_path: Path) 
     assert record.is_file() and not record.is_symlink()
     assert record.read_text().strip() == str(outside)
     assert not (snap_dir / "leak").exists()
+
+
+def test_output_manifest_is_the_canonical_mapping_and_summary(tmp_path: Path) -> None:
+    (tmp_path / "page.html").write_text("<h1>Hello</h1>")
+    (tmp_path / "data.json").write_text('{"ok": true}')
+
+    manifest = OutputManifest.scan(tmp_path)
+
+    assert list(manifest.as_mapping()) == ["data.json", "page.html"]
+    assert manifest.total_size == len("<h1>Hello</h1>") + len('{"ok": true}')
+    assert manifest.mimetypes[0] in {"application/json", "text/html"}
+    assert OutputManifest.from_value(manifest.as_mapping()) == manifest

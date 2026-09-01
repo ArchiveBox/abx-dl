@@ -121,6 +121,7 @@ class SnapshotService(BaseService):
         snapshot_cleanup_phase_timeout: float = 300.0,
         abort_requested: Callable[[], bool | Awaitable[bool]] | None = None,
         selected_hooks_by_plugin: dict[str, set[str] | None] | None = None,
+        emit_discovered_snapshot_events: bool = True,
     ):
         self.url = url
         self.snapshot = snapshot
@@ -145,6 +146,7 @@ class SnapshotService(BaseService):
         self.snapshot_cleanup_phase_timeout = snapshot_cleanup_phase_timeout
         self.abort_requested = False
         self.abort_requested_callback = abort_requested
+        self.emit_discovered_snapshot_events = emit_discovered_snapshot_events
         self.limit_state: CrawlLimitState | None = None
         self.config: RuntimeConfig = config
         self._hook_timeouts: dict[tuple[str, str], int] = {}
@@ -340,7 +342,7 @@ class SnapshotService(BaseService):
         """
         if Path(event.output_dir).parent != self.output_dir:
             return
-        if str(self.config.user.ABX_RUNTIME).lower() == "archivebox":
+        if not self.emit_discovered_snapshot_events:
             return
         try:
             record = json.loads(event.line)

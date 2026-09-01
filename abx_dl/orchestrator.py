@@ -80,6 +80,7 @@ import os
 import sys
 from collections.abc import Sequence
 from contextlib import nullcontext
+from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -88,6 +89,7 @@ from abxbus import EventBus, EventBusMiddleware, EventConcurrencyMode, EventHand
 from abxpkg.binary_service import BinaryRequestEvent, BinaryService
 
 from .config import GlobalConfig, RuntimeConfig, ensure_default_persona_dir, get_explicit_user_env, get_initial_env
+from .catalog import PluginCatalog
 from .events import (
     CrawlEvent,
     InstallEvent,
@@ -121,6 +123,7 @@ def setup_services(
     crawl_setup_enabled: bool = True,
     crawl_start_enabled: bool = True,
     snapshot_cleanup_enabled: bool = True,
+    emit_discovered_snapshot_events: bool = True,
     crawl_cleanup_enabled: bool = True,
     crawl_completed_enabled: bool = True,
     crawl_event_enabled: bool = True,
@@ -260,6 +263,7 @@ def setup_services(
                 snapshot_cleanup_enabled=snapshot_cleanup_enabled,
                 snapshot_cleanup_phase_timeout=snapshot_cleanup_phase_timeout,
                 abort_requested=abort_requested,
+                emit_discovered_snapshot_events=emit_discovered_snapshot_events,
             )
 
 
@@ -456,6 +460,125 @@ def compute_phase_timeout(hooks: list[tuple[Plugin, Hook]], config: dict[str, An
     return max(float(total), 60.0)
 
 
+@dataclass(frozen=True)
+class ExecutionPlan:
+    """Framework-neutral description of one configured plugin execution.
+
+    Embedders own persistence and scheduling.  The plan owns the shared plugin
+    selection, config seed, and timeout calculations required to attach abx-dl
+    services to their EventBus.
+    """
+
+    plugins: dict[str, Plugin]
+    config: dict[str, Any]
+    derived_config: dict[str, Any]
+    runtime: str
+    install_timeout: float
+    crawl_setup_timeout: float
+    snapshot_timeout: float
+    crawl_cleanup_timeout: float
+
+    @classmethod
+    def build(
+        cls,
+        plugins: dict[str, Plugin] | PluginCatalog,
+        *,
+        selected_plugins: list[str] | None = None,
+        config: dict[str, Any] | None = None,
+        derived_config: dict[str, Any] | None = None,
+        runtime: str = "abx-dl",
+    ) -> ExecutionPlan:
+        catalog = plugins if isinstance(plugins, PluginCatalog) else PluginCatalog(dict(plugins))
+        selected = catalog.select(selected_plugins).plugins
+        runtime_config = dict(config or {})
+        runtime_config["ABX_RUNTIME"] = runtime
+        crawl_setup_hooks = [(plugin, hook) for plugin in selected.values() for hook in plugin.filter_hooks("CrawlSetup")]
+        snapshot_hooks = [(plugin, hook) for plugin in selected.values() for hook in plugin.filter_hooks("Snapshot")]
+        return cls(
+            plugins=selected,
+            config=runtime_config,
+            derived_config=dict(derived_config or {}),
+            runtime=runtime,
+            install_timeout=compute_install_phase_timeout(get_install_plugins(selected), runtime_config),
+            crawl_setup_timeout=compute_phase_timeout(crawl_setup_hooks, runtime_config),
+            snapshot_timeout=compute_phase_timeout(snapshot_hooks, runtime_config),
+            crawl_cleanup_timeout=compute_phase_timeout(crawl_setup_hooks, runtime_config),
+        )
+
+    @property
+    def runtime_config(self) -> RuntimeConfig:
+        return RuntimeConfig(
+            user=GlobalConfig(**self.config),
+            derived=dict(self.derived_config),
+        )
+
+    async def seed_config(self, bus: EventBus, *, parent_event: Any | None = None) -> None:
+        """Publish the plan's config layers through the normal runtime contract."""
+        user_event = MachineEvent(config=dict(self.config), config_type="user")
+        if parent_event is not None:
+            user_event.event_parent_id = parent_event.event_id
+        await bus.emit(user_event).now()
+        if self.derived_config:
+            derived_event = MachineEvent(config=dict(self.derived_config), config_type="derived")
+            if parent_event is not None:
+                derived_event.event_parent_id = parent_event.event_id
+            await bus.emit(derived_event).now()
+
+    def attach_services(
+        self,
+        bus: EventBus,
+        *,
+        url: str | None = None,
+        snapshot: Snapshot | None = None,
+        output_dir: Path | None = None,
+        **service_options: Any,
+    ) -> None:
+        """Attach shared services using this plan's single selected/configured view."""
+        setup_services(
+            bus,
+            plugins=self.plugins,
+            url=url,
+            snapshot=snapshot,
+            output_dir=output_dir,
+            runtime_config=self.runtime_config,
+            crawl_setup_phase_timeout=self.crawl_setup_timeout,
+            snapshot_phase_timeout=self.snapshot_timeout,
+            snapshot_cleanup_phase_timeout=self.snapshot_timeout,
+            crawl_cleanup_phase_timeout=self.crawl_cleanup_timeout,
+            **service_options,
+        )
+
+    def attach_snapshot_service(
+        self,
+        bus: EventBus,
+        *,
+        url: str,
+        snapshot: Snapshot,
+        output_dir: Path,
+        snapshot_service: type[SnapshotService] = SnapshotService,
+        timeout_padding: float = 0.0,
+        abort_requested: Any | None = None,
+        selected_hooks_by_plugin: dict[str, set[str] | None] | None = None,
+        emit_discovered_snapshot_events: bool = True,
+    ) -> SnapshotService:
+        """Attach one snapshot executor to an existing application-owned bus."""
+        timeout = self.snapshot_timeout + timeout_padding
+        return snapshot_service(
+            bus,
+            url=url,
+            snapshot=snapshot,
+            output_dir=output_dir,
+            plugins=self.plugins,
+            config=self.runtime_config,
+            snapshot_phase_timeout=timeout,
+            snapshot_cleanup_enabled=True,
+            snapshot_cleanup_phase_timeout=timeout,
+            abort_requested=abort_requested,
+            selected_hooks_by_plugin=selected_hooks_by_plugin,
+            emit_discovered_snapshot_events=emit_discovered_snapshot_events,
+        )
+
+
 def create_bus(
     *,
     total_timeout: float = 60.0,
@@ -587,8 +710,14 @@ async def download(
     if interactive_tty is None:
         interactive_tty = stdout_is_tty or sys.stderr.isatty()
 
-    # Filter plugins for runtime phases; binary providers are handled by abxpkg.
-    plugins = filter_plugins(plugins, selected_plugins)
+    plan = ExecutionPlan.build(
+        plugins,
+        selected_plugins=selected_plugins,
+        config=explicit_user_config,
+        derived_config=initial_derived_config,
+        runtime="abx-dl",
+    )
+    plugins = plan.plugins
 
     # Create snapshot record and write it as the first line of index.jsonl
     snapshot_payload: dict[str, Any] = {"url": url}
@@ -607,24 +736,11 @@ async def download(
     snapshot = Snapshot(**snapshot_payload)
     write_jsonl(index_path, snapshot, also_print=emit_jsonl)
 
-    # Collect and sort hooks by (order, name) so execution order matches
-    # the numeric prefix in hook filenames (e.g. __10, __41, __70, __90, __91)
-    crawl_setup_hooks: list[tuple[Plugin, Hook]] = []
-    snapshot_hooks: list[tuple[Plugin, Hook]] = []
-    for plugin in plugins.values():
-        for hook in plugin.filter_hooks("CrawlSetup"):
-            crawl_setup_hooks.append((plugin, hook))
-        for hook in plugin.filter_hooks("Snapshot"):
-            snapshot_hooks.append((plugin, hook))
-    crawl_setup_hooks.sort(key=lambda x: x[1].sort_key)
-    snapshot_hooks.sort(key=lambda x: x[1].sort_key)
-
-    # Compute per-phase timeouts from plugin-specific settings
-    install_phase_timeout = compute_install_phase_timeout(get_install_plugins(plugins), config_overrides or None)
-    crawl_setup_phase_timeout = compute_phase_timeout(crawl_setup_hooks, config_overrides or None)
-    snapshot_phase_timeout = compute_phase_timeout(snapshot_hooks, config_overrides or None)
+    install_phase_timeout = plan.install_timeout
+    crawl_setup_phase_timeout = plan.crawl_setup_timeout
+    snapshot_phase_timeout = plan.snapshot_timeout
     snapshot_cleanup_phase_timeout = snapshot_phase_timeout
-    crawl_cleanup_phase_timeout = crawl_setup_phase_timeout
+    crawl_cleanup_phase_timeout = plan.crawl_cleanup_timeout
     total_timeout = (
         install_phase_timeout
         + (crawl_setup_phase_timeout if crawl_setup_enabled else 0.0)
@@ -644,14 +760,7 @@ async def download(
         url=url,
         snapshot=snapshot,
         output_dir=output_dir,
-        runtime_config=RuntimeConfig(
-            # Preserve which values the user actually supplied. Passing the
-            # default-filled bootstrap mapping here marks every global default
-            # as explicit, causing TIMEOUT=60 to override plugin-specific
-            # defaults such as CLAUDECODECLEANUP_TIMEOUT=180.
-            user=GlobalConfig(**explicit_user_config),
-            derived=initial_derived_config,
-        ),
+        runtime_config=plan.runtime_config,
         install_enabled=True,
         crawl_setup_enabled=crawl_setup_enabled,
         crawl_start_enabled=crawl_start_enabled,
@@ -675,19 +784,7 @@ async def download(
         CrawlService=CrawlService,
         SnapshotService=SnapshotService,
     )
-    await bus.emit(
-        MachineEvent(
-            config=explicit_user_config,
-            config_type="user",
-        ),
-    ).now()
-    if initial_derived_config:
-        await bus.emit(
-            MachineEvent(
-                config=initial_derived_config,
-                config_type="derived",
-            ),
-        ).now()
+    await plan.seed_config(bus)
 
     heartbeat = None
     if crawl_setup_enabled or crawl_start_enabled or crawl_cleanup_enabled:
