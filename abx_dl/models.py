@@ -532,13 +532,12 @@ def filter_plugins(
     provider names are handled by abxpkg providers, not plugin dependencies.
     """
     disabled = {n.lower() for n in disabled_names or []}
-    explicit_names = names is not None
-    if not names:
+    if names is None:
         names = [name for name, plugin in plugins.items() if plugin.config.x_auto_run and name.lower() not in disabled]
     else:
         names = [name for name in names if name.lower() not in disabled]
     if not names:
-        return {} if explicit_names else plugins
+        return {}
 
     plugins_by_lower = {name.lower(): plugin for name, plugin in plugins.items()}
     plugin_names_by_lower = {name.lower(): name for name in plugins}

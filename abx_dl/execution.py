@@ -56,7 +56,14 @@ async def execute_hook(
 
     event_bus = bus or create_bus(total_timeout=float(timeout) + 30.0, name="AbxDlHook")
     if attach_process_service:
-        ProcessService(event_bus, emit_jsonl=False, interactive_tty=False)
+        # A caller may reuse one bus for many hooks. ProcessService owns the
+        # subprocess side effect, so registering it twice would run every later
+        # ProcessEvent twice; projectors are safe to add independently.
+        has_process_service = any(
+            isinstance(getattr(handler.handler, "__self__", None), ProcessService) for handler in event_bus.handlers.values()
+        )
+        if not has_process_service:
+            ProcessService(event_bus, emit_jsonl=False, interactive_tty=False)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     process_event = ProcessEvent(

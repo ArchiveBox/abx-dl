@@ -67,7 +67,11 @@ class OutputManifest(BaseModel):
             try:
                 value = json.loads(value)
             except json.JSONDecodeError:
-                return cls()
+                # Callers also pass a single unencoded path. Preserve it as one
+                # file instead of silently turning malformed JSON into no output.
+                pass
+            if isinstance(value, str):
+                value = [value]
         if isinstance(value, Mapping):
             files = []
             for path, metadata in value.items():
@@ -85,7 +89,12 @@ class OutputManifest(BaseModel):
                 elif isinstance(item, OutputFile):
                     files.append(item)
                 elif isinstance(item, Mapping) and item.get("path"):
-                    files.append(item)
+                    path = str(item["path"])
+                    payload = dict(item)
+                    payload["path"] = path
+                    payload.setdefault("extension", Path(path).suffix.lower().lstrip("."))
+                    payload.setdefault("mimetype", guess_mimetype(path))
+                    files.append(payload)
             return cls.from_files(files)
         return cls()
 

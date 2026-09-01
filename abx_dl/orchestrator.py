@@ -491,6 +491,9 @@ class ExecutionPlan:
         catalog = plugins if isinstance(plugins, PluginCatalog) else PluginCatalog(dict(plugins))
         selected = catalog.select(selected_plugins).plugins
         runtime_config = dict(config or {})
+        # The embedding application owns runtime identity. Do not let an env
+        # value make hooks believe a standalone run is ArchiveBox (or vice
+        # versa) after plugin discovery already used this explicit runtime.
         runtime_config["ABX_RUNTIME"] = runtime
         crawl_setup_hooks = [(plugin, hook) for plugin in selected.values() for hook in plugin.filter_hooks("CrawlSetup")]
         snapshot_hooks = [(plugin, hook) for plugin in selected.values() for hook in plugin.filter_hooks("Snapshot")]

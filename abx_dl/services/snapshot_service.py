@@ -342,6 +342,9 @@ class SnapshotService(BaseService):
         """
         if Path(event.output_dir).parent != self.output_dir:
             return
+        # This flag controls only whether protocol records become new work.
+        # ProcessStdoutEvent remains the shared audit/result stream for other
+        # services even when an embedder persists discoveries itself.
         if not self.emit_discovered_snapshot_events:
             return
         try:

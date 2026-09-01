@@ -92,7 +92,12 @@ class PluginCatalog(Mapping[str, Plugin]):
 
     def template_path(self, plugin_name: str, template_name: str) -> Path | None:
         """Return a plugin-owned presentation asset without interpreting it."""
-        template = self.plugins[plugin_name].path / "templates" / f"{template_name}.html"
+        templates_root = (self.plugins[plugin_name].path / "templates").resolve()
+        template = (templates_root / f"{template_name}.html").resolve()
+        try:
+            template.relative_to(templates_root)
+        except ValueError:
+            return None
         return template if template.is_file() else None
 
 
