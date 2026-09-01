@@ -12,7 +12,6 @@ from abx_dl.models import discover_plugins, filter_plugins, parse_hook_filename
 
 def test_parse_hook_filename_marks_bg_hooks() -> None:
     assert parse_hook_filename("on_Snapshot__66_papersdl.finite.bg.py") == ("Snapshot", 66, True)
-    assert parse_hook_filename("on_Snapshot__66_papersdl__background.py") == ("Snapshot", 66, True)
     assert parse_hook_filename("on_Snapshot__9_chrome_wait.js") == ("Snapshot", 9, False)
     assert parse_hook_filename("on_Snapshot__chrome_wait.js") == ("Snapshot", 0, False)
 
