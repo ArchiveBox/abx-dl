@@ -366,19 +366,20 @@ PLUGINS_DIR = _default_plugins_dir()
 def parse_hook_filename(filename: str) -> tuple[str, int, bool] | None:
     """Parse a hook filename to extract (event_type, order, is_background).
 
-    Format: `on_{Event}__[{order}_]{description}[.bg].{ext}`
+    Format: `on_{Event}__[{order}_]{description}[.bg].{ext}`. The legacy
+    `__background` marker remains supported for existing user plugins.
 
     Returns None if the filename doesn't match the hook convention.
     Never attempt to determine .finite/.daemon/interpreter, hooks should be treated like black-box executables.
     """
     pattern = r"^on_(\w+)__(?:(\d+)_)?(.+)$"
-    match = re.match(pattern, filename)
+    match = re.match(pattern, filename.replace("__background", ""))
     if not match:
         return None
 
     event = match.group(1)
     order = int(match.group(2) or 0)
-    is_background = ".bg." in filename
+    is_background = ".bg." in filename or "__background" in Path(filename).stem
 
     return (event, order, is_background)
 
