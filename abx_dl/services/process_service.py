@@ -887,5 +887,9 @@ class ProcessService(BaseService):
                 ).now()
             except RuntimeError as err:
                 if "event has no bus attached" in str(err):
+                    # Stdout progress events are best-effort during shutdown.
+                    # The owning runner may already have detached the bus after
+                    # a SIGINT/SIGTERM; do not turn that late cosmetic flush
+                    # into an unhandled task exception while the process exits.
                     return
                 raise
