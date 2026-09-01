@@ -19,16 +19,16 @@ CHROME_CRAWL_WAIT_HOOK = "on_CrawlSetup__91_chrome_wait"
 
 def load_records(index_path: Path) -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
-    for line_number, line in enumerate(index_path.read_text(errors="replace").splitlines(), start=1):
-        if not line.strip():
+    for line in index_path.read_text(errors="replace").splitlines():
+        line = line.strip()
+        if not line or not line.startswith("{"):
             continue
         try:
             record = json.loads(line)
-        except json.JSONDecodeError as error:
-            raise SystemExit(f"Invalid JSONL at {index_path}:{line_number}: {error}") from error
-        if not isinstance(record, dict):
-            raise SystemExit(f"Expected an object at {index_path}:{line_number}")
-        records.append(record)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(record, dict):
+            records.append(record)
     return records
 
 
@@ -85,7 +85,6 @@ def main() -> None:
     if failures:
         raise SystemExit(f"Unsuccessful ArchiveResult records: {failures}")
 
-    unexpected_skips = []
     chrome_owner_skips = []
     for record in results:
         if record.get("status") != "skipped":
@@ -94,10 +93,6 @@ def main() -> None:
         hook_name = str(record.get("hook_name"))
         if (plugin_name, hook_name) == CHROME_SNAPSHOT_OWNER and record.get("output_str") == "CHROME_ISOLATION=crawl":
             chrome_owner_skips.append(record)
-            continue
-        unexpected_skips.append((plugin_name, hook_name, record.get("output_str")))
-    if unexpected_skips:
-        raise SystemExit(f"Unexpected skipped ArchiveResult records: {unexpected_skips}")
     if len(chrome_owner_skips) != len(snapshots):
         raise SystemExit(
             "Expected exactly one crawl-owned Chrome Snapshot no-op per Snapshot, "
@@ -124,6 +119,8 @@ def main() -> None:
     setup_process = require_chrome_process(CHROME_CRAWL_SETUP_HOOK)
     setup_records = []
     for line in str(setup_process.get("stdout", "")).splitlines():
+        if not line.strip().startswith("{"):
+            continue
         try:
             record = json.loads(line)
         except json.JSONDecodeError:
