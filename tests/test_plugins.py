@@ -101,6 +101,29 @@ def test_default_selection_excludes_plugins_that_require_explicit_selection(tmp_
     assert "explicit" in catalog.select(["explicit"])
 
 
+def test_default_selection_can_be_empty() -> None:
+    explicit = PluginCatalog.discover()["wget"].model_copy(
+        update={"config": PluginCatalog.discover()["wget"].config.model_copy(update={"x_auto_run": False})},
+    )
+
+    assert not PluginCatalog({"explicit": explicit}).select()
+
+
+def test_template_path_cannot_escape_plugin_templates(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "example"
+    templates_dir = plugin_dir / "templates"
+    templates_dir.mkdir(parents=True)
+    (plugin_dir / "config.json").write_text('{"title":"Example","properties":{}}')
+    (templates_dir / "details.html").write_text("details")
+    outside = tmp_path / "outside.html"
+    outside.write_text("outside")
+    catalog = PluginCatalog.discover(plugins_dir=tmp_path)
+
+    assert catalog.template_path("example", "details") == templates_dir / "details.html"
+    assert catalog.template_path("example", "../../outside") is None
+    assert catalog.template_path("example", str(outside.with_suffix(""))) is None
+
+
 def test_plugin_config_resolver_uses_manifest_aliases_and_dependencies() -> None:
     resolver = PluginConfigResolver(PluginCatalog.discover(runtime="archivebox"))
 

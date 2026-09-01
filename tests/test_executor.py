@@ -74,6 +74,36 @@ def test_execute_hook_runs_without_application_framework(tmp_path):
     assert '"status":"succeeded"' in completed.stdout
 
 
+def test_execute_hook_reuses_one_process_service_per_bus(tmp_path):
+    counter = tmp_path / "runs.txt"
+    script = tmp_path / "on_Snapshot__10_example.py"
+    script.write_text(f"#!/bin/sh\nprintf 'run\\n' >> '{counter}'\n")
+    script.chmod(0o755)
+    hook = Hook(
+        name=script.name,
+        event="SnapshotEvent",
+        plugin_name="example",
+        path=script,
+        order=10,
+        is_background=False,
+    )
+
+    async def run_twice() -> None:
+        bus = create_bus(total_timeout=5, name=f"execute_hook_reuse_{uuid4().hex[:8]}")
+        for index in range(2):
+            await execute_hook(
+                hook,
+                output_dir=tmp_path / f"output-{index}",
+                env={"PATH": os.environ["PATH"]},
+                bus=bus,
+            )
+        await bus.wait_until_idle()
+
+    asyncio.run(run_twice())
+
+    assert counter.read_text().splitlines() == ["run", "run"]
+
+
 def _binary_extra_context(
     *,
     plugin_name: str,

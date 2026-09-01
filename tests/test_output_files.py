@@ -109,5 +109,26 @@ def test_output_manifest_is_the_canonical_mapping_and_summary(tmp_path: Path) ->
 
     assert list(manifest.as_mapping()) == ["data.json", "page.html"]
     assert manifest.total_size == len("<h1>Hello</h1>") + len('{"ok": true}')
-    assert manifest.mimetypes[0] in {"application/json", "text/html"}
+    assert manifest.mimetypes == ["text/html", "application/json"]
     assert OutputManifest.from_value(manifest.as_mapping()) == manifest
+
+
+def test_output_manifest_normalizes_string_and_list_metadata() -> None:
+    assert OutputManifest.from_value("page.html").files[0].model_dump() == {
+        "path": "page.html",
+        "extension": "html",
+        "mimetype": "text/html",
+        "size": 0,
+    }
+    assert OutputManifest.from_value('"data.json"').files[0].model_dump() == {
+        "path": "data.json",
+        "extension": "json",
+        "mimetype": "application/json",
+        "size": 0,
+    }
+    assert OutputManifest.from_value([{"path": "archive.warc"}]).files[0].model_dump() == {
+        "path": "archive.warc",
+        "extension": "warc",
+        "mimetype": "application/warc",
+        "size": 0,
+    }
