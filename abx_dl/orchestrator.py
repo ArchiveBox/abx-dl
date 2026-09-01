@@ -96,7 +96,6 @@ from .events import (
     MachineEvent,
     slow_warning_timeout,
 )
-from .heartbeat import CrawlHeartbeat
 from .models import Hook, Plugin, RequiredBinary, Snapshot, discover_plugins, filter_plugins, write_jsonl
 from .services import (
     ArchiveResultService,
@@ -789,15 +788,6 @@ async def download(
     )
     await plan.seed_config(bus)
 
-    heartbeat = None
-    if crawl_setup_enabled or crawl_start_enabled or crawl_cleanup_enabled:
-        heartbeat = CrawlHeartbeat(
-            output_dir,
-            runtime=str(initial_user_config.get("ABX_RUNTIME", "abx-dl")),
-            crawl_id=snapshot.crawl_id or snapshot.id,
-        )
-        await heartbeat.start()
-
     try:
         install_event = bus.emit(
             InstallEvent(
@@ -829,7 +819,5 @@ async def download(
             await emitted_crawl_event.now()
             await emitted_crawl_event.event_results_list()
     finally:
-        if heartbeat is not None:
-            await heartbeat.stop()
         if owns_bus:
             await bus.wait_until_idle()
