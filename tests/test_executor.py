@@ -26,9 +26,10 @@ from abx_dl.events import (
     SnapshotCompletedEvent,
     SnapshotEvent,
 )
+from abx_dl.execution import build_hook_args, execute_hook
 from abx_dl.limits import CrawlLimitState
-from abx_dl.models import Snapshot, discover_plugins, filter_plugins
-from abx_dl.orchestrator import create_bus, download, setup_services
+from abx_dl.models import Hook, Snapshot, discover_plugins, filter_plugins
+from abx_dl.orchestrator import ExecutionPlan, create_bus, download, setup_services
 from abx_dl.services.archive_result_service import ArchiveResultService
 from abx_dl.services.binary_service import PluginBinaryEnvService
 from abx_dl.services.crawl_service import CrawlService
@@ -37,6 +38,40 @@ from abx_dl.services.snapshot_service import SnapshotService
 from abxpkg.binary_service import BinaryEvent, BinaryRequestEvent, BinaryService
 from pytest_httpserver import HTTPServer
 from werkzeug import Response
+
+
+def test_build_hook_args_uses_standalone_cli_contract():
+    assert build_hook_args({"url": "https://example.com", "depth": 2, "enabled": True, "skip": False}) == [
+        "--url=https://example.com",
+        "--depth=2",
+        "--enabled",
+    ]
+
+
+def test_execute_hook_runs_without_application_framework(tmp_path):
+    script = tmp_path / "on_Snapshot__10_example.py"
+    script.write_text('#!/bin/sh\nprintf \'{"type":"ArchiveResult","status":"succeeded"}\\n\'\n')
+    script.chmod(0o755)
+    hook = Hook(
+        name=script.name,
+        event="SnapshotEvent",
+        plugin_name="example",
+        path=script,
+        order=10,
+        is_background=False,
+    )
+
+    completed = asyncio.run(
+        execute_hook(
+            hook,
+            output_dir=tmp_path / "output",
+            env={"PATH": os.environ["PATH"]},
+            arguments={"url": "https://example.com"},
+        ),
+    )
+
+    assert completed.exit_code == 0
+    assert '"status":"succeeded"' in completed.stdout
 
 
 def _binary_extra_context(
@@ -496,6 +531,37 @@ def test_setup_services_accepts_runtime_config_overrides_and_seeds_machine_event
     assert user_event.config["TIMEOUT"] == 123
     assert user_event.config["DRY_RUN"] is True
     assert derived_event.config == {"WGET_BINARY": str(wget_binary.abspath)}
+
+
+def test_execution_plan_centralizes_selection_timeouts_and_runtime_config(tmp_path: Path) -> None:
+    plan = ExecutionPlan.build(
+        discover_plugins(runtime="archivebox"),
+        selected_plugins=["title", "wget"],
+        config={"TIMEOUT": 17},
+        derived_config={"WGET_BINARY": str(tmp_path / "wget")},
+        runtime="archivebox",
+    )
+
+    assert {"chrome", "title", "wget"} <= set(plan.plugins)
+    assert plan.runtime_config.user.ABX_RUNTIME == "archivebox"
+    assert plan.runtime_config.user.TIMEOUT == 17
+    assert plan.runtime_config.derived == {"WGET_BINARY": str(tmp_path / "wget")}
+    assert plan.snapshot_timeout >= 60.0
+
+    async def run() -> list[MachineEvent]:
+        bus = create_bus(total_timeout=5.0, name=f"execution_plan_{uuid4().hex[:8]}")
+        observed: list[MachineEvent] = []
+
+        async def on_MachineEvent(event: MachineEvent) -> None:
+            observed.append(event)
+
+        bus.on(MachineEvent, on_MachineEvent)
+        await plan.seed_config(bus)
+        await bus.wait_until_idle()
+        return observed
+
+    events = asyncio.run(run())
+    assert [event.config_type for event in events] == ["user", "derived"]
 
 
 def test_binary_service_stops_after_successful_provider_result(tmp_path: Path) -> None:

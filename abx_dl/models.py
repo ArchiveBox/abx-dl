@@ -99,12 +99,16 @@ class PluginConfig(BaseModel):
     title: str = ""
     description: str = ""
     x_runtimes: list[str] = Field(default_factory=list, alias="x-runtimes")
+    x_auto_run: bool = Field(default=True, alias="x-auto-run")
     x_accepts_internal_input: bool = Field(default=False, alias="x-accepts-internal-input")
     output_mimetypes: list[str] = Field(default_factory=list)  # e.g. ['text/html', 'video/']
     properties: dict[str, dict[str, Any]] = Field(default_factory=dict)  # JSONSchema format describing plugin config
     required_binaries: list[RequiredBinary] = Field(default_factory=list)  # e.g. [{'name': 'wget', 'binproviders': 'env,brew,apt'}]
     required_plugins: list[str] = Field(default_factory=list)  # e.g. ['chrome', 'pdf']
     wait_for_plugins: list[str] = Field(default_factory=list)
+    category: str = ""
+    display_order: int = 1000
+    hidden: bool = False
 
 
 class Plugin(BaseModel):
@@ -122,6 +126,7 @@ class Plugin(BaseModel):
     name: str
     path: Path
     config: PluginConfig = Field(default_factory=PluginConfig)
+    manifest: dict[str, Any] = Field(default_factory=dict)
     hooks: list[Hook] = Field(default_factory=list)
 
     @property
@@ -361,7 +366,7 @@ PLUGINS_DIR = _default_plugins_dir()
 def parse_hook_filename(filename: str) -> tuple[str, int, bool] | None:
     """Parse a hook filename to extract (event_type, order, is_background).
 
-    Format: `on_{Event}__[{order}_]{description}[.bg].{ext}`
+    Format: `on_{Event}__[{order}_]{description}[.bg].{ext}`.
 
     Returns None if the filename doesn't match the hook convention.
     Never attempt to determine .finite/.daemon/interpreter, hooks should be treated like black-box executables.
@@ -379,6 +384,7 @@ def parse_hook_filename(filename: str) -> tuple[str, int, bool] | None:
 
 
 def _plugin_runtime_enabled(config: PluginConfig, runtime: str | None = None) -> bool:
+    """Apply an optional, generic host-runtime allowlist from the manifest."""
     allowed_runtimes = {str(item).strip().lower() for item in config.x_runtimes if str(item).strip()}
     if not allowed_runtimes:
         return True
@@ -406,7 +412,8 @@ def load_plugin(plugin_dir: Path, *, runtime: str | None = None) -> Plugin | Non
     # Load config schema
     config_file = plugin_dir / "config.json"
     if config_file.exists():
-        plugin.config = PluginConfig.model_validate_json(config_file.read_text())
+        plugin.manifest = json.loads(config_file.read_text())
+        plugin.config = PluginConfig.model_validate(plugin.manifest)
         if not _plugin_runtime_enabled(plugin.config, runtime=runtime):
             return None
 
@@ -527,7 +534,7 @@ def filter_plugins(
     disabled = {n.lower() for n in disabled_names or []}
     explicit_names = names is not None
     if not names:
-        names = [name for name in plugins if name.lower() not in disabled]
+        names = [name for name, plugin in plugins.items() if plugin.config.x_auto_run and name.lower() not in disabled]
     else:
         names = [name for name in names if name.lower() not in disabled]
     if not names:

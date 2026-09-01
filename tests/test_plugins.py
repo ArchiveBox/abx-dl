@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from abx_dl.catalog import PluginCatalog, PluginConfigResolver
 from abx_dl.config import get_initial_env, get_required_binary_requests
 from abx_dl.models import discover_plugins, filter_plugins, parse_hook_filename
 
@@ -66,6 +67,56 @@ def test_discover_plugins_extends_packaged_plugins_with_runtime_plugin_dir(tmp_p
     assert "wget" in discovered_hooks
     assert "parse_html_urls" in discovered_hooks
     assert discovered_hooks["runtime_only"] == [title_hook.name]
+
+
+def test_plugin_catalog_exposes_complete_metadata_and_sorted_hooks() -> None:
+    catalog = PluginCatalog.discover(runtime="archivebox")
+
+    assert "wget" in catalog
+    assert catalog["wget"].manifest["properties"]["WGET_ENABLED"]["type"] == "boolean"
+    assert catalog.schemas["wget"]["title"] == catalog["wget"].config.title
+    hooks = catalog.hooks("Snapshot", names=["title", "wget"])
+    assert hooks == sorted(hooks, key=lambda item: item[1].sort_key)
+    assert {plugin.name for plugin, _hook in hooks} == {"chrome", "title", "wget"}
+
+
+def test_plugin_catalog_extra_dirs_override_packaged_plugins(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "wget"
+    plugin_dir.mkdir()
+    (plugin_dir / "config.json").write_text('{"title":"Custom Wget","properties":{}}')
+
+    catalog = PluginCatalog.discover(extra_plugin_dirs=[tmp_path])
+
+    assert catalog["wget"].path == plugin_dir
+    assert catalog["wget"].manifest["title"] == "Custom Wget"
+
+
+def test_default_selection_excludes_plugins_that_require_explicit_selection(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "explicit"
+    plugin_dir.mkdir()
+    (plugin_dir / "config.json").write_text('{"title":"Explicit","x-auto-run":false,"properties":{}}')
+    catalog = PluginCatalog.discover(plugins_dir=tmp_path)
+
+    assert "explicit" not in catalog.select()
+    assert "explicit" in catalog.select(["explicit"])
+
+
+def test_plugin_config_resolver_uses_manifest_aliases_and_dependencies() -> None:
+    resolver = PluginConfigResolver(PluginCatalog.discover(runtime="archivebox"))
+
+    resolved = resolver.resolve(user_config={"SAVE_WGET": "False", "UBLOCK_ENABLED": "True"}, environ={})
+    enabled = resolver.enabled_plugin_names(resolved=resolved)
+
+    assert resolver.canonical_key("SAVE_WGET") == "WGET_ENABLED"
+    assert "wget" not in enabled
+    assert "ublock" in enabled
+    assert "chrome" in enabled
+    assert "wget" not in resolver.enabled_plugin_names_from_flat({"WGET_ENABLED": False})
+    assert resolver.runtime_settings("wget", {"TIMEOUT": 91, "WGET_BINARY": "/bin/wget"}) == {
+        "enabled": True,
+        "timeout": 91,
+        "binary": "/bin/wget",
+    }
 
 
 def test_filter_plugins_does_not_add_binary_providers_for_wget() -> None:
