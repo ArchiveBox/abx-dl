@@ -5,8 +5,6 @@ import shutil
 import subprocess
 import sys
 
-import pytest
-
 from abx_dl.services.process_service import _hook_child_identity
 
 
@@ -15,7 +13,6 @@ def test_mixed_root_hook_identity_targets_effective_user():
     assert _hook_child_identity(real_uid=501, effective_uid=501, effective_gid=20) is None
 
 
-@pytest.mark.skipif(sys.platform != "linux", reason="Linux root credential regression")
 def test_mixed_root_hook_child_permanently_drops_real_and_effective_ids():
     nobody = pwd.getpwnam("nobody")
     probe = f"""
@@ -50,7 +47,7 @@ asyncio.run(main())
         probe_command = [sys.executable, "-c", probe]
     else:
         sudo = shutil.which("sudo")
-        assert sudo, "Ubuntu CI must provide sudo"
+        assert sudo, "privilege-drop tests require sudo when not running as root"
         probe_command = [sudo, "-n", sys.executable, "-c", probe]
 
     result = subprocess.run(
