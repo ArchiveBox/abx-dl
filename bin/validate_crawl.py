@@ -125,7 +125,7 @@ def main() -> None:
 
     index_path = args.index.resolve()
     output_dir = args.output_dir.resolve()
-    plugins = PluginCatalog.discover(args.plugins_dir.resolve(), runtime="abx-dl")
+    plugins = PluginCatalog.discover(args.plugins_dir.resolve(), runtime="abx-dl").select()
     disabled_plugins = {
         plugin.name
         for plugin in plugins.values()

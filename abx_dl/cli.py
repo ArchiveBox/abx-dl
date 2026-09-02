@@ -1773,7 +1773,9 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
         visible_plugins = set(enabled_plugins)
 
     if do_install:
-        install_selected = selected if plugin_names else enabled_plugins
+        install_selected = (
+            selected if plugin_names else PluginCatalog({name: plugin for name, plugin in selected.items() if name in enabled_plugin_set})
+        )
         raise SystemExit(
             _run_plugin_install(
                 install_selected,
