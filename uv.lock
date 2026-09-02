@@ -3,18 +3,18 @@ revision = 3
 requires-python = ">=3.12, <3.15"
 
 [options]
-exclude-newer = "2026-08-27T21:58:10.04096131Z"
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
-abxbus = { timestamp = "2026-09-01T21:58:09.040975911Z", span = "PT1S" }
+abxbus = { timestamp = "0001-01-01T00:00:00Z", span = "PT1S" }
 abx-dl = "2100-01-01T00:00:00Z"
 abx-plugins = "2100-01-01T00:00:00Z"
 abxpkg = "2100-01-01T00:00:00Z"
 
 [[package]]
 name = "abx-dl"
-version = "1.12.233"
+version = "1.12.234"
 source = { editable = "." }
 dependencies = [
     { name = "abx-plugins" },
@@ -92,9 +92,9 @@ dependencies = [
     { name = "rich-click" },
     { name = "uv" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/69/ee/b1c1f8e25bdde434468970067a29969409e46b43810f764ad40a0f529d84/abx_plugins-1.12.203.tar.gz", hash = "sha256:841f0e43e3d5896984f0bfe78ec4adbc49c9653ee52913fde5e775478bf475cb", size = 259402 }
+sdist = { url = "https://files.pythonhosted.org/packages/69/ee/b1c1f8e25bdde434468970067a29969409e46b43810f764ad40a0f529d84/abx_plugins-1.12.203.tar.gz", hash = "sha256:841f0e43e3d5896984f0bfe78ec4adbc49c9653ee52913fde5e775478bf475cb", size = 259402, upload-time = "2026-09-01T21:57:38.733Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/04/67/fc3855b9ea68ae3e1b860d61d5f053c76e39f31841d6aff5fa86e3ce49d3/abx_plugins-1.12.203-py3-none-any.whl", hash = "sha256:72abb7b0f02bff5ae45e364d7231ff433a9f2576c6b88e7f81205b609f010b5e", size = 413256 },
+    { url = "https://files.pythonhosted.org/packages/04/67/fc3855b9ea68ae3e1b860d61d5f053c76e39f31841d6aff5fa86e3ce49d3/abx_plugins-1.12.203-py3-none-any.whl", hash = "sha256:72abb7b0f02bff5ae45e364d7231ff433a9f2576c6b88e7f81205b609f010b5e", size = 413256, upload-time = "2026-09-01T21:57:39.954Z" },
 ]
 
 [[package]]

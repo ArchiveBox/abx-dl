@@ -1,9 +1,9 @@
 """
-Data models and plugin discovery for abx-dl.
+Data models for abx-dl.
 
 All domain models (Hook, Plugin, Process, Snapshot, ArchiveResult) are defined
-here as Pydantic BaseModels. Plugin discovery functions (discover_plugins,
-filter_plugins, etc.) are also here since they operate on these models.
+here as Pydantic BaseModels. Hook filename parsing and selection live in
+``abx_dl.catalog``.
 """
 
 import importlib.metadata
@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
-from abx_plugins import get_plugins_dir
 from abxpkg import BinaryOverrides
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -335,32 +334,7 @@ def write_jsonl(path: Path, record: Any, also_print: bool = False):
         print(line, flush=True)
 
 
-# ── Plugin discovery ──────────────────────────────────────────────────────
-
-
-def _default_plugins_dir() -> Path:
-    return get_plugins_dir()
-
-
-def _plugin_dirs(plugins_dir: Path | None = None) -> list[Path]:
-    if plugins_dir is not None:
-        return [plugins_dir]
-
-    dirs = [Path(get_plugins_dir())]
-    override = os.environ.get("ABX_PLUGINS_DIR")
-    if override:
-        for raw_path in override.split(os.pathsep):
-            path = Path(raw_path).expanduser()
-            if path and path not in dirs:
-                # Runtime/user plugin dirs extend the packaged plugin set; they
-                # do not replace it. Name collisions below intentionally let
-                # later dirs override packaged plugins.
-                dirs.append(path)
-    return dirs
-
-
-# Plugins directory
-PLUGINS_DIR = _default_plugins_dir()
+# ── Hook filename parsing ──────────────────────────────────────────────────────
 
 
 def parse_hook_filename(filename: str) -> tuple[str, int, bool] | None:
@@ -381,223 +355,3 @@ def parse_hook_filename(filename: str) -> tuple[str, int, bool] | None:
     is_background = ".bg." in filename
 
     return (event, order, is_background)
-
-
-def _plugin_runtime_enabled(config: PluginConfig, runtime: str | None = None) -> bool:
-    """Apply an optional, generic host-runtime allowlist from the manifest."""
-    allowed_runtimes = {str(item).strip().lower() for item in config.x_runtimes if str(item).strip()}
-    if not allowed_runtimes:
-        return True
-    current_runtime = str(runtime or os.environ.get("ABX_RUNTIME") or "abx-dl").strip().lower()
-    return current_runtime in allowed_runtimes
-
-
-def load_plugin(plugin_dir: Path, *, runtime: str | None = None) -> Plugin | None:
-    """Load a single plugin from a directory.
-
-    Reads config.json for metadata/schema/dependencies and discovers hook scripts
-    matching the `on_*` naming convention.
-    """
-    if not plugin_dir.is_dir():
-        return None
-
-    plugin_name = plugin_dir.name
-
-    # Skip hidden dirs and special dirs
-    if plugin_name.startswith((".", "_")):
-        return None
-
-    plugin = Plugin(name=plugin_name, path=plugin_dir)
-
-    # Load config schema
-    config_file = plugin_dir / "config.json"
-    if config_file.exists():
-        plugin.manifest = json.loads(config_file.read_text())
-        plugin.config = PluginConfig.model_validate(plugin.manifest)
-        if not _plugin_runtime_enabled(plugin.config, runtime=runtime):
-            return None
-
-    # Discover hooks
-    for hook_file in plugin_dir.glob("on_*"):
-        if not hook_file.is_file():
-            continue
-        if not os.access(hook_file, os.X_OK):
-            continue
-
-        parsed = parse_hook_filename(hook_file.name)
-        if not parsed:
-            continue
-
-        event, order, is_background = parsed
-
-        hook = Hook(
-            name=hook_file.stem,
-            event=event,
-            plugin_name=plugin_name,
-            path=hook_file,
-            order=order,
-            is_background=is_background,
-        )
-        plugin.hooks.append(hook)
-
-    return plugin
-
-
-def discover_plugins(plugins_dir: Path | None = None, *, runtime: str | None = None) -> dict[str, Plugin]:
-    """Discover plugins from packaged plugins plus optional runtime plugin dirs."""
-    plugins = {}
-
-    for base_dir in _plugin_dirs(plugins_dir):
-        if not base_dir.exists():
-            continue
-        for plugin_dir in sorted(base_dir.iterdir()):
-            plugin = load_plugin(plugin_dir, runtime=runtime)
-            if plugin:
-                plugins[plugin.name] = plugin
-
-    return plugins
-
-
-def _expand_extension_to_mimetypes(token: str) -> list[str]:
-    """If *token* looks like a file extension (e.g. 'html', 'pdf'), return
-    all MIME types that map to that extension.  Returns an empty list when the
-    token is not a recognised extension (so the caller can fall back to treating
-    it as a MIME-type category prefix like 'video' -> 'video/').
-    """
-    import mimetypes
-
-    mimetypes.init()
-
-    ext = token if token.startswith(".") else f".{token}"
-    # types_map gives the canonical mapping; check both built-in maps
-    results: list[str] = []
-    for type_map in (mimetypes.types_map, mimetypes.common_types):
-        mt = type_map.get(ext)
-        if mt and mt not in results:
-            results.append(mt)
-    # Also try guess_type which consults user-installed MIME databases
-    guessed, _ = mimetypes.guess_type(f"file{ext}")
-    if guessed and guessed not in results:
-        results.append(guessed)
-    return results
-
-
-def plugins_matching_output(plugins: dict[str, Plugin], output_prefixes: list[str]) -> list[str]:
-    """Return plugin names whose output_mimetypes match any of the given prefixes.
-
-    Prefixes without a '/' get one appended so 'video' matches 'video/*'.
-    Matching is bidirectional: 'video/' matches 'video/mp4', and a plugin
-    declaring 'video/' matches a query for 'video/mp4'.
-
-    Bare tokens that correspond to a known file extension (e.g. 'html', 'pdf',
-    'json') are expanded to their MIME types first, so
-    ``--output=html,pdf,video`` works alongside ``--output=text/html,video/``.
-    """
-    # Expand each user-supplied token into one or more MIME-type prefixes.
-    # Bare tokens are treated as *both* a category prefix ('video' -> 'video/')
-    # and a file extension ('mp4' -> 'video/mp4').  The category prefix is
-    # always added so that e.g. 'text' matches 'text/*' even though '.text'
-    # also resolves to 'text/plain'.  Spurious prefixes like 'html/' are
-    # harmless — they just won't match any plugin.
-    prefixes: list[str] = []
-    for p in output_prefixes:
-        if "/" in p:
-            prefixes.append(p)
-        else:
-            # Always treat as a potential category prefix
-            prefixes.append(p + "/")
-            # Also expand as a file extension if possible
-            prefixes.extend(_expand_extension_to_mimetypes(p))
-
-    matched: list[str] = []
-    for name, plugin in plugins.items():
-        for mimetype in plugin.config.output_mimetypes:
-            if any(mimetype.startswith(p) or p.startswith(mimetype) for p in prefixes):
-                matched.append(name)
-                break
-    return matched
-
-
-def filter_plugins(
-    plugins: dict[str, Plugin],
-    names: list[str] | None,
-    *,
-    include_providers: bool = True,
-    disabled_names: list[str] | None = None,
-) -> dict[str, Plugin]:
-    """Filter plugins to only include specified names, plus transitive dependencies.
-
-    Dependencies are resolved via `required_plugins` in each plugin's
-    config.json. `include_providers` is retained only as a caller hint; binary
-    provider names are handled by abxpkg providers, not plugin dependencies.
-    """
-    disabled = {n.lower() for n in disabled_names or []}
-    if names is None:
-        names = [name for name, plugin in plugins.items() if plugin.config.x_auto_run and name.lower() not in disabled]
-    else:
-        names = [name for name in names if name.lower() not in disabled]
-    if not names:
-        return {}
-
-    plugins_by_lower = {name.lower(): plugin for name, plugin in plugins.items()}
-    plugin_names_by_lower = {name.lower(): name for name in plugins}
-
-    # walk the required_plugins DAG and add required plugins
-    resolved: set[str] = set()
-    blocked: set[str] = set()
-    queue = [n.lower() for n in names]
-    while queue:
-        name = queue.pop()
-        if name in disabled:
-            blocked.add(name)
-            continue
-        if name in resolved or name in blocked:
-            continue
-        plugin = plugins_by_lower.get(name)
-        required = [dep.lower() for dep in plugin.config.required_plugins] if plugin else []
-        if set(required).intersection(disabled | blocked):
-            blocked.add(name)
-            continue
-        resolved.add(name)
-        queue.extend(dep for dep in required if dep not in resolved)
-
-    while True:
-        newly_blocked = {
-            name.lower()
-            for name, plugin in plugins.items()
-            if name.lower() in resolved and any(dep.lower() in blocked for dep in plugin.config.required_plugins)
-        }
-        if not newly_blocked:
-            break
-        resolved.difference_update(newly_blocked)
-        blocked.update(newly_blocked)
-
-    ordered: dict[str, Plugin] = {}
-    visited: set[str] = set()
-    visiting: list[str] = []
-
-    def add_with_dependencies(name: str) -> None:
-        lower_name = name.lower()
-        if lower_name in visited or lower_name not in resolved:
-            return
-        if lower_name in visiting:
-            cycle_start = visiting.index(lower_name)
-            cycle = [*visiting[cycle_start:], lower_name]
-            raise ValueError(f"Plugin dependency cycle: {' -> '.join(cycle)}")
-
-        plugin = plugins_by_lower.get(lower_name)
-        if plugin is None:
-            return
-        visiting.append(lower_name)
-        for dependency in plugin.config.required_plugins:
-            dependency_name = dependency.lower()
-            add_with_dependencies(dependency_name)
-        visiting.pop()
-        visited.add(lower_name)
-        ordered[plugin_names_by_lower[lower_name]] = plugin
-
-    for name in plugins:
-        if name.lower() in resolved:
-            add_with_dependencies(name)
-
-    return ordered

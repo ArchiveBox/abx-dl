@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable
 
 from abxbus import BaseEvent, EventBus
 
+from ..catalog import PluginCatalog
 from ..config import get_config, get_plugin_env
 from ..events import (
     CrawlAbortEvent,
@@ -92,7 +93,7 @@ class CrawlService(BaseService):
         url: str,
         snapshot: Snapshot,
         output_dir: Path,
-        plugins: dict[str, Plugin],
+        catalog: PluginCatalog,
         crawl_setup_enabled: bool = True,
         crawl_start_enabled: bool = True,
         crawl_cleanup_enabled: bool = True,
@@ -107,9 +108,9 @@ class CrawlService(BaseService):
         self.url = url
         self.snapshot = snapshot
         self.output_dir = output_dir
-        self.plugins = plugins
+        self.catalog = catalog
         self.crawl_setup_hooks: list[tuple[Plugin, Hook]] = []
-        for plugin in plugins.values():
+        for plugin in catalog.values():
             for hook in plugin.filter_hooks("CrawlSetup"):
                 self.crawl_setup_hooks.append((plugin, hook))
         self.crawl_setup_hooks.sort(key=lambda item: item[1].sort_key)
@@ -173,7 +174,7 @@ class CrawlService(BaseService):
             runtime_env = runtime.to_env()
             env = await build_plugin_process_env(
                 self.bus,
-                plugins=self.plugins,
+                catalog=self.catalog,
                 plugin=plugin,
                 runtime_env=runtime_env,
             )

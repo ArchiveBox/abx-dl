@@ -37,10 +37,12 @@ from .config import (
     CONFIG_FILE,
     GlobalConfig,
     _load_plugin_config_model,
+    get_explicit_user_env,
     get_initial_env,
     get_required_binary_requests,
     set_user_config,
 )
+from .catalog import PluginCatalog, PluginConfigResolver
 from .dependencies import resolve_binary_requests
 from .events import (
     ArchiveResultEvent,
@@ -56,16 +58,12 @@ from .limits import parse_filesize_to_bytes
 from .models import (
     LIBRARY_VERSION,
     ArchiveResult,
-    Hook,
     Plugin,
     PluginEnv,
     Process,
-    discover_plugins,
-    filter_plugins,
     now_iso,
-    plugins_matching_output,
 )
-from .orchestrator import compute_install_phase_timeout, compute_phase_timeout, create_bus, download, get_install_plugins, install_plugins
+from .orchestrator import ExecutionPlan, create_bus, download, get_install_plugins, install_plugins
 from .output_files import OutputFile
 from .tables import binary_dependency_status, binary_dependency_table
 
@@ -469,11 +467,11 @@ def _plugin_enabled_for_install(
     return bool(plugin_config[plugin.enabled_key])
 
 
-def _count_install_requests(plugins: Mapping[str, Plugin]) -> int:
+def _count_install_requests(catalog: PluginCatalog) -> int:
     seen: set[str] = set()
     initial_user_env = get_initial_env()
     initial_derived_env: dict[str, object] = {}
-    for plugin in get_install_plugins(dict(plugins)):
+    for plugin in get_install_plugins(catalog):
         if not _plugin_enabled_for_install(
             plugin,
             initial_user_env=initial_user_env,
@@ -1274,7 +1272,9 @@ def cli(ctx):
         abx-dl plugins wget ytdlp --install
     """
     ctx.ensure_object(dict)
-    ctx.obj["plugins"] = discover_plugins()
+    catalog = PluginCatalog.discover()
+    ctx.obj["catalog"] = catalog
+    ctx.obj["config_resolver"] = PluginConfigResolver(catalog)
 
 
 @cli.command()
@@ -1361,11 +1361,11 @@ def dl(
 
         abx-dl dl --no-install 'https://example.com'
     """
-    plugins = ctx.obj["plugins"]
+    catalog: PluginCatalog = ctx.obj["catalog"]
     selected = [p.strip() for p in plugin_list.split(",")] if plugin_list else None
     if output_types:
         prefixes = [t.strip() for entry in output_types for t in entry.split(",") if t.strip()]
-        output_matched = plugins_matching_output(plugins, prefixes)
+        output_matched = catalog.matching_output(prefixes)
         if not output_matched:
             raise click.UsageError(f"No plugins found matching output types: {', '.join(prefixes)}")
         selected = list(set(selected or []) | set(output_matched))
@@ -1407,25 +1407,16 @@ def dl(
     interactive_tty = stdout_is_tty or stderr_is_tty
     ui_console = stderr_console if stderr_is_tty or not stdout_is_tty else console
 
-    selected_plugins = filter_plugins(plugins, selected if selected else None)
-    if disable_list:
-        disabled = {p.strip().lower() for p in disable_list.split(",") if p.strip()}
-        selected_plugins = {k: v for k, v in selected_plugins.items() if k.lower() not in disabled}
-    # Update selected to match the final plugin set so download() doesn't re-include disabled plugins
-    selected = list(selected_plugins.keys())
-    crawl_setup_hooks: list[tuple[Plugin, Hook]] = []
-    snapshot_hooks: list[tuple[Plugin, Hook]] = []
-    for plugin in selected_plugins.values():
-        for hook in plugin.filter_hooks("CrawlSetup"):
-            crawl_setup_hooks.append((plugin, hook))
-        for hook in plugin.filter_hooks("Snapshot"):
-            snapshot_hooks.append((plugin, hook))
-    total_timeout = (
-        compute_install_phase_timeout(get_install_plugins(selected_plugins), config_overrides)
-        + compute_phase_timeout(crawl_setup_hooks, config_overrides)
-        + compute_phase_timeout(snapshot_hooks, config_overrides)
+    disabled = [plugin.strip() for plugin in disable_list.split(",") if plugin.strip()] if disable_list else []
+    plan = ExecutionPlan.build(
+        catalog,
+        selected_plugins=selected,
+        disabled_plugins=disabled,
+        config={**get_explicit_user_env(), **config_overrides},
     )
-    total_hooks = _count_install_requests(selected_plugins) + len(crawl_setup_hooks) + len(snapshot_hooks)
+    selected = list(plan.catalog)
+    total_timeout = plan.install_timeout + plan.crawl_setup_timeout + plan.snapshot_timeout
+    total_hooks = _count_install_requests(plan.catalog) + len(plan.catalog.hooks("CrawlSetup")) + len(plan.catalog.hooks("Snapshot"))
     bus = create_bus(total_timeout=total_timeout)
     live_ui = LiveBusUI(
         bus,
@@ -1437,7 +1428,7 @@ def dl(
     live_ui.print_intro(
         url=url,
         output_dir=out_path,
-        plugins_label=", ".join(selected) if selected else f"all ({len(plugins)} available)",
+        plugins_label=", ".join(selected) if selected else f"all ({len(catalog)} available)",
     )
 
     loop = asyncio.new_event_loop()
@@ -1484,15 +1475,12 @@ def dl(
             download_task = loop.create_task(
                 download(
                     url,
-                    selected_plugins,
+                    plan,
                     out_path,
-                    selected,
-                    config_overrides or None,
                     auto_install=not no_install,
                     emit_jsonl=not stdout_is_tty,
                     interactive_tty=interactive_tty,
                     bus=bus,
-                    dry_run=dry_run,
                 ),
             )
             try:
@@ -1620,7 +1608,7 @@ def _build_install_table(rows: list[_InstallRow]) -> Table:
 
 
 def _run_plugin_install(
-    selected,
+    selected: PluginCatalog,
     *,
     visible_plugins: set[str] | None = None,
     label_plugins: list[str] | tuple[str, ...] | None = None,
@@ -1633,8 +1621,15 @@ def _run_plugin_install(
     rows: list[_InstallRow] = []
     installed_names: set[str] = set()
     request_rows_by_name: dict[str, list[_InstallRow]] = {}
-    install_phase_plugins = get_install_plugins(selected)
-    bus = create_bus(total_timeout=compute_install_phase_timeout(install_phase_plugins))
+    selected_plugin_config = {plugin.enabled_key: True for plugin in selected.values() if plugin.enabled_key in plugin.config.properties}
+    if dry_run:
+        selected_plugin_config["DRY_RUN"] = True
+    plan = ExecutionPlan.build(
+        selected,
+        selected_plugins=list(selected),
+        config={**get_explicit_user_env(), **selected_plugin_config},
+    )
+    bus = create_bus(total_timeout=plan.install_timeout)
     live = None
 
     async def on_BinaryRequestEvent(event: BinaryRequestEvent) -> None:
@@ -1687,11 +1682,6 @@ def _run_plugin_install(
         live_cm = Live(_build_install_table([]), console=console, refresh_per_second=8) if live_enabled else nullcontext()
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        selected_plugin_config = {
-            plugin.enabled_key: True for plugin in selected.values() if plugin.enabled_key in plugin.config.properties
-        }
-        if dry_run:
-            selected_plugin_config["DRY_RUN"] = True
         try:
             with live_cm as active_live:
                 live = active_live
@@ -1700,13 +1690,10 @@ def _run_plugin_install(
                     debug=debug,
                     func=lambda: loop.run_until_complete(
                         install_plugins(
-                            plugin_names=tuple(label_plugins or ()) or None,
-                            plugins=selected,
+                            plan,
                             output_dir=Path(temp_dir),
                             emit_jsonl=False,
                             bus=bus,
-                            config_overrides=selected_plugin_config,
-                            dry_run=dry_run,
                         ),
                     ),
                 )
@@ -1763,34 +1750,26 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
 
         abx-dl plugins --install wget ytdlp git  # install only these plugins
     """
-    plugins_obj = ctx.obj.get("plugins", None)
-    if isinstance(plugins_obj, dict):
-        context_plugins = {name: plugin for name, plugin in plugins_obj.items() if isinstance(name, str) and isinstance(plugin, Plugin)}
-        all_plugins = context_plugins if len(context_plugins) == len(plugins_obj) else discover_plugins()
-    else:
-        all_plugins = discover_plugins()
-
-    plugin_schemas = {name: plugin.config.properties for name, plugin in all_plugins.items()}
-    resolved_config = get_initial_env(plugin_schemas=plugin_schemas)
-    enabled_plugin_names = [
-        name for name, plugin in all_plugins.items() if bool(resolved_config.get(f"plugins/{name}", {}).get(plugin.enabled_key, True))
-    ]
-    enabled_plugins = filter_plugins(all_plugins, enabled_plugin_names, include_providers=True)
+    catalog: PluginCatalog = ctx.obj["catalog"]
+    resolver: PluginConfigResolver = ctx.obj["config_resolver"]
+    resolved_sections = get_initial_env(resolver=resolver)
+    resolved_plugins = {name: resolved_sections.get(f"plugins/{name}", {}) for name in catalog}
+    enabled_plugins = catalog.select(resolver.enabled_plugin_names(resolved=resolved_plugins))
     enabled_plugin_set = set(enabled_plugins)
 
     # Filter to selected plugins if specified (resolves required_plugins dependencies)
     if plugin_names:
-        selected = filter_plugins(all_plugins, list(plugin_names), include_providers=do_install)
-        visible_plugins = set(filter_plugins(all_plugins, list(plugin_names), include_providers=False))
-        not_found = [n for n in plugin_names if n.lower() not in {k.lower() for k in all_plugins}]
+        selected = catalog.select(plugin_names)
+        visible_plugins = {name.lower() for name in plugin_names if name.lower() in {key.lower() for key in catalog}}
+        not_found = [n for n in plugin_names if n.lower() not in {k.lower() for k in catalog}]
         if not_found:
             console.print(f"[yellow]Warning: Unknown plugins: {', '.join(not_found)}[/yellow]")
         if not selected:
             console.print("[red]No valid plugins specified.[/red]")
-            console.print(f"[dim]Available: {', '.join(sorted(all_plugins.keys()))}[/dim]")
+            console.print(f"[dim]Available: {', '.join(sorted(catalog))}[/dim]")
             return
     else:
-        selected = filter_plugins(all_plugins, None, include_providers=do_install)
+        selected = catalog.select()
         visible_plugins = set(enabled_plugins)
 
     if do_install:
@@ -1901,7 +1880,7 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
         if not all_ok:
             console.print("[yellow]Some dependencies missing. Run 'abx-dl plugins --install' to install them.[/yellow]")
 
-        detail_plugins = _resolve_requested_plugins(plugin_names, all_plugins) if plugin_names else list(selected.values())
+        detail_plugins = _resolve_requested_plugins(plugin_names, catalog) if plugin_names else list(selected.values())
 
         if len(detail_plugins) == 1:
             plugin = detail_plugins[0]
@@ -1960,8 +1939,7 @@ def config(ctx, get_key: str | None, set_pair: str | None):
     import json
 
     # Get plugin schemas for alias resolution and full config
-    all_plugins = ctx.obj["plugins"] if "plugins" in ctx.obj else discover_plugins()
-    plugin_schemas = {name: p.config.properties for name, p in all_plugins.items() if p.config.properties}
+    resolver: PluginConfigResolver = ctx.obj["config_resolver"]
 
     if set_pair:
         if "=" not in set_pair:
@@ -1969,7 +1947,7 @@ def config(ctx, get_key: str | None, set_pair: str | None):
             return
         key, value = set_pair.split("=", 1)
         try:
-            saved = set_user_config(plugin_schemas, **{key: value})
+            saved = set_user_config(resolver, **{key: value})
         except (KeyError, ValidationError) as err:
             raise click.BadParameter(str(err), param_hint="--set") from err
         for canonical_key, val in saved.items():
@@ -1978,7 +1956,7 @@ def config(ctx, get_key: str | None, set_pair: str | None):
         return
 
     if get_key:
-        result = get_initial_env(get_key, plugin_schemas=plugin_schemas)
+        result = get_initial_env(get_key, resolver=resolver)
         value = result.get(get_key)
         if value is not None:
             print(f"{get_key}={json.dumps(value)}")
@@ -1987,7 +1965,7 @@ def config(ctx, get_key: str | None, set_pair: str | None):
         return
 
     # Show all config grouped by section
-    grouped = get_initial_env(plugin_schemas=plugin_schemas)
+    grouped = get_initial_env(resolver=resolver)
     for section, values in grouped.items():
         print(f"# {section}")
         for key, value in values.items():

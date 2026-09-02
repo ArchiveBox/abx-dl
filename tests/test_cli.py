@@ -23,7 +23,8 @@ from abx_dl.events import (
     SnapshotEvent,
 )
 from abx_dl.limits import CrawlLimitState, parse_filesize_to_bytes
-from abx_dl.models import ArchiveResult, discover_plugins
+from abx_dl.catalog import PluginCatalog
+from abx_dl.models import ArchiveResult
 from abx_dl.orchestrator import create_bus
 from abx_dl.output_files import OutputFile
 from rich.console import Console
@@ -43,7 +44,7 @@ ABX_ENV_KEYS = {
     "TMP_DIR",
     "USER_AGENT",
 }
-for plugin in discover_plugins().values():
+for plugin in PluginCatalog.discover().values():
     ABX_ENV_KEYS.update(plugin.config.properties.keys())
 
 
@@ -135,12 +136,12 @@ def _run_cli(tmp_path: Path, *args: str, timeout: int = 180) -> subprocess.Compl
 
 
 def _hook_names(plugin_name: str, event_name: str) -> list[str]:
-    plugin = discover_plugins()[plugin_name]
+    plugin = PluginCatalog.discover()[plugin_name]
     return [hook.name for hook in sorted(plugin.hooks, key=lambda hook: hook.sort_key) if event_name in hook.name]
 
 
 def _real_hook_path(plugin_name: str, hook_name: str) -> str:
-    plugin = discover_plugins()[plugin_name]
+    plugin = PluginCatalog.discover()[plugin_name]
     hook = next(hook for hook in plugin.hooks if hook.name == hook_name)
     assert hook.path.is_file()
     return str(hook.path)

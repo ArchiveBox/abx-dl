@@ -12,9 +12,10 @@ from abxbus import BaseEvent, EventBus
 from abxpkg import BinProvider
 from abxpkg.binary_service import BinaryEvent, BinaryRequestEvent
 
+from ..catalog import PluginCatalog
 from ..config import RuntimeConfig, get_config, get_plugin_env, get_required_binary_requests, is_path_like_env_value
 from ..events import CrawlAbortEvent, InstallEvent, MachineEvent
-from ..models import Plugin, Snapshot, filter_plugins, uuid7
+from ..models import Plugin, Snapshot, uuid7
 from .base import BaseService
 
 _TEMPLATE_NAME_RE = re.compile(r"^\{([A-Z0-9_]+)\}$")
@@ -23,13 +24,13 @@ _TEMPLATE_NAME_RE = re.compile(r"^\{([A-Z0-9_]+)\}$")
 async def build_plugin_process_env(
     bus: EventBus,
     *,
-    plugins: dict[str, Plugin],
+    catalog: PluginCatalog,
     plugin: Plugin,
     runtime_env: dict[str, str],
 ) -> dict[str, str]:
     """Project resolved binary environments exactly as hook processes receive them."""
     env = runtime_env
-    env_plugin_names = set(filter_plugins(plugins, [plugin.name], include_providers=True))
+    env_plugin_names = set(catalog.select([plugin.name]))
     binary_events = await bus.filter(
         BinaryEvent,
         past=True,
@@ -73,7 +74,7 @@ class PluginBinariesService(BaseService):
         self,
         bus: EventBus,
         *,
-        plugins: dict[str, Plugin],
+        catalog: PluginCatalog,
         auto_install: bool,
         install_plugins: list[Plugin] | None = None,
         output_dir: Path | None = None,
@@ -81,7 +82,7 @@ class PluginBinariesService(BaseService):
         abort_requested: Callable[[], bool | Awaitable[bool]] | None = None,
     ):
         self.auto_install = auto_install
-        self.plugins = plugins
+        self.catalog = catalog
         self.install_plugins = install_plugins or []
         self.output_dir = output_dir
         self.snapshot = snapshot
@@ -182,9 +183,9 @@ class PluginBinaryEnvService(BaseService):
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [BinaryEvent]
     EMITS: ClassVar[list[type[BaseEvent]]] = [MachineEvent]
 
-    def __init__(self, bus: EventBus, *, plugins: dict[str, Plugin]):
+    def __init__(self, bus: EventBus, *, catalog: PluginCatalog):
         self.bus = bus
-        self.plugins = plugins
+        self.catalog = catalog
         super().__init__(bus)
         self.bus.on(BinaryEvent, self.on_BinaryEvent)
 
@@ -204,7 +205,7 @@ class PluginBinaryEnvService(BaseService):
     ) -> list[str]:
         plugin_name = str(event.extra_context.get("plugin_name") or "")
         output_dir = str(event.extra_context.get("output_dir") or "")
-        plugin = self.plugins.get(plugin_name)
+        plugin = self.catalog.get(plugin_name)
         if plugin is None:
             return []
 

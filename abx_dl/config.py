@@ -20,6 +20,7 @@ from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from platformdirs import user_config_path
 
+from .catalog import PluginConfigResolver
 from .events import MachineEvent
 from .models import Plugin, PluginConfig, PluginEnv, RequiredBinary
 from abx_plugins.plugins.base import utils as plugin_utils
@@ -344,7 +345,7 @@ async def get_plugin_env(
     return PluginEnv.from_config(plugin_config, run_output_dir=run_output_dir, extra_context=extra_context)
 
 
-def get_initial_env(*keys: str, plugin_schemas: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+def get_initial_env(*keys: str, resolver: PluginConfigResolver | None = None) -> dict[str, Any]:
     """Load persisted user config before a bus exists.
 
     This is bootstrap-only state from ``config.env``.
@@ -357,26 +358,25 @@ def get_initial_env(*keys: str, plugin_schemas: dict[str, dict[str, Any]] | None
     flat_config = dict(global_config)
     flat_config.update(user_config)
 
-    if plugin_schemas is None:
+    if resolver is None:
         if keys:
             return {k: flat_config.get(k) for k in keys}
         return dict(sorted(flat_config.items()))
 
     result: dict[str, dict[str, Any]] = {"GLOBAL": dict(sorted(global_config.items()))}
-    resolved_plugins = plugin_utils.resolve_plugin_configs(
-        plugin_schemas,
+    resolved_plugins = resolver.resolve(
         global_config=global_config,
         user_config=raw_user_config,
         environ=os.environ,
     )
-    for plugin_name, schema in sorted(plugin_schemas.items()):
+    for plugin_name in sorted(resolver.catalog):
         plugin_config = resolved_plugins[plugin_name] if plugin_name in resolved_plugins else {}
         if plugin_config:
             result[f"plugins/{plugin_name}"] = plugin_config
 
     if keys:
         flat = {}
-        alias_map = {key: plugin_utils.resolve_alias(key, plugin_schemas) for key in keys}
+        alias_map = {key: resolver.canonical_key(key) for key in keys}
         for section_config in result.values():
             for k in keys:
                 canonical_key = alias_map[k]
@@ -387,7 +387,7 @@ def get_initial_env(*keys: str, plugin_schemas: dict[str, dict[str, Any]] | None
     return result
 
 
-def set_user_config(plugin_schemas: dict[str, dict[str, Any]] | None = None, **kwargs: Any) -> dict[str, Any]:
+def set_user_config(resolver: PluginConfigResolver | None = None, **kwargs: Any) -> dict[str, Any]:
     """Validate and persist user-owned config updates into ``config.env``."""
     settings = _global_config()
     config_file = _config_file(settings)
@@ -400,19 +400,18 @@ def set_user_config(plugin_schemas: dict[str, dict[str, Any]] | None = None, **k
     # Resolve aliases and update values (store as JSON)
     saved: dict[str, Any] = {}
     for key, value in kwargs.items():
-        canonical_key = plugin_utils.resolve_alias(key, plugin_schemas)
+        canonical_key = resolver.canonical_key(key) if resolver is not None else key
         validated_value: Any = None
 
         if canonical_key in GLOBAL_DEFAULT_KEY_SET:
             validated_value = GlobalConfig(**{canonical_key: value}).model_dump(mode="json")[canonical_key]
         else:
-            if plugin_schemas is None:
+            if resolver is None:
                 raise KeyError(f"Unknown config key: {canonical_key}")
 
             validation_user_config = dict(config)
             validation_user_config[canonical_key] = value if isinstance(value, str) else json.dumps(value)
-            resolved_plugins = plugin_utils.resolve_plugin_configs(
-                plugin_schemas,
+            resolved_plugins = resolver.resolve(
                 global_config=global_config,
                 user_config=validation_user_config,
                 environ={},

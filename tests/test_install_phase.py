@@ -5,14 +5,15 @@ from pathlib import Path
 
 from abx_dl.config import get_initial_env, get_required_binary_requests
 from abx_dl.events import InstallEvent, MachineEvent
-from abx_dl.models import Plugin, PluginConfig, RequiredBinary, Snapshot, discover_plugins
+from abx_dl.catalog import PluginCatalog
+from abx_dl.models import Plugin, PluginConfig, RequiredBinary, Snapshot
 from abx_dl.orchestrator import compute_install_phase_timeout, create_bus
 from abx_dl.services.binary_service import PluginBinariesService, PluginBinaryEnvService
 from abxpkg.binary_service import BinaryEvent, BinaryRequestEvent, BinaryService
 
 
 def test_install_phase_timeout_uses_largest_sequential_binary_lane_budget() -> None:
-    plugins = discover_plugins()
+    plugins = PluginCatalog.discover()
     selected = [plugins["chrome"], plugins["claudecode"], plugins["ytdlp"]]
 
     assert (
@@ -29,7 +30,7 @@ def test_install_phase_timeout_uses_largest_sequential_binary_lane_budget() -> N
 
 
 def test_install_event_resolves_plugin_binaries_through_abxpkg(tmp_path: Path) -> None:
-    plugins = discover_plugins()
+    plugins = PluginCatalog.discover()
     selected = {name: plugins[name] for name in ("git", "wget")}
     snapshot = Snapshot(url="")
     run_dir = tmp_path / "run"
@@ -37,13 +38,13 @@ def test_install_event_resolves_plugin_binaries_through_abxpkg(tmp_path: Path) -
     bus = create_bus(total_timeout=60.0, name=f"install_phase_concurrent_binaries_{tmp_path.name}")
     PluginBinariesService(
         bus,
-        plugins=selected,
+        catalog=PluginCatalog(selected),
         auto_install=True,
         install_plugins=list(selected.values()),
         output_dir=run_dir,
         snapshot=snapshot,
     )
-    PluginBinaryEnvService(bus, plugins=selected)
+    PluginBinaryEnvService(bus, catalog=PluginCatalog(selected))
     BinaryService(bus, auto_install=True)
     request_events: list[BinaryRequestEvent] = []
     binary_events: list[BinaryEvent] = []
@@ -131,13 +132,13 @@ def test_install_event_resolves_plugin_binaries_in_config_order(tmp_path: Path) 
     bus = create_bus(total_timeout=60.0, name=f"install_phase_ordered_binaries_{tmp_path.name}")
     PluginBinariesService(
         bus,
-        plugins=plugins,
+        catalog=PluginCatalog(plugins),
         auto_install=True,
         install_plugins=[plugin],
         output_dir=run_dir,
         snapshot=snapshot,
     )
-    PluginBinaryEnvService(bus, plugins=plugins)
+    PluginBinaryEnvService(bus, catalog=PluginCatalog(plugins))
     BinaryService(bus, auto_install=True)
     events_seen: list[tuple[str, str]] = []
 
@@ -201,13 +202,13 @@ def test_install_event_does_not_feed_derived_binary_paths_back_into_requests(tmp
     bus = create_bus(total_timeout=60.0, name=f"install_phase_derived_order_{tmp_path.name}")
     PluginBinariesService(
         bus,
-        plugins={plugin.name: plugin},
+        catalog=PluginCatalog({plugin.name: plugin}),
         auto_install=True,
         install_plugins=[plugin],
         output_dir=run_dir,
         snapshot=snapshot,
     )
-    PluginBinaryEnvService(bus, plugins={plugin.name: plugin})
+    PluginBinaryEnvService(bus, catalog=PluginCatalog({plugin.name: plugin}))
     BinaryService(bus, auto_install=True)
     request_events: list[BinaryRequestEvent] = []
 
@@ -245,7 +246,7 @@ def test_install_event_does_not_feed_derived_binary_paths_back_into_requests(tmp
 
 
 def test_install_event_preserves_binary_overrides_and_plugin_context(tmp_path: Path) -> None:
-    plugins = discover_plugins()
+    plugins = PluginCatalog.discover()
     plugin = plugins["chrome"]
     ytdlp_plugin = plugins["ytdlp"]
     snapshot = Snapshot(url="")
@@ -259,7 +260,7 @@ def test_install_event_preserves_binary_overrides_and_plugin_context(tmp_path: P
         )
         PluginBinariesService(
             bus,
-            plugins={"chrome": plugin, "ytdlp": ytdlp_plugin},
+            catalog=PluginCatalog({"chrome": plugin, "ytdlp": ytdlp_plugin}),
             auto_install=False,
             install_plugins=[plugin, ytdlp_plugin],
             output_dir=run_dir,
@@ -323,7 +324,7 @@ def test_install_event_preserves_binary_overrides_and_plugin_context(tmp_path: P
 
 
 def test_install_event_excludes_opencode_when_route_is_disabled(tmp_path: Path) -> None:
-    plugins = discover_plugins(runtime="archivebox")
+    plugins = PluginCatalog.discover(runtime="archivebox")
     plugin = plugins["opencode"]
     snapshot = Snapshot(url="")
     run_dir = tmp_path / "run"
@@ -331,7 +332,7 @@ def test_install_event_excludes_opencode_when_route_is_disabled(tmp_path: Path) 
     bus = create_bus(total_timeout=60.0, name=f"install_phase_opencode_disabled_{tmp_path.name}")
     PluginBinariesService(
         bus,
-        plugins={"opencode": plugin},
+        catalog=PluginCatalog({"opencode": plugin}),
         auto_install=False,
         install_plugins=[plugin],
         output_dir=run_dir,
@@ -376,20 +377,20 @@ def test_install_event_excludes_opencode_when_route_is_disabled(tmp_path: Path) 
 
 
 def test_install_event_revalidates_derived_binary_requests_for_persistence(tmp_path: Path) -> None:
-    plugin = discover_plugins()["wget"]
+    plugin = PluginCatalog.discover()["wget"]
     snapshot = Snapshot(url="")
     run_dir = tmp_path / "run"
     managed_lib_dir = tmp_path / "lib"
     bus = create_bus(total_timeout=60.0, name=f"install_phase_cached_persist_{tmp_path.name}")
     PluginBinariesService(
         bus,
-        plugins={"wget": plugin},
+        catalog=PluginCatalog({"wget": plugin}),
         auto_install=False,
         install_plugins=[plugin],
         output_dir=run_dir,
         snapshot=snapshot,
     )
-    PluginBinaryEnvService(bus, plugins={"wget": plugin})
+    PluginBinaryEnvService(bus, catalog=PluginCatalog({"wget": plugin}))
     BinaryService(bus, auto_install=True)
     request_events: list[BinaryRequestEvent] = []
     binary_events: list[BinaryEvent] = []
@@ -451,14 +452,14 @@ def test_install_event_revalidates_derived_binary_requests_for_persistence(tmp_p
 
 
 def test_install_event_resolves_real_plugin_override_paths(tmp_path: Path) -> None:
-    plugin = discover_plugins()["parse_rss_urls"]
+    plugin = PluginCatalog.discover()["parse_rss_urls"]
     snapshot = Snapshot(url="")
     run_dir = tmp_path / "run"
     managed_lib_dir = tmp_path / "lib"
     bus = create_bus(total_timeout=60.0, name=f"install_phase_override_metadata_{tmp_path.name}")
     PluginBinariesService(
         bus,
-        plugins={plugin.name: plugin},
+        catalog=PluginCatalog({plugin.name: plugin}),
         auto_install=False,
         install_plugins=[plugin],
         output_dir=run_dir,
@@ -504,7 +505,7 @@ def test_install_event_resolves_real_plugin_override_paths(tmp_path: Path) -> No
 
 
 def test_chromewebstore_install_preflight_uses_shared_cache_without_persona_duplicate(tmp_path: Path) -> None:
-    plugins = discover_plugins()
+    plugins = PluginCatalog.discover()
     plugin = plugins["archivewebpage"]
     snapshot = Snapshot(url="")
     run_dir = tmp_path / "run"
@@ -515,13 +516,13 @@ def test_chromewebstore_install_preflight_uses_shared_cache_without_persona_dupl
     bus = create_bus(total_timeout=60.0, name=f"chromewebstore_shared_cache_{tmp_path.name}")
     PluginBinariesService(
         bus,
-        plugins={"archivewebpage": plugin},
+        catalog=PluginCatalog({"archivewebpage": plugin}),
         auto_install=True,
         install_plugins=[plugin],
         output_dir=run_dir,
         snapshot=snapshot,
     )
-    PluginBinaryEnvService(bus, plugins={"archivewebpage": plugin})
+    PluginBinaryEnvService(bus, catalog=PluginCatalog({"archivewebpage": plugin}))
     BinaryService(bus, auto_install=True)
     binary_events: list[BinaryEvent] = []
 

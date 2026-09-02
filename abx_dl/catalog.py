@@ -8,15 +8,73 @@ own adapters while sharing the exact inventory used by the downloader CLI.
 
 from __future__ import annotations
 
+import json
+import mimetypes
+import os
 from collections import defaultdict
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from abx_plugins import get_plugins_dir
 from abx_plugins.plugins.base import utils as plugin_utils
 
-from .models import Hook, Plugin, discover_plugins, filter_plugins
+from .models import Hook, Plugin, PluginConfig, parse_hook_filename
+
+
+def _plugin_dirs(plugins_dir: Path | None = None) -> list[Path]:
+    if plugins_dir is not None:
+        return [plugins_dir]
+
+    dirs = [Path(get_plugins_dir())]
+    override = os.environ.get("ABX_PLUGINS_DIR")
+    if override:
+        for raw_path in override.split(os.pathsep):
+            path = Path(raw_path).expanduser()
+            if path and path not in dirs:
+                dirs.append(path)
+    return dirs
+
+
+def _plugin_runtime_enabled(config: PluginConfig, runtime: str | None = None) -> bool:
+    allowed_runtimes = {str(item).strip().lower() for item in config.x_runtimes if str(item).strip()}
+    if not allowed_runtimes:
+        return True
+    current_runtime = str(runtime or os.environ.get("ABX_RUNTIME") or "abx-dl").strip().lower()
+    return current_runtime in allowed_runtimes
+
+
+def _load_plugin(plugin_dir: Path, *, runtime: str | None = None) -> Plugin | None:
+    if not plugin_dir.is_dir() or plugin_dir.name.startswith((".", "_")):
+        return None
+
+    plugin = Plugin(name=plugin_dir.name, path=plugin_dir)
+    config_file = plugin_dir / "config.json"
+    if config_file.exists():
+        plugin.manifest = json.loads(config_file.read_text())
+        plugin.config = PluginConfig.model_validate(plugin.manifest)
+        if not _plugin_runtime_enabled(plugin.config, runtime=runtime):
+            return None
+
+    for hook_file in plugin_dir.glob("on_*"):
+        if not hook_file.is_file() or not os.access(hook_file, os.X_OK):
+            continue
+        parsed = parse_hook_filename(hook_file.name)
+        if parsed is None:
+            continue
+        event, order, is_background = parsed
+        plugin.hooks.append(
+            Hook(
+                name=hook_file.stem,
+                event=event,
+                plugin_name=plugin.name,
+                path=hook_file,
+                order=order,
+                is_background=is_background,
+            ),
+        )
+    return plugin
 
 
 @dataclass(frozen=True)
@@ -33,9 +91,15 @@ class PluginCatalog(Mapping[str, Plugin]):
         extra_plugin_dirs: Iterable[Path] = (),
         runtime: str | None = None,
     ) -> PluginCatalog:
-        plugins = discover_plugins(plugins_dir=plugins_dir, runtime=runtime)
-        for extra_dir in extra_plugin_dirs:
-            plugins.update(discover_plugins(plugins_dir=extra_dir, runtime=runtime))
+        plugins: dict[str, Plugin] = {}
+        for requested_dir in (plugins_dir, *extra_plugin_dirs):
+            for base_dir in _plugin_dirs(requested_dir):
+                if not base_dir.exists():
+                    continue
+                for plugin_dir in sorted(base_dir.iterdir()):
+                    plugin = _load_plugin(plugin_dir, runtime=runtime)
+                    if plugin is not None:
+                        plugins[plugin.name] = plugin
         return cls(plugins)
 
     def __getitem__(self, name: str) -> Plugin:
@@ -62,8 +126,110 @@ class PluginCatalog(Mapping[str, Plugin]):
                     properties[str(key)] = definition
         return properties
 
-    def select(self, names: list[str] | None = None, *, disabled_names: list[str] | None = None) -> PluginCatalog:
-        return type(self)(filter_plugins(self.plugins, names, disabled_names=disabled_names))
+    def select(
+        self,
+        names: Iterable[str] | None = None,
+        *,
+        disabled_names: Iterable[str] | None = None,
+    ) -> PluginCatalog:
+        """Select plugins and their transitive ``required_plugins`` dependencies."""
+        disabled = {name.lower() for name in disabled_names or ()}
+        requested = (
+            [name for name, plugin in self.plugins.items() if plugin.config.x_auto_run and name.lower() not in disabled]
+            if names is None
+            else [name for name in names if name.lower() not in disabled]
+        )
+        if not requested:
+            return type(self)({})
+
+        plugins_by_lower = {name.lower(): plugin for name, plugin in self.plugins.items()}
+        names_by_lower = {name.lower(): name for name in self.plugins}
+        resolved: set[str] = set()
+        blocked: set[str] = set()
+        queue = [name.lower() for name in requested]
+        while queue:
+            name = queue.pop()
+            if name in disabled:
+                blocked.add(name)
+                continue
+            if name in resolved or name in blocked:
+                continue
+            plugin = plugins_by_lower.get(name)
+            required = [dependency.lower() for dependency in plugin.config.required_plugins] if plugin else []
+            if set(required).intersection(disabled | blocked):
+                blocked.add(name)
+                continue
+            resolved.add(name)
+            queue.extend(dependency for dependency in required if dependency not in resolved)
+
+        while True:
+            newly_blocked = {
+                name.lower()
+                for name, plugin in self.plugins.items()
+                if name.lower() in resolved and any(dependency.lower() in blocked for dependency in plugin.config.required_plugins)
+            }
+            if not newly_blocked:
+                break
+            resolved.difference_update(newly_blocked)
+            blocked.update(newly_blocked)
+
+        ordered: dict[str, Plugin] = {}
+        visited: set[str] = set()
+        visiting: list[str] = []
+
+        def add_with_dependencies(name: str) -> None:
+            lower_name = name.lower()
+            if lower_name in visited or lower_name not in resolved:
+                return
+            if lower_name in visiting:
+                cycle_start = visiting.index(lower_name)
+                cycle = [*visiting[cycle_start:], lower_name]
+                raise ValueError(f"Plugin dependency cycle: {' -> '.join(cycle)}")
+            plugin = plugins_by_lower.get(lower_name)
+            if plugin is None:
+                return
+            visiting.append(lower_name)
+            for dependency in plugin.config.required_plugins:
+                add_with_dependencies(dependency)
+            visiting.pop()
+            visited.add(lower_name)
+            ordered[names_by_lower[lower_name]] = plugin
+
+        for name in self.plugins:
+            if name.lower() in resolved:
+                add_with_dependencies(name)
+        return type(self)(ordered)
+
+    def matching_output(self, output_prefixes: Iterable[str]) -> list[str]:
+        """Return plugin names matching MIME types, categories, or extensions."""
+        prefixes: list[str] = []
+        mimetypes.init()
+        for raw_prefix in output_prefixes:
+            prefix = raw_prefix.strip()
+            if not prefix:
+                continue
+            if "/" in prefix:
+                prefixes.append(prefix)
+                continue
+            prefixes.append(f"{prefix}/")
+            extension = prefix if prefix.startswith(".") else f".{prefix}"
+            for type_map in (mimetypes.types_map, mimetypes.common_types):
+                mimetype = type_map.get(extension)
+                if mimetype and mimetype not in prefixes:
+                    prefixes.append(mimetype)
+            guessed, _encoding = mimetypes.guess_type(f"file{extension}")
+            if guessed and guessed not in prefixes:
+                prefixes.append(guessed)
+
+        return [
+            name
+            for name, plugin in self.plugins.items()
+            if any(
+                mimetype.startswith(prefix) or prefix.startswith(mimetype)
+                for mimetype in plugin.config.output_mimetypes
+                for prefix in prefixes
+            )
+        ]
 
     def hooks(
         self,

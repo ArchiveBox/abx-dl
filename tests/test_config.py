@@ -8,10 +8,11 @@ from typing import Any
 
 import pytest
 from abxpkg.binary_service import BinaryEvent
-from abx_dl.config import GlobalConfig, RuntimeConfig, get_config, get_initial_env, get_plugin_env
+from abx_dl.config import GlobalConfig, RuntimeConfig, get_config, get_explicit_user_env, get_initial_env, get_plugin_env
 from abx_dl.events import MachineEvent
-from abx_dl.models import PluginEnv, discover_plugins
-from abx_dl.orchestrator import create_bus, install_plugins
+from abx_dl.catalog import PluginCatalog
+from abx_dl.models import PluginEnv
+from abx_dl.orchestrator import ExecutionPlan, create_bus, install_plugins
 from abx_dl.services.binary_service import build_plugin_process_env
 from platformdirs import user_config_path
 
@@ -75,7 +76,7 @@ def test_plugin_env_sets_run_dirs_without_projecting_binary_paths(tmp_path: Path
 
 
 def test_plugin_timeout_defaults_only_yield_to_explicit_global_timeout(tmp_path: Path) -> None:
-    plugin = discover_plugins()["claudecodecleanup"]
+    plugin = PluginCatalog.discover()["claudecodecleanup"]
     default_user = GlobalConfig.__pydantic_validator__.validate_python({})
     override_user = GlobalConfig.__pydantic_validator__.validate_python({"TIMEOUT": 90})
 
@@ -105,7 +106,7 @@ def test_plugin_timeout_defaults_only_yield_to_explicit_global_timeout(tmp_path:
 
 
 def test_plugin_timeout_defaults_without_event_bus(tmp_path: Path) -> None:
-    plugin = discover_plugins()["claudecodecleanup"]
+    plugin = PluginCatalog.discover()["claudecodecleanup"]
 
     env = asyncio.run(
         get_plugin_env(
@@ -144,13 +145,17 @@ def test_machine_event_config_rebuild_applies_events_oldest_to_newest(tmp_path: 
 def test_plugin_env_exports_abxpkg_runtime_after_real_install_phase(tmp_path: Path) -> None:
     os.environ.pop("VIRTUAL_ENV", None)
     run_output_dir = tmp_path / "run"
-    plugins = discover_plugins()
+    plugins = PluginCatalog.discover()
     bus = create_bus(total_timeout=300.0, name=f"test_config_shared_runtime_{tmp_path.name}")
 
     async def run() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+        plan = ExecutionPlan.build(
+            plugins,
+            selected_plugins=["ytdlp"],
+            config=get_explicit_user_env(),
+        )
         await install_plugins(
-            plugin_names=["ytdlp"],
-            plugins=plugins,
+            plan,
             output_dir=run_output_dir,
             bus=bus,
         )
@@ -163,7 +168,7 @@ def test_plugin_env_exports_abxpkg_runtime_after_real_install_phase(tmp_path: Pa
         ).to_env()
         process_env = await build_plugin_process_env(
             bus,
-            plugins=plugins,
+            catalog=plugins,
             plugin=plugins["ytdlp"],
             runtime_env=base_env,
         )
@@ -249,7 +254,7 @@ def test_plugin_env_preserves_user_runtime_dirs_when_derived_config_has_defaults
     ):
         os.environ.pop(key, None)
 
-    plugins = discover_plugins()
+    plugins = PluginCatalog.discover()
     bus = create_bus(total_timeout=60.0, name=f"test_config_derived_runtime_dirs_{tmp_path.name}")
     data_dir = tmp_path / "data"
     crawl_dir = tmp_path / "crawl"
@@ -299,7 +304,7 @@ def test_plugin_env_ignores_direct_chrome_profile_env(
 ) -> None:
     configured_profile = str(tmp_path / "stale" / "chrome_profile")
 
-    plugins = discover_plugins()
+    plugins = PluginCatalog.discover()
     bus = create_bus(total_timeout=60.0, name=f"test_config_archivebox_runtime_{tmp_path.name}")
 
     async def emit_runtime_config() -> None:
@@ -356,7 +361,7 @@ def test_plugin_env_omits_none_runtime_overrides(tmp_path: Path) -> None:
 
 
 def test_plugin_env_accepts_structured_extra_context_from_machine_events(tmp_path: Path) -> None:
-    plugins = discover_plugins()
+    plugins = PluginCatalog.discover()
     bus = create_bus(total_timeout=60.0, name=f"test_config_extra_context_{tmp_path.name}")
 
     async def emit_runtime_config() -> None:
