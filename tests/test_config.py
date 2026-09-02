@@ -145,22 +145,39 @@ def test_machine_event_config_rebuild_applies_events_oldest_to_newest(tmp_path: 
 def test_plugin_env_exports_abxpkg_runtime_after_real_install_phase(tmp_path: Path) -> None:
     os.environ.pop("VIRTUAL_ENV", None)
     run_output_dir = tmp_path / "run"
+    current_output_dir = tmp_path / "current-run"
     plugins = PluginCatalog.discover()
     bus = create_bus(total_timeout=300.0, name=f"test_config_shared_runtime_{tmp_path.name}")
 
     async def run() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
         selected = plugins.select(["ytdlp"])
+        install_config = {
+            **get_explicit_user_env(),
+            "EXTRA_CONTEXT": json.dumps({"snapshot_id": "install-snapshot"}),
+            "SNAP_DIR": str(run_output_dir),
+        }
         await install_plugins(
             selected,
-            config=get_explicit_user_env(),
+            config=install_config,
             output_dir=run_output_dir,
             bus=bus,
+        )
+        current_config = RuntimeConfig(
+            user=GlobalConfig(
+                **{
+                    **install_config,
+                    "EXTRA_CONTEXT": json.dumps({"snapshot_id": "current-snapshot"}),
+                    "SNAP_DIR": str(current_output_dir),
+                },
+            ),
+            derived={},
         )
         base_env = (
             await get_plugin_env(
                 bus,
                 plugin=plugins["ytdlp"],
-                run_output_dir=run_output_dir,
+                run_output_dir=current_output_dir,
+                config=current_config,
             )
         ).to_env()
         process_env = await build_plugin_process_env(
@@ -189,6 +206,8 @@ def test_plugin_env_exports_abxpkg_runtime_after_real_install_phase(tmp_path: Pa
     assert ytdlp_path.is_file()
     assert binary_env.get("PATH")
     assert str(ytdlp_path.parent) in process_env["PATH"].split(os.pathsep)
+    assert json.loads(process_env["EXTRA_CONTEXT"])["snapshot_id"] == "current-snapshot"
+    assert process_env["SNAP_DIR"] == str(current_output_dir)
 
 
 def test_plugin_env_keeps_chrome_sandbox_enabled_by_default(tmp_path: Path) -> None:
