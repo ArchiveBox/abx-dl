@@ -8,6 +8,8 @@ from typing import ClassVar
 from collections.abc import Awaitable, Callable
 
 from abxbus import BaseEvent, EventBus
+
+from ..catalog import PluginCatalog
 from pydantic import ValidationError
 
 from ..config import RuntimeConfig, get_plugin_env
@@ -114,7 +116,7 @@ class SnapshotService(BaseService):
         url: str,
         snapshot: Snapshot,
         output_dir: Path,
-        plugins: dict[str, Plugin],
+        catalog: PluginCatalog,
         config: RuntimeConfig,
         snapshot_phase_timeout: float = 300.0,
         snapshot_cleanup_enabled: bool = True,
@@ -127,8 +129,8 @@ class SnapshotService(BaseService):
         self.snapshot = snapshot
         self.output_dir = output_dir
         self.hooks: list[tuple[Plugin, Hook]] = []
-        self.plugins = plugins
-        for plugin in plugins.values():
+        self.catalog = catalog
+        for plugin in catalog.values():
             if selected_hooks_by_plugin is not None and plugin.name not in selected_hooks_by_plugin:
                 continue
             selected_hook_names = selected_hooks_by_plugin.get(plugin.name) if selected_hooks_by_plugin is not None else None
@@ -241,7 +243,7 @@ class SnapshotService(BaseService):
             runtime_env = plugin_config.to_env()
             env = await build_plugin_process_env(
                 self.bus,
-                plugins=self.plugins,
+                catalog=self.catalog,
                 plugin=plugin,
                 runtime_env=runtime_env,
             )

@@ -448,7 +448,7 @@ This repo includes an `abx-dl` skill for coding agents that need to run the stan
 
 `abx-dl` is built on these components:
 
-- **`abx_dl/plugins.py`** - Plugin discovery from `abx-plugins` or `ABX_PLUGINS_DIR`
+- **`abx_dl/catalog.py`** - Plugin discovery, selection, and config resolution from `abx-plugins` or `ABX_PLUGINS_DIR`
 - **`abx_dl/executor.py`** - Hook execution engine with config propagation
 - **`abx_dl/config.py`** - Environment variable configuration
 - **`abx_dl/cli.py`** - Rich CLI with live progress display

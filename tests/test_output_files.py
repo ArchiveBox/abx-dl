@@ -3,7 +3,7 @@ import shutil
 import stat
 from pathlib import Path
 
-from abx_dl.models import discover_plugins
+from abx_dl.catalog import PluginCatalog
 from abx_dl.output_files import OutputManifest, scan_output_files
 
 
@@ -24,7 +24,7 @@ def test_scan_output_files_excludes_symlinked_files_and_dirs(tmp_path: Path) -> 
 
 def test_scan_output_files_strips_executable_bits(tmp_path: Path) -> None:
     script = tmp_path / "script.sh.x"
-    real_hook = discover_plugins()["wget"].hooks[0].path
+    real_hook = PluginCatalog.discover()["wget"].hooks[0].path
     shutil.copy2(real_hook, script)
     assert stat.S_IMODE(script.lstat().st_mode) & 0o111
 

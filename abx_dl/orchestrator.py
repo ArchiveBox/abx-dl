@@ -74,11 +74,10 @@ Key abxbus concepts used:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
@@ -88,7 +87,7 @@ from typing import Any
 from abxbus import EventBus, EventBusMiddleware, EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode
 from abxpkg.binary_service import BinaryRequestEvent, BinaryService
 
-from .config import GlobalConfig, RuntimeConfig, ensure_default_persona_dir, get_explicit_user_env, get_initial_env
+from .config import GlobalConfig, RuntimeConfig, ensure_default_persona_dir
 from .catalog import PluginCatalog
 from .events import (
     CrawlEvent,
@@ -96,7 +95,7 @@ from .events import (
     MachineEvent,
     slow_warning_timeout,
 )
-from .models import Hook, Plugin, RequiredBinary, Snapshot, discover_plugins, filter_plugins, write_jsonl
+from .models import Hook, Plugin, RequiredBinary, Snapshot, write_jsonl
 from .services import (
     ArchiveResultService,
     CrawlService,
@@ -108,16 +107,14 @@ from .services import (
 )
 
 
-def setup_services(
+def _attach_services(
     bus: EventBus,
     *,
-    plugins: dict[str, Plugin],
+    catalog: PluginCatalog,
     url: str | None = None,
     snapshot: Snapshot | None = None,
     output_dir: Path | None = None,
-    config_overrides: dict[str, Any] | None = None,
-    derived_config_overrides: dict[str, Any] | None = None,
-    runtime_config: RuntimeConfig | None = None,
+    runtime_config: RuntimeConfig,
     install_enabled: bool = True,
     crawl_setup_enabled: bool = True,
     crawl_start_enabled: bool = True,
@@ -145,48 +142,14 @@ def setup_services(
 ) -> None:
     """Attach the shared abx-dl services to an existing bus.
 
-    This is the public entrypoint for embedding abx-dl as an event-driven
-    runtime without immediately starting a crawl via ``download()``. Callers
-    that attach SnapshotService must provide the snapshot-owned RuntimeConfig.
+    ExecutionPlan is the public entrypoint for attaching this configured view
+    to an application-owned event bus.
     """
     if interactive_tty is None:
         interactive_tty = sys.stdout.isatty() or sys.stderr.isatty()
 
-    initial_user_config = None
-    explicit_user_config = None
-    initial_derived_config = None
-    if config_overrides is not None or derived_config_overrides is not None:
-        initial_user_config = get_initial_env()
-        explicit_user_config = get_explicit_user_env()
-        if config_overrides:
-            initial_user_config.update(config_overrides)
-            explicit_user_config.update(config_overrides)
-        initial_derived_config = {}
-        if derived_config_overrides:
-            initial_derived_config.update(derived_config_overrides)
-
-    if explicit_user_config is not None:
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            pass
-        else:
-            bus.emit(
-                MachineEvent(
-                    config=explicit_user_config,
-                    config_type="user",
-                ),
-            )
-            if initial_derived_config:
-                bus.emit(
-                    MachineEvent(
-                        config=initial_derived_config,
-                        config_type="derived",
-                    ),
-                )
-
     if PluginBinaryEnvService is not None:
-        PluginBinaryEnvService(bus, plugins=plugins)
+        PluginBinaryEnvService(bus, catalog=catalog)
 
     if BinaryService is not None:
         BinaryService(
@@ -195,10 +158,10 @@ def setup_services(
         )
 
     if install_enabled and PluginBinariesService is not None:
-        install_plugins = get_install_plugins(plugins)
+        install_plugins = get_install_plugins(catalog)
         PluginBinariesService(
             bus,
-            plugins=plugins,
+            catalog=catalog,
             auto_install=auto_install,
             install_plugins=install_plugins,
             output_dir=output_dir,
@@ -234,7 +197,7 @@ def setup_services(
             url=url,
             snapshot=snapshot,
             output_dir=output_dir,
-            plugins=plugins,
+            catalog=catalog,
             crawl_setup_enabled=crawl_setup_enabled,
             crawl_start_enabled=crawl_start_enabled,
             crawl_cleanup_enabled=crawl_cleanup_enabled,
@@ -249,14 +212,14 @@ def setup_services(
         if SnapshotService is not None and (crawl_start_enabled or snapshot_cleanup_enabled):
             if runtime_config is None:
                 raise TypeError(
-                    "runtime_config is required when setup_services attaches SnapshotService",
+                    "runtime_config is required when ExecutionPlan attaches SnapshotService",
                 )
             SnapshotService(
                 bus,
                 url=url,
                 snapshot=snapshot,
                 output_dir=output_dir,
-                plugins=plugins,
+                catalog=catalog,
                 config=runtime_config,
                 snapshot_phase_timeout=snapshot_phase_timeout,
                 snapshot_cleanup_enabled=snapshot_cleanup_enabled,
@@ -266,9 +229,9 @@ def setup_services(
             )
 
 
-def get_install_plugins(plugins: dict[str, Plugin]) -> list[Plugin]:
+def get_install_plugins(catalog: PluginCatalog) -> list[Plugin]:
     """Return plugins that declare required binaries for the install phase."""
-    return [plugin for plugin in plugins.values() if plugin.config.required_binaries]
+    return [plugin for plugin in catalog.values() if plugin.config.required_binaries]
 
 
 def _positive_int(value: Any) -> int | None:
@@ -306,15 +269,11 @@ def compute_install_phase_timeout(plugins: list[Plugin], config: dict[str, Any] 
 
 
 async def install_plugins(
-    plugin_names: Sequence[str] | None = None,
+    plan: ExecutionPlan,
     *,
-    plugins: dict[str, Plugin] | None = None,
     output_dir: Path | None = None,
-    config_overrides: dict[str, Any] | None = None,
-    derived_config_overrides: dict[str, Any] | None = None,
     emit_jsonl: bool = False,
     bus: EventBus | None = None,
-    dry_run: bool = False,
     PluginBinariesService: type[PluginBinariesService] | None = PluginBinariesService,
     PluginBinaryEnvService: type[PluginBinaryEnvService] | None = PluginBinaryEnvService,
     BinaryService: type[BinaryService] | None = BinaryService,
@@ -326,29 +285,8 @@ async def install_plugins(
     ``config.json > required_binaries`` through abxpkg, without starting the
     later ``on_CrawlSetup__*`` or ``on_Snapshot__*`` plugin phases.
     """
-    all_plugins = plugins or discover_plugins()
-    selected = filter_plugins(
-        all_plugins,
-        list(plugin_names) if plugin_names else None,
-        include_providers=True,
-    )
-    if not selected:
+    if not plan.catalog:
         return []
-
-    merged_config = dict(config_overrides or {})
-    if plugin_names:
-        for plugin in selected.values():
-            if plugin.enabled_key in plugin.config.properties:
-                merged_config[plugin.enabled_key] = True
-    if dry_run:
-        merged_config["DRY_RUN"] = True
-    initial_user_config = get_initial_env()
-    initial_user_config.update(merged_config)
-    explicit_user_config = get_explicit_user_env()
-    explicit_user_config.update(merged_config)
-    initial_derived_config: dict[str, Any] = {}
-    if derived_config_overrides:
-        initial_derived_config.update(derived_config_overrides)
 
     install_output_dir = output_dir
     temp_dir_ctx = nullcontext(output_dir) if output_dir is not None else TemporaryDirectory(prefix="abx-dl-install-")
@@ -356,13 +294,10 @@ async def install_plugins(
     with temp_dir_ctx as temp_dir:
         install_output_dir = install_output_dir or Path(temp_dir)
         install_output_dir.mkdir(parents=True, exist_ok=True)
-        bus = bus or create_bus(total_timeout=60.0)
+        bus = bus or create_bus(total_timeout=plan.install_timeout)
         snapshot = Snapshot(url="")
-        install_plugins_for_phase = get_install_plugins(selected)
-
-        setup_services(
+        plan.attach_services(
             bus,
-            plugins=selected,
             url="",
             snapshot=snapshot,
             output_dir=install_output_dir,
@@ -371,10 +306,6 @@ async def install_plugins(
             crawl_start_enabled=False,
             snapshot_cleanup_enabled=False,
             crawl_cleanup_enabled=False,
-            crawl_setup_phase_timeout=60.0,
-            snapshot_phase_timeout=60.0,
-            snapshot_cleanup_phase_timeout=60.0,
-            crawl_cleanup_phase_timeout=60.0,
             auto_install=True,
             emit_jsonl=emit_jsonl,
             interactive_tty=sys.stdout.isatty() or sys.stderr.isatty(),
@@ -385,32 +316,19 @@ async def install_plugins(
             ArchiveResultService=None,
             TagService=None,
         )
-        await bus.emit(
-            MachineEvent(
-                config=explicit_user_config,
-                config_type="user",
-            ),
-        ).now()
-        if initial_derived_config:
-            await bus.emit(
-                MachineEvent(
-                    config=initial_derived_config,
-                    config_type="derived",
-                ),
-            ).now()
-        install_phase_timeout = compute_install_phase_timeout(install_plugins_for_phase, merged_config or None)
+        await plan.seed_config(bus)
         try:
             install_event = bus.emit(
                 InstallEvent(
                     url="",
                     snapshot_id=snapshot.id,
                     output_dir=str(install_output_dir),
-                    event_timeout=install_phase_timeout,
-                    event_handler_slow_timeout=slow_warning_timeout(install_phase_timeout),
+                    event_timeout=plan.install_timeout,
+                    event_handler_slow_timeout=slow_warning_timeout(plan.install_timeout),
                 ),
             )
-            await install_event.now(timeout=install_phase_timeout)
-            await install_event.wait(timeout=install_phase_timeout)
+            await install_event.now(timeout=plan.install_timeout)
+            await install_event.wait(timeout=plan.install_timeout)
             await install_event.event_results_list()
         finally:
             await bus.wait_until_idle()
@@ -468,7 +386,7 @@ class ExecutionPlan:
     services to their EventBus.
     """
 
-    plugins: dict[str, Plugin]
+    catalog: PluginCatalog
     config: dict[str, Any]
     derived_config: dict[str, Any]
     runtime: str
@@ -480,15 +398,15 @@ class ExecutionPlan:
     @classmethod
     def build(
         cls,
-        plugins: dict[str, Plugin] | PluginCatalog,
+        catalog: PluginCatalog,
         *,
-        selected_plugins: list[str] | None = None,
+        selected_plugins: Iterable[str] | None = None,
+        disabled_plugins: Iterable[str] = (),
         config: dict[str, Any] | None = None,
         derived_config: dict[str, Any] | None = None,
         runtime: str = "abx-dl",
     ) -> ExecutionPlan:
-        catalog = plugins if isinstance(plugins, PluginCatalog) else PluginCatalog(dict(plugins))
-        selected = catalog.select(selected_plugins).plugins
+        selected = catalog.select(selected_plugins, disabled_names=disabled_plugins)
         runtime_config = dict(config or {})
         # The embedding application owns runtime identity. Do not let an env
         # value make hooks believe a standalone run is ArchiveBox (or vice
@@ -497,7 +415,7 @@ class ExecutionPlan:
         crawl_setup_hooks = [(plugin, hook) for plugin in selected.values() for hook in plugin.filter_hooks("CrawlSetup")]
         snapshot_hooks = [(plugin, hook) for plugin in selected.values() for hook in plugin.filter_hooks("Snapshot")]
         return cls(
-            plugins=selected,
+            catalog=selected,
             config=runtime_config,
             derived_config=dict(derived_config or {}),
             runtime=runtime,
@@ -536,9 +454,9 @@ class ExecutionPlan:
         **service_options: Any,
     ) -> None:
         """Attach shared services using this plan's single selected/configured view."""
-        setup_services(
+        _attach_services(
             bus,
-            plugins=self.plugins,
+            catalog=self.catalog,
             url=url,
             snapshot=snapshot,
             output_dir=output_dir,
@@ -570,7 +488,7 @@ class ExecutionPlan:
             url=url,
             snapshot=snapshot,
             output_dir=output_dir,
-            plugins=self.plugins,
+            catalog=self.catalog,
             config=self.runtime_config,
             snapshot_phase_timeout=timeout,
             snapshot_cleanup_enabled=True,
@@ -639,11 +557,8 @@ def create_bus(
 
 async def download(
     url: str,
-    plugins: dict[str, Plugin],
+    plan: ExecutionPlan,
     output_dir: Path,
-    selected_plugins: list[str] | None = None,
-    config_overrides: dict[str, Any] | None = None,
-    derived_config_overrides: dict[str, Any] | None = None,
     auto_install: bool = True,
     *,
     bus: EventBus | None = None,
@@ -655,7 +570,6 @@ async def download(
     crawl_cleanup_enabled: bool = True,
     crawl_completed_enabled: bool = True,
     crawl_event_enabled: bool = True,
-    dry_run: bool = False,
     PluginBinariesService: type[PluginBinariesService] | None = PluginBinariesService,
     PluginBinaryEnvService: type[PluginBinaryEnvService] | None = PluginBinaryEnvService,
     BinaryService: type[BinaryService] | None = BinaryService,
@@ -677,10 +591,8 @@ async def download(
 
     Args:
         url: The URL to download/archive.
-        plugins: All discovered plugins (from discover_plugins()).
+        plan: The selected, configured plugin execution plan.
         output_dir: Where to write output files and index.jsonl.
-        selected_plugins: If set, only use these plugins (with dependency resolution).
-        config_overrides: Extra config values (e.g. TIMEOUT) merged into user_config.
         auto_install: Whether to auto-install missing binaries.
         bus: Pre-configured EventBus to run against. If None, a default bus is
             created via create_bus().
@@ -688,16 +600,6 @@ async def download(
 
     """
 
-    config_overrides = dict(config_overrides or {})
-    if dry_run:
-        config_overrides["DRY_RUN"] = True
-    initial_user_config = get_initial_env()
-    initial_user_config.update(config_overrides)
-    explicit_user_config = get_explicit_user_env()
-    explicit_user_config.update(config_overrides)
-    initial_derived_config: dict[str, Any] = {}
-    if derived_config_overrides:
-        initial_derived_config.update(derived_config_overrides)
     ensure_default_persona_dir()
     # Hook subprocesses run with cwd set to SNAP_DIR/<plugin>, while hook env
     # carries shared crawl/snapshot paths like SNAP_DIR and CRAWL_DIR. Keeping
@@ -712,19 +614,10 @@ async def download(
     if interactive_tty is None:
         interactive_tty = stdout_is_tty or sys.stderr.isatty()
 
-    plan = ExecutionPlan.build(
-        plugins,
-        selected_plugins=selected_plugins,
-        config=explicit_user_config,
-        derived_config=initial_derived_config,
-        runtime="abx-dl",
-    )
-    plugins = plan.plugins
-
     # Create snapshot record and write it as the first line of index.jsonl
     snapshot_payload: dict[str, Any] = {"url": url}
-    if config_overrides.get("EXTRA_CONTEXT"):
-        extra_context = config_overrides["EXTRA_CONTEXT"]
+    if plan.config.get("EXTRA_CONTEXT"):
+        extra_context = plan.config["EXTRA_CONTEXT"]
         if isinstance(extra_context, str):
             extra_context = json.loads(extra_context)
         if not isinstance(extra_context, dict):
@@ -756,13 +649,11 @@ async def download(
         bus = create_bus(total_timeout=total_timeout)
     assert bus is not None
 
-    setup_services(
+    plan.attach_services(
         bus,
-        plugins=plugins,
         url=url,
         snapshot=snapshot,
         output_dir=output_dir,
-        runtime_config=plan.runtime_config,
         install_enabled=True,
         crawl_setup_enabled=crawl_setup_enabled,
         crawl_start_enabled=crawl_start_enabled,
@@ -770,10 +661,6 @@ async def download(
         crawl_cleanup_enabled=crawl_cleanup_enabled,
         crawl_completed_enabled=crawl_completed_enabled,
         crawl_event_enabled=crawl_event_enabled,
-        crawl_setup_phase_timeout=crawl_setup_phase_timeout,
-        snapshot_phase_timeout=snapshot_phase_timeout,
-        snapshot_cleanup_phase_timeout=snapshot_cleanup_phase_timeout,
-        crawl_cleanup_phase_timeout=crawl_cleanup_phase_timeout,
         auto_install=auto_install,
         emit_jsonl=emit_jsonl,
         interactive_tty=interactive_tty,

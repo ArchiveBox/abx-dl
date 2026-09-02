@@ -8,7 +8,7 @@ import json
 import os
 from pathlib import Path
 
-from abx_dl.models import discover_plugins
+from abx_dl.catalog import PluginCatalog
 
 
 SUCCESS_STATUSES = {"succeeded", "noresult", "noresults"}
@@ -125,7 +125,7 @@ def main() -> None:
 
     index_path = args.index.resolve()
     output_dir = args.output_dir.resolve()
-    plugins = discover_plugins(args.plugins_dir.resolve(), runtime="abx-dl")
+    plugins = PluginCatalog.discover(args.plugins_dir.resolve(), runtime="abx-dl")
     disabled_plugins = {
         plugin.name
         for plugin in plugins.values()

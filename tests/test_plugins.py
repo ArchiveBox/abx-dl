@@ -7,7 +7,7 @@ from pathlib import Path
 
 from abx_dl.catalog import PluginCatalog, PluginConfigResolver
 from abx_dl.config import get_initial_env, get_required_binary_requests
-from abx_dl.models import discover_plugins, filter_plugins, parse_hook_filename
+from abx_dl.models import parse_hook_filename
 
 
 def test_parse_hook_filename_marks_bg_hooks() -> None:
@@ -17,7 +17,7 @@ def test_parse_hook_filename_marks_bg_hooks() -> None:
 
 
 def test_discover_plugins_marks_papersdl_as_background() -> None:
-    plugins = discover_plugins()
+    plugins = PluginCatalog.discover()
     papersdl_hooks = plugins["papersdl"].hooks
 
     papersdl_hook = next(hook for hook in papersdl_hooks if "Snapshot" in hook.name and hook.order == 66)
@@ -28,7 +28,7 @@ def test_discover_plugins_marks_papersdl_as_background() -> None:
 
 
 def test_discover_plugins_extension_plugins_declare_required_binaries() -> None:
-    plugins = discover_plugins()
+    plugins = PluginCatalog.discover()
 
     expected = ["ublock", "istilldontcareaboutcookies", "singlefile", "twocaptcha", "claudechrome"]
 
@@ -39,7 +39,7 @@ def test_discover_plugins_extension_plugins_declare_required_binaries() -> None:
 def test_discover_plugins_extends_packaged_plugins_with_runtime_plugin_dir(tmp_path: Path) -> None:
     plugin_dir = tmp_path / "runtime_only"
     plugin_dir.mkdir()
-    title_hook = discover_plugins()["title"].hooks[0]
+    title_hook = PluginCatalog.discover()["title"].hooks[0]
     hook = plugin_dir / title_hook.path.name
     shutil.copy2(title_hook.path, hook)
 
@@ -51,8 +51,8 @@ def test_discover_plugins_extends_packaged_plugins_with_runtime_plugin_dir(tmp_p
             "-c",
             (
                 "import json; "
-                "from abx_dl.models import discover_plugins; "
-                "plugins = discover_plugins(runtime='archivebox'); "
+                "from abx_dl.catalog import PluginCatalog; "
+                "plugins = PluginCatalog.discover(runtime='archivebox'); "
                 "print(json.dumps({name: [hook.name for hook in plugin.hooks] for name, plugin in plugins.items()}))"
             ),
         ],
@@ -169,9 +169,9 @@ def test_plugin_config_resolver_uses_manifest_aliases_and_dependencies() -> None
 
 
 def test_filter_plugins_does_not_add_binary_providers_for_wget() -> None:
-    plugins = discover_plugins()
+    plugins = PluginCatalog.discover()
 
-    selected = filter_plugins(plugins, ["wget"], include_providers=True)
+    selected = plugins.select(["wget"])
 
     assert "wget" in selected
     assert "env" not in selected
@@ -182,9 +182,9 @@ def test_filter_plugins_does_not_add_binary_providers_for_wget() -> None:
 
 
 def test_filter_plugins_includes_required_plugins_without_binary_providers() -> None:
-    plugins = discover_plugins()
+    plugins = PluginCatalog.discover()
 
-    selected = filter_plugins(plugins, ["ublock"], include_providers=True)
+    selected = plugins.select(["ublock"])
 
     assert "ublock" in selected
     assert "chrome" in selected
@@ -196,14 +196,14 @@ def test_filter_plugins_includes_required_plugins_without_binary_providers() -> 
     assert "brew" not in selected
     assert "npm" not in selected
 
-    all_selected = filter_plugins(plugins, None, include_providers=True)
+    all_selected = plugins.select()
     assert list(all_selected).index("chrome") < list(all_selected).index("ublock")
 
 
 def test_filter_plugins_prunes_plugins_with_disabled_required_plugins() -> None:
-    plugins = discover_plugins(runtime="archivebox")
+    plugins = PluginCatalog.discover(runtime="archivebox")
 
-    selected = filter_plugins(plugins, ["wget", "accessibility", "ublock"], include_providers=True, disabled_names=["chrome"])
+    selected = plugins.select(["wget", "accessibility", "ublock"], disabled_names=["chrome"])
 
     assert "wget" in selected
     assert "chrome" not in selected
@@ -212,7 +212,7 @@ def test_filter_plugins_prunes_plugins_with_disabled_required_plugins() -> None:
 
 
 def test_required_binary_requests_preserve_user_binary_overrides_and_ignore_stale_derived_paths() -> None:
-    plugins = discover_plugins()
+    plugins = PluginCatalog.discover()
     plugin = plugins["ytdlp"]
 
     requests = get_required_binary_requests(

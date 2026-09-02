@@ -7,7 +7,7 @@ import threading
 from pathlib import Path
 from uuid import uuid4
 
-from abx_dl.config import GlobalConfig, RuntimeConfig, get_initial_env, get_required_binary_requests
+from abx_dl.config import GlobalConfig, RuntimeConfig, get_explicit_user_env, get_initial_env, get_required_binary_requests
 from abx_dl.events import (
     ArchiveResultEvent,
     CrawlAbortEvent,
@@ -28,8 +28,9 @@ from abx_dl.events import (
 )
 from abx_dl.execution import build_hook_args, execute_hook, iter_plugin_command
 from abx_dl.limits import CrawlLimitState
-from abx_dl.models import Hook, PluginCommand, Snapshot, discover_plugins, filter_plugins
-from abx_dl.orchestrator import ExecutionPlan, create_bus, download, setup_services
+from abx_dl.catalog import PluginCatalog, PluginConfigResolver
+from abx_dl.models import Hook, PluginCommand, Snapshot
+from abx_dl.orchestrator import ExecutionPlan, create_bus, download as execute_download
 from abx_dl.services.archive_result_service import ArchiveResultService
 from abx_dl.services.binary_service import PluginBinaryEnvService
 from abx_dl.services.crawl_service import CrawlService
@@ -145,7 +146,56 @@ def _binary_extra_context(
     }
 
 
+def _execution_plan(
+    plugins,
+    *,
+    selected_plugins=None,
+    config_overrides=None,
+    derived_config_overrides=None,
+    dry_run=False,
+):
+    catalog = plugins if isinstance(plugins, PluginCatalog) else PluginCatalog(dict(plugins))
+    config = {**get_explicit_user_env(), **dict(config_overrides or {})}
+    if dry_run:
+        config["DRY_RUN"] = True
+    return ExecutionPlan.build(
+        catalog,
+        selected_plugins=selected_plugins if selected_plugins is not None else list(catalog),
+        config=config,
+        derived_config=derived_config_overrides,
+    )
+
+
+async def _download_with_plan(
+    url,
+    catalog,
+    output_dir,
+    selected_plugins=None,
+    config_overrides=None,
+    *,
+    derived_config_overrides=None,
+    dry_run=False,
+    **kwargs,
+):
+    plan = _execution_plan(
+        catalog,
+        selected_plugins=selected_plugins,
+        config_overrides=config_overrides,
+        derived_config_overrides=derived_config_overrides,
+        dry_run=dry_run,
+    )
+    return await execute_download(url, plan, output_dir, **kwargs)
+
+
 def _run_download(*args, **kwargs):
+    url = args[0] if args else kwargs.pop("url")
+    plugins = args[1] if len(args) > 1 else kwargs.pop("catalog")
+    output_dir = args[2] if len(args) > 2 else kwargs.pop("output_dir")
+    positional = args[3:]
+    selected_plugins = positional[0] if positional else kwargs.pop("selected_plugins", None)
+    config_overrides = positional[1] if len(positional) > 1 else kwargs.pop("config_overrides", None)
+    derived_config_overrides = kwargs.pop("derived_config_overrides", None)
+    dry_run = kwargs.pop("dry_run", False)
     bus = kwargs.get("bus")
     if bus is None:
         bus = create_bus(total_timeout=120.0, name=f"test_executor_download_{uuid4().hex[:8]}")
@@ -160,7 +210,16 @@ def _run_download(*args, **kwargs):
 
     async def run() -> None:
         try:
-            await download(*args, **kwargs)
+            await _download_with_plan(
+                url,
+                plugins,
+                output_dir,
+                selected_plugins,
+                config_overrides,
+                derived_config_overrides=derived_config_overrides,
+                dry_run=dry_run,
+                **kwargs,
+            )
         finally:
             await bus.wait_until_idle()
 
@@ -197,7 +256,7 @@ def test_process_command_executes_hooks_through_declared_shebang(tmp_path: Path)
 
 
 def test_runtime_setup_hooks_run_before_dependent_extractors() -> None:
-    plugins = filter_plugins(discover_plugins(), ["archivewebpage"])
+    plugins = PluginCatalog.discover().select(["archivewebpage"])
     setup_hooks = [
         (plugin.name, hook.name)
         for plugin, hook in sorted(
@@ -213,7 +272,7 @@ def test_runtime_setup_hooks_run_before_dependent_extractors() -> None:
     snapshot_hooks = [
         (plugin.name, hook.name)
         for plugin, hook in sorted(
-            ((plugin, hook) for plugin in discover_plugins().values() for hook in plugin.filter_hooks("Snapshot")),
+            ((plugin, hook) for plugin in PluginCatalog.discover().values() for hook in plugin.filter_hooks("Snapshot")),
             key=lambda item: item[1].sort_key,
         )
     ]
@@ -235,10 +294,10 @@ def _pid_is_alive(pid: int) -> bool:
 
 
 def _resolve_real_wget_binary(tmp_path: Path) -> BinaryEvent:
-    plugins = discover_plugins()
-    selected = {"wget": plugins["wget"]}
+    plugins = PluginCatalog.discover()
+    selected = plugins.select(["wget"])
     bus = create_bus(total_timeout=30.0, name=f"resolve_real_wget_binary_{tmp_path.name}")
-    setup_services(bus, plugins=selected, auto_install=True, emit_jsonl=False)
+    ExecutionPlan.build(selected, selected_plugins=selected).attach_services(bus, auto_install=True, emit_jsonl=False)
     installed_events: list[BinaryEvent] = []
 
     async def on_BinaryEvent(event: BinaryEvent) -> None:
@@ -280,7 +339,7 @@ def _streaming_http_response(httpserver: HTTPServer, path: str) -> tuple[str, th
 
 
 def _real_hook_path(plugin_name: str, hook_name: str) -> str:
-    plugin = discover_plugins()[plugin_name]
+    plugin = PluginCatalog.discover()[plugin_name]
     hook = next(hook for hook in plugin.hooks if hook.name == hook_name)
     assert hook.path.is_file()
     return str(hook.path)
@@ -291,10 +350,10 @@ def _runtime_config(**user_config) -> RuntimeConfig:
 
 
 def test_binary_installed_event_preserves_child_provider_metadata(tmp_path: Path) -> None:
-    plugins = discover_plugins()
-    selected = {"wget": plugins["wget"]}
+    plugins = PluginCatalog.discover()
+    selected = plugins.select(["wget"])
     bus = create_bus(total_timeout=30.0, name=f"binary_installed_metadata_{tmp_path.name}")
-    setup_services(bus, plugins=selected, auto_install=True, emit_jsonl=False)
+    ExecutionPlan.build(selected, selected_plugins=selected).attach_services(bus, auto_install=True, emit_jsonl=False)
     installed_events: list[BinaryEvent] = []
 
     async def on_BinaryEvent(event: BinaryEvent) -> None:
@@ -326,13 +385,13 @@ def test_binary_installed_event_preserves_child_provider_metadata(tmp_path: Path
 def test_binary_installed_event_uses_machine_config_seeded_from_persistent_config(tmp_path: Path) -> None:
     from abx_dl.config import set_user_config
 
-    plugins = discover_plugins()
+    plugins = PluginCatalog.discover()
     resolved_binary = _resolve_real_wget_binary(tmp_path)
-    set_user_config({name: plugin.config.properties for name, plugin in plugins.items()}, WGET_BINARY=resolved_binary.abspath)
+    set_user_config(PluginConfigResolver(plugins), WGET_BINARY=resolved_binary.abspath)
 
     async def run() -> list[BinaryEvent]:
         bus = create_bus(total_timeout=10.0, name=f"machine_config_seeded_{tmp_path.name}")
-        PluginBinaryEnvService(bus, plugins={"wget": plugins["wget"]})
+        PluginBinaryEnvService(bus, catalog=PluginCatalog({"wget": plugins["wget"]}))
         BinaryService(bus, auto_install=True)
         installed_events: list[BinaryEvent] = []
 
@@ -362,11 +421,11 @@ def test_binary_installed_event_uses_machine_config_seeded_from_persistent_confi
 
 def test_binary_installed_event_resolves_config_backed_command_name(tmp_path: Path) -> None:
     resolved_binary = _resolve_real_wget_binary(tmp_path)
-    plugins = discover_plugins()
+    plugins = PluginCatalog.discover()
 
     async def run() -> list[BinaryEvent]:
         bus = create_bus(total_timeout=10.0, name=f"config_backed_command_{tmp_path.name}")
-        PluginBinaryEnvService(bus, plugins={"wget": plugins["wget"]})
+        PluginBinaryEnvService(bus, catalog=PluginCatalog({"wget": plugins["wget"]}))
         BinaryService(bus, auto_install=True)
         installed_events: list[BinaryEvent] = []
 
@@ -398,11 +457,11 @@ def test_binary_installed_event_resolves_config_backed_command_name(tmp_path: Pa
 
 def test_binary_installed_event_uses_user_absolute_path_for_real_plugin(tmp_path: Path) -> None:
     resolved_binary = _resolve_real_wget_binary(tmp_path)
-    plugins = discover_plugins()
+    plugins = PluginCatalog.discover()
 
     async def run() -> list[BinaryEvent]:
         bus = create_bus(total_timeout=10.0, name=f"user_absolute_path_{tmp_path.name}")
-        PluginBinaryEnvService(bus, plugins={"wget": plugins["wget"]})
+        PluginBinaryEnvService(bus, catalog=PluginCatalog({"wget": plugins["wget"]}))
         BinaryService(bus, auto_install=True)
         installed_events: list[BinaryEvent] = []
 
@@ -433,11 +492,11 @@ def test_binary_installed_event_uses_user_absolute_path_for_real_plugin(tmp_path
 
 def test_binary_installed_event_validates_real_plugin_derived_paths_through_abxpkg(tmp_path: Path) -> None:
     resolved_binary = _resolve_real_wget_binary(tmp_path)
-    plugins = discover_plugins()
+    plugins = PluginCatalog.discover()
 
     async def run() -> list[BinaryEvent]:
         bus = create_bus(total_timeout=10.0, name=f"reuses_cached_paths_{tmp_path.name}")
-        PluginBinaryEnvService(bus, plugins={"wget": plugins["wget"]})
+        PluginBinaryEnvService(bus, catalog=PluginCatalog({"wget": plugins["wget"]}))
         BinaryService(bus, auto_install=True)
         installed_events: list[BinaryEvent] = []
 
@@ -469,15 +528,10 @@ def test_binary_installed_event_validates_real_plugin_derived_paths_through_abxp
 
 def test_binary_event_validates_derived_config_binary_through_abxpkg_resolution(tmp_path: Path) -> None:
     resolved_binary = _resolve_real_wget_binary(tmp_path)
-    plugins = discover_plugins()
-    selected = {"wget": plugins["wget"]}
+    plugins = PluginCatalog.discover()
+    selected = plugins.select(["wget"])
     bus = create_bus(total_timeout=60.0, name=f"cached_binary_before_provider_{tmp_path.name}")
-    setup_services(
-        bus,
-        plugins=selected,
-        auto_install=True,
-        emit_jsonl=False,
-    )
+    ExecutionPlan.build(selected, selected_plugins=selected).attach_services(bus, auto_install=True, emit_jsonl=False)
     installed_events: list[BinaryEvent] = []
     process_events: list[ProcessEvent] = []
 
@@ -512,7 +566,7 @@ def test_binary_event_validates_derived_config_binary_through_abxpkg_resolution(
 
 
 def test_required_binary_requests_preserve_extra_config_fields() -> None:
-    plugins = discover_plugins()
+    plugins = PluginCatalog.discover()
     plugin = plugins["papersdl"]
 
     requests = get_required_binary_requests(
@@ -536,7 +590,7 @@ def test_required_binary_requests_preserve_extra_config_fields() -> None:
         Path(os.environ["ABXPKG_LIB_DIR"]) / "uv" / "packages" / "papers-dl"
     )
 
-    sonic_plugin = discover_plugins(runtime="archivebox")["search_backend_sonic"]
+    sonic_plugin = PluginCatalog.discover(runtime="archivebox")["search_backend_sonic"]
     sonic_request = get_required_binary_requests(
         sonic_plugin,
         sonic_plugin.config.required_binaries,
@@ -549,54 +603,16 @@ def test_required_binary_requests_preserve_extra_config_fields() -> None:
     assert "{'User-Agent': 'abxpkg sonic bootstrap/1.7.4'}" in install_script
 
 
-def test_setup_services_accepts_runtime_config_overrides_and_seeds_machine_events(tmp_path: Path) -> None:
-    wget_binary = _resolve_real_wget_binary(tmp_path)
-
-    async def run() -> list[MachineEvent]:
-        bus = create_bus(total_timeout=5.0, name=f"setup_services_runtime_config_{uuid4().hex[:8]}")
-        observed: list[MachineEvent] = []
-
-        async def on_MachineEvent(event: MachineEvent) -> None:
-            observed.append(event)
-
-        bus.on(MachineEvent, on_MachineEvent)
-        try:
-            setup_services(
-                bus,
-                plugins={},
-                config_overrides={"TIMEOUT": 123, "DRY_RUN": True},
-                derived_config_overrides={"WGET_BINARY": str(wget_binary.abspath)},
-                PluginBinariesService=None,
-                ProcessService=None,
-                ArchiveResultService=None,
-                TagService=None,
-                CrawlService=None,
-                SnapshotService=None,
-            )
-            await bus.wait_until_idle(timeout=2.0)
-            return observed
-        finally:
-            await bus.wait_until_idle()
-
-    events = asyncio.run(run())
-    user_event = next(event for event in events if event.config_type == "user")
-    derived_event = next(event for event in events if event.config_type == "derived")
-    assert user_event.config is not None
-    assert user_event.config["TIMEOUT"] == 123
-    assert user_event.config["DRY_RUN"] is True
-    assert derived_event.config == {"WGET_BINARY": str(wget_binary.abspath)}
-
-
 def test_execution_plan_centralizes_selection_timeouts_and_runtime_config(tmp_path: Path) -> None:
     plan = ExecutionPlan.build(
-        discover_plugins(runtime="archivebox"),
+        PluginCatalog.discover(runtime="archivebox"),
         selected_plugins=["title", "wget"],
         config={"TIMEOUT": 17},
         derived_config={"WGET_BINARY": str(tmp_path / "wget")},
         runtime="archivebox",
     )
 
-    assert {"chrome", "title", "wget"} <= set(plan.plugins)
+    assert {"chrome", "title", "wget"} <= set(plan.catalog)
     assert plan.runtime_config.user.ABX_RUNTIME == "archivebox"
     assert plan.runtime_config.user.TIMEOUT == 17
     assert plan.runtime_config.derived == {"WGET_BINARY": str(tmp_path / "wget")}
@@ -620,12 +636,7 @@ def test_execution_plan_centralizes_selection_timeouts_and_runtime_config(tmp_pa
 
 def test_binary_service_stops_after_successful_provider_result(tmp_path: Path) -> None:
     bus = create_bus(total_timeout=30.0, name=f"binary_provider_result_{tmp_path.name}")
-    setup_services(
-        bus,
-        plugins={},
-        auto_install=True,
-        emit_jsonl=False,
-    )
+    ExecutionPlan.build(PluginCatalog({})).attach_services(bus, auto_install=True, emit_jsonl=False)
     process_events: list[ProcessEvent] = []
     binary_events: list[BinaryEvent] = []
 
@@ -707,7 +718,7 @@ def test_binary_service_concurrent_real_requests_preserve_env_projection(tmp_pat
 def test_binary_event_ignores_unknown_request_plugin_when_projecting_config(tmp_path: Path) -> None:
     async def run() -> list[BinaryEvent]:
         bus = create_bus(total_timeout=10.0, name=f"unknown_binary_request_plugin_{tmp_path.name}")
-        PluginBinaryEnvService(bus, plugins={})
+        PluginBinaryEnvService(bus, catalog=PluginCatalog({}))
         BinaryService(bus, auto_install=True)
         installed_events: list[BinaryEvent] = []
 
@@ -760,15 +771,10 @@ def test_binary_event_ignores_unknown_request_plugin_when_projecting_config(tmp_
 def test_binary_event_delegates_stale_cached_config_binary_to_abxpkg_resolution(tmp_path: Path) -> None:
     managed_lib_dir = tmp_path / "lib"
     stale_binary = managed_lib_dir / "pip" / "venv" / "bin" / "wget"
-    plugins = discover_plugins()
-    selected = {"wget": plugins["wget"]}
+    plugins = PluginCatalog.discover()
+    selected = plugins.select(["wget"])
     bus = create_bus(total_timeout=60.0, name=f"stale_cached_binary_{tmp_path.name}")
-    setup_services(
-        bus,
-        plugins=selected,
-        auto_install=True,
-        emit_jsonl=False,
-    )
+    ExecutionPlan.build(selected, selected_plugins=selected).attach_services(bus, auto_install=True, emit_jsonl=False)
     installed_events: list[BinaryEvent] = []
     process_events: list[ProcessEvent] = []
 
@@ -818,15 +824,10 @@ def test_binary_event_delegates_stale_cached_config_binary_to_abxpkg_resolution(
 
 def test_binary_event_delegates_missing_user_binary_abspath_override_to_abxpkg(tmp_path: Path) -> None:
     broken_binary = tmp_path / "broken" / "wget"
-    plugins = discover_plugins()
-    selected = {"wget": plugins["wget"]}
+    plugins = PluginCatalog.discover()
+    selected = plugins.select(["wget"])
     bus = create_bus(total_timeout=60.0, name=f"user_abspath_override_{tmp_path.name}")
-    setup_services(
-        bus,
-        plugins=selected,
-        auto_install=True,
-        emit_jsonl=False,
-    )
+    ExecutionPlan.build(selected, selected_plugins=selected).attach_services(bus, auto_install=True, emit_jsonl=False)
     installed_events: list[BinaryEvent] = []
     process_events: list[ProcessEvent] = []
 
@@ -871,8 +872,8 @@ def test_download_creates_default_persona_dir(tmp_path: Path) -> None:
 
 
 def test_download_sets_plugin_specific_binary_env_from_binary_default(tmp_path: Path) -> None:
-    plugins = discover_plugins()
-    selected = {"wget": plugins["wget"]}
+    plugins = PluginCatalog.discover()
+    selected = plugins.select(["wget"])
     bus = create_bus(total_timeout=120.0, name=f"real_wget_binary_env_{tmp_path.name}")
     snapshot_processes: list[ProcessEvent] = []
 
@@ -894,8 +895,8 @@ def test_download_sets_plugin_specific_binary_env_from_binary_default(tmp_path: 
 
 
 def test_snapshot_background_only_hook_finishes_before_cleanup_without_filename_special_case(tmp_path: Path) -> None:
-    plugins = discover_plugins()
-    selected = {"wget": plugins["wget"]}
+    plugins = PluginCatalog.discover()
+    selected = plugins.select(["wget"])
     bus = create_bus(total_timeout=120.0, name=f"real_wget_background_cleanup_{tmp_path.name}")
     completed_processes: list[ProcessCompletedEvent] = []
 
@@ -927,8 +928,8 @@ def test_snapshot_background_only_hook_finishes_before_cleanup_without_filename_
 
 
 def test_real_js_snapshot_hook_replays_early_sigterm_to_late_cleanup_handler(tmp_path: Path) -> None:
-    plugin = discover_plugins()["staticfile"]
-    chrome = discover_plugins()["chrome"]
+    plugin = PluginCatalog.discover()["staticfile"]
+    chrome = PluginCatalog.discover()["chrome"]
     selected = {chrome.name: chrome, plugin.name: plugin}
     hook = plugin.hooks[0]
     navigate_hook = next(hook for hook in chrome.filter_hooks("Snapshot") if not hook.is_background)
@@ -937,7 +938,7 @@ def test_real_js_snapshot_hook_replays_early_sigterm_to_late_cleanup_handler(tmp
 
     async def run() -> ProcessCompletedEvent | None:
         download_task = asyncio.create_task(
-            download(
+            _download_with_plan(
                 "https://example.com",
                 selected,
                 output_dir,
@@ -1005,7 +1006,7 @@ def test_real_js_snapshot_hook_replays_early_sigterm_to_late_cleanup_handler(tmp
 
 
 def test_snapshot_service_emits_background_process_without_extra_wait(tmp_path: Path) -> None:
-    plugin = discover_plugins()["wget"]
+    plugin = PluginCatalog.discover()["wget"]
     bus = create_bus(total_timeout=120.0, name=f"make_hook_handler_background_{tmp_path.name}")
     started_processes: list[ProcessStartedEvent] = []
     process_events: list[ProcessEvent] = []
@@ -1040,7 +1041,7 @@ def test_snapshot_service_emits_background_process_without_extra_wait(tmp_path: 
 
 
 def test_download_preserves_plugin_timeout_when_global_timeout_is_only_a_default(tmp_path: Path) -> None:
-    plugin = discover_plugins()["claudecodecleanup"]
+    plugin = PluginCatalog.discover()["claudecodecleanup"]
     bus = create_bus(total_timeout=300.0, name=f"plugin_default_timeout_{tmp_path.name}")
     process_events: list[ProcessEvent] = []
 
@@ -1051,7 +1052,7 @@ def test_download_preserves_plugin_timeout_when_global_timeout_is_only_a_default
     bus.on(ProcessEvent, on_ProcessEvent)
     _run_download(
         "https://example.com",
-        discover_plugins(),
+        PluginCatalog.discover(),
         tmp_path / "run",
         selected_plugins=[plugin.name],
         config_overrides={"CLAUDECODECLEANUP_ENABLED": True},
@@ -1066,14 +1067,14 @@ def test_download_preserves_plugin_timeout_when_global_timeout_is_only_a_default
 
 
 def test_download_does_not_spawn_disabled_plugin_hooks(tmp_path: Path) -> None:
-    plugin = discover_plugins()["claudecodecleanup"]
+    plugin = PluginCatalog.discover()["claudecodecleanup"]
     bus = create_bus(total_timeout=30.0, name=f"disabled_plugin_{tmp_path.name}")
     process_events: list[ProcessEvent] = []
     bus.on(ProcessEvent, lambda event: process_events.append(event))
 
     _run_download(
         "https://example.com",
-        discover_plugins(),
+        PluginCatalog.discover(),
         tmp_path / "run",
         selected_plugins=[plugin.name],
         config_overrides={"CLAUDECODECLEANUP_ENABLED": False},
@@ -1086,7 +1087,7 @@ def test_download_does_not_spawn_disabled_plugin_hooks(tmp_path: Path) -> None:
 
 
 def test_snapshot_service_selected_hooks_by_plugin_runs_only_named_hooks(tmp_path: Path) -> None:
-    plugin = discover_plugins()["chrome"]
+    plugin = PluginCatalog.discover()["chrome"]
     selected_hook = next(hook for hook in plugin.hooks if hook.name == "on_Snapshot__30_chrome_navigate")
     bus = create_bus(total_timeout=20.0, name=f"selected_snapshot_hooks_{tmp_path.name}")
     ProcessService(bus, emit_jsonl=False, interactive_tty=False)
@@ -1096,7 +1097,7 @@ def test_snapshot_service_selected_hooks_by_plugin_runs_only_named_hooks(tmp_pat
         url="https://example.com",
         snapshot=snapshot,
         output_dir=tmp_path / "run",
-        plugins={plugin.name: plugin},
+        catalog=PluginCatalog({plugin.name: plugin}),
         config=_runtime_config(CHROME_TIMEOUT=5),
         snapshot_phase_timeout=5.0,
         selected_hooks_by_plugin={plugin.name: {selected_hook.name}},
@@ -1126,7 +1127,7 @@ def test_snapshot_service_repins_snapshot_persona_after_global_config_merge(tmp_
     bus = create_bus(total_timeout=30.0, name=f"snapshot_chrome_env_{tmp_path.name}")
     output_dir = tmp_path / "archive" / "users" / "system" / "snapshots" / "20260603" / "example.com" / "current"
     stale_dir = tmp_path / "archive" / "users" / "system" / "snapshots" / "20260603" / "example.com" / "stale"
-    plugin = discover_plugins()["chrome"]
+    plugin = PluginCatalog.discover()["chrome"]
     real_hook = next(hook for hook in plugin.hooks if hook.name == "on_Snapshot__30_chrome_navigate")
     snapshot = Snapshot(url="https://example.com", id="snap-current")
     ProcessService(bus, emit_jsonl=False, interactive_tty=False)
@@ -1135,7 +1136,7 @@ def test_snapshot_service_repins_snapshot_persona_after_global_config_merge(tmp_
         url=snapshot.url,
         snapshot=snapshot,
         output_dir=output_dir,
-        plugins={plugin.name: plugin},
+        catalog=PluginCatalog({plugin.name: plugin}),
         config=_runtime_config(
             ABX_RUNTIME="archivebox",
             CHROME_ISOLATION="snapshot",
@@ -1201,7 +1202,7 @@ def test_snapshot_service_repins_snapshot_persona_after_global_config_merge(tmp_
 def test_concurrent_snapshot_services_use_their_injected_runtime_config(tmp_path: Path) -> None:
     bus = create_bus(total_timeout=30.0, name=f"snapshot_config_isolation_{tmp_path.name}")
     ProcessService(bus, emit_jsonl=False, interactive_tty=False)
-    plugin = discover_plugins()["parse_txt_urls"]
+    plugin = PluginCatalog.discover()["parse_txt_urls"]
     snapshots = [
         Snapshot(url="https://example.com/first", id="snap-config-first"),
         Snapshot(url="https://example.com/second", id="snap-config-second"),
@@ -1215,7 +1216,7 @@ def test_concurrent_snapshot_services_use_their_injected_runtime_config(tmp_path
             url=snapshot.url,
             snapshot=snapshot,
             output_dir=output_dir,
-            plugins={plugin.name: plugin},
+            catalog=PluginCatalog({plugin.name: plugin}),
             config=_runtime_config(
                 CRAWL_DIR=crawl_dir,
                 EXTRA_CONTEXT=json.dumps({"snapshot_url": snapshot.url}),
@@ -1290,7 +1291,7 @@ def test_snapshot_limit_admission_uses_stable_snapshot_id_across_retries(tmp_pat
         url=snapshot.url,
         snapshot=snapshot,
         output_dir=output_dir,
-        plugins={},
+        catalog=PluginCatalog({}),
         config=_runtime_config(
             CRAWL_DIR=output_dir,
             CRAWL_MAX_URLS=1,
@@ -1333,7 +1334,7 @@ def test_snapshot_limit_admission_uses_stable_snapshot_id_across_retries(tmp_pat
 
 
 def test_snapshot_hook_binary_event_env_replay_applies_newest_last(tmp_path: Path) -> None:
-    plugin = discover_plugins()["parse_txt_urls"]
+    plugin = PluginCatalog.discover()["parse_txt_urls"]
     snapshot = Snapshot(url="https://example.com", id="snap-env-check")
     output_dir = tmp_path / "run"
     bus = create_bus(total_timeout=30.0, name=f"snapshot_binary_env_order_{tmp_path.name}")
@@ -1343,7 +1344,7 @@ def test_snapshot_hook_binary_event_env_replay_applies_newest_last(tmp_path: Pat
         url=snapshot.url,
         snapshot=snapshot,
         output_dir=output_dir,
-        plugins={plugin.name: plugin},
+        catalog=PluginCatalog({plugin.name: plugin}),
         config=_runtime_config(CRAWL_DIR=output_dir, ABX_TEST_BINARY_MARKER="runtime-stale"),
         snapshot_phase_timeout=10.0,
     )
@@ -1388,7 +1389,7 @@ def test_snapshot_hook_binary_event_env_replay_applies_newest_last(tmp_path: Pat
 
 
 def test_crawl_setup_hook_binary_event_env_replay_applies_newest_last(tmp_path: Path) -> None:
-    plugin = discover_plugins()["twocaptcha"]
+    plugin = PluginCatalog.discover()["twocaptcha"]
     snapshot = Snapshot(url="https://example.com", id="snap-setup-env-check")
     output_dir = tmp_path / "run"
     bus = create_bus(total_timeout=30.0, name=f"crawl_setup_binary_env_order_{tmp_path.name}")
@@ -1398,7 +1399,7 @@ def test_crawl_setup_hook_binary_event_env_replay_applies_newest_last(tmp_path: 
         url=snapshot.url,
         snapshot=snapshot,
         output_dir=output_dir,
-        plugins={plugin.name: plugin},
+        catalog=PluginCatalog({plugin.name: plugin}),
         crawl_event_enabled=False,
         crawl_start_enabled=False,
         crawl_cleanup_enabled=False,
@@ -1449,7 +1450,7 @@ def test_crawl_setup_hook_binary_event_env_replay_applies_newest_last(tmp_path: 
 
 
 def test_snapshot_background_daemon_stays_alive_until_cleanup(tmp_path: Path) -> None:
-    plugin = discover_plugins()["wget"]
+    plugin = PluginCatalog.discover()["wget"]
     bus = create_bus(total_timeout=120.0, name=f"snapshot_real_background_lifecycle_{tmp_path.name}")
     started: list[ProcessStartedEvent] = []
     completed: list[ProcessCompletedEvent] = []
@@ -1473,7 +1474,7 @@ def test_snapshot_background_daemon_stays_alive_until_cleanup(tmp_path: Path) ->
 
 def test_snapshot_hook_waits_for_selected_plugin_outputs(tmp_path: Path, httpserver: HTTPServer) -> None:
     stream_url, response_started, release_response = _streaming_http_response(httpserver, "/plugin-output-dependency")
-    plugins = discover_plugins()
+    plugins = PluginCatalog.discover()
     wget = plugins["wget"]
     consumer = plugins["parse_txt_urls"].model_copy(deep=True)
     consumer.config = consumer.config.model_copy(update={"wait_for_plugins": ["wget"]})
@@ -1483,9 +1484,9 @@ def test_snapshot_hook_waits_for_selected_plugin_outputs(tmp_path: Path, httpser
 
     async def run() -> None:
         download_task = asyncio.create_task(
-            download(
+            _download_with_plan(
                 stream_url,
-                plugins=selected,
+                catalog=PluginCatalog(selected),
                 output_dir=output_dir,
                 selected_plugins=list(selected),
                 auto_install=True,
@@ -1531,7 +1532,7 @@ def test_snapshot_hook_waits_for_selected_plugin_outputs(tmp_path: Path, httpser
 
 def test_snapshot_abort_stops_scheduling_later_hooks(tmp_path: Path, httpserver: HTTPServer) -> None:
     stream_url, response_started, release_response = _streaming_http_response(httpserver, "/snapshot-abort")
-    plugins = discover_plugins()
+    plugins = PluginCatalog.discover()
     selected = {name: plugins[name] for name in ("chrome", "title")}
     output_dir = tmp_path / "run"
     bus = create_bus(total_timeout=300.0, name=f"snapshot_abort_{tmp_path.name}")
@@ -1544,9 +1545,9 @@ def test_snapshot_abort_stops_scheduling_later_hooks(tmp_path: Path, httpserver:
         int,
     ]:
         task = asyncio.create_task(
-            download(
+            _download_with_plan(
                 stream_url,
-                plugins=selected,
+                catalog=PluginCatalog(selected),
                 output_dir=output_dir,
                 selected_plugins=list(selected),
                 auto_install=True,
@@ -1621,7 +1622,7 @@ def test_snapshot_abort_stops_scheduling_later_hooks(tmp_path: Path, httpserver:
 
 
 def test_snapshot_completed_waits_for_cleanup_process_listeners(tmp_path: Path) -> None:
-    plugin = discover_plugins()["wget"]
+    plugin = PluginCatalog.discover()["wget"]
     daemon_hook_name = plugin.hooks[0].name
 
     output_dir = tmp_path / "run"
@@ -1633,7 +1634,7 @@ def test_snapshot_completed_waits_for_cleanup_process_listeners(tmp_path: Path) 
         url="https://example.com",
         snapshot=Snapshot(url="https://example.com", id="snap-cleanup-wait"),
         output_dir=output_dir,
-        plugins={plugin.name: plugin},
+        catalog=PluginCatalog({plugin.name: plugin}),
         config=_runtime_config(CRAWL_DIR=output_dir),
         snapshot_phase_timeout=10.0,
         snapshot_cleanup_phase_timeout=5.0,
@@ -1682,15 +1683,15 @@ def test_snapshot_completed_waits_for_cleanup_process_listeners(tmp_path: Path) 
 
 
 def test_crawl_setup_background_daemon_survives_until_explicit_cleanup(tmp_path: Path) -> None:
-    plugin = discover_plugins()["chrome"]
+    plugin = PluginCatalog.discover()["chrome"]
     daemon_hook_name = "on_CrawlSetup__90_chrome_launch.daemon.bg"
     output_dir = tmp_path / "run"
     bus = create_bus(total_timeout=300.0, name=f"crawl_bg_lifetime_{tmp_path.name}")
 
     async def run() -> ProcessCompletedEvent | None:
-        await download(
+        await _download_with_plan(
             "https://example.com",
-            plugins={plugin.name: plugin},
+            catalog=PluginCatalog({plugin.name: plugin}),
             output_dir=output_dir,
             selected_plugins=[plugin.name],
             auto_install=True,
@@ -1745,7 +1746,7 @@ def test_crawl_setup_background_daemon_survives_until_explicit_cleanup(tmp_path:
 def test_crawl_completed_waits_for_cleanup_process_listeners(tmp_path: Path) -> None:
     output_dir = tmp_path / "run"
     side_effect = output_dir / "process-completed-listener.txt"
-    plugin = discover_plugins()["chrome"]
+    plugin = PluginCatalog.discover()["chrome"]
     hook_name = "on_CrawlSetup__90_chrome_launch.daemon.bg"
     bus = create_bus(total_timeout=300.0, name=f"crawl_cleanup_wait_{tmp_path.name}")
     completed_saw_side_effect: list[bool] = []
@@ -1767,9 +1768,9 @@ def test_crawl_completed_waits_for_cleanup_process_listeners(tmp_path: Path) -> 
 
     async def run() -> None:
         download_task = asyncio.create_task(
-            download(
+            _download_with_plan(
                 "https://example.com",
-                plugins={plugin.name: plugin},
+                catalog=PluginCatalog({plugin.name: plugin}),
                 output_dir=output_dir,
                 selected_plugins=[plugin.name],
                 auto_install=True,
@@ -1792,16 +1793,16 @@ def test_crawl_completed_waits_for_cleanup_process_listeners(tmp_path: Path) -> 
 
 
 def test_crawl_abort_during_setup_cleans_background_daemon(tmp_path: Path) -> None:
-    plugin = discover_plugins()["chrome"]
+    plugin = PluginCatalog.discover()["chrome"]
     daemon_hook_name = "on_CrawlSetup__90_chrome_launch.daemon.bg"
     output_dir = tmp_path / "run"
     bus = create_bus(total_timeout=300.0, name=f"crawl_setup_abort_{tmp_path.name}")
 
     async def run() -> ProcessCompletedEvent | None:
         task = asyncio.create_task(
-            download(
+            _download_with_plan(
                 "https://example.com",
-                plugins={plugin.name: plugin},
+                catalog=PluginCatalog({plugin.name: plugin}),
                 output_dir=output_dir,
                 selected_plugins=[plugin.name],
                 auto_install=True,
@@ -1835,7 +1836,7 @@ def test_crawl_abort_during_setup_cleans_background_daemon(tmp_path: Path) -> No
 def test_crawl_abort_during_foreground_setup_interrupts_hook_and_stops_later_setup(
     tmp_path: Path,
 ) -> None:
-    plugins = discover_plugins()
+    plugins = PluginCatalog.discover()
     selected = {name: plugins[name] for name in ("chrome", "claudechrome")}
     daemon_hook_name = "on_CrawlSetup__90_chrome_launch.daemon.bg"
     foreground_hook_name = "on_CrawlSetup__91_chrome_wait"
@@ -1845,9 +1846,9 @@ def test_crawl_abort_during_foreground_setup_interrupts_hook_and_stops_later_set
 
     async def run() -> tuple[ProcessCompletedEvent | None, ProcessCompletedEvent | None, list[ProcessStartedEvent]]:
         crawl_task = asyncio.create_task(
-            download(
+            _download_with_plan(
                 "https://example.com",
-                plugins=selected,
+                catalog=PluginCatalog(selected),
                 output_dir=output_dir,
                 selected_plugins=list(selected),
                 config_overrides={"CLAUDECHROME_ENABLED": True},
@@ -1904,16 +1905,16 @@ def test_crawl_abort_cleans_real_chrome_process_tree_and_foreground_hook(
     tmp_path: Path,
     httpserver: HTTPServer,
 ) -> None:
-    plugin = discover_plugins()["chrome"]
+    plugin = PluginCatalog.discover()["chrome"]
     stream_url, response_started, release_response = _streaming_http_response(httpserver, "/chrome-abort")
     output_dir = tmp_path / "run"
     bus = create_bus(total_timeout=300.0, name=f"real_chrome_abort_{tmp_path.name}")
 
     async def run() -> tuple[int, int, int, list[ProcessCompletedEvent], list[ProcessKillEvent]]:
         download_task = asyncio.create_task(
-            download(
+            _download_with_plan(
                 stream_url,
-                plugins={plugin.name: plugin},
+                catalog=PluginCatalog({plugin.name: plugin}),
                 output_dir=output_dir,
                 selected_plugins=[plugin.name],
                 auto_install=True,
@@ -1982,14 +1983,14 @@ def test_crawl_abort_cleans_real_chrome_process_tree_and_foreground_hook(
 
 
 def test_real_chrome_hook_completes_while_child_survives_then_lifecycle_cleans_it(tmp_path: Path) -> None:
-    plugin = discover_plugins()["chrome"]
+    plugin = PluginCatalog.discover()["chrome"]
     output_dir = tmp_path / "run"
 
     async def run() -> tuple[ProcessCompletedEvent, int, ProcessCompletedEvent]:
         keepalive_bus = create_bus(total_timeout=300.0, name=f"chrome_keepalive_parent_{tmp_path.name}")
-        await download(
+        await _download_with_plan(
             "https://example.com",
-            plugins={plugin.name: plugin},
+            catalog=PluginCatalog({plugin.name: plugin}),
             output_dir=output_dir,
             selected_plugins=[plugin.name],
             config_overrides={"CHROME_KEEPALIVE": True},
@@ -2011,9 +2012,9 @@ def test_real_chrome_hook_completes_while_child_survives_then_lifecycle_cleans_i
         assert _pid_is_alive(chrome_pid)
 
         cleanup_bus = create_bus(total_timeout=300.0, name=f"chrome_adopt_cleanup_{tmp_path.name}")
-        await download(
+        await _download_with_plan(
             "https://example.com",
-            plugins={plugin.name: plugin},
+            catalog=PluginCatalog({plugin.name: plugin}),
             output_dir=output_dir,
             selected_plugins=[plugin.name],
             config_overrides={"CHROME_KEEPALIVE": False},
@@ -2044,7 +2045,7 @@ def test_real_chrome_hook_completes_while_child_survives_then_lifecycle_cleans_i
 
 
 def test_crawl_abort_from_crawl_event_interrupts_active_setup_hook(tmp_path: Path) -> None:
-    plugins = discover_plugins()
+    plugins = PluginCatalog.discover()
     selected = {name: plugins[name] for name in ("chrome", "twocaptcha")}
     foreground_hook_name = "on_CrawlSetup__91_chrome_wait"
     later_hook_name = "on_CrawlSetup__95_twocaptcha_config"
@@ -2053,9 +2054,9 @@ def test_crawl_abort_from_crawl_event_interrupts_active_setup_hook(tmp_path: Pat
 
     async def run() -> tuple[ProcessCompletedEvent | None, list[ProcessStartedEvent]]:
         task = asyncio.create_task(
-            download(
+            _download_with_plan(
                 "https://example.com",
-                plugins=selected,
+                catalog=PluginCatalog(selected),
                 output_dir=output_dir,
                 selected_plugins=list(selected),
                 auto_install=True,
@@ -2094,7 +2095,7 @@ def test_crawl_abort_from_crawl_event_interrupts_active_setup_hook(tmp_path: Pat
 
 
 def test_crawl_runs_real_background_wget_through_cleanup(tmp_path: Path) -> None:
-    plugin = discover_plugins()["wget"]
+    plugin = PluginCatalog.discover()["wget"]
     output_dir = tmp_path / "run"
     bus = create_bus(total_timeout=120.0, name=f"crawl_real_background_lifecycle_{tmp_path.name}")
     started: list[ProcessStartedEvent] = []
@@ -2120,16 +2121,16 @@ def test_process_kill_uses_live_subprocess_handle_when_pid_file_validation_fails
     tmp_path: Path,
     httpserver: HTTPServer,
 ) -> None:
-    plugin = discover_plugins()["wget"]
+    plugin = PluginCatalog.discover()["wget"]
     stream_url, response_started, release_response = _streaming_http_response(httpserver, "/live-handle")
     output_dir = tmp_path / "run"
     bus = create_bus(total_timeout=60.0, name=f"process_kill_live_handle_{tmp_path.name}")
 
     async def run() -> ProcessCompletedEvent:
         download_task = asyncio.create_task(
-            download(
+            _download_with_plan(
                 stream_url,
-                plugins={plugin.name: plugin},
+                catalog=PluginCatalog({plugin.name: plugin}),
                 output_dir=output_dir,
                 selected_plugins=[plugin.name],
                 auto_install=True,
@@ -2189,11 +2190,11 @@ def test_process_kill_uses_live_subprocess_handle_when_pid_file_validation_fails
 
 
 def test_download_cleanup_records_real_background_process_without_failure(tmp_path: Path) -> None:
-    plugin = discover_plugins()["wget"]
+    plugin = PluginCatalog.discover()["wget"]
     output_dir = tmp_path / "run"
     _run_download(
         "https://example.com",
-        plugins={plugin.name: plugin},
+        catalog=PluginCatalog({plugin.name: plugin}),
         output_dir=output_dir,
         selected_plugins=[plugin.name],
         auto_install=True,
@@ -2208,16 +2209,16 @@ def test_download_cleanup_records_real_background_process_without_failure(tmp_pa
 
 
 def test_background_process_event_returns_after_real_hook_start(tmp_path: Path, httpserver: HTTPServer) -> None:
-    plugin = discover_plugins()["wget"]
+    plugin = PluginCatalog.discover()["wget"]
     stream_url, response_started, release_response = _streaming_http_response(httpserver, "/background-process")
     output_dir = tmp_path / "run"
     bus = create_bus(total_timeout=60.0, name=f"background_returns_after_start_{tmp_path.name}")
 
     async def run() -> ProcessCompletedEvent:
         download_task = asyncio.create_task(
-            download(
+            _download_with_plan(
                 stream_url,
-                plugins={plugin.name: plugin},
+                catalog=PluginCatalog({plugin.name: plugin}),
                 output_dir=output_dir,
                 selected_plugins=[plugin.name],
                 auto_install=True,
@@ -2268,7 +2269,7 @@ def test_background_process_event_returns_after_real_hook_start(tmp_path: Path, 
 
 
 def test_process_event_subprocess_starts_once_when_event_is_awaited_twice(tmp_path: Path) -> None:
-    real_hook = discover_plugins()["parse_txt_urls"].hooks[0]
+    real_hook = PluginCatalog.discover()["parse_txt_urls"].hooks[0]
 
     output_dir = tmp_path / "run" / "start_once"
     bus = create_bus(total_timeout=10.0, name=f"process_event_start_once_{tmp_path.name}")
@@ -2308,7 +2309,7 @@ def test_process_event_subprocess_starts_once_when_event_is_awaited_twice(tmp_pa
 
 
 def test_concurrent_process_events_for_same_hook_keep_distinct_artifacts(tmp_path: Path) -> None:
-    real_hook = discover_plugins()["parse_txt_urls"].hooks[0]
+    real_hook = PluginCatalog.discover()["parse_txt_urls"].hooks[0]
 
     output_dir = tmp_path / "run" / "same_hook"
     bus = create_bus(total_timeout=10.0, name=f"process_event_same_hook_{tmp_path.name}")
@@ -2348,7 +2349,7 @@ def test_concurrent_process_events_for_same_hook_keep_distinct_artifacts(tmp_pat
 
 
 def test_process_completion_waits_for_stdout_consumers(tmp_path: Path) -> None:
-    real_hook = discover_plugins()["parse_txt_urls"].hooks[0]
+    real_hook = PluginCatalog.discover()["parse_txt_urls"].hooks[0]
 
     output_dir = tmp_path / "run" / "stdout_order"
     bus = create_bus(total_timeout=10.0, name=f"process_stdout_order_{tmp_path.name}")
@@ -2437,8 +2438,8 @@ def test_process_completion_waits_for_stdout_consumers(tmp_path: Path) -> None:
 
 
 def test_download_can_suppress_jsonl_stdout(tmp_path: Path, capsys) -> None:
-    plugins = discover_plugins()
-    selected = {"wget": plugins["wget"]}
+    plugins = PluginCatalog.discover()
+    selected = plugins.select(["wget"])
     results = _run_download(
         "https://example.com",
         selected,
@@ -2472,7 +2473,7 @@ def test_nested_snapshot_events_are_emitted_but_ignored_by_snapshot_hooks(tmp_pa
         url=snapshot.url,
         snapshot=snapshot,
         output_dir=tmp_path / "run",
-        plugins={},
+        catalog=PluginCatalog({}),
         config=_runtime_config(CRAWL_DIR=tmp_path / "run"),
         snapshot_phase_timeout=60.0,
         snapshot_cleanup_phase_timeout=60.0,
@@ -2545,7 +2546,7 @@ def test_discovered_snapshot_depth_increments_from_parent_snapshot(tmp_path: Pat
         url=snapshot.url,
         snapshot=snapshot,
         output_dir=tmp_path / "run",
-        plugins={},
+        catalog=PluginCatalog({}),
         config=_runtime_config(CRAWL_DIR=tmp_path / "run"),
         snapshot_phase_timeout=60.0,
         snapshot_cleanup_phase_timeout=60.0,
@@ -2605,7 +2606,7 @@ def test_inline_archive_result_collects_current_output_files(tmp_path: Path) -> 
     ProcessService(bus, emit_jsonl=False, interactive_tty=False)
     ArchiveResultService(bus, emit_jsonl=False)
 
-    wget_hook = discover_plugins()["wget"].hooks[0]
+    wget_hook = PluginCatalog.discover()["wget"].hooks[0]
     wget_binary = _resolve_real_wget_binary(tmp_path)
     run_dir = tmp_path / "run"
     process_env = {
