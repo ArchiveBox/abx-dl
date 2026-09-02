@@ -28,7 +28,14 @@ async def build_plugin_process_env(
     plugin: Plugin,
     runtime_env: dict[str, str],
 ) -> dict[str, str]:
-    """Project resolved binary environments exactly as hook processes receive them."""
+    """Overlay provider-owned binary environment changes onto one hook run.
+
+    ``BinaryEvent.env`` is the fully materialized environment from the install
+    request.  A shared bus can reuse that binary for later snapshots, so
+    replaying the full mapping would also replay stale request context such as
+    ``SNAP_DIR`` and ``EXTRA_CONTEXT``.  Compare it to its request base and
+    carry forward only values the provider actually changed.
+    """
     env = runtime_env
     env_plugin_names = set(catalog.select([plugin.name]))
     binary_events = await bus.filter(
@@ -38,9 +45,18 @@ async def build_plugin_process_env(
     )
     for binary_event in reversed(binary_events):
         if binary_event.env:
+            binary_request = await bus.find(
+                BinaryRequestEvent,
+                past=True,
+                future=False,
+                where=lambda candidate: candidate.event_id == binary_event.event_parent_id,
+            )
+            binary_env = binary_event.env
+            if isinstance(binary_request, BinaryRequestEvent) and binary_request.base_env is not None:
+                binary_env = {key: value for key, value in binary_event.env.items() if binary_request.base_env.get(key) != value}
             env = BinProvider.build_exec_env(
                 base_env=env,
-                extra_env=binary_event.env,
+                extra_env=binary_env,
             )
     return env
 
