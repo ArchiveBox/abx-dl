@@ -80,6 +80,32 @@ def test_plugin_catalog_exposes_complete_metadata_and_sorted_hooks() -> None:
     assert {plugin.name for plugin, _hook in hooks} == {"chrome", "title", "wget"}
 
 
+def test_plugin_catalog_exposes_manifest_declared_commands() -> None:
+    catalog = PluginCatalog.discover(runtime="archivebox")
+
+    search = catalog.command("search_backend_ripgrep", "search")
+    flush = catalog.command("search_backend_ripgrep", "flush")
+
+    assert search is not None
+    assert flush is not None
+    assert search.path.name == "search.py"
+    assert search.args == ["search"]
+    assert flush.path == search.path
+    assert flush.args == ["flush"]
+
+
+def test_plugin_catalog_rejects_command_paths_outside_plugin(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "example"
+    plugin_dir.mkdir()
+    (plugin_dir / "config.json").write_text(
+        '{"commands":{"escape":["../outside.py"]},"properties":{}}',
+    )
+    (tmp_path / "outside.py").write_text("#!/bin/sh\n")
+    catalog = PluginCatalog.discover(plugins_dir=tmp_path)
+
+    assert catalog.command("example", "escape") is None
+
+
 def test_plugin_catalog_extra_dirs_override_packaged_plugins(tmp_path: Path) -> None:
     plugin_dir = tmp_path / "wget"
     plugin_dir.mkdir()

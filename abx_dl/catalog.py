@@ -16,7 +16,7 @@ from typing import Any
 
 from abx_plugins.plugins.base import utils as plugin_utils
 
-from .models import Hook, Plugin, discover_plugins, filter_plugins
+from .models import Hook, Plugin, PluginCommand, discover_plugins, filter_plugins
 
 
 @dataclass(frozen=True)
@@ -99,6 +99,27 @@ class PluginCatalog(Mapping[str, Plugin]):
         except ValueError:
             return None
         return template if template.is_file() else None
+
+    def command(self, plugin_name: str, command_name: str) -> PluginCommand | None:
+        """Resolve one manifest-declared executable without interpreting it."""
+        plugin = self.plugins[plugin_name]
+        command = plugin.config.commands.get(command_name)
+        if not command:
+            return None
+        plugin_root = plugin.path.resolve()
+        command_path = (plugin_root / command[0]).resolve()
+        try:
+            command_path.relative_to(plugin_root)
+        except ValueError:
+            return None
+        if not command_path.is_file() or not command_path.stat().st_mode & 0o111:
+            return None
+        return PluginCommand(
+            name=command_name,
+            plugin_name=plugin_name,
+            path=command_path,
+            args=list(command[1:]),
+        )
 
 
 @dataclass(frozen=True)

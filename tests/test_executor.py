@@ -26,9 +26,9 @@ from abx_dl.events import (
     SnapshotCompletedEvent,
     SnapshotEvent,
 )
-from abx_dl.execution import build_hook_args, execute_hook
+from abx_dl.execution import build_hook_args, execute_hook, iter_plugin_command
 from abx_dl.limits import CrawlLimitState
-from abx_dl.models import Hook, Snapshot, discover_plugins, filter_plugins
+from abx_dl.models import Hook, PluginCommand, Snapshot, discover_plugins, filter_plugins
 from abx_dl.orchestrator import ExecutionPlan, create_bus, download, setup_services
 from abx_dl.services.archive_result_service import ArchiveResultService
 from abx_dl.services.binary_service import PluginBinaryEnvService
@@ -102,6 +102,30 @@ def test_execute_hook_reuses_one_process_service_per_bus(tmp_path):
     asyncio.run(run_twice())
 
     assert counter.read_text().splitlines() == ["run", "run"]
+
+
+def test_iter_plugin_command_returns_stdout_and_accepts_stdin(tmp_path):
+    script = tmp_path / "command.sh"
+    script.write_text('#!/bin/sh\nprintf "%s\\n" "$@"\nwhile IFS= read -r line; do printf "stdin:%s\\n" "$line"; done\n')
+    script.chmod(0o755)
+    command = PluginCommand(
+        name="example",
+        plugin_name="example",
+        path=script,
+        args=["fixed"],
+    )
+
+    lines = list(
+        iter_plugin_command(
+            command,
+            arguments={"query": "needle", "deep": True, "disabled": False},
+            stdin=["one", "two"],
+            env={"PATH": os.environ["PATH"]},
+            timeout=5,
+        ),
+    )
+
+    assert lines == ["fixed", "--query=needle", "--deep", "stdin:one", "stdin:two"]
 
 
 def _binary_extra_context(

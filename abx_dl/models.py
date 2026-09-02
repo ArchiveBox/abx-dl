@@ -82,6 +82,17 @@ class Hook(BaseModel):
         return (self.order, self.name)
 
 
+class PluginCommand(BaseModel):
+    """A manifest-declared executable command owned by one plugin."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    name: str
+    plugin_name: str
+    path: Path
+    args: list[str] = Field(default_factory=list)
+
+
 class RequiredBinary(BaseModel):
     """A single required binary definition from plugins/<pluginname>/config.json > required_binaries[]"""
 
@@ -109,6 +120,7 @@ class PluginConfig(BaseModel):
     category: str = ""
     display_order: int = 1000
     hidden: bool = False
+    commands: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class Plugin(BaseModel):

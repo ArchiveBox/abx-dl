@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+import subprocess
+from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
 from abxbus import EventBus
 
 from .events import ProcessCompletedEvent, ProcessEvent, slow_warning_timeout
-from .models import Hook
+from .models import Hook, PluginCommand
 from .orchestrator import create_bus
 from .services.process_service import ProcessService
 
@@ -31,6 +32,36 @@ def build_hook_args(values: Mapping[str, Any]) -> list[str]:
             if rendered:
                 args.append(f"{name}={rendered}")
     return args
+
+
+def iter_plugin_command(
+    command: PluginCommand,
+    *,
+    arguments: Mapping[str, Any] | None = None,
+    stdin: Iterable[str] = (),
+    env: Mapping[str, str] | None = None,
+    cwd: Path | None = None,
+    timeout: float = 60,
+) -> Iterator[str]:
+    """Run a plugin-owned command and yield its stdout lines.
+
+    Commands are black-box executables declared by plugin manifests. The
+    caller owns the meaning of their arguments and output; abx-dl only applies
+    the shared standalone CLI encoding and subprocess lifecycle.
+    """
+    argv = [str(command.path), *command.args, *build_hook_args(arguments or {})]
+    input_text = "".join(f"{str(line).rstrip(chr(10))}\n" for line in stdin)
+    completed = subprocess.run(
+        argv,
+        cwd=str(cwd or command.path.parent),
+        env=dict(env) if env is not None else None,
+        input=input_text,
+        capture_output=True,
+        text=True,
+        check=True,
+        timeout=timeout,
+    )
+    yield from completed.stdout.splitlines()
 
 
 async def execute_hook(
