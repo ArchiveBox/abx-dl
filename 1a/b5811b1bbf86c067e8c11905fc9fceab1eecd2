@@ -1,0 +1,19 @@
+tests/test_permissions.py
+  s_5bb32a7a6ab331::t_1d5264f8f42d30 50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "1ab5811b1bbf86c067e8c11905fc9fceab1eecd2",
+  "prompts": {},
+  "sessions": {
+    "s_5bb32a7a6ab331": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a061ba-d733-7dc0-9218-b3d19f4bd53c",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
