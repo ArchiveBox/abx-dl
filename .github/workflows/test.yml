@@ -240,9 +240,9 @@ jobs:
           "$UV_BINARY" run --no-cache --no-sync --no-sources python - <<'PY'
           import os
           from pathlib import Path
-          from abx_dl.models import discover_plugins
+          from abx_dl.catalog import PluginCatalog
 
-          plugins = discover_plugins(Path(os.environ["ABX_PLUGINS_DIR"]), runtime="abx-dl")
+          plugins = PluginCatalog.discover(Path(os.environ["ABX_PLUGINS_DIR"]), runtime="abx-dl")
           enabled_keys = sorted(
               plugin.enabled_key
               for plugin in plugins.values()
