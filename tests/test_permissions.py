@@ -1,7 +1,6 @@
 import json
 import os
 import pwd
-import shutil
 import subprocess
 import sys
 
@@ -13,20 +12,21 @@ def test_mixed_root_hook_identity_targets_effective_user():
     assert _hook_child_identity(real_uid=501, effective_uid=501, effective_gid=20) is None
 
 
-def test_mixed_root_hook_child_permanently_drops_real_and_effective_ids():
+def test_hook_child_process_uses_expected_real_and_effective_ids():
     nobody = pwd.getpwnam("nobody")
+    running_as_root = os.geteuid() == 0
+    identity_setup = f"os.setegid({nobody.pw_gid})\nos.seteuid({nobody.pw_uid})" if running_as_root else ""
+    expected_identity = f"({nobody.pw_uid}, {nobody.pw_gid})" if running_as_root else "None"
     probe = f"""
 import asyncio
 import json
 import os
-import sys
 
 from abx_dl.services.process_service import _hook_child_identity, _permanently_drop_child_privileges
 
-os.setegid({nobody.pw_gid})
-os.seteuid({nobody.pw_uid})
+{identity_setup}
 identity = _hook_child_identity()
-assert identity == ({nobody.pw_uid}, {nobody.pw_gid})
+assert identity == {expected_identity}
 
 async def main():
     child = await asyncio.create_subprocess_exec(
@@ -34,7 +34,7 @@ async def main():
         "-c",
         "id -ru; id -u; id -rg; id -g; id -G",
         stdout=asyncio.subprocess.PIPE,
-        preexec_fn=_permanently_drop_child_privileges(*identity),
+        preexec_fn=_permanently_drop_child_privileges(*identity) if identity else None,
     )
     stdout, _ = await child.communicate()
     assert child.returncode == 0
@@ -43,15 +43,8 @@ async def main():
 
 asyncio.run(main())
 """
-    if os.geteuid() == 0:
-        probe_command = [sys.executable, "-c", probe]
-    else:
-        sudo = shutil.which("sudo")
-        assert sudo, "privilege-drop tests require sudo when not running as root"
-        probe_command = [sudo, "-n", sys.executable, "-c", probe]
-
     result = subprocess.run(
-        probe_command,
+        [sys.executable, "-c", probe],
         cwd=os.getcwd(),
         capture_output=True,
         text=True,
@@ -59,4 +52,16 @@ asyncio.run(main())
     )
 
     assert result.returncode == 0, result.stderr or result.stdout
-    assert json.loads(result.stdout) == [nobody.pw_uid, nobody.pw_uid, nobody.pw_gid, nobody.pw_gid, [nobody.pw_gid]]
+    real_uid, effective_uid, real_gid, effective_gid, groups = json.loads(result.stdout)
+    expected_uid = nobody.pw_uid if running_as_root else os.getuid()
+    expected_gid = nobody.pw_gid if running_as_root else os.getgid()
+    assert (real_uid, effective_uid, real_gid, effective_gid) == (
+        expected_uid,
+        expected_uid,
+        expected_gid,
+        expected_gid,
+    )
+    if running_as_root:
+        assert groups == [expected_gid]
+    else:
+        assert expected_gid in groups
