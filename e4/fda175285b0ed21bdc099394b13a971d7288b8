@@ -1,0 +1,20 @@
+bin/validate_crawl.py
+  s_5bb32a7a6ab331::t_add028b26d163b 143
+  s_5bb32a7a6ab331::t_45df75a39c2053 154
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "e4fda175285b0ed21bdc099394b13a971d7288b8",
+  "prompts": {},
+  "sessions": {
+    "s_5bb32a7a6ab331": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a061ba-d733-7dc0-9218-b3d19f4bd53c",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
