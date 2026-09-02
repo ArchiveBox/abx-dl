@@ -63,7 +63,7 @@ from .models import (
     Process,
     now_iso,
 )
-from .orchestrator import ExecutionPlan, create_bus, download, get_install_plugins, install_plugins
+from .orchestrator import compute_install_phase_timeout, compute_phase_timeout, create_bus, download, get_install_plugins, install_plugins
 from .output_files import OutputFile
 from .tables import binary_dependency_status, binary_dependency_table
 
@@ -1408,15 +1408,16 @@ def dl(
     ui_console = stderr_console if stderr_is_tty or not stdout_is_tty else console
 
     disabled = [plugin.strip() for plugin in disable_list.split(",") if plugin.strip()] if disable_list else []
-    plan = ExecutionPlan.build(
-        catalog,
-        selected_plugins=selected,
-        disabled_plugins=disabled,
-        config={**get_explicit_user_env(), **config_overrides},
+    selected_catalog = catalog.select(selected, disabled_names=disabled)
+    user_config = {**get_explicit_user_env(), **config_overrides, "ABX_RUNTIME": "abx-dl"}
+    install_timeout = compute_install_phase_timeout(get_install_plugins(selected_catalog), user_config)
+    crawl_setup_timeout = compute_phase_timeout(selected_catalog.hooks("CrawlSetup"), user_config)
+    snapshot_timeout = compute_phase_timeout(selected_catalog.hooks("Snapshot"), user_config)
+    selected = list(selected_catalog)
+    total_timeout = install_timeout + crawl_setup_timeout + snapshot_timeout
+    total_hooks = (
+        _count_install_requests(selected_catalog) + len(selected_catalog.hooks("CrawlSetup")) + len(selected_catalog.hooks("Snapshot"))
     )
-    selected = list(plan.catalog)
-    total_timeout = plan.install_timeout + plan.crawl_setup_timeout + plan.snapshot_timeout
-    total_hooks = _count_install_requests(plan.catalog) + len(plan.catalog.hooks("CrawlSetup")) + len(plan.catalog.hooks("Snapshot"))
     bus = create_bus(total_timeout=total_timeout)
     live_ui = LiveBusUI(
         bus,
@@ -1475,9 +1476,10 @@ def dl(
             download_task = loop.create_task(
                 download(
                     url,
-                    plan,
+                    selected_catalog,
                     out_path,
                     auto_install=not no_install,
+                    config=user_config,
                     emit_jsonl=not stdout_is_tty,
                     interactive_tty=interactive_tty,
                     bus=bus,
@@ -1624,12 +1626,9 @@ def _run_plugin_install(
     selected_plugin_config = {plugin.enabled_key: True for plugin in selected.values() if plugin.enabled_key in plugin.config.properties}
     if dry_run:
         selected_plugin_config["DRY_RUN"] = True
-    plan = ExecutionPlan.build(
-        selected,
-        selected_plugins=list(selected),
-        config={**get_explicit_user_env(), **selected_plugin_config},
-    )
-    bus = create_bus(total_timeout=plan.install_timeout)
+    user_config = {**get_explicit_user_env(), **selected_plugin_config, "ABX_RUNTIME": "abx-dl"}
+    install_timeout = compute_install_phase_timeout(get_install_plugins(selected), user_config)
+    bus = create_bus(total_timeout=install_timeout)
     live = None
 
     async def on_BinaryRequestEvent(event: BinaryRequestEvent) -> None:
@@ -1690,7 +1689,8 @@ def _run_plugin_install(
                     debug=debug,
                     func=lambda: loop.run_until_complete(
                         install_plugins(
-                            plan,
+                            selected,
+                            config=user_config,
                             output_dir=Path(temp_dir),
                             emit_jsonl=False,
                             bus=bus,

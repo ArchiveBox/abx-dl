@@ -287,12 +287,19 @@ class Process(BaseModel):
 class Snapshot(BaseModel):
     """A URL being archived — one per download() call."""
 
-    model_config = ConfigDict(extra="ignore")
+    # Parser plugins attach import metadata such as title, tags, bookmarked_at,
+    # and the producing plugin. Keep it on discovery facts so embedders can
+    # persist the complete record without reparsing plugin output files.
+    model_config = ConfigDict(extra="allow")
 
     url: str
     id: str = Field(default_factory=uuid7)
     depth: int = 0
     crawl_id: str | None = None
+    title: str | None = None
+    tags: str | None = None
+    bookmarked_at: str | None = None
+    plugin: str | None = None
 
     def to_jsonl(self) -> str:
         d = {k: v for k, v in self.model_dump().items() if v is not None}

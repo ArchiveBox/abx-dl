@@ -15,7 +15,6 @@ from pydantic import ValidationError
 from ..config import RuntimeConfig, get_plugin_env
 from ..events import (
     CrawlAbortEvent,
-    CrawlStartEvent,
     ProcessEvent,
     ProcessCompletedEvent,
     ProcessKillEvent,
@@ -23,6 +22,7 @@ from ..events import (
     ProcessStdoutEvent,
     SnapshotCleanupEvent,
     SnapshotCompletedEvent,
+    SnapshotDiscoveredEvent,
     SnapshotEvent,
     slow_warning_timeout,
 )
@@ -51,7 +51,7 @@ async def _run_event_now(event: BaseEvent, timeout: float | None = None) -> Base
 class SnapshotService(BaseService):
     """Orchestrates the snapshot phase: extraction hooks, cleanup, completion.
 
-    The SnapshotEvent is emitted by CrawlService.on_CrawlStartEvent after the
+    The SnapshotEvent is emitted by CrawlLifecycleService after the
     install and crawl-setup phases have already completed::
 
         InstallEvent
@@ -61,12 +61,12 @@ class SnapshotService(BaseService):
         │   └── SnapshotEvent (depth=0)                    # triggers this service
         │       │
         │       │  ── Snapshot hook handlers run serially ──
-        │       │  (only root SnapshotEvents emitted by CrawlStartEvent)
+        │       │  (the event matching this service's snapshot context)
         │       │
         │       ├── on_Snapshot__35_wget.finite.bg
         │       │   └── ProcessEvent
         │       │       ├── ProcessStdoutEvent
-        │       │       │   ├── SnapshotEvent (discovered URL)
+        │       │       │   ├── SnapshotDiscoveredEvent
         │       │       │   └── ArchiveResultEvent (inline)
         │       │       └── ProcessCompletedEvent
         │       │           └── ArchiveResultEvent (enriched)
@@ -83,9 +83,9 @@ class SnapshotService(BaseService):
         ├── CrawlCleanupEvent
         └── CrawlCompletedEvent
 
-    Only the root SnapshotEvent emitted directly by CrawlStartEvent executes
-    snapshot hooks. SnapshotEvents emitted from hook stdout are discovery
-    records for higher-level consumers such as ArchiveBox.
+    Each service instance handles only the exact SnapshotEvent matching its
+    injected snapshot and output directory. Hook-emitted discovery records are
+    routed to SnapshotDiscoveredEvent facts, never back into executable work.
 
     RuntimeConfig is injected for this snapshot so shared-bus MachineEvent
     history from another snapshot cannot change its hook environment or limits.
@@ -104,7 +104,7 @@ class SnapshotService(BaseService):
     EMITS: ClassVar[list[type[BaseEvent]]] = [
         ProcessEvent,
         ProcessKillEvent,
-        SnapshotEvent,
+        SnapshotDiscoveredEvent,
         SnapshotCleanupEvent,
         SnapshotCompletedEvent,
     ]
@@ -119,11 +119,9 @@ class SnapshotService(BaseService):
         catalog: PluginCatalog,
         config: RuntimeConfig,
         snapshot_phase_timeout: float = 300.0,
-        snapshot_cleanup_enabled: bool = True,
         snapshot_cleanup_phase_timeout: float = 300.0,
         abort_requested: Callable[[], bool | Awaitable[bool]] | None = None,
         selected_hooks_by_plugin: dict[str, set[str] | None] | None = None,
-        emit_discovered_snapshot_events: bool = True,
     ):
         self.url = url
         self.snapshot = snapshot
@@ -144,11 +142,9 @@ class SnapshotService(BaseService):
                 self.hooks.append((plugin, hook))
         self.hooks.sort(key=lambda item: item[1].sort_key)
         self.snapshot_phase_timeout = snapshot_phase_timeout
-        self.snapshot_cleanup_enabled = snapshot_cleanup_enabled
         self.snapshot_cleanup_phase_timeout = snapshot_cleanup_phase_timeout
         self.abort_requested = False
         self.abort_requested_callback = abort_requested
-        self.emit_discovered_snapshot_events = emit_discovered_snapshot_events
         self.limit_state: CrawlLimitState | None = None
         self.config: RuntimeConfig = config
         self._hook_timeouts: dict[tuple[str, str], int] = {}
@@ -209,14 +205,6 @@ class SnapshotService(BaseService):
 
         async def on_SnapshotEvent__hook(event: SnapshotEvent) -> None:
             if event.output_dir != str(self.output_dir) or event.snapshot_id != self.snapshot.id:
-                return
-            parent_event = await self.bus.find(
-                CrawlStartEvent,
-                past=True,
-                future=False,
-                where=lambda candidate: self.bus.event_is_parent_of(candidate, event),
-            )
-            if not isinstance(parent_event, CrawlStartEvent):
                 return
             if await self.should_abort():
                 return
@@ -325,29 +313,16 @@ class SnapshotService(BaseService):
             return
         if self.limit_state is None:
             self.limit_state = CrawlLimitState.from_config(self.config.user.model_dump(mode="json"))
-        parent_event = await self.bus.find(
-            CrawlStartEvent,
-            past=True,
-            future=False,
-            where=lambda candidate: self.bus.event_is_parent_of(candidate, event),
-        )
-        if not isinstance(parent_event, CrawlStartEvent):
-            return
         if self.limit_state.has_limits():
             self.limit_state.admit_snapshot(event.snapshot_id)
 
     async def on_ProcessStdoutEvent(self, event: ProcessStdoutEvent) -> None:
-        """Route type=Snapshot records to SnapshotEvent.
+        """Route type=Snapshot records to SnapshotDiscoveredEvent facts.
 
         Discovered snapshots inherit their parent SnapshotEvent's depth and
         increment it by one.
         """
         if Path(event.output_dir).parent != self.output_dir:
-            return
-        # This flag controls only whether protocol records become new work.
-        # ProcessStdoutEvent remains the shared audit/result stream for other
-        # services even when an embedder persists discoveries itself.
-        if not self.emit_discovered_snapshot_events:
             return
         try:
             record = json.loads(event.line)
@@ -357,8 +332,11 @@ class SnapshotService(BaseService):
             return
         if "type" not in record or record["type"] != "Snapshot":
             return
+        snapshot_payload = {key: value for key, value in record.items() if key != "type"}
+        if not snapshot_payload.get("id"):
+            snapshot_payload.pop("id", None)
         try:
-            discovered_snapshot = Snapshot(**record)
+            discovered_snapshot = Snapshot(**snapshot_payload)
         except ValidationError:
             return
         if self.limit_state is None:
@@ -374,33 +352,22 @@ class SnapshotService(BaseService):
         if parent_snapshot is None:
             return
         assert isinstance(parent_snapshot, SnapshotEvent)
+        discovered_snapshot = discovered_snapshot.model_copy(update={"depth": parent_snapshot.depth + 1})
         event.emit(
-            SnapshotEvent(
-                url=discovered_snapshot.url,
-                snapshot_id=discovered_snapshot.id,
-                output_dir=str(self.output_dir),
-                depth=parent_snapshot.depth + 1,
-                event_timeout=event.event_timeout,
-                event_handler_slow_timeout=slow_warning_timeout(event.event_timeout),
+            SnapshotDiscoveredEvent(
+                snapshot=discovered_snapshot,
+                plugin_name=event.plugin_name,
+                hook_name=event.hook_name,
             ),
         )
 
     async def on_SnapshotEvent(self, event: SnapshotEvent) -> None:
         """Run snapshot hooks in sort order, then emit cleanup and completion.
 
-        Only the root SnapshotEvent emitted directly by CrawlStartEvent drives
-        hook execution and cleanup. Discovered SnapshotEvents emitted from hook
-        stdout are left for higher-level consumers like ArchiveBox.
+        The exact snapshot/output pair identifies this service's executable
+        command. Discovery uses a separate event type and cannot re-enter it.
         """
         if event.output_dir != str(self.output_dir) or event.snapshot_id != self.snapshot.id:
-            return
-        parent_event = await self.bus.find(
-            CrawlStartEvent,
-            past=True,
-            future=False,
-            where=lambda candidate: self.bus.event_is_parent_of(candidate, event),
-        )
-        if not isinstance(parent_event, CrawlStartEvent):
             return
         if event.event_id in self._active_snapshot_event_ids or event.event_id in self._completed_snapshot_event_ids:
             return
@@ -440,27 +407,14 @@ class SnapshotService(BaseService):
                 if self.limit_state.get_snapshot_stop_reason(event.snapshot_id) == "snapshot_max_size":
                     break
         finally:
-            if self.snapshot_cleanup_enabled:
-                cleanup_event = SnapshotCleanupEvent(
-                    url=url,
-                    snapshot_id=snapshot_id,
-                    output_dir=output_dir,
-                    event_timeout=self.snapshot_cleanup_phase_timeout,
-                    event_handler_slow_timeout=slow_warning_timeout(self.snapshot_cleanup_phase_timeout),
-                )
-                await _run_event_now(event.emit(cleanup_event), self.snapshot_cleanup_phase_timeout)
-        if self.snapshot_cleanup_enabled:
-            return
-
-        completed_event = SnapshotCompletedEvent(
-            url=url,
-            snapshot_id=snapshot_id,
-            output_dir=output_dir,
-            event_timeout=self.snapshot_phase_timeout,
-            event_handler_timeout=self.snapshot_phase_timeout,
-            event_handler_slow_timeout=slow_warning_timeout(self.snapshot_phase_timeout),
-        )
-        event.emit(completed_event)
+            cleanup_event = SnapshotCleanupEvent(
+                url=url,
+                snapshot_id=snapshot_id,
+                output_dir=output_dir,
+                event_timeout=self.snapshot_cleanup_phase_timeout,
+                event_handler_slow_timeout=slow_warning_timeout(self.snapshot_cleanup_phase_timeout),
+            )
+            await _run_event_now(event.emit(cleanup_event), self.snapshot_cleanup_phase_timeout)
 
     async def on_SnapshotCleanupEvent(self, event: SnapshotCleanupEvent) -> None:
         """SIGTERM all background snapshot hooks so they can flush and exit.

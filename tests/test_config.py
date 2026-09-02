@@ -12,7 +12,7 @@ from abx_dl.config import GlobalConfig, RuntimeConfig, get_config, get_explicit_
 from abx_dl.events import MachineEvent
 from abx_dl.catalog import PluginCatalog
 from abx_dl.models import PluginEnv
-from abx_dl.orchestrator import ExecutionPlan, create_bus, install_plugins
+from abx_dl.orchestrator import create_bus, install_plugins
 from abx_dl.services.binary_service import build_plugin_process_env
 from platformdirs import user_config_path
 
@@ -149,13 +149,10 @@ def test_plugin_env_exports_abxpkg_runtime_after_real_install_phase(tmp_path: Pa
     bus = create_bus(total_timeout=300.0, name=f"test_config_shared_runtime_{tmp_path.name}")
 
     async def run() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
-        plan = ExecutionPlan.build(
-            plugins,
-            selected_plugins=["ytdlp"],
-            config=get_explicit_user_env(),
-        )
+        selected = plugins.select(["ytdlp"])
         await install_plugins(
-            plan,
+            selected,
+            config=get_explicit_user_env(),
             output_dir=run_output_dir,
             bus=bus,
         )

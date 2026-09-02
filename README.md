@@ -108,10 +108,22 @@ Plugins are loaded from the installed [`abx-plugins`](https://pypi.org/project/a
 
 Applications embedding the runtime use the same framework-free interfaces as
 the CLI: `PluginCatalog` for inventory, `PluginConfigResolver` for config,
-`ExecutionPlan` for plugin selection/service setup, `execute_hook()` for a
-single finite hook, and `OutputManifest` for output metadata. These APIs accept
-plain mappings, filesystem paths, environment variables, and CLI arguments;
-they do not depend on Django or an application database.
+the service classes for explicit listener composition, typed events for phase
+dispatch, `execute_hook()` for a single finite hook, and `OutputManifest` for
+output metadata. These APIs accept plain mappings, filesystem paths,
+environment variables, and CLI arguments; they do not depend on Django or an
+application database.
+
+Standalone `download()` attaches both `CrawlService` (plugin crawl hooks) and
+`CrawlLifecycleService` (phase sequencing). Embedders can attach only the
+listener suites whose behavior they want and dispatch the corresponding typed
+events directly.
+
+`parse_input(source_text, catalog, output_dir)` is the framework-free import
+path for pasted text and bookmark/feed exports. It writes
+`staticfile/stdin.txt`, runs only plugins declaring
+`x-accepts-internal-input`, and returns metadata-preserving `Snapshot` facts at
+depth zero. It does not create a crawl, database row, or synthetic URL.
 
 
 <br/>
