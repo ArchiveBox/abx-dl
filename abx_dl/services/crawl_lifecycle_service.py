@@ -82,7 +82,7 @@ class CrawlLifecycleService(BaseService):
         return False
 
     async def on_CrawlEvent(self, event: CrawlEvent) -> None:
-        if event.output_dir != str(self.output_dir):
+        if event.output_dir != str(self.output_dir) or event.snapshot_id != self.snapshot.id:
             return
         if event.event_id in self._active_crawl_event_ids or event.event_id in self._completed_crawl_event_ids:
             return
@@ -94,31 +94,51 @@ class CrawlLifecycleService(BaseService):
             self._completed_crawl_event_ids.add(event.event_id)
 
     async def _run_root_crawl_event(self, event: CrawlEvent) -> None:
-        await _run_event_now(
-            event.emit(
-                CrawlSetupEvent(
-                    url=self.url,
-                    snapshot_id=self.snapshot.id,
-                    output_dir=str(self.output_dir),
-                    event_timeout=self.crawl_setup_phase_timeout,
-                    event_handler_slow_timeout=slow_warning_timeout(self.crawl_setup_phase_timeout),
-                ),
-            ),
-            self.crawl_setup_phase_timeout,
-        )
-        if not await self.should_abort():
+        try:
             await _run_event_now(
                 event.emit(
-                    CrawlStartEvent(
+                    CrawlSetupEvent(
                         url=self.url,
                         snapshot_id=self.snapshot.id,
                         output_dir=str(self.output_dir),
-                        event_timeout=self.snapshot_phase_timeout,
-                        event_handler_slow_timeout=slow_warning_timeout(self.snapshot_phase_timeout),
+                        event_timeout=self.crawl_setup_phase_timeout,
+                        event_handler_slow_timeout=slow_warning_timeout(self.crawl_setup_phase_timeout),
                     ),
                 ),
-                self.snapshot_phase_timeout,
+                self.crawl_setup_phase_timeout,
             )
+            if not await self.should_abort():
+                await _run_event_now(
+                    event.emit(
+                        CrawlStartEvent(
+                            url=self.url,
+                            snapshot_id=self.snapshot.id,
+                            output_dir=str(self.output_dir),
+                            event_timeout=self.snapshot_phase_timeout,
+                            event_handler_slow_timeout=slow_warning_timeout(self.snapshot_phase_timeout),
+                        ),
+                    ),
+                    self.snapshot_phase_timeout,
+                )
+        except BaseException as phase_error:
+            try:
+                await self._run_cleanup(event)
+            except BaseException as cleanup_error:
+                phase_error.add_note(f"Crawl cleanup also failed: {cleanup_error}")
+            raise
+        await self._run_cleanup(event)
+        await _run_event_now(
+            event.emit(
+                CrawlCompletedEvent(
+                    url=self.url,
+                    snapshot_id=self.snapshot.id,
+                    output_dir=str(self.output_dir),
+                ),
+            ),
+            CrawlCompletedEvent.model_fields["event_timeout"].default,
+        )
+
+    async def _run_cleanup(self, event: CrawlEvent) -> None:
         await _run_event_now(
             event.emit(
                 CrawlCleanupEvent(
@@ -131,19 +151,9 @@ class CrawlLifecycleService(BaseService):
             ),
             self.crawl_cleanup_phase_timeout,
         )
-        await _run_event_now(
-            event.emit(
-                CrawlCompletedEvent(
-                    url=self.url,
-                    snapshot_id=self.snapshot.id,
-                    output_dir=str(self.output_dir),
-                ),
-            ),
-            CrawlCompletedEvent.model_fields["event_timeout"].default,
-        )
 
     async def on_CrawlStartEvent(self, event: CrawlStartEvent) -> None:
-        if event.output_dir != str(self.output_dir) or await self.should_abort():
+        if event.output_dir != str(self.output_dir) or event.snapshot_id != self.snapshot.id or await self.should_abort():
             return
         snapshot_event = event.emit(
             SnapshotEvent(

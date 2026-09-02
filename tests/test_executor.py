@@ -7,6 +7,8 @@ import threading
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
+
 from abx_dl.config import GlobalConfig, RuntimeConfig, get_explicit_user_env, get_initial_env, get_required_binary_requests
 from abx_dl.events import (
     ArchiveResultEvent,
@@ -2473,8 +2475,46 @@ def test_parse_input_runs_only_opted_in_real_hooks_and_writes_durable_source(tmp
     assert {snapshot.depth for snapshot in snapshots} == {0}
     assert {snapshot.plugin for snapshot in snapshots} == {"parse_txt_urls"}
     manifest = (output_dir / "index.jsonl").read_text()
+    assert '"type": "Snapshot"' not in manifest
     assert '"plugin": "parse_txt_urls"' in manifest
     assert '"plugin": "title"' not in manifest
+
+
+def test_orchestration_rejects_reusing_a_bus(tmp_path: Path) -> None:
+    async def run() -> None:
+        bus = create_bus(total_timeout=60.0, name=f"single_run_bus_{tmp_path.name}")
+        await execute_download(
+            "https://example.com",
+            PluginCatalog({}),
+            tmp_path / "first",
+            auto_install=False,
+            emit_jsonl=False,
+            interactive_tty=False,
+            bus=bus,
+        )
+        with pytest.raises(RuntimeError, match="create a fresh EventBus"):
+            await execute_download(
+                "https://example.net",
+                PluginCatalog({}),
+                tmp_path / "second",
+                auto_install=False,
+                emit_jsonl=False,
+                interactive_tty=False,
+                bus=bus,
+            )
+
+    asyncio.run(run())
+
+
+def test_parse_input_rejects_reusing_a_bus(tmp_path: Path) -> None:
+    async def run() -> None:
+        bus = create_bus(total_timeout=60.0, name=f"single_parse_bus_{tmp_path.name}")
+        selected = PluginCatalog.discover().select(["parse_txt_urls"])
+        await parse_input("https://example.com/one\n", selected, tmp_path / "first", auto_install=False, bus=bus)
+        with pytest.raises(RuntimeError, match="create a fresh EventBus"):
+            await parse_input("https://example.net/two\n", selected, tmp_path / "second", auto_install=False, bus=bus)
+
+    asyncio.run(run())
 
 
 def test_parse_input_preserves_jsonl_parser_metadata_at_depth_zero(tmp_path: Path) -> None:

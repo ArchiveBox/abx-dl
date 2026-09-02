@@ -114,6 +114,21 @@ def get_install_plugins(catalog: PluginCatalog) -> list[Plugin]:
     return [plugin for plugin in catalog.values() if plugin.config.required_binaries]
 
 
+def _claim_fresh_bus(bus: EventBus, operation: str) -> None:
+    """Reserve a caller-provided bus for one orchestration run.
+
+    Orchestrator services remain attached so callers can inspect event history
+    after completion. Reusing that bus would register a second listener suite
+    and execute hooks more than once, so fail before attaching any services.
+    """
+    previous_operation = getattr(bus, "_abx_dl_orchestrator_operation", None)
+    if previous_operation is not None:
+        raise RuntimeError(
+            f"EventBus was already used by {previous_operation}; create a fresh EventBus for each orchestration call",
+        )
+    setattr(bus, "_abx_dl_orchestrator_operation", operation)
+
+
 def _positive_int(value: Any) -> int | None:
     try:
         parsed = int(value)
@@ -178,6 +193,7 @@ async def install_plugins(
         install_output_dir = install_output_dir or Path(temp_dir)
         install_output_dir.mkdir(parents=True, exist_ok=True)
         bus = bus or create_bus(total_timeout=install_timeout)
+        _claim_fresh_bus(bus, "install_plugins")
         snapshot = Snapshot(url="")
         PluginBinaryEnvService(bus, catalog=catalog)
         BinaryService(bus, auto_install=True)
@@ -257,6 +273,7 @@ async def parse_input(
     snapshot_timeout = compute_phase_timeout(snapshot_hooks, user_config)
     owns_bus = bus is None
     bus = bus or create_bus(total_timeout=install_timeout + (snapshot_timeout * 2), name=f"AbxDlInput_{snapshot.id}")
+    _claim_fresh_bus(bus, "parse_input")
 
     PluginBinaryEnvService(bus, catalog=parser_catalog)
     BinaryService(bus, auto_install=auto_install)
@@ -478,7 +495,7 @@ async def download(
     user_config["ABX_RUNTIME"] = runtime
     runtime_config = RuntimeConfig(user=GlobalConfig(**user_config), derived=dict(derived_config or {}))
 
-    # Create snapshot record and write it as the first line of index.jsonl
+    # Create the snapshot record that owns this run.
     snapshot_payload: dict[str, Any] = {"url": url}
     if user_config.get("EXTRA_CONTEXT"):
         extra_context = user_config["EXTRA_CONTEXT"]
@@ -493,7 +510,6 @@ async def download(
         if "crawl_id" in extra_context:
             snapshot_payload["crawl_id"] = str(extra_context["crawl_id"])
     snapshot = Snapshot(**snapshot_payload)
-    write_jsonl(index_path, snapshot, also_print=emit_jsonl)
 
     crawl_setup_hooks = [(plugin, hook) for plugin in catalog.values() for hook in plugin.filter_hooks("CrawlSetup")]
     snapshot_hooks = [(plugin, hook) for plugin in catalog.values() for hook in plugin.filter_hooks("Snapshot")]
@@ -514,6 +530,10 @@ async def download(
     if bus is None:
         bus = create_bus(total_timeout=total_timeout)
     assert bus is not None
+    _claim_fresh_bus(bus, "download")
+
+    # Keep the owning snapshot as the first line of index.jsonl.
+    write_jsonl(index_path, snapshot, also_print=emit_jsonl)
 
     PluginBinaryEnvService(bus, catalog=catalog)
     BinaryService(bus, auto_install=auto_install)

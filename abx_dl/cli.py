@@ -1411,13 +1411,13 @@ def dl(
     selected_catalog = catalog.select(selected, disabled_names=disabled)
     user_config = {**get_explicit_user_env(), **config_overrides, "ABX_RUNTIME": "abx-dl"}
     install_timeout = compute_install_phase_timeout(get_install_plugins(selected_catalog), user_config)
-    crawl_setup_timeout = compute_phase_timeout(selected_catalog.hooks("CrawlSetup"), user_config)
-    snapshot_timeout = compute_phase_timeout(selected_catalog.hooks("Snapshot"), user_config)
+    crawl_setup_hooks = [(plugin, hook) for plugin in selected_catalog.values() for hook in plugin.filter_hooks("CrawlSetup")]
+    snapshot_hooks = [(plugin, hook) for plugin in selected_catalog.values() for hook in plugin.filter_hooks("Snapshot")]
+    crawl_setup_timeout = compute_phase_timeout(crawl_setup_hooks, user_config)
+    snapshot_timeout = compute_phase_timeout(snapshot_hooks, user_config)
     selected = list(selected_catalog)
     total_timeout = install_timeout + crawl_setup_timeout + snapshot_timeout
-    total_hooks = (
-        _count_install_requests(selected_catalog) + len(selected_catalog.hooks("CrawlSetup")) + len(selected_catalog.hooks("Snapshot"))
-    )
+    total_hooks = _count_install_requests(selected_catalog) + len(crawl_setup_hooks) + len(snapshot_hooks)
     bus = create_bus(total_timeout=total_timeout)
     live_ui = LiveBusUI(
         bus,
