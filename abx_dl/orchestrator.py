@@ -114,6 +114,11 @@ def get_install_plugins(catalog: PluginCatalog) -> list[Plugin]:
     return [plugin for plugin in catalog.values() if plugin.config.required_binaries]
 
 
+def get_phase_hooks(catalog: PluginCatalog, phase: str) -> list[tuple[Plugin, Hook]]:
+    """Return every hook selected for one lifecycle phase."""
+    return [(plugin, hook) for plugin in catalog.values() for hook in plugin.filter_hooks(phase)]
+
+
 def _claim_fresh_bus(bus: EventBus, operation: str) -> None:
     """Reserve a caller-provided bus for one orchestration run.
 
@@ -269,7 +274,7 @@ async def parse_input(
     runtime_config = RuntimeConfig(user=GlobalConfig(**user_config), derived=dict(derived_config or {}))
     snapshot = Snapshot(url=input_path.as_uri())
     install_timeout = compute_install_phase_timeout(get_install_plugins(parser_catalog), user_config)
-    snapshot_hooks = [(plugin, hook) for plugin in parser_catalog.values() for hook in plugin.filter_hooks("Snapshot")]
+    snapshot_hooks = get_phase_hooks(parser_catalog, "Snapshot")
     snapshot_timeout = compute_phase_timeout(snapshot_hooks, user_config)
     owns_bus = bus is None
     bus = bus or create_bus(total_timeout=install_timeout + (snapshot_timeout * 2), name=f"AbxDlInput_{snapshot.id}")
@@ -511,8 +516,8 @@ async def download(
             snapshot_payload["crawl_id"] = str(extra_context["crawl_id"])
     snapshot = Snapshot(**snapshot_payload)
 
-    crawl_setup_hooks = [(plugin, hook) for plugin in catalog.values() for hook in plugin.filter_hooks("CrawlSetup")]
-    snapshot_hooks = [(plugin, hook) for plugin in catalog.values() for hook in plugin.filter_hooks("Snapshot")]
+    crawl_setup_hooks = get_phase_hooks(catalog, "CrawlSetup")
+    snapshot_hooks = get_phase_hooks(catalog, "Snapshot")
     install_phase_timeout = compute_install_phase_timeout(get_install_plugins(catalog), user_config)
     crawl_setup_phase_timeout = compute_phase_timeout(crawl_setup_hooks, user_config)
     snapshot_phase_timeout = compute_phase_timeout(snapshot_hooks, user_config)

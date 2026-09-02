@@ -63,7 +63,15 @@ from .models import (
     Process,
     now_iso,
 )
-from .orchestrator import compute_install_phase_timeout, compute_phase_timeout, create_bus, download, get_install_plugins, install_plugins
+from .orchestrator import (
+    compute_install_phase_timeout,
+    compute_phase_timeout,
+    create_bus,
+    download,
+    get_install_plugins,
+    get_phase_hooks,
+    install_plugins,
+)
 from .output_files import OutputFile
 from .tables import binary_dependency_status, binary_dependency_table
 
@@ -1411,8 +1419,8 @@ def dl(
     selected_catalog = catalog.select(selected, disabled_names=disabled)
     user_config = {**get_explicit_user_env(), **config_overrides, "ABX_RUNTIME": "abx-dl"}
     install_timeout = compute_install_phase_timeout(get_install_plugins(selected_catalog), user_config)
-    crawl_setup_hooks = [(plugin, hook) for plugin in selected_catalog.values() for hook in plugin.filter_hooks("CrawlSetup")]
-    snapshot_hooks = [(plugin, hook) for plugin in selected_catalog.values() for hook in plugin.filter_hooks("Snapshot")]
+    crawl_setup_hooks = get_phase_hooks(selected_catalog, "CrawlSetup")
+    snapshot_hooks = get_phase_hooks(selected_catalog, "Snapshot")
     crawl_setup_timeout = compute_phase_timeout(crawl_setup_hooks, user_config)
     snapshot_timeout = compute_phase_timeout(snapshot_hooks, user_config)
     selected = list(selected_catalog)
