@@ -40,6 +40,10 @@ grep -q 'Example Domain' "$output_dir/wget/example.com/index.html"
 ```
 ---
 
+To persist standalone Docker personas, mount their directory explicitly at
+`/data/personas`. The image does not create an anonymous persona volume; this
+also lets ArchiveBox's single `/data` collection mount include its personas.
+
 ✨ *Ever wish you could `yt-dlp`, `gallery-dl`, `wget`, `curl`, `puppeteer`, etc. all in one command?*
 
 `abx-dl` is an all-in-one CLI tool for downloading URLs "by any means necessary".

@@ -273,6 +273,8 @@ RUN --network=none env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox \
         )' | tee -a /VERSION.txt
 
 WORKDIR /out
-VOLUME ["/out", "/data/personas"]
+# Do not declare /data/personas: an anonymous nested volume hides personas in
+# ArchiveBox's documented bind mount of the parent /data collection directory.
+VOLUME ["/out"]
 ENTRYPOINT ["dumb-init", "--", "abx-dl-docker-entrypoint"]
 CMD ["--help"]
