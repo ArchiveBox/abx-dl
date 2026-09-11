@@ -1,0 +1,29 @@
+abx_dl/catalog.py
+  s_cec16ad9ba0455::t_1d2e8ef059e695 95-100
+abx_dl/execution.py
+  s_cec16ad9ba0455::t_1d2e8ef059e695 59-66
+abx_dl/orchestrator.py
+  s_cec16ad9ba0455::t_1d2e8ef059e695 494-496
+abx_dl/output_files.py
+  s_cec16ad9ba0455::t_1d2e8ef059e695 70-74,92-97
+abx_dl/services/snapshot_service.py
+  s_cec16ad9ba0455::t_1d2e8ef059e695 345-347
+abx_dl/models.py
+  s_cec16ad9ba0455::t_1d2e8ef059e695 535,540
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "87ff7c27e25d9c10fe6d654d5fcda0391c2fb98b",
+  "prompts": {},
+  "sessions": {
+    "s_cec16ad9ba0455": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a05b1d-30f5-7a51-87b6-8499bac7baa6",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

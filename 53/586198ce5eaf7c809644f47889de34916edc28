@@ -1,0 +1,25 @@
+abx_dl/services/binary_service.py
+  4a26fb32c1caba7b 178-185
+tests/test_executor.py
+  4a26fb32c1caba7b 607,614
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.15",
+  "base_commit_sha": "53586198ce5eaf7c809644f47889de34916edc28",
+  "prompts": {
+    "4a26fb32c1caba7b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d09e2-8247-7ab2-bb77-be712871b3b7",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>",
+      "messages": [],
+      "total_additions": 10,
+      "total_deletions": 2,
+      "accepted_lines": 10,
+      "overriden_lines": 0
+    }
+  }
+}

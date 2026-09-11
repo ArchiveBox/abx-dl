@@ -1,0 +1,22 @@
+tests/test_install_phase.py
+  s_3155555fdbdae3::t_643050e43079d1 2
+  s_3155555fdbdae3::t_c85994889fca18 236-237,243,245
+.github/workflows/docker.yml
+  s_3155555fdbdae3::t_3e19b26a32963f 314-321,326
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "1a97fa0116acd22a16823f33d908e8e7c49845d1",
+  "prompts": {},
+  "sessions": {
+    "s_3155555fdbdae3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0467b-ccd7-7a30-a1bb-9d99d3bf7584",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

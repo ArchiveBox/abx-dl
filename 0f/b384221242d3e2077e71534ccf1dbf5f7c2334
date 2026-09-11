@@ -1,0 +1,35 @@
+Dockerfile
+  s_3155555fdbdae3::t_cfd2936b4e3d03 173-176
+  s_3155555fdbdae3::t_ba8b0142bea9c6 182-184,202-204,232-234
+  s_3155555fdbdae3::t_1d03f17e100879 185
+  s_3155555fdbdae3::t_18b6cb9274a844 214
+  s_3155555fdbdae3::t_4258278f202df8 235-236
+  s_3155555fdbdae3::t_1b6dc89dae94ff 207-209
+  s_3155555fdbdae3::t_e391b92a5bbe1c 177-181,187,199,201
+  s_3155555fdbdae3::t_256f4e3b8eaa1f 198,200
+  s_3155555fdbdae3::t_1268911946af55 210-213
+.github/workflows/docker.yml
+  s_3155555fdbdae3::t_ea9899cc419ed5 178-192,195-196,202-203,210-211,215,299,310,315-321,328
+  s_3155555fdbdae3::t_07b98235b4421c 193-194,213-214
+abx_dl/services/binary_service.py
+  s_3155555fdbdae3::t_e3232800009adc 128-130,136
+tests/test_install_phase.py
+  s_3155555fdbdae3::t_3688e893f8b863 177,244
+  s_3155555fdbdae3::t_0085b262ecf9f8 178-243,245-246
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "0fb384221242d3e2077e71534ccf1dbf5f7c2334",
+  "prompts": {},
+  "sessions": {
+    "s_3155555fdbdae3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a0467b-ccd7-7a30-a1bb-9d99d3bf7584",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

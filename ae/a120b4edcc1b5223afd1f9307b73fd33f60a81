@@ -1,0 +1,18 @@
+Dockerfile
+  h_923c208e183a7b 135,241
+README.md
+  h_923c208e183a7b 34
+bin/docker_entrypoint.sh
+  h_923c208e183a7b 1-26
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "aea120b4edcc1b5223afd1f9307b73fd33f60a81",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

@@ -1,0 +1,20 @@
+abx_dl/models.py
+  s_732ff1cf64be89::t_28edd9840b8166 9,28-31
+  s_732ff1cf64be89::t_a5b4806c36c2eb 208
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.2",
+  "base_commit_sha": "6535bbf0c21f6c957600ea2a5ec37f4de251b36d",
+  "prompts": {},
+  "sessions": {
+    "s_732ff1cf64be89": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "21f1d6f2-d8cc-42da-9e62-f8eddbc32e49",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

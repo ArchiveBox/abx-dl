@@ -1,0 +1,44 @@
+pyproject.toml
+  s_f8414d52051f83::t_6a24d83c76f5e9 44-45
+  s_f8414d52051f83::t_80840a4512fd0d 3
+tests/test_executor.py
+  s_f8414d52051f83::t_f0487d4064055c 257-258,300,336-337,340,381-382
+bin/setup_monorepo.sh
+  s_f8414d52051f83::t_294a2cf33b7899 9,177-184
+  s_f8414d52051f83::t_7768594b416396 172-176,185-192,223-224,233,237-238,244-246,248,256,258,267-271,280,284-285,296
+.github/workflows/docker.yml
+  s_f8414d52051f83::t_a7a7fc357b4939 67
+  s_f8414d52051f83::t_df4067ad527bf8 68
+abx_dl/services/binary_service.py
+  s_f8414d52051f83::t_13d96db491535f 247
+  s_f8414d52051f83::t_366ce43d392646 246
+abx_dl/config.py
+  s_f8414d52051f83::t_bb4969c31b9cdb 602-604
+.github/workflows/test.yml
+  s_f8414d52051f83::t_840af60e8bffba 137-164,167-197
+  s_f8414d52051f83::t_df4067ad527bf8 40-41,101-102,165-166,231-232,316-317,441-442
+tests/test_install_phase.py
+  s_f8414d52051f83::t_a9dbf77d6817c6 34,36,40,43,45,49,89-102
+  s_f8414d52051f83::t_b9b2cfd63f6611 44,50,52,61-63,65,304
+  s_f8414d52051f83::t_53bc69bdde946a 232,301-303
+README.md
+  s_f8414d52051f83::t_deb752af336d43 312
+uv.lock
+  s_f8414d52051f83::t_62a25cd1793d3a 10,14,21,58,60,92,103,105,124,133,135
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "6f877dae8f302ef90031e85a9709feacf32bde70",
+  "prompts": {},
+  "sessions": {
+    "s_f8414d52051f83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f73c1-cded-7c63-bb8b-3b3c3e5de67d",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

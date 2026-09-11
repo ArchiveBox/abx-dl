@@ -1,0 +1,22 @@
+.github/workflows/docker.yml
+  s_7cc75db5230061::t_33cd93475166e0 271-273,281-283,297-300,304-307
+  s_7cc75db5230061::t_81db994fff4f5f 19,276-278,286-288,296,301-302,308-310
+Dockerfile
+  s_7cc75db5230061::t_d98ec74aaed423 95
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "ad96c93e476585f8e32e1fdacb45b07bc290af5b",
+  "prompts": {},
+  "sessions": {
+    "s_7cc75db5230061": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9181-9d0e-7f61-a8dc-95dc82bc59e7",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

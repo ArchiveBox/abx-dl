@@ -1,0 +1,34 @@
+tests/test_executor.py
+  s_b989805ae95d6a::t_b1dbaf11156e76 348-349
+  s_b989805ae95d6a::t_b32905f214a41a 346-347
+abx_dl/dependencies.py
+  s_b989805ae95d6a::t_3e74465b4d7500 23
+pyproject.toml
+  s_074e76a4b61abc::t_52022b5b1cb243 3,46
+abx_dl/config.py
+  s_b989805ae95d6a::t_3e74465b4d7500 570-579
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.0",
+  "base_commit_sha": "adaf964f0e60541f41eecff1f04b9a783bfbf6b0",
+  "prompts": {},
+  "sessions": {
+    "s_074e76a4b61abc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e3237-ada8-7741-a7c1-098a7ec3e4c8",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    },
+    "s_b989805ae95d6a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e1fa8-ca6f-7ef3-af88-ea8dba9078db",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

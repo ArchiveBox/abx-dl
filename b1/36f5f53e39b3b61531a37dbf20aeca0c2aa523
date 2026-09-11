@@ -1,0 +1,24 @@
+.github/actions/verify-chromium-launch/action.yml
+  s_f8414d52051f83::t_57e506615e38f3 20,33-35,40,229
+  s_f8414d52051f83::t_cc785c192cadf8 19
+abx_dl/orchestrator.py
+  s_f8414d52051f83::t_c9798ddfc97795 422,426-430,437-438,441-442
+.github/workflows/test.yml
+  s_f8414d52051f83::t_57e506615e38f3 91-93
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "b136f5f53e39b3b61531a37dbf20aeca0c2aa523",
+  "prompts": {},
+  "sessions": {
+    "s_f8414d52051f83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f73c1-cded-7c63-bb8b-3b3c3e5de67d",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

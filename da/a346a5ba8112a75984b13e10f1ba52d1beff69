@@ -1,0 +1,29 @@
+abx_dl/services/snapshot_service.py
+  5e51e4c17f5a3f8d 123-125,160-162
+abx_dl/orchestrator.py
+  5e51e4c17f5a3f8d 81,95-96,147-168,170-238
+abx_dl/services/process_service.py
+  5e51e4c17f5a3f8d 94,158-168,171-175,177-184,222-233,235-274,276-290,292-328,355,374,376,378,380-388,390-397,399-403
+tests/test_executor.py
+  5e51e4c17f5a3f8d 7,779-859
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.17",
+  "base_commit_sha": "daa346a5ba8112a75984b13e10f1ba52d1beff69",
+  "prompts": {
+    "5e51e4c17f5a3f8d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d1151-ad88-7de3-8a68-85fb941e715d",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>",
+      "messages": [],
+      "total_additions": 352,
+      "total_deletions": 82,
+      "accepted_lines": 342,
+      "overriden_lines": 1
+    }
+  }
+}

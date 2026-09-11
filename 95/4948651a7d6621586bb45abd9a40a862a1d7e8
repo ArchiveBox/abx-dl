@@ -1,0 +1,29 @@
+tests/test_cli.py
+  4a26fb32c1caba7b 245-281
+abx_dl/models.py
+  4a26fb32c1caba7b 76
+abx_dl/cli.py
+  4a26fb32c1caba7b 6,127-151,523-533,555-556,562,572,580-583
+abx_dl/dependencies.py
+  4a26fb32c1caba7b 36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.15",
+  "base_commit_sha": "954948651a7d6621586bb45abd9a40a862a1d7e8",
+  "prompts": {
+    "4a26fb32c1caba7b": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d09e2-8247-7ab2-bb77-be712871b3b7",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>",
+      "messages": [],
+      "total_additions": 87,
+      "total_deletions": 18,
+      "accepted_lines": 84,
+      "overriden_lines": 0
+    }
+  }
+}

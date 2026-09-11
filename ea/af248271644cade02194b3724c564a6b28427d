@@ -1,0 +1,25 @@
+.github/workflows/release.yml
+  s_f8414d52051f83::t_f5fc1cfc96e244 32-33,67-75,80-274
+.github/workflows/docker-ci.yml
+  s_f8414d52051f83::t_50ce638a972fcc 14,26-27
+pyproject.toml
+  s_f8414d52051f83::t_de979f23742665 3
+uv.lock
+  s_f8414d52051f83::t_9b6c8f12e27f7b 17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "eaaf248271644cade02194b3724c564a6b28427d",
+  "prompts": {},
+  "sessions": {
+    "s_f8414d52051f83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f73c1-cded-7c63-bb8b-3b3c3e5de67d",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

@@ -1,0 +1,21 @@
+abx_dl/services/crawl_service.py
+  s_70b3b8284ef391::t_28e4d90dfa6c1b 30-31,174
+abx_dl/services/snapshot_service.py
+  s_70b3b8284ef391::t_70c7891a1a93ec 31-32,239
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "791b45ef80050a08684186a5de802e80779af2cd",
+  "prompts": {},
+  "sessions": {
+    "s_70b3b8284ef391": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ec4bb-38fe-7723-b66e-d0af77a36fd0",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

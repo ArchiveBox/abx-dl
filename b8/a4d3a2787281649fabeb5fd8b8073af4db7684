@@ -1,0 +1,29 @@
+.github/workflows/docker.yml
+  s_f8414d52051f83::t_21d3c15a4ea29a 68
+abx_dl/orchestrator.py
+  s_f8414d52051f83::t_21d3c15a4ea29a 671-675
+tests/test_executor.py
+  s_f8414d52051f83::t_21d3c15a4ea29a 876-901
+.github/workflows/test.yml
+  s_f8414d52051f83::t_21d3c15a4ea29a 40-41,101-102,165-166,231-232,316-317,441-442
+pyproject.toml
+  s_f8414d52051f83::t_63d6dbb03e7f2c 3
+uv.lock
+  s_f8414d52051f83::t_0cad4417e86a81 10,14,21
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "b8a4d3a2787281649fabeb5fd8b8073af4db7684",
+  "prompts": {},
+  "sessions": {
+    "s_f8414d52051f83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f73c1-cded-7c63-bb8b-3b3c3e5de67d",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

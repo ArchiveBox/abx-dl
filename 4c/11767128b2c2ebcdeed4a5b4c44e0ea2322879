@@ -1,0 +1,36 @@
+abx_dl/orchestrator.py
+  s_70b3b8284ef391::t_8b9284c80e5d29 577-581
+tests/test_cli.py
+  s_70b3b8284ef391::t_0b6541b9ace9e9 852-879
+AGENTS.md
+  s_15f59ac80abb8e::t_417f00307a7210 1-61,63,65
+pyproject.toml
+  s_15f59ac80abb8e::t_50935ff3253d61 112-113
+  s_70b3b8284ef391::t_5c3e673ba80ef5 44
+skills/abx-dl/SKILL.md
+  s_15f59ac80abb8e::t_3e7e13744b950f 3,8,10,12,14-20,22,26-27,30,33,36,39-44,47,50-51,54,58
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "4c11767128b2c2ebcdeed4a5b4c44e0ea2322879",
+  "prompts": {},
+  "sessions": {
+    "s_15f59ac80abb8e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019eaa8a-3bcf-7290-a54d-15bd828c06a5",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    },
+    "s_70b3b8284ef391": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ec4bb-38fe-7723-b66e-d0af77a36fd0",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

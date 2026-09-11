@@ -1,0 +1,23 @@
+tests/test_install_phase.py
+  s_074e76a4b61abc::t_5a0937b9084a9b 7,88-109,113,152,154,170-171
+  s_074e76a4b61abc::t_7edd3f6264e5a9 6,85-87,110-112,114-119,121-151,153,155-169
+  s_074e76a4b61abc::t_b48082fb702271 120
+pyproject.toml
+  s_074e76a4b61abc::t_7edd3f6264e5a9 3,46
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.9",
+  "base_commit_sha": "2ba6b5a3a0e8a8f14eb3e855f294e56e46320b15",
+  "prompts": {},
+  "sessions": {
+    "s_074e76a4b61abc": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e3237-ada8-7741-a7c1-098a7ec3e4c8",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

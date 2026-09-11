@@ -1,0 +1,29 @@
+tests/test_executor.py
+  s_7cc75db5230061::t_220753af0be402 4,721,723,733-736,748,757
+Dockerfile
+  s_7cc75db5230061::t_c3b1e7264f6307 49,134,186
+  s_7cc75db5230061::t_5050efa3c62b4d 192
+  s_7cc75db5230061::t_8f5407855d784b 157,166-169,174-175
+  s_7cc75db5230061::t_e7d869bda737db 185
+  s_7cc75db5230061::t_6ea2fd43b7af12 187-189,194
+  s_7cc75db5230061::t_fcc484017e8723 183,190
+  s_7cc75db5230061::t_f5ab15fba95487 159,191,193
+  s_7cc75db5230061::t_01d4fbe6f5b4eb 61,161,202,204
+  s_7cc75db5230061::t_e62fad786a75f3 184
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.3",
+  "base_commit_sha": "38a5b67f25a41e16dd16895c12e7d797d95b1f18",
+  "prompts": {},
+  "sessions": {
+    "s_7cc75db5230061": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e9181-9d0e-7f61-a8dc-95dc82bc59e7",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

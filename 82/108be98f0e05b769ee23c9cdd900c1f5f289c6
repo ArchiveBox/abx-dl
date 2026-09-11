@@ -1,0 +1,16 @@
+.github/workflows/docker.yml
+  h_923c208e183a7b 255
+bin/validate_crawl.py
+  h_923c208e183a7b 81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "82108be98f0e05b769ee23c9cdd900c1f5f289c6",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

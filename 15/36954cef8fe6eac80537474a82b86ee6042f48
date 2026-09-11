@@ -1,0 +1,25 @@
+pyproject.toml
+  s_f8414d52051f83::t_5693c65ee41153 3,45
+uv.lock
+  s_f8414d52051f83::t_ad7b5f053a5aa0 54,88,98,100
+bin/validate_crawl.py
+  s_f8414d52051f83::t_b25accbd4d4f78 94
+  s_f8414d52051f83::t_0cef523394e671 55-57
+  s_f8414d52051f83::t_439a79de858506 8,46-54,58-59,93
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.17",
+  "base_commit_sha": "1536954cef8fe6eac80537474a82b86ee6042f48",
+  "prompts": {},
+  "sessions": {
+    "s_f8414d52051f83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f73c1-cded-7c63-bb8b-3b3c3e5de67d",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": null
+    }
+  }
+}

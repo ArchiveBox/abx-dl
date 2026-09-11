@@ -1,0 +1,14 @@
+tests/test_executor.py
+  h_923c208e183a7b 83,97,108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "7b775913bd5096056038200effbb389458e157a0",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

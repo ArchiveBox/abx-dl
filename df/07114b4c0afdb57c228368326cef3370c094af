@@ -1,0 +1,60 @@
+abx_dl/orchestrator.py
+  s_750dfb69a92570::t_3340fa3cd0d893 527-560,563-577,579-580
+  s_750dfb69a92570::t_cc522a302f9856 83,92,463-489,491-525
+  s_750dfb69a92570::t_e174022692cbf1 561
+  s_750dfb69a92570::t_264e77d969c321 713-720,739-741,743,763,787
+  s_750dfb69a92570::t_cfa6df3e17a4e7 126,266,490,562,578
+  s_750dfb69a92570::t_044e2a4a50c96a 526
+  s_750dfb69a92570::t_c3e94066d1870e 581
+abx_dl/models.py
+  s_750dfb69a92570::t_e6b3c5f0ac3bb9 387
+  s_750dfb69a92570::t_fe9838a0a89497 102,537
+  s_750dfb69a92570::t_00d52128e9eecb 109-111
+  s_750dfb69a92570::t_858024fe310ad9 129,415-416
+abx_dl/catalog.py
+  s_750dfb69a92570::t_51e6acdd057472 153-173
+  s_750dfb69a92570::t_290ebcac9abb2d 12,29-39
+  s_750dfb69a92570::t_858024fe310ad9 53
+  s_750dfb69a92570::t_00d52128e9eecb 1-11,13-28,40-52,54-152
+abx_dl/output_files.py
+  s_750dfb69a92570::t_4e9acbaeebabb1 40,42
+  s_750dfb69a92570::t_00d52128e9eecb 9-11,37-39,41,43-105
+  s_750dfb69a92570::t_187a61e7b20e87 13,29
+  s_750dfb69a92570::t_7b78b77e236ee8 30,171-172
+tests/test_output_files.py
+  s_750dfb69a92570::t_3f16e51627ca3f 7,102-110,112-113
+  s_750dfb69a92570::t_858024fe310ad9 111
+tests/test_executor.py
+  s_750dfb69a92570::t_cc522a302f9856 32,536-564
+  s_750dfb69a92570::t_18040f0cfe21ae 29,31,43-74
+  s_750dfb69a92570::t_8dd889aa23c116 75-76,565-566
+README.md
+  s_750dfb69a92570::t_7d7509c8ae21b4 109-115
+abx_dl/services/snapshot_service.py
+  s_750dfb69a92570::t_cfa6df3e17a4e7 124,149,345
+tests/test_plugins.py
+  s_750dfb69a92570::t_858024fe310ad9 76,80
+  s_750dfb69a92570::t_fe9838a0a89497 94-103
+  s_750dfb69a92570::t_e66b643110132f 83-93
+  s_750dfb69a92570::t_51e6acdd057472 114-119
+  s_750dfb69a92570::t_3f16e51627ca3f 8,72-75,77-79,81-82,104-113
+  s_750dfb69a92570::t_d39ff96b232c06 120-121
+abx_dl/execution.py
+  s_750dfb69a92570::t_1838970bf10979 1-83
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "df07114b4c0afdb57c228368326cef3370c094af",
+  "prompts": {},
+  "sessions": {
+    "s_750dfb69a92570": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a05b67-229b-7b73-884d-437256ffa903",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

@@ -1,0 +1,20 @@
+abx_dl/services/binary_service.py
+  h_923c208e183a7b 7,17-18,22,191-198,240,260-291
+pyproject.toml
+  h_923c208e183a7b 3,45
+tests/test_install_phase.py
+  h_923c208e183a7b 4,16-24,141-142,146-160,163,171-176,183,189,224
+uv.lock
+  h_923c208e183a7b 6,10,17,54,88,98,100,119,127,129
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "6ace1914362c8843d5d1cda915eaa5426ba43320",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

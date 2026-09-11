@@ -1,0 +1,26 @@
+README.md
+  s_f8414d52051f83::t_4079b60ec57466 27
+skills/abx-dl/SKILL.md
+  s_f8414d52051f83::t_28904140a373bb 32,34-35,38,41-43,49-56,69-70,73-75
+AGENTS.md
+  s_f8414d52051f83::t_4079b60ec57466 47
+  s_f8414d52051f83::t_28904140a373bb 28,30-31,34,37-40,73-74,77-78
+.github/workflows/test.yml
+  s_f8414d52051f83::t_d86dc22c56bba1 106
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.14",
+  "base_commit_sha": "04c0167536bb873a8f15a3b5619f20794ec440ea",
+  "prompts": {},
+  "sessions": {
+    "s_f8414d52051f83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f73c1-cded-7c63-bb8b-3b3c3e5de67d",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

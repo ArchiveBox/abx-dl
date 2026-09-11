@@ -1,0 +1,29 @@
+abx_dl/services/snapshot_service.py
+  s_15f59ac80abb8e::t_8af062a1708784 30
+AGENTS.md
+  s_2f8c9d935d47e3::t_b011b4f84425e5 1-14
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.6",
+  "base_commit_sha": "158de1d61c0449747a23232dd84cd59546ebb59a",
+  "prompts": {},
+  "sessions": {
+    "s_15f59ac80abb8e": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019eaa8a-3bcf-7290-a54d-15bd828c06a5",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    },
+    "s_2f8c9d935d47e3": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019eab68-f9e8-7f00-a09a-7a3715fc0cf5",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

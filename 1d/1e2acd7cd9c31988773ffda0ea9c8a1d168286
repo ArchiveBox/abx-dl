@@ -1,0 +1,14 @@
+tests/test_install_phase.py
+  h_923c208e183a7b 285,301-303,305
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "1d1e2acd7cd9c31988773ffda0ea9c8a1d168286",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

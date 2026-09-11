@@ -1,0 +1,21 @@
+.github/workflows/test.yml
+  s_b989805ae95d6a::t_e17d6eaf13517f 205-267,351-411
+.github/actions/verify-chromium-launch/action.yml
+  s_b989805ae95d6a::t_dc43898ab1c30b 2,5,7,16-19,26-29,33-34,36,39,41,107-114
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.5.1",
+  "base_commit_sha": "98607a2c4fe553817d3afc94f84d1027cae7c89f",
+  "prompts": {},
+  "sessions": {
+    "s_b989805ae95d6a": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019e1fa8-ca6f-7ef3-af88-ea8dba9078db",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

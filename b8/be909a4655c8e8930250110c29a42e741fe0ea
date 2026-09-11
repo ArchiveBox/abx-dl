@@ -1,0 +1,20 @@
+.github/workflows/docker.yml
+  h_923c208e183a7b 217
+Dockerfile
+  h_923c208e183a7b 187
+pyproject.toml
+  h_923c208e183a7b 3
+uv.lock
+  h_923c208e183a7b 17
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "b8be909a4655c8e8930250110c29a42e741fe0ea",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

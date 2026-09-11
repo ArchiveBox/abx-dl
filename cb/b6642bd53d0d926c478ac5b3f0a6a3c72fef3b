@@ -1,0 +1,21 @@
+abx_dl/models.py
+  s_f8414d52051f83::t_5b3e008bbb5738 16,21,39,44,443
+abx_dl/services/binary_service.py
+  s_f8414d52051f83::t_899b0a179a583b 298
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "cbb6642bd53d0d926c478ac5b3f0a6a3c72fef3b",
+  "prompts": {},
+  "sessions": {
+    "s_f8414d52051f83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f73c1-cded-7c63-bb8b-3b3c3e5de67d",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

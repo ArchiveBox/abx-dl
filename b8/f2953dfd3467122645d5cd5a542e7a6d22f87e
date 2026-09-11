@@ -1,0 +1,24 @@
+README.md
+  h_923c208e183a7b 306,312,314,322
+abx_dl/cli.py
+  h_923c208e183a7b 1404,1408
+abx_dl/events.py
+  h_923c208e183a7b 70,72-73
+abx_dl/orchestrator.py
+  h_923c208e183a7b 10-12,41-42,569,644,650,676,726-738
+abx_dl/services/process_service.py
+  h_923c208e183a7b 7,112-116
+tests/test_executor.py
+  h_923c208e183a7b 83,97-108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "b8f2953dfd3467122645d5cd5a542e7a6d22f87e",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

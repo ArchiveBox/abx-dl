@@ -1,0 +1,23 @@
+pyproject.toml
+  s_f8414d52051f83::t_9e6242886e7263 3,44-45
+bin/setup_monorepo.sh
+  s_f8414d52051f83::t_7bb969305d1c6d 43,51,60,67,82,97,105,115,123,164-182,211,219,223-227,232-234,236,246,260-264,274,286,302
+uv.lock
+  s_f8414d52051f83::t_ee540e3cdf9bd5 17,54,56,88,98,100,119,128,130
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "2afec95982c7997a6e62ec12daa652ded1a4a9f0",
+  "prompts": {},
+  "sessions": {
+    "s_f8414d52051f83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f73c1-cded-7c63-bb8b-3b3c3e5de67d",
+        "model": "gpt-5.5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

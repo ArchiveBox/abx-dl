@@ -1,0 +1,31 @@
+tests/conftest.py
+  s_f8414d52051f83::t_dd309adc916297 45,64
+abx_dl/services/process_service.py
+  s_f8414d52051f83::t_b69e3e9249374d 38
+pyproject.toml
+  s_f8414d52051f83::t_c4389d99481a2d 3,45
+.github/workflows/test.yml
+  s_f8414d52051f83::t_62f8d7dc5a5366 343-354,356-357
+  s_f8414d52051f83::t_840af60e8bffba 125
+  s_f8414d52051f83::t_ba90a290f7524e 329
+  s_f8414d52051f83::t_d21f7fe3edf9ae 33,158,195,270
+tests/test_cli.py
+  s_f8414d52051f83::t_436ccc726e0454 909
+  s_f8414d52051f83::t_62f8be1926835f 69
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.16",
+  "base_commit_sha": "e5ebb9de7a6d8e522b47e35f73df201f078725d3",
+  "prompts": {},
+  "sessions": {
+    "s_f8414d52051f83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f73c1-cded-7c63-bb8b-3b3c3e5de67d",
+        "model": "gpt-5.5"
+      },
+      "human_author": null
+    }
+  }
+}

@@ -1,0 +1,14 @@
+bin/docker_entrypoint.sh
+  h_923c208e183a7b 11,18,23
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "78af6cb657cf0294a2620d4e484ead326a8e2727",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

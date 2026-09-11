@@ -1,0 +1,20 @@
+abx_dl/services/binary_service.py
+  h_923c208e183a7b 274-275,289
+abx_dl/services/crawl_service.py
+  h_923c208e183a7b 174-175,188
+abx_dl/services/snapshot_service.py
+  h_923c208e183a7b 213-214,227
+tests/test_install_phase.py
+  h_923c208e183a7b 19-20,23-26,129,137,145-149,231
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "ef5f10aa50e1740a6fb0b2f8a01d494fb4b5a960",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

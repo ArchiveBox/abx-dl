@@ -1,0 +1,26 @@
+pyproject.toml
+  s_f8414d52051f83::t_85a408d76d6de4 45
+.github/workflows/docker.yml
+  s_f8414d52051f83::t_6d34747f95235f 68
+.github/workflows/test.yml
+  s_f8414d52051f83::t_85a408d76d6de4 40,101,165,231,316,441
+  s_f8414d52051f83::t_6d34747f95235f 41,102,166,232,317,442
+uv.lock
+  s_f8414d52051f83::t_b18ce9c1de0d04 10,14,58,92,103,105
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.15",
+  "base_commit_sha": "123a3ed93d5172f5f2b563ae45e0a7c598c7029e",
+  "prompts": {},
+  "sessions": {
+    "s_f8414d52051f83": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019f73c1-cded-7c63-bb8b-3b3c3e5de67d",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

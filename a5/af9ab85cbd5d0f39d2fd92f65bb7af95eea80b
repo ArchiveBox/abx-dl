@@ -1,0 +1,20 @@
+abx_dl/events.py
+  h_923c208e183a7b 348-350
+abx_dl/services/snapshot_service.py
+  h_923c208e183a7b 348,357
+abx_dl/services/tag_service.py
+  h_923c208e183a7b 39
+tests/test_executor.py
+  h_923c208e183a7b 2272-2273,2277-2279,2331-2339,2341
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "a5af9ab85cbd5d0f39d2fd92f65bb7af95eea80b",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}

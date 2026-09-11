@@ -1,0 +1,29 @@
+abx_dl/services/base.py
+  5e51e4c17f5a3f8d 141-149
+abx_dl/services/process_service.py
+  5e51e4c17f5a3f8d 234,302,480
+abx_dl/events.py
+  5e51e4c17f5a3f8d 6,66,212,256,286,345
+abx_dl/orchestrator.py
+  5e51e4c17f5a3f8d 12-14,70,120-121,132-134,164-165,181-182,251-252,260,267-269,271-277,335-336,342-343,351,533-534,544-546,558,609-610,626,729
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.17",
+  "base_commit_sha": "4b13ec8f00540fcf3d7ca5894ae948776d44ca54",
+  "prompts": {
+    "5e51e4c17f5a3f8d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d1151-ad88-7de3-8a68-85fb941e715d",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>",
+      "messages": [],
+      "total_additions": 68,
+      "total_deletions": 45,
+      "accepted_lines": 60,
+      "overriden_lines": 2
+    }
+  }
+}

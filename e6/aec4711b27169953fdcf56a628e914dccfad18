@@ -1,0 +1,25 @@
+abx_dl/cli.py
+  5e51e4c17f5a3f8d 604,612-613,615-617,619-620,637-641,647,666,674-952,1033-1035,1037-1038,1040-1042,1046,1064
+abx_dl/orchestrator.py
+  5e51e4c17f5a3f8d 86,289,326,381
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.1.17",
+  "base_commit_sha": "e6aec4711b27169953fdcf56a628e914dccfad18",
+  "prompts": {
+    "5e51e4c17f5a3f8d": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019d1151-ad88-7de3-8a68-85fb941e715d",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>",
+      "messages": [],
+      "total_additions": 314,
+      "total_deletions": 258,
+      "accepted_lines": 310,
+      "overriden_lines": 2
+    }
+  }
+}

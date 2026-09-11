@@ -1,0 +1,30 @@
+pyproject.toml
+  s_5bb32a7a6ab331::t_3a15aa6b9ea52c 45
+  s_5bb32a7a6ab331::t_d8ba9929a748d1 44
+uv.lock
+  s_cec16ad9ba0455::t_0455e7b270575d 6,10,53,55,86,95,97,116,124,126
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.0",
+  "base_commit_sha": "34a8a77dc0249e87b0a125aebcf3452ac78a7a47",
+  "prompts": {},
+  "sessions": {
+    "s_5bb32a7a6ab331": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a061ba-d733-7dc0-9218-b3d19f4bd53c",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    },
+    "s_cec16ad9ba0455": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a05b1d-30f5-7a51-87b6-8499bac7baa6",
+        "model": "gpt-5.6-sol"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
