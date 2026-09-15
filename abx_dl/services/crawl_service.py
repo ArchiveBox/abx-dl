@@ -115,7 +115,6 @@ class CrawlService(BaseService):
                 config=config,
                 extra_context={
                     "snapshot_id": self.snapshot.id,
-                    "snapshot_depth": self.snapshot.depth,
                     "plugin": plugin.name,
                     "hook_name": hook.name,
                 },

@@ -74,7 +74,6 @@ Key abxbus concepts used:
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from collections.abc import Sequence
@@ -459,6 +458,7 @@ async def download(
     bus: EventBus | None = None,
     emit_jsonl: bool | None = None,
     interactive_tty: bool | None = None,
+    snapshot: Snapshot | None = None,
 ):
     """Download a URL using plugins, coordinated through a abxbus EventBus.
 
@@ -475,6 +475,7 @@ async def download(
         catalog: The selected plugins to execute.
         output_dir: Where to write output files and index.jsonl.
         auto_install: Whether to auto-install missing binaries.
+        snapshot: Explicit snapshot input, including its ID and depth. Defaults to a new snapshot.
         bus: Pre-configured EventBus to run against. If None, a default bus is
             created via create_bus().
         emit_jsonl: Whether to print JSONL to stdout. Defaults to True if not a TTY.
@@ -501,20 +502,9 @@ async def download(
     runtime_config = RuntimeConfig(user=GlobalConfig(**user_config), derived=dict(derived_config or {}))
 
     # Create the snapshot record that owns this run.
-    snapshot_payload: dict[str, Any] = {"url": url}
-    if user_config.get("EXTRA_CONTEXT"):
-        extra_context = user_config["EXTRA_CONTEXT"]
-        if isinstance(extra_context, str):
-            extra_context = json.loads(extra_context)
-        if not isinstance(extra_context, dict):
-            raise TypeError("EXTRA_CONTEXT must be an object")
-        if "snapshot_id" in extra_context:
-            snapshot_payload["id"] = str(extra_context["snapshot_id"])
-        if "snapshot_depth" in extra_context:
-            snapshot_payload["depth"] = int(extra_context["snapshot_depth"])
-        if "crawl_id" in extra_context:
-            snapshot_payload["crawl_id"] = str(extra_context["crawl_id"])
-    snapshot = Snapshot(**snapshot_payload)
+    snapshot = snapshot if snapshot is not None else Snapshot(url=url)
+    if snapshot.url != url:
+        raise ValueError("snapshot.url must match the download URL")
 
     crawl_setup_hooks = get_phase_hooks(catalog, "CrawlSetup")
     snapshot_hooks = get_phase_hooks(catalog, "Snapshot")

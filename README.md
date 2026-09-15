@@ -335,6 +335,7 @@ The normal runtime flow after dependency preflight is:
 - `SnapshotCleanupEvent` / `CrawlCleanupEvent`
 
 Hook output contract:
+- `EXTRA_CONTEXT` is opaque correlation data reflected into output records only. Hooks must never inspect it. Snapshot hooks receive `--url`, `--snapshot-id`, and `--depth` as explicit arguments; archived titles/tags stay in filesystem data. Embedders provide `download(snapshot=Snapshot(...))` for an existing snapshot, not identity or depth hidden in configuration.
 - binary preflight is driven by plugin `required_binaries` and handled by `abxpkg`, not by plugin hooks
 - `on_CrawlSetup__*` background hooks emit a first stdout readiness line, but no stdout JSONL records
 - `on_Snapshot__*` background hooks emit a first stdout readiness line; hook JSONL records after that are only `ArchiveResult`, `Snapshot`, and `Tag`

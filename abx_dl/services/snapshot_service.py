@@ -218,7 +218,6 @@ class SnapshotService(BaseService):
                 run_output_dir=self.output_dir,
                 extra_context={
                     "snapshot_id": self.snapshot.id,
-                    "snapshot_depth": self.snapshot.depth,
                     "plugin": plugin.name,
                     "hook_name": hook.name,
                 },
@@ -260,7 +259,7 @@ class SnapshotService(BaseService):
                 plugin_name=plugin.name,
                 hook_name=hook.name,
                 hook_path=str(hook.path),
-                hook_args=[f"--url={self.url}"],
+                hook_args=[f"--url={self.url}", f"--snapshot-id={self.snapshot.id}", f"--depth={self.snapshot.depth}"],
                 is_background=hook.is_background,
                 output_dir=str(plugin_output_dir),
                 env=env,
