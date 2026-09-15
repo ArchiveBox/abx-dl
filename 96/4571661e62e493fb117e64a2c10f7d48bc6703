@@ -1,0 +1,21 @@
+README.md
+  s_52f2bda5505456::t_99113494af3b54 43-46
+Dockerfile
+  s_52f2bda5505456::t_81bc2fb6dfbeef 276-278
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "964571661e62e493fb117e64a2c10f7d48bc6703",
+  "prompts": {},
+  "sessions": {
+    "s_52f2bda5505456": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a091f5-a5f0-70d3-a06d-259a10de24c2",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
