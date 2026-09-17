@@ -183,6 +183,7 @@ RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=
     && export HOME=/var/tmp/abxpkg-cache XDG_CACHE_HOME=/var/tmp/abxpkg-cache ABXPKG_TMP_CACHE_DIR=/var/tmp/abxpkg-cache \
     && abx-dl install chrome \
     && abx-dl install \
+    && /venv/bin/python3 -c 'import json, pathlib, subprocess, abx_plugins; root = pathlib.Path(abx_plugins.__file__).parent / "plugins"; names = [p.parent.name for p in sorted(root.glob("*/config.json")) if json.loads(p.read_text()).get("x-install-in-docker", False)]; [subprocess.run(["abx-dl", "install", name], check=True) for name in names]' \
     && rm -rf /usr/lib/*-linux-gnu/dri /usr/lib/*-linux-gnu/libLLVM*.so* /usr/lib/*-linux-gnu/libz3.so.* \
     && rm -rf /usr/share/icons /usr/share/doc /usr/share/man /usr/share/bash-completion /usr/share/zsh /usr/share/info /usr/share/lintian /usr/share/bug \
     && install -d -m 755 /usr/share/man/man1 \
