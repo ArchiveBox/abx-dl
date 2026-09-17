@@ -22,6 +22,21 @@ def assemble_env(*, overrides: dict[str, Any] | None = None, run_output_dir: Pat
     return PluginEnv.from_config(config, run_output_dir=run_output_dir).to_env()
 
 
+def test_chrome_hook_receives_other_plugins_enabled_flags(tmp_path: Path) -> None:
+    catalog = PluginCatalog.discover()
+    runtime = asyncio.run(
+        get_plugin_env(
+            None,
+            plugin=catalog["chrome"],
+            run_output_dir=tmp_path,
+            config=RuntimeConfig(user=GlobalConfig(UBLOCK_ENABLED=False, SINGLEFILE_ENABLED=True), derived={}),
+        ),
+    )
+    env = runtime.to_env()
+    assert env["UBLOCK_ENABLED"] == "False"
+    assert env["SINGLEFILE_ENABLED"] == "True"
+
+
 @pytest.mark.parametrize("_fixture_case", range(2))
 def test_isolated_config_shares_managed_binaries_but_isolates_mutable_state(
     _fixture_case: int,

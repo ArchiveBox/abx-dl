@@ -3,8 +3,15 @@
 from __future__ import annotations
 
 import json
+import codecs
+import os
+import selectors
+import signal
+import tempfile
+import threading
+import time
 import subprocess
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Generator, Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -42,7 +49,8 @@ def iter_plugin_command(
     env: Mapping[str, str] | None = None,
     cwd: Path | None = None,
     timeout: float = 60,
-) -> Iterator[str]:
+    stop_event: threading.Event | None = None,
+) -> Generator[str]:
     """Run a plugin-owned command and yield its stdout lines.
 
     Commands are black-box executables declared by plugin manifests. The
@@ -51,17 +59,70 @@ def iter_plugin_command(
     """
     argv = [str(command.path), *command.args, *build_hook_args(arguments or {})]
     input_text = "".join(f"{str(line).rstrip(chr(10))}\n" for line in stdin)
-    completed = subprocess.run(
-        argv,
-        cwd=str(cwd or command.path.parent),
-        env=dict(env) if env is not None else None,
-        input=input_text,
-        capture_output=True,
-        text=True,
-        check=True,
-        timeout=timeout,
-    )
-    yield from completed.stdout.splitlines()
+    # Files avoid deadlocks when a command consumes large stdin or writes stderr
+    # while stdout is being streamed. Each invocation owns its entire process group.
+    with tempfile.TemporaryFile() as input_file, tempfile.TemporaryFile() as errors:
+        input_file.write(input_text.encode())
+        input_file.seek(0)
+        proc = subprocess.Popen(
+            argv,
+            cwd=str(cwd or command.path.parent),
+            env=dict(env) if env is not None else None,
+            stdin=input_file,
+            stdout=subprocess.PIPE,
+            stderr=errors,
+            start_new_session=True,
+        )
+        deadline = time.monotonic() + timeout
+        decoder = codecs.getincrementaldecoder("utf-8")()
+        pending = ""
+        try:
+            assert proc.stdout is not None
+            with selectors.DefaultSelector() as selector:
+                selector.register(proc.stdout, selectors.EVENT_READ)
+                while True:
+                    if stop_event is not None and stop_event.is_set():
+                        return
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise subprocess.TimeoutExpired(argv, timeout)
+                    if not selector.select(min(0.1, remaining)):
+                        continue
+                    chunk = os.read(proc.stdout.fileno(), 65536)
+                    pending += decoder.decode(chunk, final=not chunk)
+                    lines = pending.split("\n")
+                    pending = lines.pop()
+                    for line in lines:
+                        if stop_event is not None and stop_event.is_set():
+                            return
+                        yield line.rstrip("\r")
+                    if not chunk:
+                        break
+                if pending:
+                    yield pending
+            while proc.poll() is None:
+                if stop_event is not None and stop_event.is_set():
+                    return
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(argv, timeout)
+                try:
+                    proc.wait(timeout=min(0.1, remaining))
+                except subprocess.TimeoutExpired:
+                    pass
+            if proc.returncode:
+                errors.seek(0)
+                raise subprocess.CalledProcessError(proc.returncode, argv, stderr=errors.read().decode(errors="replace"))
+        finally:
+            # Killing only the wrapper leaves search engines alive after an HTTP
+            # disconnect or timeout. The fresh session cannot include other jobs.
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.wait()
+            if proc.stdout is not None:
+                proc.stdout.close()
 
 
 async def execute_hook(

@@ -1418,6 +1418,9 @@ def dl(
     disabled = [plugin.strip() for plugin in disable_list.split(",") if plugin.strip()] if disable_list else []
     selected_catalog = catalog.select(selected, disabled_names=disabled)
     user_config = {**get_explicit_user_env(), **config_overrides, "ABX_RUNTIME": "abx-dl"}
+    for plugin in catalog.values():
+        if plugin.name not in selected_catalog and plugin.enabled_key in plugin.config.properties:
+            user_config[plugin.enabled_key] = False
     install_timeout = compute_install_phase_timeout(get_install_plugins(selected_catalog), user_config)
     crawl_setup_hooks = get_phase_hooks(selected_catalog, "CrawlSetup")
     snapshot_hooks = get_phase_hooks(selected_catalog, "Snapshot")

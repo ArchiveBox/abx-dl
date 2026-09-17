@@ -342,7 +342,15 @@ async def get_plugin_env(
         user_env=runtime_config.user,
         derived_env=runtime_config.derived if include_derived else None,
     )
-    return PluginEnv.from_config(plugin_config, run_output_dir=run_output_dir, extra_context=extra_context)
+    runtime = PluginEnv.from_config(plugin_config, run_output_dir=run_output_dir, extra_context=extra_context)
+    # Shared resources such as Chrome need the concrete selection flags for
+    # other plugins too, so cached extensions cannot bypass disabled plugins.
+    # Preserve this snapshot's user configuration, not ambient bus state.
+    existing_keys = set(runtime.model_dump())
+    for key, value in runtime_config.user.model_dump(mode="json").items():
+        if key.endswith("_ENABLED") and key not in existing_keys:
+            setattr(runtime, key, value)
+    return runtime
 
 
 def get_initial_env(*keys: str, resolver: PluginConfigResolver | None = None) -> dict[str, Any]:
