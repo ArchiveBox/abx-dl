@@ -184,6 +184,10 @@ RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=
     && abx-dl install chrome \
     && abx-dl install \
     && /venv/bin/python3 -c 'import json, pathlib, subprocess, abx_plugins; root = pathlib.Path(abx_plugins.__file__).parent / "plugins"; names = [p.parent.name for p in sorted(root.glob("*/config.json")) if json.loads(p.read_text()).get("x-install-in-docker", False)]; [subprocess.run(["abx-dl", "install", name], check=True) for name in names]' \
+    # pnpm includes both libc variants of OpenCode's optional binary packages.
+    # Debian uses glibc; the unused musl binaries add ~60 MiB compressed.
+    && find "$ABXPKG_LIB_DIR/pnpm/packages/opencode/node_modules" -type l -name 'opencode-linux-*-musl' -delete \
+    && find "$ABXPKG_LIB_DIR/pnpm/packages/opencode/node_modules/.pnpm" -maxdepth 1 -type d -name 'opencode-linux-*-musl@*' -exec rm -rf {} + \
     && rm -rf /usr/lib/*-linux-gnu/dri /usr/lib/*-linux-gnu/libLLVM*.so* /usr/lib/*-linux-gnu/libz3.so.* \
     && rm -rf /usr/share/icons /usr/share/doc /usr/share/man /usr/share/bash-completion /usr/share/zsh /usr/share/info /usr/share/lintian /usr/share/bug \
     && install -d -m 755 /usr/share/man/man1 \
@@ -257,6 +261,8 @@ RUN --network=none env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox \
         && abxpkg load /venv/bin/python3 \
         && abx-dl plugins \
         && abxpkg load rg \
+        && "$ABXPKG_LIB_DIR/pnpm/packages/opencode/node_modules/.bin/opencode" --version \
+        && abx-dl install opencode \
         && ! command -v gcc \
         && ! command -v g++ \
         && ! command -v make \
