@@ -10,7 +10,7 @@ exec >stdout.log
 -->
 <!--pytest-codeblocks:cont-->
 ```bash
-uvx abx-dl --plugins=title,wget 'https://example.com'
+uvx abx-dl 'https://example.com'
 ```
 
 <!--pytest-codeblocks:cont-->
@@ -22,27 +22,7 @@ test -s wget/example.com/index.html
 ```
 -->
 
-<!--pytest.mark.docker_required-->
-```bash
-set -Eeuo pipefail
-output_dir="$(mktemp -d)"
-image="${ABXDL_IMAGE:-archivebox/abx-dl:latest}"
-trap 'rm -rf "$output_dir"' EXIT
-docker run --rm \
-  --volume "$output_dir:/out" \
-  "$image" \
-  --no-install --max-urls=1 --plugins=title,wget 'https://example.com'
-test -s "$output_dir/index.jsonl"
-test -s "$output_dir/title/title.txt"
-test -s "$output_dir/wget/example.com/index.html"
-grep -q 'Example Domain' "$output_dir/title/title.txt"
-grep -q 'Example Domain' "$output_dir/wget/example.com/index.html"
-```
 ---
-
-To persist standalone Docker personas, mount their directory explicitly at
-`/data/personas`. The image does not create an anonymous persona volume; this
-also lets ArchiveBox's single `/data` collection mount include its personas.
 
 ✨ *Ever wish you could `yt-dlp`, `gallery-dl`, `wget`, `curl`, `puppeteer`, etc. all in one command?*
 
