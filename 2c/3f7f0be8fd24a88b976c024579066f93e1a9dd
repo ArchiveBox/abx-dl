@@ -1,0 +1,16 @@
+.github/workflows/docker.yml
+  h_923c208e183a7b 235-237,242
+Dockerfile
+  h_923c208e183a7b 187-190,264-265
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "2c3f7f0be8fd24a88b976c024579066f93e1a9dd",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
