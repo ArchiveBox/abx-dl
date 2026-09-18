@@ -1,0 +1,20 @@
+.github/workflows/pages.yml
+  h_923c208e183a7b 1-40
+bin/build_site.py
+  h_923c208e183a7b 1-24
+website/index.html
+  h_923c208e183a7b 1-30
+website/style.css
+  h_923c208e183a7b 1-30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "0ccc4ad0d513d44c3cb1d7e509c71dfb4eff2837",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
