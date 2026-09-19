@@ -1,0 +1,22 @@
+README.md
+  h_923c208e183a7b 32,80,86,457
+bin/build_site.py
+  h_923c208e183a7b 25
+pyproject.toml
+  h_923c208e183a7b 155,157
+website/CNAME
+  h_923c208e183a7b 1
+website/index.html
+  h_923c208e183a7b 37,39,42,50
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "4b52c027026ef769454b874b2050ce6ab95bdead",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
