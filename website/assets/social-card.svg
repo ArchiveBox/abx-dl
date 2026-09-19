@@ -10,5 +10,5 @@
  <text x="72" y="242" font-size="46">A simple all-in-one CLI tool to auto-detect and</text>
  <text x="72" y="306" font-size="46">download everything available from a URL.</text>
  <path d="M72 514H1128" stroke="#ddcfd5"/>
- <text x="72" y="563" font-size="25" fill="#852347">archivebox.github.io/abx-dl</text>
+ <text x="72" y="563" font-size="25" fill="#852347">abx-dl.archivebox.io</text>
  </g></svg>
