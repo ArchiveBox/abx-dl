@@ -1,0 +1,14 @@
+website/assets/social-card.svg
+  h_923c208e183a7b 13
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "66f6591caf12cc80f45a251b1930013355967096",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
