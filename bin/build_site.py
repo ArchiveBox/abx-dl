@@ -6,6 +6,7 @@
 
 from pathlib import Path
 import re
+import shutil
 
 import markdown
 
@@ -20,5 +21,6 @@ output = ROOT / "dist" / "site"
 output.mkdir(parents=True, exist_ok=True)
 output.joinpath("index.html").write_text(ROOT.joinpath("website/index.html").read_text().replace("<!-- README -->", content))
 output.joinpath("style.css").write_text(ROOT.joinpath("website/style.css").read_text())
+shutil.copytree(ROOT / "website/assets", output / "assets", dirs_exist_ok=True)
 output.joinpath(".nojekyll").touch()
 print(f"Built {output / 'index.html'}")
