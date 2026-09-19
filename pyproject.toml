@@ -152,9 +152,9 @@ pythonPlatform = "Linux"
 abx-dl = "abx_dl:main"
 
 [project.urls]
-Homepage = "https://github.com/ArchiveBox/abx-dl"
+Homepage = "https://abx-dl.archivebox.io/"
 Source = "https://github.com/ArchiveBox/abx-dl"
-Documentation = "https://github.com/ArchiveBox/abx-dl"
+Documentation = "https://abx-dl.archivebox.io/"
 "Bug Tracker" = "https://github.com/ArchiveBox/abx-dl/issues"
 Changelog = "https://github.com/ArchiveBox/abx-dl/releases"
 Community = "https://github.com/ArchiveBox/ArchiveBox/wiki/Web-Archiving-Community"

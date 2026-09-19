@@ -29,7 +29,7 @@ test -s wget/example.com/index.html
 `abx-dl` is an all-in-one CLI tool for downloading URLs "by any means necessary".
 
 It's useful for scraping, downloading, OSINT, digital preservation, and more.
-`abx-dl` provides a simpler one-shot CLI interface to the [ArchiveBox plugin ecosystem](https://archivebox.github.io/abx-plugins/).
+`abx-dl` provides a simpler one-shot CLI interface to the [ArchiveBox plugin ecosystem](https://plugins.archivebox.io/).
 
 <img width="1000" height="1082" alt="Screenshot 2026-03-11 at 6 53 03 AM" src="https://github.com/user-attachments/assets/4e19d985-1a93-4f65-9970-2565be16b718" />
 
@@ -77,13 +77,13 @@ grep -q '"plugin": "readability".*"status": "succeeded"' index.jsonl
 - audio, video, subtitles, playlists, comments
 - snapshot of the page as a PDF, screenshot, and [Singlefile](https://github.com/gildas-lormeau/single-file-cli) HTML
 - article text, `git` source code
-- [and much more](https://archivebox.github.io/abx-plugins/)...
+- [and much more](https://plugins.archivebox.io/)...
 
 <br/>
 
 #### 🧩 How does it work?
 
-`abx-dl` uses the **[Plugin Library](https://archivebox.github.io/abx-plugins/)** (shared with [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox)) to run a collection of downloading and scraping tools.
+`abx-dl` uses the **[Plugin Library](https://plugins.archivebox.io/)** (shared with [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox)) to run a collection of downloading and scraping tools.
 
 Plugins are loaded from the installed [`abx-plugins`](https://pypi.org/project/abx-plugins/) package (or from `ABX_PLUGINS_DIR` if you override it) and execute in distinct phases:
 1. **Install phase** runner reads plugins `config.json`: `required_binaries` and emits `BinaryRequestEvent`s for `abxpkg.binary_service.BinaryService`, which resolves or installs binaries using built-in providers such as env, pip, npm, brew, apt, cargo, and browser-specific providers. `abxpkg` owns the persistent binary cache; `abx-dl` only projects resolved paths into the current run's in-memory config.
@@ -454,7 +454,7 @@ This repo includes an `abx-dl` skill for coding agents that need to run the stan
 
 - `abxbus` https://abxbus.archivebox.io https://github.com/archiveBox/abxbus
 - `abxpkg` https://abxpkg.archivebox.io https://github.com/archiveBox/abxpkg
-- `abx-plugins` https://abx-plugins.archivebox.io https://github.com/ArchiveBox/abx-plugins
+- `abx-plugins` https://plugins.archivebox.io https://github.com/ArchiveBox/abx-plugins
 - `archivebox` https://archivebox.io https://github.com/ArchiveBox/ArchiveBox
 - And lots more...
   - https://github.com/stars/pirate/lists/internet-archiving
