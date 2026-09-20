@@ -5,15 +5,31 @@
 # WHY: abx-dl is the reusable downloader runtime. Only extraction dependencies
 # belong here. ArchiveBox-only services (Sonic, OpenCode, supervisor, Django)
 # must be installed in ArchiveBox's added layers, never this shared base.
-# Preinstall ALL plugins supported by the abx-dl runtime and every required
-# dependency, including plugins disabled by default (Java/OpenDataLoader,
-# TLSNotary, OpenTimestamps, and Claude capture tools). Enabled state controls
-# capture execution, never what ships in the image. Verify the complete set
-# offline as the normal runtime user. Never omit a dependency or feature to
-# satisfy the compressed image budget (775 MiB).
-# Only mechanical/internal optimizations preserving user-facing functionality
-# are allowed. If the complete image exceeds the limit, let CI fail and ask the
-# maintainer how to proceed; do not disable features or weaken the check.
+# REQUIRED INSTALLATION CONTRACT — do not work around failures:
+# 1. IMAGE CONSTRUCTION: preinstall ALL plugins supported by runtime="abx-dl"
+#    and ALL their required_binaries, including disabled-by-default plugins
+#    (Java/OpenDataLoader, TLSNotary, OpenTimestamps, Claude capture tools).
+#    Use the normal plugin dependency pipeline: abx-dl install -> config.json
+#    required_binaries -> abxpkg. Enabled defaults control captures, NOT image
+#    contents. Never add manual apt/pip/npm installs to hide pipeline failures.
+#    OS/interpreter bootstrap needed to run that pipeline is a separate concern;
+#    it must not become a second hand-maintained list of plugin dependencies.
+# 2. FINISHED IMAGE: every dependency is already present in the image layers.
+#    Verify the ENTIRE supported catalog offline as UID 911. Installation must
+#    discover the existing binaries and be a no-op: no downloads, package
+#    installs, sudo, or root repair. A missing dependency means the image build
+#    or dependency discovery is broken; fix that cause and rebuild the image.
+#    Never change the runtime verification to root or preinstall before it.
+# 3. NON-CONTAINER CI: test real runtime auto-installation through the same
+#    CLI/required_binaries/abxpkg path users invoke. GitHub's runner has
+#    passwordless sudo; abxpkg must escalate automatically when needed. Never
+#    preinstall test dependencies manually or wrap the tested command in sudo
+#    to conceal a broken installer. This is distinct from the image no-op test.
+# 4. SIZE: the complete compressed image budget is 775 MiB. Only mechanical or
+#    internal optimizations preserving ALL user-facing functionality are allowed.
+#    Never remove dependencies, disable plugins/features, weaken assertions, or
+#    skip checks to pass. If the complete image exceeds the limit, LET CI FAIL
+#    and explicitly ask the maintainer what to do. Do not raise it unilaterally.
 #
 # Build from the abx-dl package directory:
 #   docker buildx build ./abx-dl -f ./abx-dl/Dockerfile \
