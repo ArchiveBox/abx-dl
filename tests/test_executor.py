@@ -1,4 +1,5 @@
 import asyncio
+import hashlib
 import json
 import os
 import signal
@@ -1471,6 +1472,34 @@ def test_snapshot_background_daemon_stays_alive_until_cleanup(tmp_path: Path) ->
     assert len(started) == 1 and started[0].is_background is True
     assert len(completed) == 1 and completed[0].status == "succeeded" and completed[0].exit_code == 0
     assert not _pid_is_alive(started[0].pid)
+
+
+@pytest.mark.parametrize("keep_frames", [0, 2])
+def test_hash_manifest_matches_files_after_browser_cleanup(tmp_path: Path, httpserver: HTTPServer, keep_frames: int) -> None:
+    httpserver.expect_request("/").respond_with_data(
+        "<html><head><title>Final archive hashes</title></head><body>Saved content</body></html>",
+        content_type="text/html",
+    )
+    catalog = PluginCatalog.discover().select(["screenshot", "consolelog", "chrome_screencast", "hashes"])
+    output_dir = tmp_path / "capture"
+    results = _run_download(
+        httpserver.url_for("/"),
+        catalog,
+        output_dir,
+        config_overrides={"CHROME_HEADLESS": True, "CHROME_SCREENCAST_KEEP": keep_frames},
+        auto_install=True,
+        emit_jsonl=False,
+    )
+    assert {result.plugin for result in results if result.status == "succeeded"} >= {"screenshot", "hashes"}
+    manifest = json.loads((output_dir / "hashes" / "hashes.json").read_text())
+    assert "screenshot/screenshot.png" in {item["path"] for item in manifest["files"]}
+    retained_frames = list((output_dir / "chrome_screencast").glob("frame-*.jpg"))
+    assert bool(retained_frames) is bool(keep_frames)
+    assert {str(path.relative_to(output_dir)) for path in retained_frames} <= {item["path"] for item in manifest["files"]}
+    for item in manifest["files"]:
+        path = output_dir / item["path"]
+        assert path.is_file(), item["path"]
+        assert hashlib.sha256(path.read_bytes()).hexdigest() == item["hash"], item["path"]
 
 
 def test_snapshot_hook_waits_for_selected_plugin_outputs(tmp_path: Path, httpserver: HTTPServer) -> None:

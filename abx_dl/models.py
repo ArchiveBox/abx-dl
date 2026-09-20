@@ -116,6 +116,7 @@ class PluginConfig(BaseModel):
     required_binaries: list[RequiredBinary] = Field(default_factory=list)  # e.g. [{'name': 'wget', 'binproviders': 'env,brew,apt'}]
     required_plugins: list[str] = Field(default_factory=list)  # e.g. ['chrome', 'pdf']
     wait_for_plugins: list[str] = Field(default_factory=list)
+    wait_for_background_cleanup: bool = False
     category: str = ""
     display_order: int = 1000
     hidden: bool = False

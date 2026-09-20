@@ -213,12 +213,14 @@ class SnapshotDiscoveredEvent(BaseEvent):
 class SnapshotCleanupEvent(BaseEvent):
     """Phase: SIGTERM all background snapshot hooks.
 
-    Emitted by SnapshotService.on_SnapshotEvent after all snapshot hooks complete.
+    Emitted after snapshot hooks complete, or before a final-file consumer with
+    finalize_snapshot=False to flush producers without marking the snapshot done.
     """
 
     url: str
     snapshot_id: str
     output_dir: str
+    finalize_snapshot: bool = True
     event_timeout: float | None = 30.0
 
 

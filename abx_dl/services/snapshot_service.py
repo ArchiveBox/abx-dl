@@ -210,6 +210,15 @@ class SnapshotService(BaseService):
             if await self.should_abort():
                 return
             await self.wait_for_plugin_outputs(event, plugin)
+            if plugin.config.wait_for_background_cleanup:
+                cleanup_event = SnapshotCleanupEvent(
+                    url=event.url,
+                    snapshot_id=event.snapshot_id,
+                    output_dir=event.output_dir,
+                    finalize_snapshot=False,
+                    event_timeout=self.snapshot_cleanup_phase_timeout,
+                )
+                await _run_event_now(event.emit(cleanup_event), self.snapshot_cleanup_phase_timeout)
             if await self.should_abort():
                 return
             assert self.limit_state is not None
@@ -543,7 +552,7 @@ class SnapshotService(BaseService):
                     for process_event, _ in started_processes
                 ],
             )
-        if root_snapshot_event.event_id in self._failed_snapshot_event_ids:
+        if not event.finalize_snapshot or root_snapshot_event.event_id in self._failed_snapshot_event_ids:
             return
         completed_event = SnapshotCompletedEvent(
             url=event.url,
