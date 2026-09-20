@@ -222,6 +222,31 @@ uvx abx-dl version
 abx-dl install wget title
 ```
 
+#### Docker
+
+The image includes the downloader plugins and their dependencies. Mount an
+output directory at `/out` to keep the downloaded files:
+
+<!--pytest.mark.docker_required-->
+```bash
+set -Eeuo pipefail
+output_dir="$(mktemp -d)"
+image="${ABXDL_IMAGE:-archivebox/abx-dl:latest}"
+trap 'rm -rf "$output_dir"' EXIT
+docker run --rm \
+  --volume "$output_dir:/out" \
+  "$image" \
+  --no-install --max-urls=1 --plugins=title,wget 'https://example.com'
+test -s "$output_dir/index.jsonl"
+test -s "$output_dir/title/title.txt"
+test -s "$output_dir/wget/example.com/index.html"
+grep -q 'Example Domain' "$output_dir/title/title.txt"
+grep -q 'Example Domain' "$output_dir/wget/example.com/index.html"
+```
+
+To persist browser personas, also mount their directory at `/data/personas`.
+The image does not create an anonymous persona volume.
+
 <br/>
 
 ### 🔠 Usage
