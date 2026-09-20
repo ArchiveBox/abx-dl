@@ -144,6 +144,12 @@ jobs:
       - name: Install Python dependencies
         run: '"${UV_BINARY}" sync --no-cache --locked --dev --no-sources'
 
+      - name: Install real search backend dependency
+        if: matrix.file == 'tests/test_search_command_lifecycle.py'
+        env:
+          ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
+        run: $UV_BINARY run --no-cache --no-sync --no-sources abx-dl install search_backend_ripgrep
+
       - name: Run repo test suite
         env:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
@@ -194,7 +200,7 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.ANTHROPIC_API_KEY == '' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
       TWOCAPTCHA_API_KEY: ${{ secrets.TWOCAPTCHA_API_KEY }}
 
     steps:
