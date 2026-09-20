@@ -3,11 +3,11 @@ revision = 3
 requires-python = ">=3.12, <3.15"
 
 [options]
-exclude-newer = "2026-09-14T06:34:10.517383705Z"
+exclude-newer = "0001-01-01T00:00:00Z" # This has no effect and is included for backwards compatibility when using relative exclude-newer values.
 exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
-abxbus = { timestamp = "2026-09-19T06:34:09.517398443Z", span = "PT1S" }
+abxbus = { timestamp = "0001-01-01T00:00:00Z", span = "PT1S" }
 abx-dl = "2100-01-01T00:00:00Z"
 abx-plugins = "2100-01-01T00:00:00Z"
 abxpkg = "2100-01-01T00:00:00Z"
@@ -33,6 +33,7 @@ dependencies = [
 dev = [
     { name = "flake8" },
     { name = "flask" },
+    { name = "markdown" },
     { name = "mypy" },
     { name = "pdm-backend" },
     { name = "prek" },
@@ -66,6 +67,7 @@ requires-dist = [
 dev = [
     { name = "flake8", specifier = ">=7.1.1" },
     { name = "flask", specifier = ">=3.0" },
+    { name = "markdown", specifier = ">=3.10.3" },
     { name = "mypy", specifier = ">=1.11.2" },
     { name = "pdm-backend", specifier = ">=2.4.0" },
     { name = "prek", specifier = ">=0.3.6" },
@@ -92,9 +94,9 @@ dependencies = [
     { name = "rich-click" },
     { name = "uv" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/39/a3/bd836bda7f3a7ea69ec4fc360858898ed0ae01ac57cfb4df361f5c6a907c/abx_plugins-1.12.285.tar.gz", hash = "sha256:3c09722829c363c6d4282a2f1c725fef1384edc033e3e31dc422d69c963516a0", size = 344443 }
+sdist = { url = "https://files.pythonhosted.org/packages/39/a3/bd836bda7f3a7ea69ec4fc360858898ed0ae01ac57cfb4df361f5c6a907c/abx_plugins-1.12.285.tar.gz", hash = "sha256:3c09722829c363c6d4282a2f1c725fef1384edc033e3e31dc422d69c963516a0", size = 344443, upload-time = "2026-09-19T06:33:44.159Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0d/a0/14034335e2e87992e875cfa643c0c689ed2861367be9a636472649dcbcd9/abx_plugins-1.12.285-py3-none-any.whl", hash = "sha256:2ac5be17e1a32916ffa5c25e0a45d7f16770b4496a441a664b018cc16041514b", size = 511371 },
+    { url = "https://files.pythonhosted.org/packages/0d/a0/14034335e2e87992e875cfa643c0c689ed2861367be9a636472649dcbcd9/abx_plugins-1.12.285-py3-none-any.whl", hash = "sha256:2ac5be17e1a32916ffa5c25e0a45d7f16770b4496a441a664b018cc16041514b", size = 511371, upload-time = "2026-09-19T06:33:45.609Z" },
 ]
 
 [[package]]
@@ -424,6 +426,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/0c/99/6203ce619dee940d6bfbe099ec3fe4be00a68e9d60f70abf906cf124fe66/librt-0.13.0-cp314-cp314t-win32.whl", hash = "sha256:5fdcf34f86de8fb66d7dc7589f96ba91c4aa46671200d400e6fd6f109a483f18", size = 104357, upload-time = "2026-07-08T12:26:09.828Z" },
     { url = "https://files.pythonhosted.org/packages/52/dd/843b6314087c41657c7036d7914d8f294bdf9b580aa8513ea0588c8e9a3d/librt-0.13.0-cp314-cp314t-win_amd64.whl", hash = "sha256:260c33e92263fa629b4f6d3c51967a1c2158fe6c33237aaa3ebeac586b085259", size = 126998, upload-time = "2026-07-08T12:26:10.975Z" },
     { url = "https://files.pythonhosted.org/packages/5f/5d/3dcec2884ba1b0806d1408612555c38dd5d68e90156b59f75f6e36435c3a/librt-0.13.0-cp314-cp314t-win_arm64.whl", hash = "sha256:2f281549a4c52ac7bb97997f14353f8bd0e53a34ca0dad1c905cfd0b4a58ae99", size = 110771, upload-time = "2026-07-08T12:26:12.303Z" },
+]
+
+[[package]]
+name = "markdown"
+version = "3.10.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/29/6f/da4c6aea59b3001f2e8c0ec7497475aadaf3b021c10cab5b2858f0f32b26/markdown-3.10.3.tar.gz", hash = "sha256:3589362618f743188b4d955b874402bc814f4f83f544dc207719f4baa7d9c45f", size = 372596, upload-time = "2026-07-30T19:05:29.005Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/64/69/4a5af2bc115a9a33fefe51709749de8262be3f9ba063d1753a837cdbc49c/markdown-3.10.3-py3-none-any.whl", hash = "sha256:fa6c92a00a4a3c98b22728c64a935ae1928250ae65058a6ded814d2cc29a4cea", size = 110757, upload-time = "2026-07-30T19:05:27.883Z" },
 ]
 
 [[package]]

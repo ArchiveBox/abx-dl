@@ -150,6 +150,7 @@ class SnapshotService(BaseService):
         self._hook_timeouts: dict[tuple[str, str], int] = {}
         self._active_snapshot_event_ids: set[str] = set()
         self._completed_snapshot_event_ids: set[str] = set()
+        self._failed_snapshot_event_ids: set[str] = set()
         super().__init__(bus)
         self._handler_registrations = [
             (CrawlAbortEvent, self.bus.on(CrawlAbortEvent, self.on_CrawlAbortEvent)),
@@ -396,6 +397,7 @@ class SnapshotService(BaseService):
         url = self.url
         snapshot_id = self.snapshot.id
         output_dir = str(self.output_dir)
+        snapshot_failed = True
         try:
             for plugin, hook in self.hooks:
                 if await self.should_abort():
@@ -405,7 +407,10 @@ class SnapshotService(BaseService):
                     break
                 if self.limit_state.get_snapshot_stop_reason(event.snapshot_id) == "snapshot_max_size":
                     break
+            snapshot_failed = False
         finally:
+            if snapshot_failed:
+                self._failed_snapshot_event_ids.add(event.event_id)
             cleanup_event = SnapshotCleanupEvent(
                 url=url,
                 snapshot_id=snapshot_id,
@@ -413,7 +418,10 @@ class SnapshotService(BaseService):
                 event_timeout=self.snapshot_cleanup_phase_timeout,
                 event_handler_slow_timeout=slow_warning_timeout(self.snapshot_cleanup_phase_timeout),
             )
-            await _run_event_now(event.emit(cleanup_event), self.snapshot_cleanup_phase_timeout)
+            try:
+                await _run_event_now(event.emit(cleanup_event), self.snapshot_cleanup_phase_timeout)
+            finally:
+                self._failed_snapshot_event_ids.discard(event.event_id)
 
     async def on_SnapshotCleanupEvent(self, event: SnapshotCleanupEvent) -> None:
         """SIGTERM all background snapshot hooks so they can flush and exit.
@@ -535,6 +543,8 @@ class SnapshotService(BaseService):
                     for process_event, _ in started_processes
                 ],
             )
+        if root_snapshot_event.event_id in self._failed_snapshot_event_ids:
+            return
         completed_event = SnapshotCompletedEvent(
             url=event.url,
             snapshot_id=event.snapshot_id,

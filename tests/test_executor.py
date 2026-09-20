@@ -1683,6 +1683,57 @@ def test_snapshot_completed_waits_for_cleanup_process_listeners(tmp_path: Path) 
     assert completed_saw_side_effect == [True]
 
 
+def test_snapshot_filesystem_failure_cleans_up_without_completion(tmp_path: Path) -> None:
+    plugin = PluginCatalog.discover()["title"]
+    output_dir = tmp_path / "run"
+    output_dir.mkdir()
+    (output_dir / plugin.name).symlink_to(plugin.name)
+    bus = create_bus(total_timeout=10.0, name=f"snapshot_filesystem_failure_{tmp_path.name}")
+    SnapshotService(
+        bus,
+        url="https://example.com",
+        snapshot=Snapshot(url="https://example.com", id="snap-filesystem-failure"),
+        output_dir=output_dir,
+        catalog=PluginCatalog({plugin.name: plugin}),
+        config=_runtime_config(CRAWL_DIR=output_dir),
+        snapshot_phase_timeout=5.0,
+        snapshot_cleanup_phase_timeout=5.0,
+    )
+
+    async def run() -> tuple[SnapshotCleanupEvent | None, SnapshotCompletedEvent | None]:
+        await bus.emit(
+            MachineEvent(
+                config={"CRAWL_DIR": str(output_dir)},
+                config_type="user",
+            ),
+        ).now()
+        crawl_start_event = CrawlStartEvent(
+            url="https://example.com",
+            snapshot_id="snap-filesystem-failure",
+            output_dir=str(output_dir),
+        )
+        root_event = SnapshotEvent(
+            url="https://example.com",
+            snapshot_id="snap-filesystem-failure",
+            output_dir=str(output_dir),
+            event_parent_id=crawl_start_event.event_id,
+        )
+        await bus.emit(crawl_start_event).now()
+        await bus.emit(root_event).now()
+        cleanup = await bus.find(SnapshotCleanupEvent, child_of=root_event, past=True, future=False)
+        completed = await bus.find(SnapshotCompletedEvent, child_of=root_event, past=True, future=False)
+        await bus.wait_until_idle()
+        return (
+            cleanup if isinstance(cleanup, SnapshotCleanupEvent) else None,
+            completed if isinstance(completed, SnapshotCompletedEvent) else None,
+        )
+
+    cleanup, completed = asyncio.run(run())
+
+    assert cleanup is not None
+    assert completed is None
+
+
 def test_crawl_setup_background_daemon_survives_until_explicit_cleanup(tmp_path: Path) -> None:
     plugin = PluginCatalog.discover()["chrome"]
     daemon_hook_name = "on_CrawlSetup__90_chrome_launch.daemon.bg"

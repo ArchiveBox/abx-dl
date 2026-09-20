@@ -69,6 +69,7 @@ dev = [
     "pyright>=1.1.408",
     "ruff>=0.15.7",
     "ty>=0.0.24",
+    "markdown>=3.10.3",
 ]
 
 [build-system]
