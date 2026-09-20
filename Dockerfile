@@ -182,9 +182,10 @@ RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_ARCHIVEBOX_UID}..."
 RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=abxpkg-tmp-$TARGETARCH$TARGETVARIANT \
     echo "[+] Installing Chrome and plugin dependencies..." \
     && export HOME=/var/tmp/abxpkg-cache XDG_CACHE_HOME=/var/tmp/abxpkg-cache ABXPKG_TMP_CACHE_DIR=/var/tmp/abxpkg-cache \
+    && export ABX_DOCKER_PLUGINS="$(/venv/bin/python3 -c 'from abx_dl.catalog import PluginCatalog; print(" ".join(PluginCatalog.discover().select()))')" \
     && abx-dl install chrome \
-    && abx-dl install \
-    && /venv/bin/python3 -c 'import json, pathlib, subprocess, abx_plugins; root = pathlib.Path(abx_plugins.__file__).parent / "plugins"; names = [p.parent.name for p in sorted(root.glob("*/config.json")) if json.loads(p.read_text()).get("x-install-in-docker", False)]; [subprocess.run(["abx-dl", "install", name], check=True) for name in names]' \
+    # Explicit names install every downloader plugin, including disabled opt-ins.
+    && abx-dl install $ABX_DOCKER_PLUGINS \
     && rm -rf /usr/lib/*-linux-gnu/dri /usr/lib/*-linux-gnu/libLLVM*.so* /usr/lib/*-linux-gnu/libz3.so.* \
     && rm -rf /usr/share/icons /usr/share/doc /usr/share/man /usr/share/bash-completion /usr/share/zsh /usr/share/info /usr/share/lintian /usr/share/bug \
     && install -d -m 755 /usr/share/man/man1 \
@@ -194,10 +195,10 @@ RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=
     && STDLIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("stdlib"))')" \
     && PURELIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
     && /venv/bin/python -m compileall --invalidation-mode checked-hash -q "$STDLIB_DIR" "$PURELIB_DIR" \
-    && env HOME=/home/archivebox XDG_CACHE_HOME=/var/tmp/abxpkg-cache setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups abx-dl install \
+    && env HOME=/home/archivebox XDG_CACHE_HOME=/var/tmp/abxpkg-cache setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups abx-dl install $ABX_DOCKER_PLUGINS \
     && find /venv "$ABXPKG_LIB_DIR" -exec touch -h -d '@946684800' {} + \
     && find "$ABXPKG_LIB_DIR/cache" -mindepth 1 -maxdepth 1 -exec rm -rf {} + \
-    && env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox XDG_CACHE_HOME="$ABXPKG_LIB_DIR/cache" setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups abx-dl install \
+    && env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox XDG_CACHE_HOME="$ABXPKG_LIB_DIR/cache" setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups abx-dl install $ABX_DOCKER_PLUGINS \
     && CACHE_BYTES="$(du -sb "$ABXPKG_LIB_DIR/cache" | cut -f1)" \
     && (( CACHE_BYTES < 1048576 )) \
     && rm -rf /var/lib/apt/lists/* /tmp/*
@@ -247,7 +248,8 @@ RUN /usr/bin/uv pip show abx-dl | tee -a /VERSION.txt \
 # networking disabled, both abxpkg's derived records and uv's small runtime
 # index must remain byte-for-byte unchanged. If it repairs metadata or attempts
 # an install, the image build fails.
-RUN --network=none env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox \
+RUN --network=none export ABX_DOCKER_PLUGINS="$(/venv/bin/python3 -c 'from abx_dl.catalog import PluginCatalog; print(" ".join(PluginCatalog.discover().select()))')" \
+    && env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox \
     setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups \
     bash -c '(echo -e "\n\n[+] abx-dl runtime versions" \
         && abx-dl version \
@@ -268,9 +270,9 @@ RUN --network=none env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox \
         && ! command -v supervisord \
         && ! command -v opencode \
         && test ! -e "$ABXPKG_LIB_DIR/pnpm/packages/opencode" \
-        && abx-dl install \
+        && abx-dl install $ABX_DOCKER_PLUGINS \
         && (find "$ABXPKG_LIB_DIR" -name derived.env -type f -exec sha256sum {} +; find "$XDG_CACHE_HOME" -type f -exec sha256sum {} +) | sort > /tmp/cache-before \
-        && abx-dl install \
+        && abx-dl install $ABX_DOCKER_PLUGINS \
         && (find "$ABXPKG_LIB_DIR" -name derived.env -type f -exec sha256sum {} +; find "$XDG_CACHE_HOME" -type f -exec sha256sum {} +) | sort > /tmp/cache-after \
         && diff -u /tmp/cache-before /tmp/cache-after \
         && rm -f /tmp/cache-before /tmp/cache-after \
