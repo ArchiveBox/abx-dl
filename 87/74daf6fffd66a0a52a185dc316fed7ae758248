@@ -1,0 +1,20 @@
+abx_dl/services/snapshot_service.py
+  h_923c208e183a7b 153,400,410,412-413,421-424,546-547
+pyproject.toml
+  h_923c208e183a7b 72
+tests/test_executor.py
+  h_923c208e183a7b 1686-1736
+uv.lock
+  h_923c208e183a7b 6,10,36,70,97,99,431-439
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "8774daf6fffd66a0a52a185dc316fed7ae758248",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
