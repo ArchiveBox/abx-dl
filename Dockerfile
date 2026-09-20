@@ -259,7 +259,7 @@ RUN --network=none env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox \
         && abx-dl plugins \
         && abxpkg load rg \
         && abxpkg load --binproviders=env --min-version=11.0.0 java \
-        && abxpkg run --binproviders=env opendataloader-pdf --help \
+        && abxpkg run --binproviders=uv opendataloader-pdf --help \
         && ! command -v gcc \
         && ! command -v g++ \
         && ! command -v make \
