@@ -10,6 +10,14 @@ from abx_dl.config import get_initial_env, get_required_binary_requests
 from abx_dl.models import parse_hook_filename
 
 
+def test_runtime_catalogs_include_disabled_plugins_and_separate_server_tools() -> None:
+    downloader = PluginCatalog.discover(runtime="abx-dl")
+    archivebox = PluginCatalog.discover(runtime="archivebox")
+    assert {"opendataloader", "opentimestamps", "tlsnotary", "claudechrome", "claudecode"} <= set(downloader)
+    assert {"opencode", "search_backend_sonic"}.isdisjoint(downloader)
+    assert set(downloader) | {"opencode", "search_backend_sonic"} <= set(archivebox)
+
+
 def test_parse_hook_filename_marks_bg_hooks() -> None:
     assert parse_hook_filename("on_Snapshot__66_papersdl.finite.bg.py") == ("Snapshot", 66, True)
     assert parse_hook_filename("on_Snapshot__9_chrome_wait.js") == ("Snapshot", 9, False)

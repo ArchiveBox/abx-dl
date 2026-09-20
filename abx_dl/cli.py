@@ -1637,7 +1637,7 @@ def _run_plugin_install(
     selected_plugin_config = {plugin.enabled_key: True for plugin in selected.values() if plugin.enabled_key in plugin.config.properties}
     if dry_run:
         selected_plugin_config["DRY_RUN"] = True
-    user_config = {**get_explicit_user_env(), **selected_plugin_config, "ABX_RUNTIME": "abx-dl"}
+    user_config = {**get_explicit_user_env(), **selected_plugin_config, "ABX_RUNTIME": os.environ.get("ABX_RUNTIME", "abx-dl")}
     install_timeout = compute_install_phase_timeout(get_install_plugins(selected), user_config)
     bus = create_bus(total_timeout=install_timeout)
     live = None

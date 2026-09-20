@@ -5,6 +5,15 @@
 # WHY: abx-dl is the reusable downloader runtime. Only extraction dependencies
 # belong here. ArchiveBox-only services (Sonic, OpenCode, supervisor, Django)
 # must be installed in ArchiveBox's added layers, never this shared base.
+# Preinstall ALL plugins supported by the abx-dl runtime and every required
+# dependency, including plugins disabled by default (Java/OpenDataLoader,
+# TLSNotary, OpenTimestamps, and Claude capture tools). Enabled state controls
+# capture execution, never what ships in the image. Verify the complete set
+# offline as the normal runtime user. Never omit a dependency or feature to
+# satisfy the compressed image budget (775 MiB).
+# Only mechanical/internal optimizations preserving user-facing functionality
+# are allowed. If the complete image exceeds the limit, let CI fail and ask the
+# maintainer how to proceed; do not disable features or weaken the check.
 #
 # Build from the abx-dl package directory:
 #   docker buildx build ./abx-dl -f ./abx-dl/Dockerfile \
@@ -182,7 +191,7 @@ RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_ARCHIVEBOX_UID}..."
 RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=abxpkg-tmp-$TARGETARCH$TARGETVARIANT \
     echo "[+] Installing Chrome and plugin dependencies..." \
     && export HOME=/var/tmp/abxpkg-cache XDG_CACHE_HOME=/var/tmp/abxpkg-cache ABXPKG_TMP_CACHE_DIR=/var/tmp/abxpkg-cache \
-    && export ABX_DOCKER_PLUGINS="$(/venv/bin/python3 -c 'from abx_dl.catalog import PluginCatalog; print(" ".join(PluginCatalog.discover().select()))')" \
+    && export ABX_DOCKER_PLUGINS="$(/venv/bin/python3 -c 'from abx_dl.catalog import PluginCatalog; print(" ".join(PluginCatalog.discover(runtime="abx-dl")))')" \
     && abx-dl install chrome \
     # Explicit names install every downloader plugin, including disabled opt-ins.
     && abx-dl install $ABX_DOCKER_PLUGINS \
@@ -248,7 +257,7 @@ RUN /usr/bin/uv pip show abx-dl | tee -a /VERSION.txt \
 # networking disabled, both abxpkg's derived records and uv's small runtime
 # index must remain byte-for-byte unchanged. If it repairs metadata or attempts
 # an install, the image build fails.
-RUN --network=none export ABX_DOCKER_PLUGINS="$(/venv/bin/python3 -c 'from abx_dl.catalog import PluginCatalog; print(" ".join(PluginCatalog.discover().select()))')" \
+RUN --network=none export ABX_DOCKER_PLUGINS="$(/venv/bin/python3 -c 'from abx_dl.catalog import PluginCatalog; print(" ".join(PluginCatalog.discover(runtime="abx-dl")))')" \
     && env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox \
     setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups \
     bash -c '(echo -e "\n\n[+] abx-dl runtime versions" \
