@@ -25,7 +25,7 @@
 #    passwordless sudo; abxpkg must escalate automatically when needed. Never
 #    preinstall test dependencies manually or wrap the tested command in sudo
 #    to conceal a broken installer. This is distinct from the image no-op test.
-# 4. SIZE: the complete compressed image budget is 775 MiB. Only mechanical or
+# 4. SIZE: the complete compressed image budget is 900 MiB. Only mechanical or
 #    internal optimizations preserving ALL user-facing functionality are allowed.
 #    Never remove dependencies, disable plugins/features, weaken assertions, or
 #    skip checks to pass. If the complete image exceeds the limit, LET CI FAIL

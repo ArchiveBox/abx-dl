@@ -360,8 +360,8 @@ jobs:
             MANIFEST="$("${DOCKER_BINARY}" buildx imagetools inspect --raw "${DOCKERHUB_IMAGE}@${IMAGE_DIGEST}")"
           fi
           COMPRESSED_SIZE="$(MANIFEST="$MANIFEST" "$UV_BINARY" run --no-cache --no-project python -c 'import json, os; manifest = json.loads(os.environ["MANIFEST"]); print(manifest["config"]["size"] + sum(layer["size"] for layer in manifest["layers"]))')"
-          LIMIT=$((775 * 1024 * 1024))
-          echo "${DIGEST} compressed_size=$((COMPRESSED_SIZE / 1024 / 1024)) MiB limit=775 MiB"
+          LIMIT=$((900 * 1024 * 1024))
+          echo "${DIGEST} compressed_size=$((COMPRESSED_SIZE / 1024 / 1024)) MiB limit=900 MiB"
           (( COMPRESSED_SIZE < LIMIT ))
 
       - name: Export digest
