@@ -211,6 +211,10 @@ RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=
     && abx-dl install chrome \
     # Explicit names install every downloader plugin, including disabled opt-ins.
     && abx-dl install $ABX_DOCKER_PLUGINS \
+    # pnpm installs both libc variants; Debian can only execute the glibc one.
+    # Keep Claude and all plugins installed, removing only the unusable variant.
+    && find "$ABXPKG_LIB_DIR/pnpm/packages/claudecode/node_modules" -type l -name 'claude-code-linux-*-musl' -delete \
+    && find "$ABXPKG_LIB_DIR/pnpm/packages/claudecode/node_modules/.pnpm" -maxdepth 1 -type d -name '@anthropic-ai+claude-code-linux-*-musl@*' -exec rm -rf {} + \
     && rm -rf /usr/lib/*-linux-gnu/dri /usr/lib/*-linux-gnu/libLLVM*.so* /usr/lib/*-linux-gnu/libz3.so.* \
     && rm -rf /usr/share/icons /usr/share/doc /usr/share/man /usr/share/bash-completion /usr/share/zsh /usr/share/info /usr/share/lintian /usr/share/bug \
     && install -d -m 755 /usr/share/man/man1 \
@@ -287,6 +291,7 @@ RUN --network=none export ABX_DOCKER_PLUGINS="$(/venv/bin/python3 -c 'from abx_d
         && abxpkg load rg \
         && abxpkg load --binproviders=env --min-version=11.0.0 java \
         && abxpkg run --binproviders=uv opendataloader-pdf --help \
+        && abxpkg run --binproviders=env claude --version \
         && ! command -v gcc \
         && ! command -v g++ \
         && ! command -v make \
