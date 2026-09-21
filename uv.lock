@@ -3,11 +3,11 @@ revision = 3
 requires-python = ">=3.12, <3.15"
 
 [options]
-exclude-newer = "2026-09-16T07:18:46.907670225Z"
+exclude-newer = "2026-09-16T07:21:28.698859788Z"
 exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
-abxbus = { timestamp = "2026-09-21T07:18:45.907684416Z", span = "PT1S" }
+abxbus = { timestamp = "2026-09-21T07:21:27.698873994Z", span = "PT1S" }
 abx-dl = "2100-01-01T00:00:00Z"
 abx-plugins = "2100-01-01T00:00:00Z"
 abxpkg = "2100-01-01T00:00:00Z"
@@ -51,7 +51,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "abx-plugins", specifier = "==1.12.328" },
+    { name = "abx-plugins", specifier = "==1.12.329" },
     { name = "abxbus", specifier = "==2.5.57" },
     { name = "abxpkg", specifier = "==1.12.142" },
     { name = "platformdirs", specifier = ">=4.0.0" },
@@ -85,7 +85,7 @@ dev = [
 
 [[package]]
 name = "abx-plugins"
-version = "1.12.328"
+version = "1.12.329"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "abxbus" },
@@ -94,9 +94,9 @@ dependencies = [
     { name = "rich-click" },
     { name = "uv" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/bf/31/c4552e026ddca7e0050ec9a938fc16470a60efef84b7f8750267486a099a/abx_plugins-1.12.328.tar.gz", hash = "sha256:cdf5bf8657f0068b0c8c6e93e94486f26ddf7a101bfc292531789c348c239180", size = 402506 }
+sdist = { url = "https://files.pythonhosted.org/packages/c2/55/9b2b48dcad2616652675ecba1bc7c811e5a51c68189bba62c2c39ee293b8/abx_plugins-1.12.329.tar.gz", hash = "sha256:a28f9054ce10da806c11f44179a6df985a959780ad2150e55966ccab089b0361", size = 402604 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/78/34/618a6ba2a998cb30dccd44b14dc95154796daf22695f93c53e37cea429e4/abx_plugins-1.12.328-py3-none-any.whl", hash = "sha256:e3ac242477e7ff04f5cb7b61c5b4a98e3f79505af00c007ed3c9f0c8d8a75db6", size = 599900 },
+    { url = "https://files.pythonhosted.org/packages/38/75/b5c9983dfb35f77bef79e142ecae7485997ce4b0d3e7407db69af6330bc5/abx_plugins-1.12.329-py3-none-any.whl", hash = "sha256:872f0c424d441a9130bc9bd81443d17c654f98e002e6e0c485e50fe017134cb6", size = 600010 },
 ]
 
 [[package]]
