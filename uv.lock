@@ -3,11 +3,11 @@ revision = 3
 requires-python = ">=3.12, <3.15"
 
 [options]
-exclude-newer = "2026-09-16T22:19:26.73486796Z"
+exclude-newer = "2026-09-16T22:37:42.565676786Z"
 exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
-abxbus = { timestamp = "2026-09-21T22:19:25.734881892Z", span = "PT1S" }
+abxbus = { timestamp = "2026-09-21T22:37:41.565691227Z", span = "PT1S" }
 abx-dl = "2100-01-01T00:00:00Z"
 abx-plugins = "2100-01-01T00:00:00Z"
 abxpkg = "2100-01-01T00:00:00Z"
@@ -51,7 +51,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "abx-plugins", specifier = "==1.13.1" },
+    { name = "abx-plugins", specifier = "==1.13.2" },
     { name = "abxbus", specifier = "==2.5.57" },
     { name = "abxpkg", specifier = "==1.12.142" },
     { name = "platformdirs", specifier = ">=4.0.0" },
@@ -85,7 +85,7 @@ dev = [
 
 [[package]]
 name = "abx-plugins"
-version = "1.13.1"
+version = "1.13.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "abxbus" },
@@ -94,9 +94,9 @@ dependencies = [
     { name = "rich-click" },
     { name = "uv" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/19/e1/8e92268d03e2eb17b7e920fff0b64dc318e8a71c713d6106b8c28474ea08/abx_plugins-1.13.1.tar.gz", hash = "sha256:f1328f11e4ac70b120e93aa5e7d5ab385c1de8108bc4faead1e48132e8e24309", size = 418064 }
+sdist = { url = "https://files.pythonhosted.org/packages/a3/59/b7f3ca32efd1ed3a75587603002fa0a1dbbe2d8b1a3459078c34abd9a77b/abx_plugins-1.13.2.tar.gz", hash = "sha256:249e1684da6d9d370e56e244ab2b476f4d19a389b5e61fcaa685bdc002742069", size = 418317 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9c/28/3b42ef2c86fc6e3f7bb4c806c4f228fb869576a0104465706a9f8b8746ea/abx_plugins-1.13.1-py3-none-any.whl", hash = "sha256:f49bb7562071247f0a0e71679a0b4022ac28983c1b966b0d12ce6b0383ca6dfc", size = 618742 },
+    { url = "https://files.pythonhosted.org/packages/95/ff/1ac51a9a5ce073ea28e43807f647acd7dabdb1eb1fea351e5ec32ecfd53c/abx_plugins-1.13.2-py3-none-any.whl", hash = "sha256:36af7d894338a78df477c547644f57a5b22d6f9c074896051291b2ae0fa74251", size = 619023 },
 ]
 
 [[package]]
