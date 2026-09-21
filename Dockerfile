@@ -291,7 +291,7 @@ RUN --network=none export ABX_DOCKER_PLUGINS="$(/venv/bin/python3 -c 'from abx_d
         && abxpkg load rg \
         && abxpkg load --binproviders=env --min-version=11.0.0 java \
         && abxpkg run --binproviders=uv opendataloader-pdf --help \
-        && abxpkg run --binproviders=env claude --version \
+        && "$ABXPKG_LIB_DIR/pnpm/packages/claudecode/node_modules/.bin/claude" --version \
         && ! command -v gcc \
         && ! command -v g++ \
         && ! command -v make \
