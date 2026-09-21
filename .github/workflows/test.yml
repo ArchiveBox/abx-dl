@@ -272,6 +272,10 @@ jobs:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
           PERSONAS_DIR: ${{ runner.temp }}/abx-personas
           CHROME_USER_DATA_DIR: ${{ runner.temp }}/abx-personas/Default/chrome_profile
+          # Temporarily skipped: api key is out of credits.
+          CLAUDECODE_ENABLED: "False"
+          CLAUDECODEEXTRACT_ENABLED: "False"
+          CLAUDECODECLEANUP_ENABLED: "False"
 
       - name: Upload test output
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
