@@ -1640,7 +1640,7 @@ def test_snapshot_abort_stops_scheduling_later_hooks(tmp_path: Path, httpserver:
         release_response.set()
 
     assert first_completed is not None
-    assert first_completed.status == "skipped"
+    assert first_completed.status == "failed"
     assert tab_completed is not None
     assert tab_completed.status == "succeeded"
     assert tab_completed.exit_code == 0
@@ -1977,7 +1977,7 @@ def test_crawl_abort_during_foreground_setup_interrupts_hook_and_stops_later_set
     assert daemon_completed is not None
     assert daemon_completed.status == "succeeded"
     assert foreground_completed is not None
-    assert foreground_completed.status == "skipped"
+    assert foreground_completed.status == "failed"
     assert "Hook interrupted by user" in foreground_completed.stderr
     assert later_started == []
 
@@ -2052,7 +2052,7 @@ def test_crawl_abort_cleans_real_chrome_process_tree_and_foreground_hook(
     assert launch_completed.exit_code == 0
     assert tab_completed.status == "succeeded"
     assert tab_completed.exit_code == 0
-    assert navigate_completed.status == "skipped"
+    assert navigate_completed.status == "failed"
     assert navigate_completed.stderr == "Hook interrupted by user"
     assert {event.hook_name for event in kills} >= {
         "on_CrawlSetup__90_chrome_launch.daemon.bg",
@@ -2170,7 +2170,7 @@ def test_crawl_abort_from_crawl_event_interrupts_active_setup_hook(tmp_path: Pat
     foreground_completed, later_started = asyncio.run(run())
 
     assert foreground_completed is not None
-    assert foreground_completed.status == "skipped"
+    assert foreground_completed.status == "failed"
     assert "Hook interrupted by user" in foreground_completed.stderr
     assert later_started == []
 
