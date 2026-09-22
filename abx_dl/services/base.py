@@ -34,7 +34,21 @@ async def wait_for_process_ready(
     timeout: float,
     abort_requested: Callable[[], Awaitable[bool]] | None = None,
 ) -> None:
-    """Wait until a hook reaches its normal stdout boundary."""
+    """Wait for readiness, not for a successful ArchiveResult.
+
+    Spawning an OS process does not mean it has installed its listeners or
+    attached to Chrome. In short captures the scheduler can otherwise reach
+    cleanup and kill a background hook before it has initialized. A live hook
+    must write stdout only once the next hook may safely start; earlier
+    diagnostics belong on stderr. Successful process exit also releases this
+    barrier because there is no longer a live hook waiting to initialize.
+
+    Read the actual stdout file, independently of JSONL parsing/event delivery
+    (see 86174379). Requiring an ArchiveResult here would couple readiness to
+    output production and encourage hooks to report success before capturing
+    anything. Any stdout satisfies readiness; only ArchiveResultService owns
+    result status, and this function must never promote it to succeeded.
+    """
     hook_kind = "Background hook" if started_event.is_background else "Foreground hook"
     deadline = asyncio.get_running_loop().time() + timeout
     while asyncio.get_running_loop().time() < deadline:

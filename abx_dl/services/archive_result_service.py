@@ -31,17 +31,24 @@ class ArchiveResultService(BaseService):
        self-reported result. Emits an ArchiveResultEvent and writes it to
        index.jsonl immediately.
 
-    2. **ProcessCompletedEvent**: only for ``on_Snapshot`` hooks, emits a
-       synthetic ArchiveResultEvent when the hook didn't already report one:
-       - If exit_code is nonzero and not the skipped sentinel → synthetic
-         ``failed`` result (with stderr as error).
-       - If exit_code == 0 → synthetic ``noresult`` result. Hooks must emit a
-         real ArchiveResult record to claim success.
+    2. **ProcessCompletedEvent**: only for ``on_Snapshot`` hooks, reconciles
+       the reported result with the actual exit:
+       - Nonzero exit overrides an earlier result with ``failed`` (or
+         ``skipped`` for the explicit skipped sentinel).
+       - Zero exit preserves a reported result; without one it produces
+         ``noresult``. Finishing a process is not proof of captured output.
 
        Install, CrawlSetup, and BinaryRequest hooks are excluded — they don't
        produce ArchiveResults.
        Uses ``bus.find()`` to check whether an ArchiveResultEvent was already
        emitted for this hook, avoiding the need for manual pending-state tracking.
+
+    Plain stdout is the scheduler's readiness signal, not a success record.
+    Hooks must explicitly report the output they actually produced. Do not
+    restore directory-based success inference (removed in 40c5e547): several
+    hooks/retries share a directory containing metadata, partial or old files.
+    Immediate result events let completed parsers persist discovered URLs before
+    the whole snapshot finishes, but a later crash must still correct that result.
     """
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [
@@ -165,11 +172,14 @@ class ArchiveResultService(BaseService):
             past=True,
             future=False,
         )
+        # A hook may report output while its process is still alive. Returning
+        # merely because a record exists would leave the DB succeeded after a
+        # later crash/interruption. Only a clean exit preserves that report.
         if existing is not None and event.exit_code == 0:
             return
 
         if event.exit_code == PROCESS_EXIT_SKIPPED:
-            # Skipped process with no inline result → synthetic skipped result
+            # The explicit skipped sentinel is distinct from a failed exit.
             ar = ArchiveResult(
                 snapshot_id=snapshot_event.snapshot_id,
                 plugin=event.plugin_name,
@@ -197,6 +207,8 @@ class ArchiveResultService(BaseService):
             )
 
         if existing is not None:
+            # Reconcile the same result, rather than leave a separate successful
+            # record behind for JSONL consumers when the process later fails.
             ar.id = existing.id
 
         index_path = Path(event.output_dir).parent / "index.jsonl"

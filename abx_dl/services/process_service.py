@@ -4,6 +4,7 @@ import asyncio
 import os
 import re
 import signal
+import select
 import time
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
@@ -36,6 +37,18 @@ from ..process_utils import graceful_kill_by_pid_file, graceful_kill_process, wr
 from .base import BaseService
 
 ProcessStatus = Literal["succeeded", "failed", "skipped"]
+
+
+def interrupted_hook_prompt_text(hook_name: str) -> str:
+    return (
+        f"Interrupted {hook_name}. Choose what to do next:\n"
+        "  Enter: continue and skip the aborted hook\n"
+        "  r: continue and retry the aborted hook\n"
+        "  a or Ctrl+C: exit now and abort the whole crawl\n"
+        "Choice [skip]: "
+    )
+
+
 STDOUT_POLL_INTERVAL = 0.05
 SHELL_SIGNAL_STDERR_RE = re.compile(r"(?:Terminated|Killed):\s*(\d+)")
 POLITE_CLEANUP_SIGNAL_EXIT_CODES = {
@@ -233,7 +246,12 @@ class ProcessService(BaseService):
     # ── Event handlers ──────────────────────────────────────────────────────
 
     @staticmethod
-    def on_InterruptedHookPrompt(hook_name: str) -> Literal["abort", "retry", "skip"]:
+    def on_InterruptedHookPrompt(
+        hook_name: str,
+        *,
+        render: bool = True,
+        is_active: Callable[[], bool] | None = None,
+    ) -> Literal["abort", "retry", "skip"] | None:
         """Ask the user what to do after interrupting one foreground hook.
 
         Runs synchronously inside the orchestrator's asyncio loop, so
@@ -244,17 +262,37 @@ class ProcessService(BaseService):
         ``KeyboardInterrupt`` while the prompt is open; the ``except`` below
         catches it and turns it into ``"abort"``.
         """
-        click.echo("", err=True)
-        click.echo(f"Interrupted {hook_name}. Choose what to do next:", err=True)
-        click.echo("  Enter: continue and skip the aborted hook", err=True)
-        click.echo("  r: continue and retry the aborted hook", err=True)
-        click.echo("  a or Ctrl+C: exit now and abort the whole crawl", err=True)
         try:
-            with _default_sigint_during_prompt():
-                click.echo("Choice [skip]: ", nl=False, err=True)
+            with ExitStack() as stack:
+                stack.enter_context(_default_sigint_during_prompt())
+                input_fd = None
+                if is_active is not None:
+                    # Use the same raw terminal context as click.getchar, while
+                    # allowing a supervised caller to withdraw a stale prompt.
+                    from click._termui_impl import raw_terminal
+                    import termios
+
+                    input_fd = stack.enter_context(raw_terminal())
+                    # Background status rows still render while input is raw.
+                    # Keep newline output behaving like normal terminal output.
+                    settings = termios.tcgetattr(input_fd)
+                    settings[1] |= termios.OPOST | termios.ONLCR
+                    termios.tcsetattr(input_fd, termios.TCSANOW, settings)
+                if render:
+                    click.echo("\n" + interrupted_hook_prompt_text(hook_name), nl=False, err=True)
                 while True:
-                    choice_char = click.getchar()
-                    click.echo("", err=True)
+                    if is_active is not None and not is_active():
+                        return None
+                    if input_fd is not None:
+                        if not select.select([input_fd], [], [], 0.2)[0]:
+                            continue
+                        choice_char = os.read(input_fd, 1).decode("utf-8", errors="replace")
+                    else:
+                        choice_char = click.getchar()
+                    if render:
+                        click.echo("", err=True)
+                    if not choice_char:
+                        return "abort"
                     if choice_char in ("\x03", "\x04"):
                         return "abort"
                     if choice_char in ("\r", "\n", "3", "s", "S"):
@@ -263,8 +301,9 @@ class ProcessService(BaseService):
                         return "abort"
                     if choice_char in ("2", "r", "R"):
                         return "retry"
-                    click.echo("Press Enter to skip, r to retry, or a/Ctrl+C to abort.", err=True)
-                    click.echo("Choice [skip]: ", nl=False, err=True)
+                    if render:
+                        click.echo("Press Enter to skip, r to retry, or a/Ctrl+C to abort.", err=True)
+                        click.echo("Choice [skip]: ", nl=False, err=True)
         except (EOFError, KeyboardInterrupt, click.Abort):
             return "abort"
 
@@ -618,6 +657,9 @@ class ProcessService(BaseService):
             # archive results look broken in index.jsonl and Docker smoke tests.
             # SIGKILL escalation and organic nonzero exits still surface as
             # failures because they do not match this polite cleanup path.
+            # This normalizes Process lifecycle only. A zero exit without an
+            # explicit output record becomes noresult in ArchiveResultService;
+            # it must never manufacture a successful capture from readiness.
             returncode = 0
             stderr = SHELL_SIGNAL_STDERR_RE.sub("", stderr).strip()
 
@@ -633,6 +675,7 @@ class ProcessService(BaseService):
                 action = await self.interrupted_hook_prompt(event.hook_name)
             else:
                 action = self.on_InterruptedHookPrompt(event.hook_name)
+            assert action is not None
             await event.emit(
                 {
                     "abort": CrawlAbortEvent,

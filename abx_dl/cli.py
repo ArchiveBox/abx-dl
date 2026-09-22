@@ -922,16 +922,31 @@ class LiveBusUI:
             self.live.__exit__(exc_type, exc, tb)
 
     def set_paused(self, paused: bool) -> None:
-        if self.live is None or self.paused == paused:
+        if self.live is None or self.status_view is None or self.paused == paused:
             return
         self.paused = paused
         if paused and self.live.is_started:
             self.live.stop()
             return
+        if not paused:
+            self.live.update(self.status_view, refresh=True)
         if not paused and not self.live.is_started:
             self.live.start(refresh=True)
             self.last_live_refresh = 0.0
             self.live.refresh()
+
+    def show_interrupt_prompt(self, hook_name: str) -> bool:
+        from .services.process_service import interrupted_hook_prompt_text
+
+        if self.live is None:
+            return False
+        self.paused = True
+        self.live.update(Text(interrupted_hook_prompt_text(hook_name)), refresh=False)
+        if not self.live.is_started:
+            self.live.start(refresh=True)
+        else:
+            self.live.refresh()
+        return True
 
     def print_intro(self, *, url: str, output_dir: Path, plugins_label: str) -> None:
         if not self.interactive_tty:

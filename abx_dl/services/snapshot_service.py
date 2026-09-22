@@ -292,6 +292,9 @@ class SnapshotService(BaseService):
                     return
                 if started_process is None:
                     raise RuntimeError(f"Background hook {hook.name} did not start")
+                # OS spawn alone is too early: short captures can reach cleanup
+                # before this hook initializes. Stdout releases this scheduling
+                # barrier; it says nothing about whether an output succeeded.
                 await wait_for_process_ready(
                     started_process,
                     started_wait_timeout,
@@ -461,6 +464,11 @@ class SnapshotService(BaseService):
         Each background hook gets its plugin's timeout (PLUGINNAME_TIMEOUT) as the
         grace period before SIGKILL. The processes to terminate are resolved
         from the current root SnapshotEvent ancestry.
+
+        Cleanup is part of capture execution: recorders may write their real
+        output and ArchiveResult only when asked to stop. Wait for completion
+        and its result consumers before finishing the snapshot. Do not replace
+        this with immediate termination or infer success from having started.
         """
         if event.output_dir != str(self.output_dir) or event.snapshot_id != self.snapshot.id:
             return
