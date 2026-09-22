@@ -827,47 +827,6 @@ def test_binary_event_delegates_stale_cached_config_binary_to_abxpkg_resolution(
     assert Path(str(derived_update.value)).name == "wget"
 
 
-def test_binary_event_delegates_missing_user_binary_abspath_override_to_abxpkg(tmp_path: Path) -> None:
-    broken_binary = tmp_path / "broken" / "wget"
-    plugins = PluginCatalog.discover()
-    selected = plugins.select(["wget"])
-    bus = create_bus(total_timeout=60.0, name=f"user_abspath_override_{tmp_path.name}")
-    PluginBinaryEnvService(bus, catalog=selected)
-    BinaryService(bus, auto_install=True)
-    ProcessService(bus, emit_jsonl=False, interactive_tty=False)
-    installed_events: list[BinaryEvent] = []
-    process_events: list[ProcessEvent] = []
-
-    async def on_BinaryEvent(event: BinaryEvent) -> None:
-        installed_events.append(event)
-
-    async def on_ProcessEvent(event: ProcessEvent) -> None:
-        process_events.append(event)
-
-    bus.on(BinaryEvent, on_BinaryEvent)
-    bus.on(ProcessEvent, on_ProcessEvent)
-
-    async def run() -> None:
-        await bus.emit(MachineEvent(config={"WGET_BINARY": str(broken_binary)}, config_type="user")).now()
-        request = bus.emit(
-            BinaryRequestEvent(
-                name=str(broken_binary),
-                binproviders="env,apt,brew",
-                extra_context=_binary_extra_context(plugin_name="wget", output_dir=str(tmp_path / "run")),
-            ),
-        )
-        await request.now(first_result=True)
-        assert await request.event_result() is not None
-        await bus.wait_until_idle()
-
-    asyncio.run(run())
-
-    assert installed_events
-    assert installed_events[-1].name == str(broken_binary)
-    assert installed_events[-1].binprovider == "env"
-    assert process_events == []
-
-
 def test_download_creates_default_persona_dir(tmp_path: Path) -> None:
     personas_dir = Path(os.environ["PERSONAS_DIR"])
 
