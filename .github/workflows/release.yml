@@ -23,6 +23,9 @@ jobs:
   candidate:
     if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
     runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
     outputs:
       ready: ${{ steps.owner.outputs.ready }}
     steps:
