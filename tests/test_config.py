@@ -2,6 +2,8 @@ import asyncio
 import json
 import os
 import shutil
+import subprocess
+import sys
 import sysconfig
 from pathlib import Path
 from typing import Any
@@ -35,6 +37,19 @@ def test_chrome_hook_receives_other_plugins_enabled_flags(tmp_path: Path) -> Non
     env = runtime.to_env()
     assert env["UBLOCK_ENABLED"] == "False"
     assert env["SINGLEFILE_ENABLED"] == "True"
+
+
+def test_plugin_env_prioritizes_current_runtime_when_already_on_path(tmp_path: Path) -> None:
+    scripts_dir = sysconfig.get_path("scripts")
+    inherited_path = os.pathsep.join(["/usr/bin", scripts_dir, "/bin"])
+    result = subprocess.run(
+        [sys.executable, "-c", "from abx_dl.models import PluginEnv; import json; print(json.dumps(PluginEnv().to_env()['PATH']))"],
+        env={**os.environ, "PATH": inherited_path},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert json.loads(result.stdout).split(os.pathsep) == [scripts_dir, "/usr/bin", "/bin"]
 
 
 @pytest.mark.parametrize("_fixture_case", range(2))
@@ -85,8 +100,8 @@ def test_plugin_env_sets_run_dirs_without_projecting_binary_paths(tmp_path: Path
     assert "PUPPETEER_CACHE_DIR" not in env
     assert "VIRTUAL_ENV" not in env
     expected_path = [entry for entry in os.environ["PATH"].split(os.pathsep) if entry]
-    if sysconfig.get_path("scripts") not in expected_path:
-        expected_path.insert(0, sysconfig.get_path("scripts"))
+    scripts_dir = sysconfig.get_path("scripts")
+    expected_path = [scripts_dir, *(entry for entry in expected_path if entry != scripts_dir)]
     assert env["PATH"].split(os.pathsep) == expected_path
 
 

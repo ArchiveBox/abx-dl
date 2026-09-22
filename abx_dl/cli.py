@@ -1412,7 +1412,7 @@ def dl(
     timeout_seconds = int(timeout_value)
     stdout_is_tty = sys.stdout.isatty()
     stderr_is_tty = sys.stderr.isatty()
-    interactive_tty = stdout_is_tty or stderr_is_tty
+    interactive_tty = sys.stdin.isatty() and (stdout_is_tty or stderr_is_tty)
     ui_console = stderr_console if stderr_is_tty or not stdout_is_tty else console
 
     disabled = [plugin.strip() for plugin in disable_list.split(",") if plugin.strip()] if disable_list else []
@@ -1469,7 +1469,7 @@ def dl(
 
         def on_sigint() -> None:
             nonlocal pause_requested
-            next_event = CrawlAbortEvent() if pause_requested else CrawlPauseEvent()
+            next_event = CrawlAbortEvent() if pause_requested or not interactive_tty else CrawlPauseEvent()
             pause_requested = True
 
             async def emit_control_event() -> None:

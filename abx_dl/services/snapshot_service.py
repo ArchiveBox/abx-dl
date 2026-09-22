@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 from ..config import RuntimeConfig, get_plugin_env
 from ..events import (
+    ArchiveResultEvent,
     CrawlAbortEvent,
     ProcessEvent,
     ProcessCompletedEvent,
@@ -27,7 +28,7 @@ from ..events import (
     slow_warning_timeout,
 )
 from ..limits import CrawlLimitState
-from ..models import Snapshot
+from ..models import ArchiveResult, Snapshot, write_jsonl
 from ..models import Hook, Plugin
 from .base import BaseService, wait_for_process_ready
 from .binary_service import build_plugin_process_env
@@ -407,10 +408,12 @@ class SnapshotService(BaseService):
         snapshot_id = self.snapshot.id
         output_dir = str(self.output_dir)
         snapshot_failed = True
+        next_hook_index = 0
         try:
-            for plugin, hook in self.hooks:
+            for hook_index, (plugin, hook) in enumerate(self.hooks):
                 if await self.should_abort():
                     break
+                next_hook_index = hook_index + 1
                 await self.on_SnapshotEvent__for_hook(plugin, hook)(event)
                 if await self.should_abort():
                     break
@@ -418,6 +421,26 @@ class SnapshotService(BaseService):
                     break
             snapshot_failed = False
         finally:
+            if snapshot_failed or await self.should_abort():
+                for plugin, hook in self.hooks[next_hook_index:]:
+                    result = ArchiveResult(
+                        snapshot_id=snapshot_id,
+                        plugin=plugin.name,
+                        hook_name=hook.name,
+                        status="failed",
+                        error="Capture interrupted before this hook could run",
+                    )
+                    write_jsonl(self.output_dir / "index.jsonl", result)
+                    await event.emit(
+                        ArchiveResultEvent(
+                            snapshot_id=snapshot_id,
+                            plugin=plugin.name,
+                            hook_name=hook.name,
+                            id=result.id,
+                            status=result.status,
+                            error=result.error or "",
+                        ),
+                    ).now()
             if snapshot_failed:
                 self._failed_snapshot_event_ids.add(event.event_id)
             cleanup_event = SnapshotCleanupEvent(

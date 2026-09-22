@@ -9,7 +9,7 @@ from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import BinaryIO, ClassVar, Literal, TextIO
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 import click
 from abxbus import BaseEvent, EventBus
@@ -214,9 +214,11 @@ class ProcessService(BaseService):
         *,
         emit_jsonl: bool,
         interactive_tty: bool,
+        interrupted_hook_prompt: Callable[[str], Awaitable[Literal["abort", "retry", "skip"]]] | None = None,
     ):
         self.emit_jsonl = emit_jsonl
         self.interactive_tty = interactive_tty
+        self.interrupted_hook_prompt = interrupted_hook_prompt
         self.pause_requested = asyncio.Event()
         self.abort_requested = False
         self._active_process_event_tasks: dict[str, asyncio.Task[Process | None]] = {}
@@ -230,7 +232,8 @@ class ProcessService(BaseService):
 
     # ── Event handlers ──────────────────────────────────────────────────────
 
-    def on_InterruptedHookPrompt(self, hook_name: str) -> Literal["abort", "retry", "skip"]:
+    @staticmethod
+    def on_InterruptedHookPrompt(hook_name: str) -> Literal["abort", "retry", "skip"]:
         """Ask the user what to do after interrupting one foreground hook.
 
         Runs synchronously inside the orchestrator's asyncio loop, so
@@ -621,11 +624,13 @@ class ProcessService(BaseService):
         action = "skip"
         status = _process_status(returncode)
         if interrupted:
-            returncode = PROCESS_EXIT_SKIPPED
-            status = "skipped"
+            returncode = 130
+            status = "failed"
             stderr = "Hook interrupted by user"
             if self.abort_requested or not self.interactive_tty:
                 action = "abort"
+            elif self.interrupted_hook_prompt is not None:
+                action = await self.interrupted_hook_prompt(event.hook_name)
             else:
                 action = self.on_InterruptedHookPrompt(event.hook_name)
             await event.emit(

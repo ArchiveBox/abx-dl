@@ -250,8 +250,8 @@ class PluginEnv(BaseModel):
 
         scripts_dir = sysconfig.get_path("scripts")
         path_entries = [entry for entry in env.get("PATH", "").split(os.pathsep) if entry]
-        if scripts_dir and scripts_dir not in path_entries:
-            env["PATH"] = os.pathsep.join([scripts_dir, *path_entries])
+        if scripts_dir:
+            env["PATH"] = os.pathsep.join([scripts_dir, *(entry for entry in path_entries if entry != scripts_dir)])
 
         return env
 

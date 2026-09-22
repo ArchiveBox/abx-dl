@@ -126,7 +126,7 @@ class ArchiveResultService(BaseService):
         ).now()
 
     async def on_ProcessCompletedEvent(self, event: ProcessCompletedEvent) -> None:
-        """Emit a synthetic ArchiveResult only for Snapshot hooks that didn't self-report."""
+        """Reconcile reported results with the actual hook exit status."""
         if not event.hook_name.startswith("on_Snapshot"):
             return
 
@@ -165,7 +165,7 @@ class ArchiveResultService(BaseService):
             past=True,
             future=False,
         )
-        if existing is not None:
+        if existing is not None and event.exit_code == 0:
             return
 
         if event.exit_code == PROCESS_EXIT_SKIPPED:
@@ -178,14 +178,14 @@ class ArchiveResultService(BaseService):
                 output_files=event.output_files,
             )
         elif event.exit_code != 0:
-            # Failed process with no inline result → synthetic failure
+            # A crash or interruption overrides even an earlier success record.
             ar = ArchiveResult(
                 snapshot_id=snapshot_event.snapshot_id,
                 plugin=event.plugin_name,
                 hook_name=event.hook_name,
                 status="failed",
                 output_files=event.output_files,
-                error=event.stderr or None,
+                error=event.stderr or f"Hook exited with code {event.exit_code}",
             )
         else:
             ar = ArchiveResult(
@@ -195,6 +195,9 @@ class ArchiveResultService(BaseService):
                 status="noresult",
                 output_files=event.output_files,
             )
+
+        if existing is not None:
+            ar.id = existing.id
 
         index_path = Path(event.output_dir).parent / "index.jsonl"
         write_jsonl(index_path, ar, also_print=self.emit_jsonl)

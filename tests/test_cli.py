@@ -3,10 +3,16 @@ import importlib.metadata
 import io
 import json
 import os
+import pty
+import select
+import signal
+import termios
 import shutil
 import subprocess
 import sys
 import time
+import psutil
+import pytest
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -31,6 +37,80 @@ from rich.console import Console
 from rich.progress import Progress
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize("choice", ["skip", "retry", "abort", "ctrl-c", "noninteractive"])
+def test_cli_interrupts_active_hook(tmp_path: Path, choice: str) -> None:
+    master, slave = pty.openpty()
+    output = bytearray()
+    output_dir = tmp_path / "capture"
+    env = _cli_env(tmp_path)
+    env.update(CHROME_DELAY_AFTER_LOAD="60", CHROME_TIMEOUT="120", CHROME_HEADLESS="True")
+    process = subprocess.Popen(
+        [sys.executable, "-m", "abx_dl", "dl", "--plugins=chrome", "--dir", str(output_dir), "https://example.com"],
+        cwd=tmp_path,
+        env=env,
+        stdin=subprocess.DEVNULL if choice == "noninteractive" else slave,
+        stdout=slave,
+        stderr=slave,
+        start_new_session=True,
+    )
+
+    def read_until(predicate, timeout=90):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if select.select([master], [], [], 0.1)[0]:
+                output.extend(os.read(master, 65536))
+            if predicate():
+                return
+        raise AssertionError(output.decode(errors="replace"))
+
+    def active_hook():
+        for pid_file in output_dir.rglob("on_Snapshot__30_chrome_navigate.*.pid"):
+            pid_text = pid_file.read_text().strip()
+            if pid_text and psutil.pid_exists(int(pid_text)):
+                return int(pid_text)
+        return None
+
+    try:
+        read_until(lambda: active_hook() is not None)
+        pid = active_hook()
+        assert pid is not None
+        process.send_signal(signal.SIGINT)
+        if choice != "noninteractive":
+            read_until(lambda: b"Choice [skip]:" in output)
+            read_until(lambda: not termios.tcgetattr(slave)[3] & termios.ICANON)
+            assert not psutil.pid_exists(pid)
+            if choice == "retry":
+                os.write(master, b"r")
+                read_until(lambda: (next_pid := active_hook()) is not None and next_pid != pid)
+                process.send_signal(signal.SIGINT)
+                read_until(lambda: output.count(b"Choice [skip]:") == 2)
+                read_until(lambda: not termios.tcgetattr(slave)[3] & termios.ICANON)
+            if choice == "ctrl-c":
+                process.send_signal(signal.SIGINT)
+            else:
+                os.write(master, b"a" if choice == "abort" else b"\r")
+        read_until(lambda: process.poll() is not None)
+        assert process.returncode == (1 if choice in {"abort", "ctrl-c", "noninteractive"} else 0), output.decode(errors="replace")
+        assert not psutil.pid_exists(pid)
+        if choice == "noninteractive":
+            assert b"Choice [skip]:" not in output
+        assert b"Traceback" not in output
+        records = [json.loads(line) for path in output_dir.rglob("index.jsonl") for line in path.read_text().splitlines() if line.strip()]
+        interrupted = [
+            record for record in records if record.get("type") == "Process" and record.get("hook_name") == "on_Snapshot__30_chrome_navigate"
+        ]
+        assert len(interrupted) == (2 if choice == "retry" else 1)
+        assert all(record["exit_code"] == 130 and record["stderr"] == "Hook interrupted by user" for record in interrupted)
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=15)
+        os.close(slave)
+        os.close(master)
+
+
 ABX_ENV_KEYS = {
     "CHECK_SSL_VALIDITY",
     "CONFIG_DIR",
