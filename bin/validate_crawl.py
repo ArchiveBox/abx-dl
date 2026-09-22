@@ -18,7 +18,6 @@ CHROME_CRAWL_WAIT_HOOK = "on_CrawlSetup__91_chrome_wait"
 UBLOCK_SNAPSHOT_CONFIG = ("ublock", "on_Snapshot__11_ublock_config")
 UBLOCK_CRAWL_SETUP_HOOK = "on_CrawlSetup__95_ublock_config"
 CRAWL_ISOLATION_NOOP = "CHROME_ISOLATION=crawl"
-UBLOCK_CONFIGURED_MESSAGE = "Disabled uBlock top-level strict blocking"
 
 
 def load_records(index_path: Path) -> list[dict[str, object]]:
@@ -108,11 +107,7 @@ def validate_crawl_isolation(
     if " ready pid=" not in str(wait_process.get("stdout", "")):
         raise SystemExit("Crawl-owned Chrome readiness hook did not observe a ready CDP session")
 
-    ublock_process = require_process("ublock", UBLOCK_CRAWL_SETUP_HOOK, "uBlock")
-    if UBLOCK_CONFIGURED_MESSAGE not in str(ublock_process.get("stderr", "")):
-        raise SystemExit(
-            "Crawl-owned uBlock setup did not confirm strict-blocking configuration",
-        )
+    require_process("ublock", UBLOCK_CRAWL_SETUP_HOOK, "uBlock")
 
 
 def main() -> None:

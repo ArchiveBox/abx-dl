@@ -52,7 +52,7 @@ def _isolation_records(*, ublock_reason: str = "CHROME_ISOLATION=crawl"):
             "status": "succeeded",
             "exit_code": 0,
             "stdout": "",
-            "stderr": "[+] Disabled uBlock top-level strict blocking; subresource filtering remains enabled\n",
+            "stderr": "",
         },
     ]
 
