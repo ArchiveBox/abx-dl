@@ -37,6 +37,31 @@ jobs:
           TARGET="$(git ls-remote origin "refs/tags/release-candidate/$VERSION" | awk '{print $1}')"
           [[ "$TARGET" == "$RELEASE_SHA" ]] && echo 'ready=true' >> "$GITHUB_OUTPUT" || echo 'ready=false' >> "$GITHUB_OUTPUT"
 
+      - name: Require successful full CI for this commit
+        id: verified
+        if: steps.owner.outputs.ready == 'true'
+        timeout-minutes: 40
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          CI_RUN_ID=''
+          for _ in {1..12}; do
+            CI_RUN_ID="$(gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow ci.yml \
+              --commit "$RELEASE_SHA" \
+              --event push \
+              --limit 1 \
+              --json databaseId \
+              --jq '.[0].databaseId // empty')"
+            [[ -n "$CI_RUN_ID" ]] && break
+            sleep 5
+          done
+          [[ -n "$CI_RUN_ID" ]]
+          gh run watch "$CI_RUN_ID" --repo "$GITHUB_REPOSITORY" --exit-status
+
   python-release:
     name: Publish tested Python artifacts
     needs: candidate
