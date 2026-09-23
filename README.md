@@ -236,7 +236,7 @@ trap 'rm -rf "$output_dir"' EXIT
 docker run --rm \
   --volume "$output_dir:/out" \
   "$image" \
-  --no-install --max-urls=1 --plugins=title,wget 'https://example.com'
+  --no-install --plugins=title,wget 'https://example.com'
 test -s "$output_dir/index.jsonl"
 test -s "$output_dir/title/title.txt"
 test -s "$output_dir/wget/example.com/index.html"
@@ -489,3 +489,9 @@ This repo includes an `abx-dl` skill for coding agents that need to run the stan
 
 For more advanced use with collections, parallel downloading, a Web UI + REST API, etc.
 See: [`ArchiveBox/ArchiveBox`](https://github.com/ArchiveBox/ArchiveBox)
+
+`abx-dl` runs one snapshot at a time. `--snapshot-max-size` stops starting more
+hooks once reported output reaches the budget; cleanup still runs to preserve
+recordings. Accounting lives only in memory for that run, so retrying an output
+directory starts fresh and preserves partial artifacts until hooks overwrite them.
+Crawl-wide URL, size, and time limits belong to ArchiveBox and its database.

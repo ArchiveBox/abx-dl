@@ -19,7 +19,7 @@ from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import TypeVar
+from typing import Literal, TypeVar
 
 import rich_click as click
 from abxpkg.binary_service import BinaryEvent, BinaryRequestEvent, BinaryService
@@ -53,6 +53,7 @@ from .events import (
     ProcessCompletedEvent,
     ProcessStartedEvent,
     ProcessStdoutEvent,
+    ProcessStderrEvent,
 )
 from .limits import parse_filesize_to_bytes
 from .models import (
@@ -166,10 +167,11 @@ def _get_commit_hash() -> str | None:
 
 STATUS_STYLES = {
     "succeeded": "green",
-    "noresult": "grey58",
-    "noresults": "grey58",
+    "noresult": "dim",
+    "noresults": "dim",
     "failed": "red",
-    "skipped": "grey50",
+    "cancelled": "red",
+    "skipped": "dim",
     "started": "yellow",
 }
 BG_STARTED_STYLE = "#b45309"
@@ -225,6 +227,9 @@ class _LiveProcessRecord:
     exit_code: int | None = None
     final_status: str | None = None
     final_output: str = ""
+    final_error: str = ""
+    latest_stdout: str = ""
+    latest_stderr: str = ""
     final_output_is_archive_result: bool = False
     output_files: list[OutputFile] = dataclass_field(default_factory=list)
 
@@ -339,10 +344,8 @@ def _format_table_output_cached(text: str, *, flatten: bool) -> Text:
 
 
 def _record_muted_style(record: VisibleRecord) -> str | None:
-    if _record_status(record) in ("noresult", "noresults"):
-        return "grey58"
-    if _record_status(record) == "skipped":
-        return "grey50"
+    if _record_status(record) in ("noresult", "noresults", "skipped"):
+        return "dim"
     return None
 
 
@@ -664,21 +667,19 @@ def _normalize_archive_result_output(text: str) -> str:
 
 
 def _render_record_output(record: VisibleRecord) -> str:
-    output = _humanize_special_output(_record_output(record))
-    if _record_status(record) == "failed":
-        return output
-    if isinstance(record, ArchiveResult):
-        return record.output_str or _compact_output(output)
-    if isinstance(record, _LiveProcessRecord):
-        return output if record.final_output_is_archive_result else _compact_output(output)
-    return _compact_output(output)
+    # This column answers "what is happening / what did I get?", not "show the
+    # entire log". A multiline error/result would push other hooks and the Ctrl+C
+    # prompt off screen. Apply the same one-line budget to EVERY status and record
+    # type; retain full diagnostics in Process records and the hook log files.
+    return _compact_output(_humanize_special_output(_record_output(record)))
 
 
 def _render_record_output_cell(record: VisibleRecord, *, muted_style: str | None = None) -> Text:
-    full_output = _record_status(record) == "failed" or (isinstance(record, ArchiveResult) and bool(record.output_str))
-    if isinstance(record, _LiveProcessRecord):
-        full_output = full_output or record.final_output_is_archive_result
-    cell = _format_table_output(_render_record_output(record), flatten=not full_output)
+    cell = _format_table_output(_render_record_output(record), flatten=True)
+    # Flattening removes explicit newlines; no_wrap also prevents a long path or
+    # diagnostic from expanding into several terminal rows at narrow widths.
+    cell.no_wrap = True
+    cell.overflow = "ellipsis"
     if muted_style:
         cell.stylize(muted_style)
     return cell
@@ -814,7 +815,7 @@ def _build_archive_results_table(
             row.append(escape(_record_phase(record)))
         row.extend(
             [
-                f"[{status_style}]{status}[/{status_style}]",
+                Text(status, style=status_style),
                 output_size,
                 f"[{muted_style}]{elapsed}[/{muted_style}]" if muted_style else elapsed,
                 output,
@@ -848,6 +849,21 @@ class _LiveStatusView:
 
 
 class LiveBusUI:
+    """Present hook progress and results without changing the hook protocol.
+
+    Historical trap: background hooks gained a first-stdout readiness boundary
+    (plugins 1ff2e065 / downloader 8701183e). The older stdout-first completion
+    fallback then mistook "started" for the final result and hid later stderr
+    diagnostics. Readiness is a scheduling signal, not a display-priority rule.
+    Keep channel provenance until choosing the summary; neither merging streams
+    nor whichever event happened to be delivered last preserves their meaning.
+
+    Running rows answer "what is it doing now?"; completed rows answer "what
+    did I get, or why did it fail?". The handlers below spell out their different
+    precedence rules. All paths share a one-physical-line Output cell so one noisy
+    hook cannot displace other hooks or the interactive cancellation prompt.
+    """
+
     def __init__(
         self,
         bus,
@@ -865,6 +881,8 @@ class LiveBusUI:
         self.live_results: dict[str, VisibleRecord] = {}
         self.streamed_header = False
         self.pending_binary_rows: dict[str, deque[str]] = defaultdict(deque)
+        self.completed_binary_request_ids: set[str] = set()
+        self.binary_request_finalizers: set[asyncio.Task[None]] = set()
         self.row_key_by_event_id: dict[str, str] = {}
         self.process_event_by_row_key: dict[str, ProcessStartedEvent] = {}
         self.active_row_keys: list[str] = []
@@ -872,6 +890,7 @@ class LiveBusUI:
         self.binary_row_num = 0
         self.last_live_refresh = 0.0
         self.paused = False
+        self.aborting = False
 
         if self.interactive_tty:
             self.progress = Progress(
@@ -901,6 +920,7 @@ class LiveBusUI:
         for event_cls, handler in (
             (ProcessStartedEvent, self.on_ProcessStartedEvent),
             (ProcessStdoutEvent, self.on_ProcessStdoutEvent),
+            (ProcessStderrEvent, self.on_ProcessStdoutEvent),
             (BinaryRequestEvent, self.on_BinaryRequestEvent),
             (BinaryEvent, self.on_BinaryEvent),
             (ArchiveResultEvent, self.on_ArchiveResultEvent),
@@ -918,6 +938,11 @@ class LiveBusUI:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
+        pending_finalizers = tuple(self.binary_request_finalizers)
+        for finalizer in pending_finalizers:
+            finalizer.cancel()
+        if pending_finalizers and not pending_finalizers[0].get_loop().is_running():
+            pending_finalizers[0].get_loop().run_until_complete(asyncio.gather(*pending_finalizers, return_exceptions=True))
         if self.live is not None:
             self.live.__exit__(exc_type, exc, tb)
 
@@ -938,7 +963,11 @@ class LiveBusUI:
     def show_interrupt_prompt(self, hook_name: str) -> bool:
         from .services.process_service import interrupted_hook_prompt_text
 
-        if self.live is None:
+        if self.live is None or not self.ui_console.is_terminal or self.ui_console.is_dumb_terminal:
+            # A TTY can accept input without supporting Rich cursor rendering
+            # (TERM=dumb, for example). Live.refresh may deliberately emit no
+            # frame there. Never claim the prompt was shown and then wait for
+            # invisible input: the terminal reader must print plain text instead.
             return False
         self.paused = True
         self.live.update(Text(interrupted_hook_prompt_text(hook_name)), refresh=False)
@@ -974,9 +1003,9 @@ class LiveBusUI:
         self.ui_console.print()
         self.ui_console.print(
             f"[green]{sum(1 for r in archive_results if r.status == 'succeeded')} succeeded[/green], "
-            f"[grey35]{sum(1 for r in archive_results if r.status in ('noresult', 'noresults'))} noresult[/grey35], "
+            f"[dim]{sum(1 for r in archive_results if r.status in ('noresult', 'noresults'))} noresult[/dim], "
             f"[red]{sum(1 for r in archive_results if r.status == 'failed')} failed[/red], "
-            f"[bright_black]{sum(1 for r in archive_results if r.status == 'skipped')} skipped[/bright_black]",
+            f"[dim]{sum(1 for r in archive_results if r.status == 'skipped')} skipped[/dim]",
         )
         self.ui_console.print(f"[dim]Output: {_abbreviate_home_paths(str(output_dir.absolute()))}[/dim]")
 
@@ -1008,7 +1037,7 @@ class LiveBusUI:
 
     def _match_row_key(
         self,
-        event: BinaryRequestEvent | BinaryEvent | ArchiveResultEvent | ProcessCompletedEvent | ProcessStdoutEvent,
+        event: BinaryRequestEvent | BinaryEvent | ArchiveResultEvent | ProcessCompletedEvent | ProcessStdoutEvent | ProcessStderrEvent,
     ) -> str | None:
         parent_id = event.event_parent_id or ""
         checked_ids: set[str] = set()
@@ -1029,11 +1058,15 @@ class LiveBusUI:
         row.final_status = event.status or row.final_status
         if event.output_files:
             row.output_files = list(event.output_files)
-        final_output = event.error or event.output_str or row.final_output
-        if final_output:
-            row.final_output = final_output
-            row.output = final_output
-            row.final_output_is_archive_result = bool(event.output_str)
+        # A hook's result is more useful than incidental diagnostics: e.g. a
+        # saved filename remains the answer even if teardown logs arrive later.
+        # Keep error and success summaries separate so a late abnormal exit cannot
+        # accidentally present an earlier successful artifact as its explanation.
+        row.final_error = event.error or ""
+        row.final_output = event.output_str or ""
+        if row.final_error or row.final_output:
+            row.output = row.final_error or row.final_output
+            row.final_output_is_archive_result = bool(row.final_output and not row.final_error)
         if row.ended_at:
             row.status = row.final_status or row.status
 
@@ -1065,16 +1098,18 @@ class LiveBusUI:
         self._refresh_live()
 
     async def on_BinaryRequestEvent(self, event: BinaryRequestEvent) -> None:
+        # BinaryService may resolve a cached binary and emit BinaryEvent before
+        # this listener receives the request. Do not reopen its completed row.
+        if event.event_id in self.completed_binary_request_ids:
+            return
         plugin_name = str(event.extra_context.get("plugin_name") or "")
-        row_key = self._match_row_key(event)
+        row_key = self.row_key_by_event_id.get(event.event_id)
         if row_key is None:
             self.binary_row_num += 1
             row_key = f"binary:{self.binary_row_num}"
             self.pending_binary_rows[event.name].append(row_key)
             self.active_row_keys.append(row_key)
         self.row_key_by_event_id[event.event_id] = row_key
-        if event.event_parent_id:
-            self.row_key_by_event_id[event.event_parent_id] = row_key
         existing = self.live_results.get(row_key)
         row = (
             existing
@@ -1094,6 +1129,9 @@ class LiveBusUI:
         row.output = _binary_event_output(event)
         row.status = "started"
         self.live_results[row_key] = row
+        finalizer = asyncio.create_task(self._finalize_binary_request_when_done(event, row_key))
+        self.binary_request_finalizers.add(finalizer)
+        finalizer.add_done_callback(self.binary_request_finalizers.discard)
         if self.progress is None or self.task_id is None:
             self._print_started_row(row)
             return
@@ -1103,16 +1141,57 @@ class LiveBusUI:
         self.progress.update(self.task_id, description=_progress_hook_description(f"install:{event.name}"))
         self._refresh_live(force=True)
 
+    async def _finalize_binary_request_when_done(self, event: BinaryRequestEvent, row_key: str) -> None:
+        try:
+            await event.wait(timeout=event.event_timeout)
+        except TimeoutError:
+            pass
+        if event.event_id in self.completed_binary_request_ids:
+            return
+        self.completed_binary_request_ids.add(event.event_id)
+        row = self.live_results.pop(row_key, None)
+        if not isinstance(row, _LiveProcessRecord):
+            return
+        row.ended_at = now_iso()
+        row.status = "failed"
+        row.output = next(
+            (message for result in event.event_results.values() if result.error and (message := str(result.error))),
+            f"Binary request did not resolve: {event.name}",
+        )
+        if row_key in self.active_row_keys:
+            self.active_row_keys.remove(row_key)
+        if row_key in self.pending_binary_rows[event.name]:
+            self.pending_binary_rows[event.name].remove(row_key)
+        if not self.pending_binary_rows[event.name]:
+            self.pending_binary_rows.pop(event.name, None)
+        self._print_completed_row(row)
+        if self.progress is not None and self.task_id is not None:
+            current_task = self.progress.tasks[self.task_id]
+            self.progress.update(self.task_id, total=max(current_task.completed + len(self.active_row_keys), 1))
+            _advance_progress(
+                self.progress,
+                self.task_id,
+                _progress_hook_description(_latest_active_hook_name(self.active_row_keys, self.live_results)),
+                headroom=len(self.active_row_keys),
+            )
+            self._refresh_live(force=True)
+
     async def on_BinaryEvent(self, event: BinaryEvent) -> None:
+        if event.event_parent_id in self.completed_binary_request_ids:
+            return
         plugin_name = str(event.extra_context.get("plugin_name") or "")
         row_key = self._match_row_key(event)
         if row_key is None:
             self.binary_row_num += 1
             row_key = f"binary:{self.binary_row_num}"
-        elif self.pending_binary_rows[event.name] and self.pending_binary_rows[event.name][0] == row_key:
-            self.pending_binary_rows[event.name].popleft()
+        elif row_key in self.pending_binary_rows[event.name]:
+            self.pending_binary_rows[event.name].remove(row_key)
         if not self.pending_binary_rows[event.name]:
             self.pending_binary_rows.pop(event.name, None)
+        self.row_key_by_event_id[event.event_id] = row_key
+        if event.event_parent_id:
+            self.completed_binary_request_ids.add(event.event_parent_id)
+            self.row_key_by_event_id[event.event_parent_id] = row_key
 
         existing = self.live_results.get(row_key)
         row = (
@@ -1165,7 +1244,21 @@ class LiveBusUI:
             self._apply_archive_result(existing, event)
             self._refresh_live()
 
-    async def on_ProcessStdoutEvent(self, event: ProcessStdoutEvent) -> None:
+    async def on_ProcessStdoutEvent(self, event: ProcessStdoutEvent | ProcessStderrEvent) -> None:
+        """Choose a live summary without confusing protocol data with diagnostics.
+
+        While running: explicit result > latest stderr > latest plain stdout.
+        Stderr is where hooks report current activity, PID, connection details,
+        warnings and stalls. Stdout can be only an old readiness announcement, so
+        receiving another stdout line must not hide useful stderr diagnostics.
+        Keep the streams independently: polling order is not a meaningful policy.
+        The newest line WITHIN the preferred stream replaces its older message.
+
+        Stdout JSONL is consumed by result services, never displayed verbatim here.
+        Explicit results win because they identify what the hook actually produced;
+        cleanup chatter must not erase that information. These rules apply to every
+        plugin, with no knowledge of hook names, executables or log message text.
+        """
         row_key = self._match_row_key(event)
         if row_key is None:
             return
@@ -1174,7 +1267,13 @@ class LiveBusUI:
             return
         existing = self.live_results.get(row_key)
         if isinstance(existing, _LiveProcessRecord):
-            existing.output = line
+            if event.event_type == "ProcessStderrEvent":
+                existing.latest_stderr = line
+            else:
+                existing.latest_stdout = line
+            if not existing.final_output and not existing.final_error:
+                existing.output = existing.latest_stderr or existing.latest_stdout
+                self._refresh_live()
 
     async def on_ProcessCompletedEvent(self, event: ProcessCompletedEvent) -> None:
         row_key = self._match_row_key(event)
@@ -1198,25 +1297,30 @@ class LiveBusUI:
         row.exit_code = event.exit_code
         row.output_files = list(event.output_files)
         if event.status == "succeeded":
-            for text in (event.stdout, event.stderr):
-                for raw_line in text.splitlines():
-                    line = raw_line.strip()
-                    if not line.startswith("{"):
-                        continue
-                    try:
-                        record = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if isinstance(record, dict) and record.get("type") == "ArchiveResult":
-                        row.final_status = str(record.get("status") or row.final_status or "")
-                        inline_output = str(record.get("error") or record.get("output_str") or "")
-                        if inline_output:
-                            row.final_output = inline_output
-                            row.output = inline_output
-                            row.final_output_is_archive_result = bool(record.get("output_str"))
+            for raw_line in event.stdout.splitlines():
+                line = raw_line.strip()
+                if not line.startswith("{"):
+                    continue
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(record, dict) and record.get("type") == "ArchiveResult":
+                    row.final_status = str(record.get("status") or row.final_status or "")
+                    row.final_error = str(record.get("error") or "")
+                    row.final_output = str(record.get("output_str") or "")
+                    inline_output = row.final_error or row.final_output
+                    if inline_output:
+                        row.output = inline_output
+                        row.final_output_is_archive_result = bool(record.get("output_str"))
         row.status = row.final_status or event.status
         last_non_json_stdout_line = ""
-        for raw_line in event.stdout.splitlines():
+        stdout_lines = event.stdout.splitlines()
+        # The first background stdout line releases the scheduler; it is not
+        # a completed-result summary. Structured records retain their priority.
+        if event.is_background:
+            stdout_lines = stdout_lines[1:]
+        for raw_line in stdout_lines:
             line = raw_line.strip()
             if line and not line.startswith("{"):
                 last_non_json_stdout_line = line
@@ -1225,31 +1329,44 @@ class LiveBusUI:
             line = raw_line.strip()
             if line and not line.startswith("{"):
                 last_non_json_stderr_line = line
-        if row.status == "failed" or event.exit_code != 0:
-            row.output = (
-                last_non_json_stderr_line
-                or last_non_json_stdout_line
-                or event.stderr
-                or event.stdout
-                or row.final_output
-                or f"exit={event.exit_code}"
-            )
-        elif row.final_output:
-            row.output = row.final_output
-        elif last_non_json_stdout_line:
-            row.output = last_non_json_stdout_line
-        elif last_non_json_stderr_line:
-            row.output = last_non_json_stderr_line
         self.live_results[row_key] = row
-
         process_event = self.process_event_by_row_key.get(row_key)
         if process_event is not None:
             existing_result = await self.bus.find(ArchiveResultEvent, child_of=process_event)
             if isinstance(existing_result, ArchiveResultEvent):
                 self._apply_archive_result(row, existing_result)
+
+        # Completion answers a different question from live progress:
+        #   clean exit: explicit result > final plain stdout > stderr > exit code
+        #   failure: explicit error > stderr > plain stdout > exit code
+        # A successful hook's stdout usually describes the result; stderr can be
+        # routine teardown, so it must not replace that result. On failure the
+        # diagnostic tail is more actionable than an earlier "download started".
+        # Background readiness is excluded above because releasing the scheduler
+        # says nothing about the eventual result. Do not infer completion from it.
+        # Reconcile the ArchiveResult BEFORE choosing this summary: doing it after
+        # selection previously replaced a concise line with the whole stderr log.
+        if row.status == "failed" or event.exit_code != 0:
+            error_lines = [line.strip() for line in row.final_error.splitlines() if line.strip()]
+            row.output = (
+                (error_lines[-1] if error_lines else "")
+                or last_non_json_stderr_line
+                or last_non_json_stdout_line
+                or f"exit={event.exit_code}"
+            )
+            row.final_output_is_archive_result = False
+        else:
+            row.output = row.final_output or last_non_json_stdout_line or last_non_json_stderr_line or f"exit={event.exit_code}"
+            row.final_output_is_archive_result = bool(row.final_output)
         if row_key in self.active_row_keys:
             self.active_row_keys.remove(row_key)
         self.live_results.pop(row_key, None)
+        # During explicit abort the user already knows why work stopped. Repeating
+        # buffered request logs looks like archiving is continuing; report the
+        # cancellation instead, without changing durable errors or saved logs.
+        if self.aborting and event.exit_code != 0:
+            row.output = f"Stopped during crawl abort (exit={event.exit_code})"
+            row.final_output_is_archive_result = False
         self._print_completed_row(row)
         if self.progress is None or self.task_id is None:
             return
@@ -1270,6 +1387,21 @@ class LiveBusUI:
         self,
         event: CrawlAbortEvent | CrawlResumeAndRetryEvent | CrawlResumeAndSkipEvent,
     ) -> None:
+        if isinstance(event, CrawlAbortEvent) and event.user_initiated:
+            from .process_utils import GRACEFUL_SHUTDOWN_TIMEOUT
+
+            message = Text(
+                f"Aborting crawl — stopping hooks (up to {GRACEFUL_SHUTDOWN_TIMEOUT:g}s per cleanup phase)… Ctrl+C again to force exit.",
+                style="yellow",
+            )
+            self.paused = True
+            self.aborting = True
+            if self.live is not None:
+                self.live.stop()
+            self.ui_console.print(message)
+            return
+        if event.event_type == "CrawlAbortEvent":
+            return
         self.set_paused(False)
 
 
@@ -1330,9 +1462,6 @@ def version(ctx, quiet: bool):
 )
 @click.option("--dir", "-d", "output_dir", type=click.Path(), help="Output directory")
 @click.option("--timeout", "-t", type=int, help="Timeout in seconds")
-@click.option("--max-urls", type=int, default=1, help="Maximum number of URLs to snapshot for this crawl (0 = unlimited)")
-@click.option("--crawl-max-size", default="0", help="Maximum total crawl size in bytes or units like 45mb / 1gb (0 = unlimited)")
-@click.option("--crawl-timeout", type=int, default=0, help="Maximum total crawl runtime in seconds (0 = unlimited)")
 @click.option("--snapshot-max-size", default="0", help="Maximum per-snapshot size in bytes or units like 45mb / 1gb (0 = unlimited)")
 @click.option("--disable", "disable_list", help="Comma-separated list of plugins to force-disable (overrides --plugins and --output)")
 @click.option("--dry-run", is_flag=True, help="Enable abxpkg dry-run mode and skip running snapshot hook subprocesses")
@@ -1350,9 +1479,6 @@ def dl(
     dry_run: bool = False,
     no_install: bool = False,
     debug: bool = False,
-    max_urls: int = 0,
-    crawl_max_size: str = "0",
-    crawl_timeout: int = 0,
     snapshot_max_size: str = "0",
 ):
     """Download a URL using all enabled plugins.
@@ -1401,24 +1527,10 @@ def dl(
     config_overrides: dict[str, object] = {"CRAWL_DIR": out_path.expanduser().resolve()}
     if timeout:
         config_overrides["TIMEOUT"] = timeout
-    if max_urls < 0:
-        raise click.BadParameter("max_urls must be 0 or a positive integer.", param_hint="--max-urls")
-    if crawl_timeout < 0:
-        raise click.BadParameter("crawl_timeout must be 0 or a positive integer.", param_hint="--crawl-timeout")
-    try:
-        crawl_max_size_bytes = parse_filesize_to_bytes(crawl_max_size)
-    except ValueError as err:
-        raise click.BadParameter(str(err), param_hint="--crawl-max-size") from err
     try:
         snapshot_max_size_bytes = parse_filesize_to_bytes(snapshot_max_size)
     except ValueError as err:
         raise click.BadParameter(str(err), param_hint="--snapshot-max-size") from err
-    if max_urls:
-        config_overrides["CRAWL_MAX_URLS"] = max_urls
-    if crawl_max_size_bytes:
-        config_overrides["CRAWL_MAX_SIZE"] = crawl_max_size_bytes
-    if crawl_timeout:
-        config_overrides["CRAWL_TIMEOUT"] = crawl_timeout
     if snapshot_max_size_bytes:
         config_overrides["SNAPSHOT_MAX_SIZE"] = snapshot_max_size_bytes
     if dry_run:
@@ -1461,36 +1573,64 @@ def dl(
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     previous_sigint_handler = signal.getsignal(signal.SIGINT)
-    pause_requested = False
 
     signal_handler_installed = False
     archive_results: list[ArchiveResultEvent] = []
+    owned_process_service = None
+    abort_chosen = False
     try:
 
-        async def on_CrawlPauseEvent(event: CrawlPauseEvent) -> None:
-            nonlocal pause_requested
-            pause_requested = True
+        def remember_process_service(service) -> None:
+            nonlocal owned_process_service
+            owned_process_service = service
 
-        async def on_CrawlControlEvent(
-            event: CrawlAbortEvent | CrawlResumeAndRetryEvent | CrawlResumeAndSkipEvent,
-        ) -> None:
-            nonlocal pause_requested
-            pause_requested = False
-
-        bus.on(CrawlPauseEvent, on_CrawlPauseEvent)
-        bus.on(CrawlAbortEvent, on_CrawlControlEvent)
-        bus.on(CrawlResumeAndRetryEvent, on_CrawlControlEvent)
-        bus.on(CrawlResumeAndSkipEvent, on_CrawlControlEvent)
+        def mark_abort_chosen() -> None:
+            nonlocal abort_chosen
+            abort_chosen = True
 
         def on_sigint() -> None:
-            nonlocal pause_requested
-            next_event = CrawlAbortEvent() if pause_requested or not interactive_tty else CrawlPauseEvent()
-            pause_requested = True
+            nonlocal abort_chosen
+            if abort_chosen or (owned_process_service is not None and owned_process_service.abort_requested):
+                # The user already chose whole-crawl abort. A further Ctrl+C
+                # means bypass graceful hook cleanup now, including Chrome's
+                # normal profile-flush grace. Only this download's hook groups
+                # and child installs are killed; the shell and other jobs are
+                # outside the service's ownership boundary.
+                os.write(sys.stderr.fileno(), b"\n[!] Forcing aborted crawl to exit now.\n")
+                if owned_process_service is not None:
+                    owned_process_service.force_kill_owned_processes()
+                os._exit(130)
+            if owned_process_service is not None and owned_process_service.interrupt_in_progress:
+                # A second signal while the prompt is pending selects abort.
+                # Record that decision synchronously so the very next signal
+                # can force exit before async CrawlAbortEvent dispatch runs.
+                abort_chosen = True
 
+            # The shared controller decides first interrupt vs abort. Keeping a
+            # second counter here drifted from background/process lifecycle and
+            # made standalone and supervised runners behave differently.
             async def emit_control_event() -> None:
-                await bus.emit(next_event).now()
+                await bus.emit(CrawlPauseEvent()).now()
 
             loop.create_task(emit_control_event())
+
+        async def prompt_in_terminal(hook_name: str) -> Literal["abort", "retry", "skip"]:
+            from .services.process_service import ProcessService
+
+            rendered = live_ui.show_interrupt_prompt(hook_name)
+            choice = (
+                await ProcessService.read_interrupt_choice(
+                    hook_name,
+                    render=not rendered,
+                    is_active=lambda: not live_ui.aborting,
+                    on_abort=mark_abort_chosen,
+                )
+                or "abort"
+            )
+            if choice == "abort":
+                # Also cover an inactive/closed prompt that defaulted to abort.
+                mark_abort_chosen()
+            return choice
 
         loop.add_signal_handler(
             signal.SIGINT,
@@ -1508,6 +1648,8 @@ def dl(
                     config=user_config,
                     emit_jsonl=not stdout_is_tty,
                     interactive_tty=interactive_tty,
+                    interrupted_hook_prompt=prompt_in_terminal,
+                    on_process_service_created=remember_process_service,
                     bus=bus,
                 ),
             )

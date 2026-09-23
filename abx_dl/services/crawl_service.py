@@ -23,7 +23,7 @@ from ..events import (
 )
 from ..models import Snapshot
 from ..models import Hook, Plugin
-from .base import BaseService, wait_for_process_ready
+from .base import BaseService, wait_for_process_ready, wait_for_crawl_resume
 from .binary_service import build_plugin_process_env
 
 
@@ -87,7 +87,7 @@ class CrawlService(BaseService):
         self.bus.on(CrawlCleanupEvent, self.on_CrawlCleanupEvent)
 
     async def should_abort(self) -> bool:
-        if self.abort_requested:
+        if self.abort_requested or await wait_for_crawl_resume(self.bus):
             return True
         if self.abort_requested_callback is None:
             return False
@@ -160,6 +160,7 @@ class CrawlService(BaseService):
             )
             if hook.is_background:
                 background_process = event.emit(process_event)
+                await background_process.now()
                 started_process = await self.bus.find(
                     ProcessStartedEvent,
                     child_of=background_process,
@@ -178,6 +179,8 @@ class CrawlService(BaseService):
             else:
                 foreground_process = event.emit(process_event)
                 await _run_event_now(foreground_process, handler_timeout)
+                if await self.should_abort():
+                    return
                 completed_process = await self.bus.find(
                     ProcessCompletedEvent,
                     child_of=foreground_process,

@@ -1,6 +1,7 @@
 """SnapshotService — orchestrates the snapshot extraction phase."""
 
 import asyncio
+from datetime import UTC, datetime
 import json
 from inspect import isawaitable
 from pathlib import Path
@@ -27,10 +28,10 @@ from ..events import (
     SnapshotEvent,
     slow_warning_timeout,
 )
-from ..limits import CrawlLimitState
-from ..models import ArchiveResult, Snapshot, write_jsonl
+from ..limits import parse_filesize_to_bytes
+from ..models import Snapshot
 from ..models import Hook, Plugin
-from .base import BaseService, wait_for_process_ready
+from .base import BaseService, wait_for_process_ready, wait_for_crawl_resume
 from .binary_service import build_plugin_process_env
 
 
@@ -90,13 +91,15 @@ class SnapshotService(BaseService):
 
     RuntimeConfig is injected for this snapshot so shared-bus MachineEvent
     history from another snapshot cannot change its hook environment or limits.
-    Lifecycle state remains event- or disk-backed:
+    Run-local bookkeeping follows the hook events:
     - discovered snapshot flow is derived from ProcessStdoutEvent ancestry
     - background hook cleanup is driven by ProcessStartedEvent / ProcessCompletedEvent
-    - crawl limit admission is persisted by CrawlLimitState in ``CRAWL_DIR/.abx-dl``
+    - snapshot size is accounted in memory; the embedding app owns crawl budgets
     """
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [
+        ArchiveResultEvent,
+        ProcessCompletedEvent,
         CrawlAbortEvent,
         ProcessStdoutEvent,
         SnapshotEvent,
@@ -146,14 +149,21 @@ class SnapshotService(BaseService):
         self.snapshot_cleanup_phase_timeout = snapshot_cleanup_phase_timeout
         self.abort_requested = False
         self.abort_requested_callback = abort_requested
-        self.limit_state: CrawlLimitState | None = None
+        self.snapshot_max_size = max(0, parse_filesize_to_bytes(config.user.model_dump(mode="json").get("SNAPSHOT_MAX_SIZE") or 0))
+        # A retry must get a fresh budget, without a hidden ledger in the output
+        # directory blocking it. Hook metadata already supplies file sizes;
+        # count each plugin/path once even when several hooks report it.
+        self._output_sizes: dict[tuple[str, str], int] = {}
         self.config: RuntimeConfig = config
         self._hook_timeouts: dict[tuple[str, str], int] = {}
+        self._snapshot_by_process: dict[str, SnapshotEvent] = {}
         self._active_snapshot_event_ids: set[str] = set()
         self._completed_snapshot_event_ids: set[str] = set()
         self._failed_snapshot_event_ids: set[str] = set()
         super().__init__(bus)
         self._handler_registrations = [
+            (ArchiveResultEvent, self.bus.on(ArchiveResultEvent, self.on_ArchiveResultEvent)),
+            (ProcessCompletedEvent, self.bus.on(ProcessCompletedEvent, self.on_ProcessCompletedEvent)),
             (CrawlAbortEvent, self.bus.on(CrawlAbortEvent, self.on_CrawlAbortEvent)),
             (ProcessStdoutEvent, self.bus.on(ProcessStdoutEvent, self.on_ProcessStdoutEvent)),
             (SnapshotEvent, self.bus.on(SnapshotEvent, self.on_SnapshotEvent)),
@@ -164,9 +174,10 @@ class SnapshotService(BaseService):
         for event_pattern, handler in reversed(self._handler_registrations):
             self.bus.off(event_pattern, handler)
         self._handler_registrations.clear()
+        self._snapshot_by_process.clear()
 
     async def should_abort(self) -> bool:
-        if self.abort_requested:
+        if self.abort_requested or await wait_for_crawl_resume(self.bus):
             return True
         if self.abort_requested_callback is None:
             return False
@@ -222,7 +233,6 @@ class SnapshotService(BaseService):
                 await _run_event_now(event.emit(cleanup_event), self.snapshot_cleanup_phase_timeout)
             if await self.should_abort():
                 return
-            assert self.limit_state is not None
             plugin_config = await get_plugin_env(
                 self.bus,
                 plugin=plugin,
@@ -282,6 +292,7 @@ class SnapshotService(BaseService):
             )
             if hook.is_background:
                 background_process = event.emit(process_event)
+                await background_process.now()
                 started_process = await self.bus.find(
                     ProcessStartedEvent,
                     child_of=background_process,
@@ -303,6 +314,8 @@ class SnapshotService(BaseService):
             else:
                 foreground_process = event.emit(process_event)
                 await _run_event_now(foreground_process, handler_timeout)
+                if await self.should_abort():
+                    return
                 completed_process = await self.bus.find(
                     ProcessCompletedEvent,
                     child_of=foreground_process,
@@ -320,14 +333,17 @@ class SnapshotService(BaseService):
         on_SnapshotEvent__hook.__qualname__ = handler_name
         return on_SnapshotEvent__hook
 
-    async def on_SnapshotEvent__check_crawl_limits(self, event: SnapshotEvent) -> None:
-        """Persist crawl-limit admission for the root snapshot before hook handlers run."""
-        if event.output_dir != str(self.output_dir) or event.snapshot_id != self.snapshot.id:
-            return
-        if self.limit_state is None:
-            self.limit_state = CrawlLimitState.from_config(self.config.user.model_dump(mode="json"))
-        if self.limit_state.has_limits():
-            self.limit_state.admit_snapshot(event.snapshot_id)
+    async def on_ArchiveResultEvent(self, event: ArchiveResultEvent) -> None:
+        if self.snapshot_max_size and event.snapshot_id == self.snapshot.id:
+            for output_file in event.output_files:
+                self._output_sizes[event.plugin, output_file.path] = output_file.size
+
+    async def on_ProcessCompletedEvent(self, event: ProcessCompletedEvent) -> None:
+        # Some hooks emit no result, or write more after their last stdout line.
+        # Their bytes still count, regardless of the eventual result status.
+        if self.snapshot_max_size and event.hook_name.startswith("on_Snapshot") and Path(event.output_dir).parent == self.output_dir:
+            for output_file in event.output_files:
+                self._output_sizes[event.plugin_name, output_file.path] = output_file.size
 
     async def on_ProcessStdoutEvent(self, event: ProcessStdoutEvent) -> None:
         """Route type=Snapshot records to SnapshotDiscoveredEvent facts.
@@ -352,16 +368,24 @@ class SnapshotService(BaseService):
             discovered_snapshot = Snapshot(**snapshot_payload)
         except ValidationError:
             return
-        if self.limit_state is None:
-            self.limit_state = CrawlLimitState.from_config(self.config.user.model_dump(mode="json"))
-        if not self.limit_state.should_emit_discovered_snapshots():
-            return
-        parent_snapshot = await self.bus.find(
-            SnapshotEvent,
-            past=True,
-            future=False,
-            where=lambda candidate: self.bus.event_is_child_of(event, candidate),
-        )
+        # All records from one hook process have the same immutable ancestry.
+        # Resolve it once, not once per URL: finding an older SnapshotEvent in
+        # growing history for every line made bulk parser output quadratic
+        # (thousands of URLs meant millions of comparisons). That bookkeeping
+        # could even expire a hook deadline after its subprocess had succeeded.
+        # Use the process-event identity, never plugin name: concurrent runs and
+        # retries can share a plugin/output directory but must not share owners.
+        process_id = event.event_parent_id
+        parent_snapshot = self._snapshot_by_process.get(process_id) if process_id else None
+        if parent_snapshot is None:
+            parent_snapshot = await self.bus.find(
+                SnapshotEvent,
+                past=True,
+                future=False,
+                where=lambda candidate: self.bus.event_is_child_of(event, candidate),
+            )
+            if process_id and isinstance(parent_snapshot, SnapshotEvent):
+                self._snapshot_by_process[process_id] = parent_snapshot
         if parent_snapshot is None:
             return
         assert isinstance(parent_snapshot, SnapshotEvent)
@@ -402,48 +426,26 @@ class SnapshotService(BaseService):
         )
         if completed_event is not None:
             return
-        if self.limit_state is None:
-            self.limit_state = CrawlLimitState.from_config(self.config.user.model_dump(mode="json"))
-        admission = self.limit_state.admit_snapshot(event.snapshot_id) if self.limit_state.has_limits() else None
-        if admission is not None and not admission.allowed:
-            raise RuntimeError(f"Snapshot {event.snapshot_id} denied by crawl limits: {admission.stop_reason}")
         url = self.url
         snapshot_id = self.snapshot.id
         output_dir = str(self.output_dir)
         snapshot_failed = True
-        next_hook_index = 0
         try:
-            for hook_index, (plugin, hook) in enumerate(self.hooks):
+            # Results describe attempts, not a checklist of planned hooks.
+            # Inventing failures for hooks we never launch would fill the
+            # user's failure list with work that simply has not happened yet.
+            for plugin, hook in self.hooks:
                 if await self.should_abort():
                     break
-                next_hook_index = hook_index + 1
                 await self.on_SnapshotEvent__for_hook(plugin, hook)(event)
                 if await self.should_abort():
                     break
-                if self.limit_state.get_snapshot_stop_reason(event.snapshot_id) == "snapshot_max_size":
+                # This is a between-hooks budget, not a disk quota. Cleanup
+                # must still run so background recorders can preserve output.
+                if self.snapshot_max_size and sum(self._output_sizes.values()) >= self.snapshot_max_size:
                     break
             snapshot_failed = False
         finally:
-            if snapshot_failed or await self.should_abort():
-                for plugin, hook in self.hooks[next_hook_index:]:
-                    result = ArchiveResult(
-                        snapshot_id=snapshot_id,
-                        plugin=plugin.name,
-                        hook_name=hook.name,
-                        status="failed",
-                        error="Capture interrupted before this hook could run",
-                    )
-                    write_jsonl(self.output_dir / "index.jsonl", result)
-                    await event.emit(
-                        ArchiveResultEvent(
-                            snapshot_id=snapshot_id,
-                            plugin=plugin.name,
-                            hook_name=hook.name,
-                            id=result.id,
-                            status=result.status,
-                            error=result.error or "",
-                        ),
-                    ).now()
             if snapshot_failed:
                 self._failed_snapshot_event_ids.add(event.event_id)
             cleanup_event = SnapshotCleanupEvent(
@@ -501,41 +503,52 @@ class SnapshotService(BaseService):
             where=lambda candidate: not candidate.is_background,
         )
         if foreground_process is None and background_process_events:
-            # Background-only snapshots have no foreground hook to create the
-            # normal state-machine barrier between process start and cleanup.
-            # In that case cleanup owns the barrier: let each background hook
-            # complete through the ordinary ProcessCompletedEvent path using
-            # its configured hook timeout, then SIGTERM only processes that are
-            # still alive. This preserves the single bg/fg lifecycle model
-            # without guessing from filename hints like ".finite" / ".daemon"
-            # or from incidental stdout/stderr output.
-            pending_startup_processes: list[ProcessEvent] = []
-            for process_event in background_process_events:
-                completed_process = await self.bus.find(
-                    ProcessCompletedEvent,
-                    child_of=process_event,
+            # With no foreground barrier, keep the capture alive until its actual
+            # background attempts finish. Re-read attempts after pause/retry: a
+            # fixed gather of the original events treats the stopped attempt as
+            # completion and abandons the replacement subprocess. Polling here
+            # also lets an abort release this wait immediately instead of waiting
+            # for a plugin's potentially hour-long capture timeout.
+            while not await self.should_abort():
+                attempts = await self.bus.filter(
+                    ProcessStartedEvent,
+                    child_of=root_snapshot_event,
                     past=True,
                     future=False,
+                    where=lambda candidate: candidate.is_background,
                 )
-                if completed_process is None:
-                    pending_startup_processes.append(process_event)
-            if pending_startup_processes:
-                await asyncio.gather(
-                    *[
-                        self.bus.find(
-                            ProcessCompletedEvent,
-                            child_of=process_event,
-                            past=True,
-                            future=grace_by_hook.get((process_event.plugin_name, process_event.hook_name), 60),
-                        )
-                        for process_event in pending_startup_processes
-                    ],
-                )
+                pending = False
+                for started in attempts:
+                    if started.interruption_done is not None and not started.interruption_done.is_set():
+                        pending = True
+                        break
+                    completed = await self.bus.find(
+                        ProcessCompletedEvent,
+                        past=True,
+                        future=False,
+                        pid=started.pid,
+                    )
+                    elapsed = (datetime.now(UTC) - datetime.fromisoformat(started.start_ts)).total_seconds()
+                    if completed is None and elapsed < grace_by_hook.get((started.plugin_name, started.hook_name), 60):
+                        pending = True
+                        break
+                if not pending:
+                    break
+                await asyncio.sleep(0.05)
+        # A retry creates another real ProcessEvent. Cleanup must own that new
+        # attempt too, even when the user retried while cleanup was waiting.
+        background_process_events = await self.bus.filter(
+            ProcessEvent,
+            child_of=root_snapshot_event,
+            past=True,
+            future=False,
+            where=lambda candidate: candidate.is_background and (candidate.plugin_name, candidate.hook_name) in background_hook_keys,
+        )
         started_processes: list[tuple[ProcessEvent, ProcessStartedEvent]] = []
         for process_event in background_process_events:
             started_process = await self.bus.find(
                 ProcessStartedEvent,
-                child_of=process_event,
+                event_parent_id=process_event.event_id,
                 past=True,
                 future=min(5.0, event.event_timeout or 5.0),
             )
@@ -545,6 +558,7 @@ class SnapshotService(BaseService):
             completed_process = await self.bus.find(
                 ProcessCompletedEvent,
                 child_of=process_event,
+                pid=started_process.pid,
                 past=True,
                 future=False,
             )

@@ -4,6 +4,7 @@ import io
 import json
 import os
 import pty
+import re
 import select
 import signal
 import termios
@@ -17,6 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import abx_dl.cli as cli_module
+from abxpkg.binary_service import BinaryRequestEvent, BinaryService
 from abx_dl.cli import _build_archive_results_table, _compact_output, _format_archive_result_line, _format_elapsed
 from abx_dl.cli import cli as cli_group
 from abx_dl.events import (
@@ -28,7 +30,7 @@ from abx_dl.events import (
     ProcessStdoutEvent,
     SnapshotEvent,
 )
-from abx_dl.limits import CrawlLimitState, parse_filesize_to_bytes
+from abx_dl.limits import parse_filesize_to_bytes
 from abx_dl.catalog import PluginCatalog
 from abx_dl.models import ArchiveResult
 from abx_dl.orchestrator import create_bus
@@ -45,7 +47,9 @@ def test_cli_interrupts_active_hook(tmp_path: Path, choice: str) -> None:
     output = bytearray()
     output_dir = tmp_path / "capture"
     env = _cli_env(tmp_path)
-    env.update(CHROME_DELAY_AFTER_LOAD="60", CHROME_TIMEOUT="120", CHROME_HEADLESS="True")
+    # A real TTY with TERM=dumb still supports input. Rich suppresses live
+    # frames there, so this also protects the plain-text prompt fallback.
+    env.update(CHROME_DELAY_AFTER_LOAD="60", CHROME_TIMEOUT="120", CHROME_HEADLESS="True", TERM="dumb")
     process = subprocess.Popen(
         [sys.executable, "-m", "abx_dl", "dl", "--plugins=chrome", "--dir", str(output_dir), "https://example.com"],
         cwd=tmp_path,
@@ -103,6 +107,204 @@ def test_cli_interrupts_active_hook(tmp_path: Path, choice: str) -> None:
         ]
         assert len(interrupted) == (2 if choice == "retry" else 1)
         assert all(record["exit_code"] == 130 and record["stderr"] == "Hook interrupted by user" for record in interrupted)
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=15)
+        os.close(slave)
+        os.close(master)
+
+
+@pytest.mark.parametrize("phase", ["startup", "running"])
+@pytest.mark.parametrize("choice", ["skip", "retry", "ctrl-c", "noninteractive"])
+def test_cli_interrupts_background_only_capture(tmp_path: Path, choice: str, phase: str) -> None:
+    """The outer CLI must prompt even when no foreground hook owns a wait loop."""
+    master, slave = pty.openpty()
+    termios.tcsetwinsize(slave, (40, 200))
+    output = bytearray()
+    output_dir = tmp_path / "capture"
+    process = subprocess.Popen(
+        [sys.executable, "-m", "abx_dl", "dl", "--plugins=forumdl", "--dir", str(output_dir), "https://news.ycombinator.com"],
+        cwd=tmp_path,
+        env=_cli_env(tmp_path),
+        stdin=subprocess.DEVNULL if choice == "noninteractive" else slave,
+        stdout=slave,
+        stderr=slave,
+        start_new_session=True,
+    )
+
+    def read_until(predicate, timeout=45):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if select.select([master], [], [], 0.1)[0]:
+                output.extend(os.read(master, 65536))
+            if predicate():
+                return
+        raise AssertionError(output.decode(errors="replace"))
+
+    def active_hook():
+        for path in output_dir.rglob("on_Snapshot__33_forumdl.*.pid"):
+            value = path.read_text().strip()
+            if value and psutil.pid_exists(int(value)):
+                return int(value)
+        return None
+
+    try:
+        read_until(lambda: active_hook() is not None)
+        pid = active_hook()
+        assert pid is not None
+        children = psutil.Process(process.pid).children(recursive=True)
+        if phase == "running":
+            read_until(lambda: any("INFO:root:GET" in log.read_text() for log in output_dir.rglob("on_Snapshot__33_forumdl.*.stderr.log")))
+        process.send_signal(signal.SIGINT)
+        if choice == "noninteractive":
+            read_until(lambda: process.poll() is not None, timeout=25)
+            assert process.returncode == 1
+            assert b"Choice [skip]:" not in output
+            assert not psutil.pid_exists(pid)
+            assert not [child.pid for child in children if child.is_running() and child.status() != psutil.STATUS_ZOMBIE]
+            return
+        read_until(lambda: b"Choice [skip]:" in output, timeout=20)
+        read_until(lambda: not termios.tcgetattr(slave)[3] & termios.ICANON)
+        assert not psutil.pid_exists(pid)
+        if choice == "retry":
+            os.write(master, b"r")
+            read_until(lambda: (new_pid := active_hook()) is not None and new_pid != pid)
+            children.extend(psutil.Process(process.pid).children(recursive=True))
+            process.send_signal(signal.SIGINT)
+            read_until(lambda: output.count(b"Choice [skip]:") == 2, timeout=20)
+            read_until(lambda: not termios.tcgetattr(slave)[3] & termios.ICANON)
+        os.write(master, b"\r" if choice == "skip" else b"\x03")
+        read_until(lambda: process.poll() is not None, timeout=25)
+        assert process.returncode == (0 if choice == "skip" else 1), output.decode(errors="replace")
+        assert b"Traceback" not in output
+        assert not [child.pid for child in children if child.is_running() and child.status() != psutil.STATUS_ZOMBIE]
+        records = [json.loads(line) for path in output_dir.rglob("index.jsonl") for line in path.read_text().splitlines() if line.strip()]
+        interrupted = [record for record in records if record.get("type") == "Process" and record.get("plugin") == "forumdl"]
+        assert len(interrupted) == (2 if choice == "retry" else 1)
+        assert all(record["exit_code"] == 130 for record in interrupted)
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=20)
+        os.close(slave)
+        os.close(master)
+
+
+def test_cli_abort_stops_long_running_background_hook(tmp_path: Path) -> None:
+    master, slave = pty.openpty()
+    termios.tcsetwinsize(slave, (40, 200))
+    output = bytearray()
+    output_dir = tmp_path / "capture"
+    env = _cli_env(tmp_path)
+    env.update(INFINISCROLL_SCROLL_DELAY="10000", CHROME_HEADLESS="True", TERM="xterm-256color", COLUMNS="200")
+    process = subprocess.Popen(
+        [sys.executable, "-m", "abx_dl", "dl", "--plugins=forumdl,infiniscroll", "--dir", str(output_dir), "https://news.ycombinator.com"],
+        cwd=tmp_path,
+        env=env,
+        stdin=slave,
+        stdout=slave,
+        stderr=slave,
+        start_new_session=True,
+    )
+
+    def read_until(predicate, timeout=90):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if select.select([master], [], [], 0.1)[0]:
+                output.extend(os.read(master, 65536))
+            if predicate():
+                return
+        raise AssertionError(output.decode(errors="replace"))
+
+    def active_hook():
+        for pid_file in output_dir.rglob("on_Snapshot__45_infiniscroll.*.pid"):
+            pid_text = pid_file.read_text().strip()
+            if pid_text and psutil.pid_exists(int(pid_text)):
+                return int(pid_text)
+        return None
+
+    try:
+        read_until(lambda: active_hook() is not None)
+        pid = active_hook()
+        assert pid is not None
+        read_until(lambda: "running pid=" in re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", output.decode(errors="replace")))
+        process.send_signal(signal.SIGINT)
+        read_until(lambda: b"Choice [skip]:" in output)
+        read_until(lambda: not termios.tcgetattr(slave)[3] & termios.ICANON)
+        children = psutil.Process(process.pid).children(recursive=True)
+        assert any("forumdl" in " ".join(child.cmdline()) for child in children)
+        abort_offset = len(output)
+        os.write(master, b"\x03")
+        read_until(lambda: b"Aborting crawl" in output[abort_offset:], timeout=3)
+        read_until(lambda: process.poll() is not None, timeout=25)
+        assert not [child.pid for child in children if child.is_running() and child.status() != psutil.STATUS_ZOMBIE]
+        assert process.returncode == 1, output.decode(errors="replace")
+        assert not psutil.pid_exists(pid)
+        assert any("INFO:root:GET" in log.read_text() for log in output_dir.rglob("on_Snapshot__33_forumdl.*.stderr.log"))
+        assert b"Stopped during crawl abort" in output
+        assert b"INFO:root:GET" not in output[abort_offset:]
+        assert b"Traceback" not in output
+        records = [json.loads(line) for path in output_dir.rglob("index.jsonl") for line in path.read_text().splitlines() if line.strip()]
+        interrupted = [
+            record for record in records if record.get("type") == "Process" and record.get("hook_name") == "on_Snapshot__45_infiniscroll"
+        ]
+        assert len(interrupted) == 1
+        assert all(record["exit_code"] == 130 and record["stderr"] == "Hook interrupted by user" for record in interrupted)
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            process.wait(timeout=15)
+        os.close(slave)
+        os.close(master)
+
+
+@pytest.mark.parametrize("choice", ["typed", "signal"])
+def test_cli_third_interrupt_forces_aborted_crawl_to_exit(tmp_path: Path, choice: str) -> None:
+    """After abort was chosen, another Ctrl+C cannot wait for hook grace periods."""
+    master, slave = pty.openpty()
+    termios.tcsetwinsize(slave, (40, 200))
+    output = bytearray()
+    output_dir = tmp_path / "capture"
+    env = _cli_env(tmp_path)
+    env.update(INFINISCROLL_SCROLL_DELAY="10000", CHROME_HEADLESS="True", TERM="dumb")
+    process = subprocess.Popen(
+        [sys.executable, "-m", "abx_dl", "dl", "--plugins=forumdl,infiniscroll", "--dir", str(output_dir), "https://news.ycombinator.com"],
+        cwd=tmp_path,
+        env=env,
+        stdin=slave,
+        stdout=slave,
+        stderr=slave,
+        start_new_session=True,
+    )
+
+    def read_until(predicate, timeout=90):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if select.select([master], [], [], 0.1)[0]:
+                output.extend(os.read(master, 65536))
+            if predicate():
+                return
+        raise AssertionError(output.decode(errors="replace"))
+
+    try:
+        read_until(lambda: any(path.read_text().strip() for path in output_dir.rglob("on_Snapshot__45_infiniscroll.*.pid")))
+        owned = psutil.Process(process.pid).children(recursive=True)
+        process.send_signal(signal.SIGINT)
+        read_until(lambda: b"Choice [skip]:" in output)
+        read_until(lambda: not termios.tcgetattr(slave)[3] & termios.ICANON)
+        if choice == "typed":
+            os.write(master, b"a")
+        else:
+            process.send_signal(signal.SIGINT)
+        read_until(lambda: b"Aborting crawl" in output, timeout=5)
+        forced_at = time.monotonic()
+        process.send_signal(signal.SIGINT)
+        read_until(lambda: process.poll() is not None, timeout=5)
+        assert time.monotonic() - forced_at < 2.0
+        assert process.returncode == 130, output.decode(errors="replace")
+        assert not [child.pid for child in owned if child.is_running() and child.status() != psutil.STATUS_ZOMBIE]
+        assert b"Traceback" not in output
     finally:
         if process.poll() is None:
             process.terminate()
@@ -289,7 +491,7 @@ def test_render_record_output_compacts_live_process_output() -> None:
     assert rendered.endswith("...")
 
 
-def test_render_record_output_keeps_archive_result_output_untruncated() -> None:
+def test_render_record_output_flattens_archive_result_output() -> None:
     record = cli_module._LiveProcessRecord(
         id="proc-1",
         plugin="headers",
@@ -299,7 +501,7 @@ def test_render_record_output_keeps_archive_result_output_untruncated() -> None:
         final_output="line one\nline two",
         final_output_is_archive_result=True,
     )
-    assert cli_module._render_record_output(record) == "line one\nline two"
+    assert cli_module._render_record_output(record) == "line one line two"
 
 
 def test_build_archive_results_table_shows_output_size_column() -> None:
@@ -682,92 +884,6 @@ def test_parse_filesize_to_bytes_accepts_human_units() -> None:
     assert parse_filesize_to_bytes("123") == 123
 
 
-def test_crawl_limit_state_blocks_snapshots_after_max_urls(tmp_path: Path) -> None:
-    limit_state = CrawlLimitState(crawl_dir=tmp_path, crawl_max_urls=2, crawl_max_size=0)
-    assert limit_state.admit_snapshot("snap-1").allowed is True
-    assert limit_state.admit_snapshot("snap-2").allowed is True
-    third = limit_state.admit_snapshot("snap-3")
-    assert third.allowed is False
-    assert third.stop_reason == "crawl_max_urls"
-
-
-def test_crawl_limit_state_resets_legacy_event_id_admission_state(tmp_path: Path) -> None:
-    state_dir = tmp_path / ".abx-dl"
-    state_dir.mkdir()
-    (state_dir / "limits.json").write_text(
-        '{"admitted_snapshot_ids":["event-1"],"stop_reason":"crawl_max_urls"}',
-        encoding="utf-8",
-    )
-
-    limit_state = CrawlLimitState(crawl_dir=tmp_path, crawl_max_urls=1, crawl_max_size=0)
-
-    assert limit_state.admit_snapshot("snap-1").allowed is True
-    assert limit_state.get_stop_reason() == "crawl_max_urls"
-
-
-def test_crawl_limit_state_resumes_when_max_urls_increases(tmp_path: Path) -> None:
-    limit_state = CrawlLimitState(crawl_dir=tmp_path, crawl_max_urls=1, crawl_max_size=0)
-    assert limit_state.admit_snapshot("snap-1").allowed is True
-    assert limit_state.admit_snapshot("snap-2").allowed is False
-    assert limit_state.get_stop_reason() == "crawl_max_urls"
-
-    resumed_limit_state = CrawlLimitState(crawl_dir=tmp_path, crawl_max_urls=2, crawl_max_size=0)
-    assert resumed_limit_state.get_stop_reason() == ""
-    assert resumed_limit_state.admit_snapshot("snap-2").allowed is True
-
-
-def test_crawl_limit_state_resumes_when_max_size_increases(tmp_path: Path) -> None:
-    plugin_dir = tmp_path / "snapshot" / "wget"
-    plugin_dir.mkdir(parents=True)
-    output_file = plugin_dir / "index.html"
-    output_file.write_bytes(b"x" * 32)
-
-    limit_state = CrawlLimitState(crawl_dir=tmp_path, crawl_max_urls=0, crawl_max_size=16)
-    assert limit_state.record_process_output("proc-1", plugin_dir, ["index.html"]) == "crawl_max_size"
-    assert limit_state.get_stop_reason() == "crawl_max_size"
-
-    resumed_limit_state = CrawlLimitState(crawl_dir=tmp_path, crawl_max_urls=0, crawl_max_size=64)
-    assert resumed_limit_state.get_stop_reason() == ""
-
-
-def test_crawl_limit_state_stops_and_resumes_when_timeout_increases(tmp_path: Path) -> None:
-    limit_state = CrawlLimitState(crawl_dir=tmp_path, crawl_timeout=1)
-    state_dir = tmp_path / ".abx-dl"
-    state_dir.mkdir(exist_ok=True)
-    (state_dir / "limits.json").write_text(
-        json.dumps(
-            {
-                "admission_key": "snapshot_id",
-                "admitted_snapshot_ids": [],
-                "counted_event_ids": [],
-                "snapshot_sizes": {},
-                "snapshot_stop_reasons": {},
-                "started_at": time.time() - 2,
-                "total_size": 0,
-                "stop_reason": "",
-            },
-        ),
-        encoding="utf-8",
-    )
-
-    assert limit_state.admit_snapshot("snap-1").allowed is False
-    assert limit_state.get_stop_reason() == "crawl_timeout"
-
-    resumed_limit_state = CrawlLimitState(crawl_dir=tmp_path, crawl_timeout=60)
-    assert resumed_limit_state.get_stop_reason() == ""
-    assert resumed_limit_state.admit_snapshot("snap-1").allowed is True
-
-
-def test_crawl_limit_state_stops_after_max_size(tmp_path: Path) -> None:
-    plugin_dir = tmp_path / "snapshot" / "wget"
-    plugin_dir.mkdir(parents=True)
-    output_file = plugin_dir / "index.html"
-    output_file.write_bytes(b"x" * 32)
-
-    limit_state = CrawlLimitState(crawl_dir=tmp_path, crawl_max_urls=0, crawl_max_size=16)
-    assert limit_state.record_process_output("proc-1", plugin_dir, ["index.html"]) == "crawl_max_size"
-
-
 def test_normalize_archive_result_output_relativizes_absolute_path(tmp_path: Path) -> None:
     cwd = Path.cwd()
     os.chdir(tmp_path)
@@ -862,17 +978,28 @@ def test_render_record_output_uses_exit_code_for_failed_empty_live_row() -> None
     assert cli_module._render_record_output(record) == "exit=1"
 
 
-def test_render_record_output_keeps_failed_output_untruncated() -> None:
+@pytest.mark.parametrize("status", ["started", "succeeded", "failed", "skipped", "noresult"])
+def test_render_record_output_is_always_single_line(status: str) -> None:
     record = cli_module._LiveProcessRecord(
         id="proc-1",
         plugin="wget",
         hook_name="install",
         timeout=60,
-        status="failed",
+        status=status,
         output="line one\nline two " + ("x" * 200),
     )
-    assert cli_module._render_record_output(record) == record.output
-    assert cli_module._render_record_output_cell(record).plain == record.output.replace('"', "")
+    assert cli_module._render_record_output(record) == "line one line two " + "x" * 99 + "..."
+    cell = cli_module._render_record_output_cell(record)
+    assert "\n" not in cell.plain
+    assert cell.no_wrap and cell.overflow == "ellipsis"
+
+    # No status may bypass the invariant, and narrow terminals must ellipsize
+    # rather than wrap. Assert physical rendered lines, not only the cell text.
+    output = io.StringIO()
+    Console(file=output, width=100, color_system=None).print(
+        _build_archive_results_table([record], timeout_seconds=60, stream=True, show_header=False),
+    )
+    assert len(output.getvalue().splitlines()) == 1
 
 
 def test_binary_record_display_output_prefers_abspath_then_version() -> None:
@@ -956,6 +1083,132 @@ def test_record_status_style_uses_darker_started_color_for_background_hooks() ->
 
     assert cli_module._record_status_style(bg_record) == cli_module.BG_STARTED_STYLE
     assert cli_module._record_status_style(fg_record) == "yellow"
+
+
+@pytest.mark.parametrize(
+    ("status", "expected_style"),
+    [("cancelled", "red"), ("noresult", "dim"), ("noresults", "dim"), ("skipped", "dim")],
+)
+def test_archive_result_status_colors_match_cli_palette(status: str, expected_style: str) -> None:
+    result = ArchiveResult(snapshot_id="snap", plugin="wget", hook_name="on_Snapshot__35_wget", status=status)
+
+    table = _build_archive_results_table([result], timeout_seconds=60, stream=True)
+    cells = table.columns[1]._cells
+    assert len(cells) == 1
+    cell = cells[0]
+    assert isinstance(cell, cli_module.Text)
+    assert (cell.plain, cell.style) == (status, expected_style)
+    assert cli_module._record_muted_style(result) == ("dim" if status in {"noresult", "noresults", "skipped"} else None)
+    output = io.StringIO()
+    Console(file=output, force_terminal=True, color_system="standard", no_color=False, width=140).print(table)
+    assert f"\x1b[{31 if expected_style == 'red' else 2}m{status}" in output.getvalue()
+
+
+def test_live_ui_closes_fast_real_binary_requests_without_stale_started_rows(tmp_path: Path) -> None:
+    bus = create_bus(total_timeout=30.0, name="real_binary_ui_lifecycle")
+    BinaryService(bus, auto_install=False)
+    output = io.StringIO()
+    live_ui = cli_module.LiveBusUI(
+        bus,
+        total_hooks=2,
+        timeout_seconds=30,
+        ui_console=Console(file=output, force_terminal=False, color_system=None),
+        interactive_tty=False,
+    )
+
+    async def run() -> None:
+        for _ in range(2):
+            request = bus.emit(
+                BinaryRequestEvent(
+                    name=sys.executable,
+                    binproviders="env",
+                    auto_install=False,
+                    lib_dir=tmp_path / "lib",
+                    no_cache=True,
+                ),
+            )
+            await request.now(timeout=30)
+            await request.wait(timeout=30)
+        await bus.wait_until_idle()
+
+    asyncio.run(run())
+
+    assert live_ui.live_results == {}
+    assert live_ui.active_row_keys == []
+    assert output.getvalue().count("succeeded") == 2
+    assert "[STARTED] Install" not in output.getvalue()
+
+
+def test_live_ui_tracks_concurrent_real_binary_requests_with_same_name(tmp_path: Path) -> None:
+    bus = create_bus(total_timeout=30.0, name="concurrent_binary_ui_lifecycle")
+    output = io.StringIO()
+    live_ui = cli_module.LiveBusUI(
+        bus,
+        total_hooks=2,
+        timeout_seconds=30,
+        ui_console=Console(file=output, force_terminal=False, color_system=None),
+        interactive_tty=False,
+    )
+    BinaryService(bus, auto_install=False)
+
+    async def run() -> None:
+        requests = [
+            bus.emit(
+                BinaryRequestEvent(
+                    name=sys.executable,
+                    binproviders="env",
+                    auto_install=False,
+                    lib_dir=tmp_path / "lib",
+                    no_cache=True,
+                ),
+            )
+            for _ in range(2)
+        ]
+        await asyncio.gather(*(request.now(timeout=30) for request in requests))
+        await asyncio.gather(*(request.wait(timeout=30) for request in requests))
+        await bus.wait_until_idle()
+
+    asyncio.run(run())
+
+    assert live_ui.live_results == {}
+    assert live_ui.active_row_keys == []
+    assert not live_ui.pending_binary_rows
+    assert output.getvalue().count("succeeded") == 2
+    assert output.getvalue().count("[STARTED] Install") == 2
+
+
+def test_live_ui_marks_unresolved_real_binary_request_failed(tmp_path: Path) -> None:
+    bus = create_bus(total_timeout=10.0, name="missing_binary_ui_lifecycle")
+    BinaryService(bus, auto_install=False)
+    output = io.StringIO()
+    live_ui = cli_module.LiveBusUI(
+        bus,
+        total_hooks=1,
+        timeout_seconds=10,
+        ui_console=Console(file=output, force_terminal=False, color_system=None),
+        interactive_tty=False,
+    )
+
+    async def run() -> None:
+        request = bus.emit(
+            BinaryRequestEvent(
+                name=str(tmp_path / "missing-real-binary"),
+                binproviders="env",
+                auto_install=False,
+                lib_dir=tmp_path / "lib",
+                no_cache=True,
+            ),
+        )
+        await request.now(timeout=10)
+        await request.wait(timeout=10)
+        await bus.wait_until_idle()
+        await asyncio.sleep(0)
+
+    asyncio.run(run())
+
+    assert live_ui.live_results == {}
+    assert live_ui.active_row_keys == []
+    assert "failed" in output.getvalue()
 
 
 def test_default_group_routes_bare_url_and_top_level_dl_options() -> None:
@@ -1152,9 +1405,7 @@ def test_readme_dl_command_downloads_example_dot_com_with_real_output(tmp_path: 
     wget_results = [record for record in index_records if record["type"] == "ArchiveResult" and record["plugin"] == "wget"]
     assert any(record["output_str"] == "wget/example.com/index.html" for record in wget_results)
 
-    limit_state = json.loads((output_dir / ".abx-dl" / "limits.json").read_text())
-    assert limit_state["admitted_snapshot_ids"] == [next(record["id"] for record in index_records if record["type"] == "Snapshot")]
-    assert limit_state["stop_reason"] == "crawl_max_urls"
+    assert not (output_dir / ".abx-dl").exists()
 
     wget_processes = [
         record
@@ -1204,7 +1455,7 @@ def test_dl_hooks_find_dependency_commands_inside_active_install(tmp_path: Path)
     assert "No such file or directory" not in process["stderr"]
 
 
-def test_dl_max_urls_is_scoped_to_each_output_dir(tmp_path: Path) -> None:
+def test_dl_independent_output_directories_need_no_accounting(tmp_path: Path) -> None:
     output_dirs = [tmp_path / "first-output", tmp_path / "second-output"]
 
     for output_dir in output_dirs:
@@ -1212,7 +1463,6 @@ def test_dl_max_urls_is_scoped_to_each_output_dir(tmp_path: Path) -> None:
             tmp_path,
             "dl",
             "--plugins=wget",
-            "--max-urls=1",
             f"--dir={output_dir}",
             "https://example.com",
         )
@@ -1220,11 +1470,11 @@ def test_dl_max_urls_is_scoped_to_each_output_dir(tmp_path: Path) -> None:
         assert result.returncode == 0, result.stderr
         assert "denied by crawl limits" not in result.stderr
         assert "Traceback" not in result.stderr
-        assert (output_dir / ".abx-dl" / "limits.json").is_file()
+        assert not (output_dir / ".abx-dl").exists()
         assert "Example Domain" in (output_dir / "wget" / "example.com" / "index.html").read_text()
 
 
-def test_dl_root_event_failure_exits_nonzero_without_success_summary(tmp_path: Path) -> None:
+def test_dl_ignores_legacy_crawl_accounting(tmp_path: Path) -> None:
     output_dir = tmp_path / "exhausted-output"
     state_dir = output_dir / ".abx-dl"
     state_dir.mkdir(parents=True)
@@ -1248,15 +1498,14 @@ def test_dl_root_event_failure_exits_nonzero_without_success_summary(tmp_path: P
         tmp_path,
         "dl",
         "--plugins=wget",
-        "--max-urls=1",
         f"--dir={output_dir}",
         "https://example.com",
     )
 
-    output = result.stdout + result.stderr
-    assert result.returncode != 0
-    assert "denied by crawl limits: crawl_max_urls" in output
-    assert "0 succeeded, 0 noresult, 0 failed, 0 skipped" not in output
+    assert result.returncode == 0, result.stderr
+    assert "Example Domain" in (output_dir / "wget/example.com/index.html").read_text()
+    assert json.loads((state_dir / "limits.json").read_text())["admitted_snapshot_ids"] == ["already-admitted"]
+    assert not (state_dir / "limits.lock").exists()
 
 
 def test_dl_relative_dir_keeps_shared_hook_paths_in_run_dir(tmp_path: Path) -> None:
@@ -1285,3 +1534,36 @@ def test_dl_relative_dir_keeps_shared_hook_paths_in_run_dir(tmp_path: Path) -> N
     assert "Example Domain" in (output_dir / "wget" / "example.com" / "index.html").read_text()
     assert not (output_dir / "chrome" / "out").exists()
     assert not (output_dir / "wget" / "out").exists()
+
+
+def test_dl_reruns_same_directory_without_crawl_accounting(tmp_path: Path) -> None:
+    output_dir = tmp_path / "downloads"
+    for _attempt in range(2):
+        result = _run_cli(tmp_path, "dl", "--plugins=wget", f"--dir={output_dir}", "https://example.com")
+        assert result.returncode == 0, result.stderr
+        assert "Example Domain" in (output_dir / "wget/example.com/index.html").read_text()
+    assert not (output_dir / ".abx-dl").exists()
+
+
+def test_dl_snapshot_size_budget_is_fresh_on_retry(tmp_path: Path) -> None:
+    output_dir = tmp_path / "limited"
+    source = output_dir / "staticfile/input.txt"
+    source.parent.mkdir(parents=True)
+    source.write_text("https://example.com/one\nhttps://example.com/two\n")
+    for _attempt in range(2):
+        result = _run_cli(
+            tmp_path,
+            "dl",
+            "--plugins=parse_txt_urls,hashes",
+            "--snapshot-max-size=1",
+            f"--dir={output_dir}",
+            "https://example.com",
+        )
+        assert result.returncode == 0, result.stderr
+        records = [json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")]
+        results = [record for record in records if record["type"] == "ArchiveResult"]
+        assert [(record["plugin"], record["status"]) for record in results] == [("parse_txt_urls", "succeeded")]
+        urls = [json.loads(line)["url"] for line in (output_dir / "parse_txt_urls/urls.jsonl").read_text().splitlines()]
+        assert urls == ["https://example.com/one", "https://example.com/two"]
+        assert not (output_dir / "hashes").exists()
+        assert not (output_dir / ".abx-dl").exists()

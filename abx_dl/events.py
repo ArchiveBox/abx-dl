@@ -145,7 +145,7 @@ class CrawlCompletedEvent(BaseEvent):
 
 
 class CrawlPauseEvent(BaseEvent):
-    """Request interruption of the current foreground hook and pause the crawl."""
+    """Request an outer-runner pause, independent of the active hook or phase."""
 
     event_concurrency: EventConcurrencyMode | None = EventConcurrencyMode.PARALLEL
     event_handler_concurrency: EventHandlerConcurrencyMode | None = EventHandlerConcurrencyMode.PARALLEL
@@ -153,21 +153,22 @@ class CrawlPauseEvent(BaseEvent):
 
 
 class CrawlAbortEvent(BaseEvent):
-    """Abort the crawl after the current interrupted hook has been handled."""
+    """Abort the whole crawl and release all paused schedulers into cleanup."""
 
+    user_initiated: bool = True
     event_concurrency: EventConcurrencyMode | None = EventConcurrencyMode.PARALLEL
     event_handler_concurrency: EventHandlerConcurrencyMode | None = EventHandlerConcurrencyMode.PARALLEL
     event_timeout: float | None = 60.0
 
 
 class CrawlResumeAndRetryEvent(BaseEvent):
-    """Resume the crawl by retrying the foreground hook that was interrupted."""
+    """Resume the crawl by retrying the hook that was interrupted."""
 
     event_timeout: float | None = 60.0
 
 
 class CrawlResumeAndSkipEvent(BaseEvent):
-    """Resume the crawl and leave the interrupted foreground hook skipped."""
+    """Resume the crawl and leave the interrupted hook skipped."""
 
     event_timeout: float | None = 60.0
 
@@ -305,6 +306,9 @@ class ProcessStartedEvent(BaseEvent):
     process_type: str = ""
     worker_type: str = ""
     start_ts: str = ""
+    # Runtime-only barrier: an interrupted startup is neither readiness failure
+    # nor permission to advance. Wait until skip is recorded or retry is ready.
+    interruption_done: asyncio.Event | None = Field(default=None, exclude=True, repr=False)
     subprocess: asyncio.subprocess.Process = Field(exclude=True, repr=False)
     stdout_file: Path = Field(exclude=True, repr=False)
     stderr_file: Path = Field(exclude=True, repr=False)
@@ -333,6 +337,9 @@ class ProcessCompletedEvent(BaseEvent):
     stderr: str
     exit_code: int
     status: Literal["succeeded", "failed", "skipped"]
+    # Set from scheduler intent, not inferred from an exit code: the same
+    # signal can mean user cancellation, normal recorder cleanup, or a crash.
+    cancelled: bool = False
     output_dir: str
     output_files: list[OutputFile] = Field(default_factory=list)
     is_background: bool = False
@@ -371,6 +378,25 @@ class ProcessStdoutEvent(BaseEvent):
     start_ts: str = ""
     end_ts: str = ""
     output_files: list[OutputFile] = Field(default_factory=list)
+    event_timeout: float | None = 360.0
+
+
+class ProcessStderrEvent(BaseEvent):
+    """A diagnostic line for live progress, NOT a hook protocol record.
+
+    Background hooks deliberately stay silent on stdout until they are ready.
+    Stderr can report dependency waits, PID/CDP details or errors before/after
+    that boundary. Giving stderr its own event lets users see those diagnostics
+    without releasing the scheduler early or interpreting JSON logs as results.
+    Never merge this channel into ProcessStdoutEvent for display convenience.
+    """
+
+    line: str
+    plugin_name: str = ""
+    hook_name: str = ""
+    output_dir: str = ""
+    start_ts: str = ""
+    end_ts: str = ""
     event_timeout: float | None = 360.0
 
 
@@ -416,9 +442,12 @@ class ArchiveResultEvent(BaseEvent):
        fields (output_files, start_ts, end_ts) reflect the current process
        context at the moment the line was emitted.
 
-    2. **Synthetic fallback**: on ProcessCompletedEvent, only if the hook didn't
-       already report an ArchiveResult — e.g. failed (nonzero exit) or succeeded
-       with output files but no explicit JSONL output.
+    2. **Completion reconciliation**: an abnormal exit corrects any earlier
+       result to failed (or skipped for the explicit skipped sentinel). Without
+       a reported result, a clean exit produces noresult, never inferred success
+       from files that may be metadata or leftovers from another hook/attempt.
+       A cancelled event withdraws the attempt from the DB rather than storing
+       a failure: the user stopped execution before its outcome was known.
 
     Both cases carry output_files, start_ts, end_ts copied from the process context.
     """

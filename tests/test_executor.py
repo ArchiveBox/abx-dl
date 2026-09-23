@@ -32,7 +32,6 @@ from abx_dl.events import (
     SnapshotEvent,
 )
 from abx_dl.execution import build_hook_args, execute_hook, iter_plugin_command
-from abx_dl.limits import CrawlLimitState
 from abx_dl.catalog import PluginCatalog, PluginConfigResolver
 from abx_dl.models import Hook, PluginCommand, Snapshot
 from abx_dl.orchestrator import create_bus, download as execute_download, install_plugins, parse_input
@@ -1278,60 +1277,6 @@ def test_concurrent_snapshot_services_use_their_injected_runtime_config(tmp_path
     assert [json.loads(event.env["EXTRA_CONTEXT"])["snapshot_url"] for event in process_events] == [snapshot.url for snapshot in snapshots]
 
 
-def test_snapshot_limit_admission_uses_stable_snapshot_id_across_retries(tmp_path: Path) -> None:
-    output_dir = tmp_path / "run"
-    snapshot = Snapshot(url="https://example.com", id="snap-limit-retry")
-    limit_state = CrawlLimitState(crawl_dir=output_dir, crawl_max_urls=1)
-    assert limit_state.admit_snapshot(snapshot.id).allowed is True
-
-    bus = create_bus(total_timeout=10.0, name=f"snapshot_limit_stable_id_{tmp_path.name}")
-    SnapshotService(
-        bus,
-        url=snapshot.url,
-        snapshot=snapshot,
-        output_dir=output_dir,
-        catalog=PluginCatalog({}),
-        config=_runtime_config(
-            CRAWL_DIR=output_dir,
-            CRAWL_MAX_URLS=1,
-            CRAWL_MAX_SIZE=0,
-            SNAPSHOT_MAX_SIZE=0,
-        ),
-        snapshot_phase_timeout=2.0,
-        snapshot_cleanup_phase_timeout=2.0,
-    )
-
-    async def run() -> SnapshotCompletedEvent | None:
-        await bus.emit(
-            MachineEvent(
-                config={
-                    "CRAWL_DIR": str(output_dir),
-                    "CRAWL_MAX_URLS": 1,
-                    "CRAWL_MAX_SIZE": 0,
-                    "SNAPSHOT_MAX_SIZE": 0,
-                },
-                config_type="user",
-            ),
-        ).now()
-        crawl_start_event = CrawlStartEvent(url=snapshot.url, snapshot_id=snapshot.id, output_dir=str(output_dir))
-        root_event = SnapshotEvent(
-            url=snapshot.url,
-            snapshot_id=snapshot.id,
-            output_dir=str(output_dir),
-            event_parent_id=crawl_start_event.event_id,
-        )
-        await bus.emit(crawl_start_event).now()
-        await bus.emit(root_event).now(timeout=2.0)
-        completed = await bus.find(SnapshotCompletedEvent, child_of=root_event, past=True, future=1.0)
-        await bus.wait_until_idle()
-        return completed if isinstance(completed, SnapshotCompletedEvent) else None
-
-    completed = asyncio.run(run())
-
-    assert completed is not None
-    assert CrawlLimitState(crawl_dir=output_dir, crawl_max_urls=1).admit_snapshot(snapshot.id).allowed is True
-
-
 def test_snapshot_hook_binary_event_env_replay_applies_newest_last(tmp_path: Path) -> None:
     plugin = PluginCatalog.discover()["parse_txt_urls"]
     snapshot = Snapshot(url="https://example.com", id="snap-env-check")
@@ -1633,14 +1578,26 @@ def test_snapshot_abort_stops_scheduling_later_hooks(tmp_path: Path, httpserver:
 
     assert first_completed is not None
     assert first_completed.status == "failed"
+    assert first_completed.cancelled
+    assert first_completed.exit_code == 130
     assert tab_completed is not None
-    assert tab_completed.status == "succeeded"
-    assert tab_completed.exit_code == 0
+    # Explicit abort withdraws unfinished capture attempts even when a hook
+    # flushes stdout cleanly. Process exit 130 must carry cancellation intent,
+    # so DB consumers remove its result instead of keeping success or failure.
+    assert tab_completed.status == "failed"
+    assert tab_completed.cancelled
+    assert tab_completed.exit_code == 130
     assert not _pid_is_alive(tab_pid)
     assert not (output_dir / "chrome" / "target_id.txt").exists()
     assert not (output_dir / "chrome" / "url.txt").exists()
     assert snapshot_completed is not None
     assert second_started is None
+
+    records = [json.loads(line) for line in (output_dir / "index.jsonl").read_text().splitlines()]
+    results = {record["hook_name"]: record for record in records if record.get("type") == "ArchiveResult"}
+    assert results[first_completed.hook_name]["status"] == "cancelled"
+    assert results[tab_completed.hook_name]["status"] == "cancelled"
+    assert "on_Snapshot__54_title" not in results
 
 
 def test_snapshot_completed_waits_for_cleanup_process_listeners(tmp_path: Path) -> None:

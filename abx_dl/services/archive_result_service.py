@@ -16,7 +16,6 @@ from ..events import (
     ProcessStdoutEvent,
     SnapshotEvent,
 )
-from ..limits import CrawlLimitState
 from ..models import ArchiveResult, write_jsonl
 from ..output_files import scan_output_files
 from .base import BaseService
@@ -33,6 +32,8 @@ class ArchiveResultService(BaseService):
 
     2. **ProcessCompletedEvent**: only for ``on_Snapshot`` hooks, reconciles
        the reported result with the actual exit:
+       - Cancellation withdraws the attempt with a ``cancelled`` event. DB
+         consumers remove its row; stopping work is not evidence of failure.
        - Nonzero exit overrides an earlier result with ``failed`` (or
          ``skipped`` for the explicit skipped sentinel).
        - Zero exit preserves a reported result; without one it produces
@@ -137,7 +138,6 @@ class ArchiveResultService(BaseService):
         if not event.hook_name.startswith("on_Snapshot"):
             return
 
-        limit_state = CrawlLimitState.from_env(event.env)
         process_event = await self.bus.find(
             ProcessEvent,
             past=True,
@@ -159,13 +159,6 @@ class ArchiveResultService(BaseService):
             where=lambda candidate: self.bus.event_is_child_of(process_event, candidate),
         )
         assert isinstance(snapshot_event, SnapshotEvent)
-        limit_state.record_process_output(
-            started_process.event_id,
-            Path(event.output_dir),
-            [output_file.path for output_file in event.output_files],
-            snapshot_id=snapshot_event.snapshot_id,
-        )
-
         existing = await self.bus.find(
             ArchiveResultEvent,
             child_of=started_process,
@@ -174,11 +167,23 @@ class ArchiveResultService(BaseService):
         )
         # A hook may report output while its process is still alive. Returning
         # merely because a record exists would leave the DB succeeded after a
-        # later crash/interruption. Only a clean exit preserves that report.
-        if existing is not None and event.exit_code == 0:
+        # later crash, or after the user withdrew the attempt. Only a clean,
+        # uncancelled exit preserves that report.
+        if existing is not None and event.exit_code == 0 and not event.cancelled:
             return
 
-        if event.exit_code == PROCESS_EXIT_SKIPPED:
+        if event.cancelled:
+            # Failure cards and "retry failed" should describe broken captures,
+            # not a user's choice to stop waiting. This final event withdraws
+            # even an earlier success report from an unfinished attempt.
+            ar = ArchiveResult(
+                snapshot_id=snapshot_event.snapshot_id,
+                plugin=event.plugin_name,
+                hook_name=event.hook_name,
+                status="cancelled",
+                output_files=event.output_files,
+            )
+        elif event.exit_code == PROCESS_EXIT_SKIPPED:
             # The explicit skipped sentinel is distinct from a failed exit.
             ar = ArchiveResult(
                 snapshot_id=snapshot_event.snapshot_id,
@@ -188,7 +193,9 @@ class ArchiveResultService(BaseService):
                 output_files=event.output_files,
             )
         elif event.exit_code != 0:
-            # A crash or interruption overrides even an earlier success record.
+            # An unexpected failure overrides even an earlier success record.
+            # Controlled cancellation was handled above; do not mix it into
+            # errors that a user may need to investigate before retrying.
             ar = ArchiveResult(
                 snapshot_id=snapshot_event.snapshot_id,
                 plugin=event.plugin_name,
@@ -210,6 +217,10 @@ class ArchiveResultService(BaseService):
             # Reconcile the same result, rather than leave a separate successful
             # record behind for JSONL consumers when the process later fails.
             ar.id = existing.id
+            # Correct lifecycle status without erasing the hook's own output
+            # description/error details or structured partial-result metadata.
+            ar.output_str = existing.output_str
+            ar.output_json = existing.output_json
 
         index_path = Path(event.output_dir).parent / "index.jsonl"
         write_jsonl(index_path, ar, also_print=self.emit_jsonl)
@@ -224,6 +235,7 @@ class ArchiveResultService(BaseService):
                 output_files=event.output_files,
                 start_ts=event.start_ts,
                 end_ts=event.end_ts,
+                output_str=ar.output_str,
                 output_json=ar.output_json,
                 error=ar.error or "",
             ),

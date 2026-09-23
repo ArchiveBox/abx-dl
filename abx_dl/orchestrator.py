@@ -76,11 +76,11 @@ from __future__ import annotations
 
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import nullcontext
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Literal, Any
 
 from abxbus import EventBus, EventBusMiddleware, EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode
 from abxpkg.binary_service import BinaryRequestEvent, BinaryService
@@ -212,7 +212,7 @@ async def install_plugins(
         ProcessService(
             bus,
             emit_jsonl=emit_jsonl,
-            interactive_tty=sys.stdout.isatty() or sys.stderr.isatty(),
+            interactive_tty=sys.stdin.isatty() and (sys.stdout.isatty() or sys.stderr.isatty()),
         )
         await bus.emit(MachineEvent(config=user_config, config_type="user")).now()
         if derived_config:
@@ -458,6 +458,8 @@ async def download(
     bus: EventBus | None = None,
     emit_jsonl: bool | None = None,
     interactive_tty: bool | None = None,
+    interrupted_hook_prompt: Callable[[str], Awaitable[Literal["abort", "retry", "skip"]]] | None = None,
+    on_process_service_created: Callable[[ProcessService], None] | None = None,
     snapshot: Snapshot | None = None,
 ):
     """Download a URL using plugins, coordinated through a abxbus EventBus.
@@ -494,7 +496,7 @@ async def download(
     if emit_jsonl is None:
         emit_jsonl = not stdout_is_tty
     if interactive_tty is None:
-        interactive_tty = stdout_is_tty or sys.stderr.isatty()
+        interactive_tty = sys.stdin.isatty() and (stdout_is_tty or sys.stderr.isatty())
     assert isinstance(interactive_tty, bool)
 
     user_config = dict(config or {})
@@ -540,7 +542,17 @@ async def download(
         output_dir=output_dir,
         snapshot=snapshot,
     )
-    ProcessService(bus, emit_jsonl=emit_jsonl, interactive_tty=interactive_tty)
+    process_service = ProcessService(
+        bus,
+        emit_jsonl=emit_jsonl,
+        interactive_tty=interactive_tty,
+        interrupted_hook_prompt=interrupted_hook_prompt,
+    )
+    if on_process_service_created is not None:
+        # Terminal owners need the exact service instance that owns hook PIDs
+        # for a confirmed-abort force exit. Publishing it here avoids walking
+        # unrelated processes or trying to inspect a busy event bus in SIGINT.
+        on_process_service_created(process_service)
     ArchiveResultService(bus, emit_jsonl=emit_jsonl)
     TagService(bus)
     CrawlService(bus, url=url, snapshot=snapshot, output_dir=output_dir, catalog=catalog)

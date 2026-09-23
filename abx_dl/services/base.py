@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 
 from abxbus import BaseEvent, EventBus
 
-from ..events import ProcessStartedEvent
+from ..events import CrawlAbortEvent, CrawlPauseEvent, CrawlResumeAndRetryEvent, CrawlResumeAndSkipEvent, ProcessStartedEvent
 
 
 def _log_tail(path: Path, limit: int = 4096) -> str:
@@ -29,6 +29,31 @@ class BaseService:
         self.bus = bus
 
 
+async def wait_for_crawl_resume(bus: EventBus) -> bool:
+    """Gate scheduling on outer-runner intent; return True for whole-crawl abort.
+
+    Read the latest control fact rather than clearing a per-hook pause flag.
+    A newly spawned hook or a readiness notification must never consume Ctrl+C.
+    Existing background hooks may flush logs while paused, but no next hook or
+    cleanup phase starts until the user chooses. Abort releases every waiter so
+    shutdown cannot deadlock behind the very pause the user is trying to exit.
+    """
+    while True:
+        # Abort is terminal for this bus. Another physical Ctrl+C may enqueue
+        # a later Pause fact during shutdown; it must not close the gate again.
+        if await bus.find(CrawlAbortEvent, past=True, future=False) is not None:
+            return True
+        control = await bus.find(
+            "Crawl*Event",
+            where=lambda event: isinstance(event, (CrawlPauseEvent, CrawlAbortEvent, CrawlResumeAndRetryEvent, CrawlResumeAndSkipEvent)),
+            past=True,
+            future=False,
+        )
+        if not isinstance(control, CrawlPauseEvent):
+            return isinstance(control, CrawlAbortEvent)
+        await asyncio.sleep(0.05)
+
+
 async def wait_for_process_ready(
     started_event: ProcessStartedEvent,
     timeout: float,
@@ -48,6 +73,14 @@ async def wait_for_process_ready(
     output production and encourage hooks to report success before capturing
     anything. Any stdout satisfies readiness; only ArchiveResultService owns
     result status, and this function must never promote it to succeeded.
+
+    Readiness and display precedence are intentionally different contracts.
+    Users need stderr progress while a hook is still initializing, but seeing
+    "connecting" must not let dependent hooks run before that connection works.
+    Conversely, the initial stdout readiness line must not pin the CLI's final
+    summary to "started" after later diagnostics or an actual result arrive.
+    LiveBusUI owns that presentation policy; do not change this barrier to make
+    a progress row update, or merge stderr into stdout to make it visible.
     """
     hook_kind = "Background hook" if started_event.is_background else "Foreground hook"
     deadline = asyncio.get_running_loop().time() + timeout
@@ -57,6 +90,11 @@ async def wait_for_process_ready(
         if started_event.stdout_file.exists() and started_event.stdout_file.stat().st_size > 0:
             return
 
+        if started_event.interruption_done is not None:
+            # A deliberately stopped startup is a user decision, not a readiness
+            # failure. Wait through skip/retry bookkeeping before advancing.
+            await started_event.interruption_done.wait()
+            return
         returncode = started_event.subprocess.returncode
         if returncode is not None:
             if started_event.is_background and returncode != 0:
