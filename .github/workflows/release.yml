@@ -327,6 +327,7 @@ jobs:
   cascade:
     name: Cascade verified release
     needs:
+      - candidate
       - python-release
       - docker-release
     if: needs.python-release.outputs.cascade_ready == 'true'
@@ -338,5 +339,6 @@ jobs:
       upstream_package: abx-dl
       upstream_version: ${{ needs.python-release.outputs.version }}
       upstream_artifact_name: python-dist-${{ github.event.workflow_run.head_sha }}
+      upstream_run_id: ${{ needs.candidate.outputs.candidate_run_id }}
     secrets:
       release_token: ${{ secrets.RELEASE_GH_TOKEN }}
