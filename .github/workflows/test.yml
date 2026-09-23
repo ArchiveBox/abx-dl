@@ -263,7 +263,7 @@ jobs:
       - name: Test all plugins
         run: |
           set -Eeuo pipefail
-          "${UV_BINARY}" run --no-cache --no-sync --no-sources abx-dl dl 'https://example.com' --dir=./test-output --max-urls=2
+          "${UV_BINARY}" run --no-cache --no-sync --no-sources abx-dl dl 'https://example.com' --dir=./test-output
           "${UV_BINARY}" run --no-cache --no-sync --no-sources python bin/validate_crawl.py \
             ./test-output/index.jsonl \
             --output-dir=./test-output \
