@@ -246,12 +246,47 @@ class ProcessService(BaseService):
         self.abort_requested = False
         self._active_process_event_tasks: dict[str, asyncio.Task[Process | None]] = {}
         self._background_completion_tasks: set[asyncio.Task[Process | None]] = set()
+        self._shutdown_hook_ids: set[str] = set()
         self._completed_process_event_ids: set[str] = set()
         super().__init__(bus)
         self.bus.on(CrawlPauseEvent, self.on_CrawlPauseEvent)
         self.bus.on(CrawlAbortEvent, self.on_CrawlAbortEvent)
         self.bus.on(ProcessEvent, self.on_ProcessEvent)
         self.bus.on(ProcessKillEvent, self.on_ProcessKillEvent)
+
+    async def wait_for_background_completions(self) -> None:
+        """Finish owned hook readers and completion events before bus teardown."""
+
+        while self._background_completion_tasks:
+            results = await asyncio.gather(*tuple(self._background_completion_tasks), return_exceptions=True)
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
+
+    async def stop_background_hooks(self) -> None:
+        """Stop remaining owned background hooks and record their completions."""
+
+        running = [
+            (event, started)
+            for event, started in tuple(self._active_hooks.values())
+            if event.is_background and started.subprocess.returncode is None
+        ]
+        self._shutdown_hook_ids.update(event.event_id for event, _ in running)
+        await asyncio.gather(
+            *(
+                self.bus.emit(
+                    ProcessKillEvent(
+                        event_parent_id=started.event_id,
+                        plugin_name=started.plugin_name,
+                        hook_name=started.hook_name,
+                        pid=started.pid,
+                        grace_period=min(float(started.timeout), GRACEFUL_SHUTDOWN_TIMEOUT),
+                    ),
+                ).now()
+                for _, started in running
+            ),
+        )
+        await self.wait_for_background_completions()
 
     # ── Event handlers ──────────────────────────────────────────────────────
 
@@ -811,7 +846,7 @@ class ProcessService(BaseService):
         # A user stopping work has not discovered an extractor/site failure.
         # Carry that intent explicitly so consumers can discard the unfinished
         # attempt, without classifying organic crashes by their signal number.
-        cancelled = interrupted or cancellation is not None
+        cancelled = interrupted or cancellation is not None or event.event_id in self._shutdown_hook_ids
         if event.is_background and self.abort_requested:
             cancelled = cancelled or await self._process_was_stopped_by_cleanup(event, process.pid)
 

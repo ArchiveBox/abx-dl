@@ -2243,6 +2243,7 @@ def test_background_process_event_returns_after_real_hook_start(tmp_path: Path, 
     stream_url, response_started, release_response = _streaming_http_response(httpserver, "/background-process")
     output_dir = tmp_path / "run"
     bus = create_bus(total_timeout=60.0, name=f"background_returns_after_start_{tmp_path.name}")
+    process_services: list[ProcessService] = []
 
     async def run() -> ProcessCompletedEvent:
         download_task = asyncio.create_task(
@@ -2255,6 +2256,7 @@ def test_background_process_event_returns_after_real_hook_start(tmp_path: Path, 
                 emit_jsonl=False,
                 interactive_tty=False,
                 bus=bus,
+                on_process_service_created=process_services.append,
             ),
         )
         process_event = await bus.find(
@@ -2276,7 +2278,11 @@ def test_background_process_event_returns_after_real_hook_start(tmp_path: Path, 
         assert await asyncio.wait_for(process_event.event_result(), timeout=5.0) is not None
         assert _pid_is_alive(started_process.pid)
 
+        completion_drain = asyncio.create_task(process_services[0].wait_for_background_completions())
+        await asyncio.sleep(0)
+        assert not completion_drain.done(), "background hook completion ended before the streaming response"
         release_response.set()
+        await completion_drain
         await download_task
         completed_process = await bus.find(
             ProcessCompletedEvent,
@@ -2286,6 +2292,7 @@ def test_background_process_event_returns_after_real_hook_start(tmp_path: Path, 
         )
         assert isinstance(completed_process, ProcessCompletedEvent)
         await bus.wait_until_idle()
+        await bus.destroy(clear=False)
         return completed_process
 
     try:
@@ -2295,6 +2302,54 @@ def test_background_process_event_returns_after_real_hook_start(tmp_path: Path, 
 
     assert completed.status == "succeeded"
     assert completed.exit_code == 0
+    assert not list(output_dir.rglob(f"{plugin.hooks[0].name}.*.pid"))
+
+
+def test_owner_shutdown_stops_real_background_hook_before_bus_destroy(tmp_path: Path, httpserver: HTTPServer) -> None:
+    plugin = PluginCatalog.discover()["wget"]
+    stream_url, response_started, release_response = _streaming_http_response(httpserver, "/owner-shutdown")
+    output_dir = tmp_path / "run"
+    bus = create_bus(total_timeout=60.0, name=f"background_owner_shutdown_{tmp_path.name}")
+    process_services: list[ProcessService] = []
+
+    async def run() -> ProcessCompletedEvent:
+        download_task = asyncio.create_task(
+            _download(
+                stream_url,
+                catalog=PluginCatalog({plugin.name: plugin}),
+                output_dir=output_dir,
+                selected_plugins=[plugin.name],
+                auto_install=True,
+                emit_jsonl=False,
+                interactive_tty=False,
+                bus=bus,
+                on_process_service_created=process_services.append,
+            ),
+        )
+        process_event = await bus.find(ProcessEvent, past=True, future=30.0, plugin_name=plugin.name, hook_name=plugin.hooks[0].name)
+        assert isinstance(process_event, ProcessEvent)
+        started = await bus.find(ProcessStartedEvent, child_of=process_event, past=True, future=30.0)
+        assert isinstance(started, ProcessStartedEvent)
+        assert await asyncio.to_thread(response_started.wait, 30.0)
+        assert _pid_is_alive(started.pid)
+
+        await process_services[0].stop_background_hooks()
+        completed = await bus.find(ProcessCompletedEvent, child_of=process_event, past=True, future=False)
+        assert isinstance(completed, ProcessCompletedEvent)
+        assert not _pid_is_alive(started.pid)
+        release_response.set()
+        await download_task
+        await bus.wait_until_idle()
+        await bus.destroy(clear=False)
+        return completed
+
+    try:
+        completed = asyncio.run(run())
+    finally:
+        release_response.set()
+
+    assert completed.cancelled is True
+    assert completed.status != "succeeded"
     assert not list(output_dir.rglob(f"{plugin.hooks[0].name}.*.pid"))
 
 
