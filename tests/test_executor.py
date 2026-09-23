@@ -1581,12 +1581,12 @@ def test_snapshot_abort_stops_scheduling_later_hooks(tmp_path: Path, httpserver:
     assert first_completed.cancelled
     assert first_completed.exit_code == 130
     assert tab_completed is not None
-    # Explicit abort withdraws unfinished capture attempts even when a hook
-    # flushes stdout cleanly. Process exit 130 must carry cancellation intent,
-    # so DB consumers remove its result instead of keeping success or failure.
-    assert tab_completed.status == "failed"
+    # Cleanup closes the background tab cleanly, while cancellation withdraws
+    # its unfinished capture result. A clean Process exit is not a completed
+    # ArchiveResult when the whole crawl was aborted.
+    assert tab_completed.status == "succeeded"
     assert tab_completed.cancelled
-    assert tab_completed.exit_code == 130
+    assert tab_completed.exit_code == 0
     assert not _pid_is_alive(tab_pid)
     assert not (output_dir / "chrome" / "target_id.txt").exists()
     assert not (output_dir / "chrome" / "url.txt").exists()

@@ -292,7 +292,6 @@ class SnapshotService(BaseService):
             )
             if hook.is_background:
                 background_process = event.emit(process_event)
-                await background_process.now()
                 started_process = await self.bus.find(
                     ProcessStartedEvent,
                     child_of=background_process,

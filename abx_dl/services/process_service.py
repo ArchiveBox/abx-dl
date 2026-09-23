@@ -712,11 +712,13 @@ class ProcessService(BaseService):
             deadline = asyncio.get_running_loop().time() + event.timeout if event.timeout and not event.is_background else None
             while True:
                 pending = {wait_task}
-                # Whole-crawl abort wakes *every* process, including captures
-                # already waiting in background-only cleanup. Pause selection
-                # lives solely in the outer controller above, never in this loop.
-                interrupt_task = asyncio.create_task(self._abort_signal.wait())
-                pending.add(interrupt_task)
+                # Cleanup owns background resource termination. Waking those
+                # processes here would route them through the foreground user
+                # interrupt path before cleanup can record the scoped stop.
+                interrupt_task = None
+                if not event.is_background:
+                    interrupt_task = asyncio.create_task(self._abort_signal.wait())
+                    pending.add(interrupt_task)
                 remaining = None if deadline is None else max(deadline - asyncio.get_running_loop().time(), 0.0)
                 done, pending = await asyncio.wait(
                     pending,
@@ -858,7 +860,7 @@ class ProcessService(BaseService):
 
         pid_file.unlink(missing_ok=True)
 
-        if returncode == 0:
+        if returncode == 0 and not cancelled:
             stdout_file.unlink(missing_ok=True)
             stderr_file.unlink(missing_ok=True)
 
