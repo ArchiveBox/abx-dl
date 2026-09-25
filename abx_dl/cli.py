@@ -1676,6 +1676,10 @@ def dl(
         loop.close()
 
     if aborted:
+        # The live hook table is transient. Depending on terminal redraw timing,
+        # its per-hook cancellation row may be cleared before Click renders the
+        # final abort exception. Keep one durable confirmation after cleanup.
+        click.echo("Stopped during crawl abort")
         raise click.Abort()
     live_ui.print_summary(output_dir=out_path, archive_results=archive_results)
 
