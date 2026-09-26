@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 from collections.abc import Awaitable, Callable, Mapping
 from inspect import isawaitable
@@ -10,7 +9,6 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from abxbus import BaseEvent, EventBus
-from abx_plugins import get_plugins_dir
 from abxpkg import BinProvider
 from abxpkg.binary_service import BinaryEvent, BinaryRequestEvent
 
@@ -60,12 +58,6 @@ async def build_plugin_process_env(
                 base_env=env,
                 extra_env=binary_env,
             )
-    # PEP 723 hook runners can use a separate uv environment whose cached
-    # abx-plugins version differs from the package that supplied this hook.
-    # Keep the running catalog's package first for imports made by that hook.
-    package_root = str(Path(get_plugins_dir()).resolve().parents[1])
-    pythonpath = [path for path in env.get("PYTHONPATH", "").split(os.pathsep) if path and path != package_root]
-    env["PYTHONPATH"] = os.pathsep.join([package_root, *pythonpath])
     return env
 
 
