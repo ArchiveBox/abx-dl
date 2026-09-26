@@ -283,13 +283,23 @@ jobs:
 
           "${DOCKER_BINARY}" run --rm --user 911:911 --platform '${{ matrix.platform }}' \
             --workdir /out --entrypoint /bin/bash '${{ matrix.local_tag }}' -c \
-            'set -Eeuo pipefail; find /opt/archivebox/lib -name derived.env -type f -exec sha256sum {} + | sort > /tmp/cache-before; abx-dl install >/dev/null; find /opt/archivebox/lib -name derived.env -type f -exec sha256sum {} + | sort > /tmp/cache-after; diff -u /tmp/cache-before /tmp/cache-after'
+            'set -Eeuo pipefail; find /opt/archivebox/lib -name derived.env -type f -exec sha256sum {} + | sort > /tmp/cache-before; if ! abx-dl install >/tmp/install.log 2>&1; then cat /tmp/install.log; exit 1; fi; find /opt/archivebox/lib -name derived.env -type f -exec sha256sum {} + | sort > /tmp/cache-after; diff -u /tmp/cache-before /tmp/cache-after'
 
-          IMPORT_PROFILE="$(${DOCKER_BINARY} run --rm --user 911:911 --platform '${{ matrix.platform }}' \
+          # The script's shebang launches abxpkg first; the hook's own Python
+          # process loads pydantic through load_config. Keep the launcher lean
+          # and verify that the hook prepared its real extension output.
+          if ! IMPORT_PROFILE="$(${DOCKER_BINARY} run --rm --user 911:911 --platform '${{ matrix.platform }}' \
+            --env PERSONAS_DIR=/out/personas --env CRAWL_DIR=/out \
             --workdir /venv/lib/python3.13/site-packages/abx_plugins/plugins/archivewebpage \
             --entrypoint /bin/bash '${{ matrix.local_tag }}' -c \
-            'PYTHONPROFILEIMPORTTIME=1 ./on_CrawlSetup__80_archivewebpage_prepare.py --url=https://example.com >/dev/null' 2>&1)"
-          if grep -Eq 'rich_click|pydantic' <<< "$IMPORT_PROFILE"; then
+            'set -Eeuo pipefail; PYTHONPROFILEIMPORTTIME=1 ./on_CrawlSetup__80_archivewebpage_prepare.py --url=https://example.com >/dev/null; test -s /out/chrome/extensions/archivewebpage.extension.json; grep -Fq '"'"'"version": "0.17.0"'"'"' /out/chrome/extensions/archivewebpage.extension.json; grep -Fq '"'"'"unpacked_path": "/out/personas/.archivewebpage/0.17.0-service-workers2"'"'"' /out/chrome/extensions/archivewebpage.extension.json; grep -Fq '"'"'"Network.setBypassServiceWorker",{bypass:!1}'"'"' /out/personas/.archivewebpage/0.17.0-service-workers2/bg.js' 2>&1)"; then
+            printf '%s\n' "$IMPORT_PROFILE"
+            exit 1
+          fi
+          test "$(grep -c '^import time: self ' <<< "$IMPORT_PROFILE")" -eq 2
+          LAUNCHER_PROFILE="$(awk '/^import time: self / { count++; if (count == 2) exit } { print }' <<< "$IMPORT_PROFILE")"
+          if grep -Eq 'rich_click|pydantic' <<< "$LAUNCHER_PROFILE"; then
+            printf '%s\n' "$LAUNCHER_PROFILE"
             exit 1
           fi
 
