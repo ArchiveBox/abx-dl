@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from abx_plugins import get_plugins_dir
 from abxpkg.binary_service import BinaryEvent
 from abx_dl.config import GlobalConfig, RuntimeConfig, get_config, get_explicit_user_env, get_initial_env, get_plugin_env
 from abx_dl.events import MachineEvent
@@ -238,6 +239,7 @@ def test_plugin_env_exports_abxpkg_runtime_after_real_install_phase(tmp_path: Pa
     assert str(ytdlp_path.parent) in process_env["PATH"].split(os.pathsep)
     assert json.loads(process_env["EXTRA_CONTEXT"])["snapshot_id"] == "current-snapshot"
     assert process_env["SNAP_DIR"] == str(current_output_dir)
+    assert process_env["PYTHONPATH"].split(os.pathsep)[0] == str(Path(get_plugins_dir()).resolve().parents[1])
 
 
 def test_plugin_env_keeps_chrome_sandbox_enabled_by_default(tmp_path: Path) -> None:
