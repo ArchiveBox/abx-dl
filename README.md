@@ -43,9 +43,11 @@ It's useful for scraping, downloading, OSINT, digital preservation, and more.
 <!--
 ```bash
 set -Eeuo pipefail
-trap 'status=$?; printf "README crawl failed: %s (exit %s)\n" "$BASH_COMMAND" "$status" >&2; find . -maxdepth 3 -type f | sort >&2; test ! -f index.jsonl || tail -n 30 index.jsonl >&2; exit "$status"' ERR
-cd "$(mktemp -d)"
-exec >stdout.log
+trap 'status=$?; printf "README crawl failed: %s (exit %s)\n" "$BASH_COMMAND" "$status" >failure.log; find . -maxdepth 3 -type f | sort >>failure.log; exit "$status"' ERR
+scratch_dir="${ABX_DL_DOCS_OUTPUT_DIR:-$(mktemp -d)}"
+mkdir -p "$scratch_dir"
+cd "$scratch_dir"
+exec >stdout.log 2>stderr.log
 ```
 -->
 <!--pytest-codeblocks:cont-->

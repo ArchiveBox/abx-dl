@@ -193,7 +193,22 @@ jobs:
       - name: Run documentation code blocks
         env:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
-        run: $UV_BINARY run --no-cache --no-sync --no-sources pytest -vv --tb=long --durations=0 -m "not docker_required" README.md AGENTS.md CLAUDE.md skills
+          ABX_DL_DOCS_OUTPUT_DIR: ${{ runner.temp }}/abx-dl-docs-output
+        run: |
+          mkdir -p "$ABX_DL_DOCS_OUTPUT_DIR"
+          $UV_BINARY run --no-cache --no-sync --no-sources pytest -vv --tb=long --durations=0 -m "not docker_required" README.md AGENTS.md CLAUDE.md skills
+
+      - name: Upload failed README crawl
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: documentation-failure
+          if-no-files-found: ignore
+          path: |
+            ${{ runner.temp }}/abx-dl-docs-output/failure.log
+            ${{ runner.temp }}/abx-dl-docs-output/stdout.log
+            ${{ runner.temp }}/abx-dl-docs-output/stderr.log
+            ${{ runner.temp }}/abx-dl-docs-output/index.jsonl
 
   test-all:
     name: All plugins
