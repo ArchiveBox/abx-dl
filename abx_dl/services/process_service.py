@@ -1070,7 +1070,11 @@ class ProcessService(BaseService):
             started_process = matches[0]
         # Capture timeouts can be hours. A user abort still lets recorders flush,
         # but must not wait an entire capture timeout for a hook ignoring SIGTERM.
-        grace_period = min(event.grace_period, GRACEFUL_SHUTDOWN_TIMEOUT) if self.abort_requested else event.grace_period
+        # The abort event is visible in bus history before its parallel handlers
+        # have all updated their local flags. Cleanup must honor that fact when
+        # choosing a grace period for hooks that ignore SIGTERM.
+        aborting = self.abort_requested or await self.bus.find(CrawlAbortEvent, past=True, future=False) is not None
+        grace_period = min(event.grace_period, GRACEFUL_SHUTDOWN_TIMEOUT) if aborting else event.grace_period
         if started_process.subprocess.returncode is None:
             await graceful_kill_process(
                 started_process.subprocess,
