@@ -17,12 +17,38 @@ concurrency:
   cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
 
 jobs:
+  prepare:
+    name: Prepare the version before starting expensive jobs
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      run_tests: ${{ github.event_name != 'push' || steps.version.outputs.action == 'ready' || steps.version.outputs.action == 'reserved' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          token: ${{ github.event_name == 'push' && secrets.RELEASE_GH_TOKEN || github.token }}
+
+      - id: version
+        if: github.event_name == 'push'
+        uses: ArchiveBox/monorepo/.github/actions/prepare-release-version@main
+        with:
+          package: abx-dl
+          branch: main
+          tag-prefix: v
+          version-scheme: patch
+
   tests:
+    needs: prepare
+    if: needs.prepare.outputs.run_tests == 'true'
     name: Full test suite
     uses: ./.github/workflows/test.yml
     secrets: inherit
 
   docker:
+    needs: prepare
+    if: needs.prepare.outputs.run_tests == 'true'
     name: Docker build and test
     uses: ./.github/workflows/docker.yml
     with:

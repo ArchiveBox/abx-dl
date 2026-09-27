@@ -2,7 +2,7 @@ name: Release
 
 on:
   workflow_run:
-    workflows: [Release candidate, CI]
+    workflows: [CI]
     types: [completed]
     branches: [main]
 
@@ -49,15 +49,11 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
-          CANDIDATE_RUN_ID="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow release-candidate.yml \
-            --commit "$RELEASE_SHA" --event push --limit 1 \
-            --json databaseId,status,conclusion \
-            --jq '.[0] | select(.status == "completed" and .conclusion == "success") | .databaseId // empty')"
           CI_RUN_ID="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml \
             --commit "$RELEASE_SHA" --event push --limit 1 \
             --json databaseId,status,conclusion \
             --jq '.[0] | select(.status == "completed" and .conclusion == "success") | .databaseId // empty')"
-          [[ -n "$CANDIDATE_RUN_ID" && -n "$CI_RUN_ID" ]] || exit 0
+          [[ -n "$CI_RUN_ID" ]] || exit 0
           RELEASE_RUN_IDS="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow release.yml \
             --commit "$RELEASE_SHA" --limit 20 --json databaseId,status,conclusion \
             --jq '.[] | select(.status == "completed" and .conclusion == "success") | .databaseId')"
