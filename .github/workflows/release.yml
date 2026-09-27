@@ -27,7 +27,7 @@ jobs:
       contents: read
     outputs:
       ready: ${{ steps.verified.outputs.ready }}
-      candidate_run_id: ${{ steps.verified.outputs.candidate_run_id }}
+      artifact_run_id: ${{ steps.verified.outputs.artifact_run_id }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -68,7 +68,7 @@ jobs:
             [[ -z "$PUBLISHED" ]] || exit 0
           done <<< "$RELEASE_RUN_IDS"
           echo 'ready=true' >> "$GITHUB_OUTPUT"
-          echo "candidate_run_id=$CANDIDATE_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "artifact_run_id=$CI_RUN_ID" >> "$GITHUB_OUTPUT"
 
   python-release:
     name: Publish tested Python artifacts
@@ -84,7 +84,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       cascade_ready: ${{ steps.cascade-state.outputs.ready }}
     env:
-      CI_RUN_ID: ${{ needs.candidate.outputs.candidate_run_id }}
+      CI_RUN_ID: ${{ needs.candidate.outputs.artifact_run_id }}
 
     steps:
       - name: Checkout the tested commit
@@ -155,7 +155,7 @@ jobs:
     needs: [candidate, python-release]
     runs-on: ubuntu-24.04
     env:
-      CI_RUN_ID: ${{ needs.candidate.outputs.candidate_run_id }}
+      CI_RUN_ID: ${{ needs.candidate.outputs.artifact_run_id }}
     permissions:
       actions: read
       contents: read
@@ -339,6 +339,6 @@ jobs:
       upstream_package: abx-dl
       upstream_version: ${{ needs.python-release.outputs.version }}
       upstream_artifact_name: python-dist-${{ github.event.workflow_run.head_sha }}
-      upstream_run_id: ${{ needs.candidate.outputs.candidate_run_id }}
+      upstream_run_id: ${{ needs.candidate.outputs.artifact_run_id }}
     secrets:
       release_token: ${{ secrets.RELEASE_GH_TOKEN }}

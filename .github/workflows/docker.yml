@@ -252,6 +252,14 @@ jobs:
           cache-to: |
             ${{ inputs.push_digests && 'type=inline' || '' }}
 
+      - name: Load the exact pushed digest for full acceptance
+        if: inputs.push_digests && inputs.full_tests
+        env:
+          IMAGE: ${{ env.DOCKERHUB_IMAGE }}@${{ steps.docker_build.outputs.digest }}
+        run: |
+          "${DOCKER_BINARY}" pull --platform '${{ matrix.platform }}' "$IMAGE"
+          "${DOCKER_BINARY}" tag "$IMAGE" '${{ matrix.local_tag }}'
+
       - name: Test Docker documentation commands
         if: inputs.full_tests && matrix.platform == 'linux/amd64'
         env:
@@ -356,7 +364,7 @@ jobs:
           retention-days: 7
 
       - name: Validate image version and commit
-        if: ${{ !inputs.push_digests }}
+        if: inputs.full_tests
         shell: bash
         run: |
           set -Eeuo pipefail

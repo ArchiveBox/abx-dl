@@ -52,8 +52,21 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       tests: ${{ steps.matrix.outputs.tests }}
+      runner: ${{ steps.runner.outputs.use-runner || '["ubuntu-24.04"]' }}
 
     steps:
+      - name: Select available CI capacity
+        id: runner
+        if: vars.UGNAS_CI_ENABLED != 'false' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: mikehardy/runner-fallback-action@dc7732f9e532c451b2527b288ba8d58fd4b0a4ca # v1.1.0
+        with:
+          github-token: ${{ secrets.RUNNER_STATUS_TOKEN }}
+          organization: ArchiveBox
+          primary-runner: self-hosted,ugnas-linux
+          fallback-runner: ubuntu-24.04
+          primaries-required: ${{ vars.UGNAS_CI_MAX_JOBS || 3 }}
+          fallback-on-error: true
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 1
@@ -66,6 +79,8 @@ jobs:
 
       - name: Build test matrix
         id: matrix
+        env:
+          UGNAS_CI_MAX_JOBS: ${{ vars.UGNAS_CI_MAX_JOBS || 3 }}
         run: |
           uv run --no-cache --no-project python - <<'PY'
           import json
@@ -89,9 +104,13 @@ jobs:
               raise SystemExit("No test files discovered")
 
           matrix = []
+          capacity = int(os.environ["UGNAS_CI_MAX_JOBS"])
           for index, test_file in enumerate(test_files):
               os_name, python_version = cells[index % len(cells)]
-              matrix.append({"file": test_file, "os": os_name, "python": python_version})
+              eligible = os_name == "ubuntu-24.04" and "# ci-runner: hosted" not in Path(test_file).read_text().splitlines()[:5]
+              use_nas = eligible and capacity > 0
+              capacity -= int(use_nas)
+              matrix.append({"file": test_file, "os": os_name, "python": python_version, "ugnas": use_nas})
           assigned_files = [entry["file"] for entry in matrix]
           assigned_cells = {(entry["os"], entry["python"]) for entry in matrix}
           if sorted(assigned_files) != test_files or len(assigned_files) != len(set(assigned_files)):
@@ -107,7 +126,7 @@ jobs:
   unit-tests:
     name: ${{ matrix.file }} (${{ matrix.os }}, Python ${{ matrix.python }})
     needs: discover-tests
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.ugnas && fromJSON(needs.discover-tests.outputs.runner) || matrix.os }}
     strategy:
       fail-fast: false
       matrix:
