@@ -332,14 +332,26 @@ jobs:
                   raise SystemExit(f"Downloaded HTML is missing {expected!r}")
           PY
 
+      - name: Package failed crawl diagnostics
+        if: inputs.full_tests && failure() && steps.real_crawl.outcome == 'failure'
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          # Read container-owned Chrome files without changing their permissions.
+          # Match upload-artifact's existing exclusion of hidden files.
+          # The unprivileged redirect deliberately makes the archive runner-owned.
+          # shellcheck disable=SC2024
+          sudo -n tar --exclude='.*' -czf - -C "${{ runner.temp }}" \
+            "abx-dl-smoke-${{ matrix.artifact_name }}" \
+            "abx-dl-personas-${{ matrix.artifact_name }}" \
+            > "${{ runner.temp }}/crawl-diagnostics-${{ matrix.artifact_name }}.tar.gz"
+
       - name: Upload failed crawl diagnostics
         if: inputs.full_tests && failure() && steps.real_crawl.outcome == 'failure'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: crawl-diagnostics-${{ matrix.artifact_name }}
-          path: |
-            ${{ runner.temp }}/abx-dl-smoke-${{ matrix.artifact_name }}
-            ${{ runner.temp }}/abx-dl-personas-${{ matrix.artifact_name }}
+          path: ${{ runner.temp }}/crawl-diagnostics-${{ matrix.artifact_name }}.tar.gz
           if-no-files-found: error
           retention-days: 7
 
