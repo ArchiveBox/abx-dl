@@ -240,7 +240,6 @@ jobs:
       # Each crawl owns its prover; unrelated public sessions must not decide
       # whether this release can produce and validate a real TLSNotary proof.
       TLSNOTARY_COMPOSE_PROJECT: tlsnotary-ci-${{ github.run_id }}-${{ github.run_attempt }}
-      TLSNOTARY_STATE_DIR: ${{ runner.temp }}/tlsnotary-state
       TLSNOTARY_PORT: "0"
       TLSNOTARY_MIN_AVAILABLE_MEMORY_MB: "1024"
       COMPOSE_PROFILES: ""
@@ -289,6 +288,8 @@ jobs:
           export TLSNOTARY_SERVER_DIR="$ABX_PLUGINS_DIR/tlsnotary/server"
           test -f "$TLSNOTARY_SERVER_DIR/docker-compose.yml"
           test -f "$TLSNOTARY_SERVER_DIR/Dockerfile"
+          export TLSNOTARY_STATE_DIR="$RUNNER_TEMP/tlsnotary-state"
+          echo "TLSNOTARY_STATE_DIR=$TLSNOTARY_STATE_DIR" >> "$GITHUB_ENV"
           export TLSNOTARY_UID="$(id -u)"
           export TLSNOTARY_GID="$(id -g)"
           mkdir -p "$TLSNOTARY_STATE_DIR"
