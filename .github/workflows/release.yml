@@ -330,6 +330,8 @@ jobs:
     permissions:
       actions: read
       contents: read
+    # Upload success is not resolver readiness. The coordinator checks the real
+    # downstream lock against the tested public artifacts before advancing pins.
     uses: ArchiveBox/monorepo/.github/workflows/cascade-release.yml@main
     with:
       upstream_package: abx-dl
