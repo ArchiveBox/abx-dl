@@ -146,11 +146,7 @@ jobs:
         uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           version: "0.10.6"
-          enable-cache: true
-          cache-local-path: ${{ runner.temp }}/uv-locked-dependencies
-          cache-dependency-glob: ""
-          cache-suffix: locked-sync-${{ matrix.python }}-v1
-          prune-cache: false
+          enable-cache: false
 
       - name: Project host CI tools through abxpkg
         env:
@@ -165,11 +161,7 @@ jobs:
           echo "$ABXPKG_LIB_DIR/env/bin" >> "$GITHUB_PATH"
 
       - name: Install Python dependencies
-        # Reuse immutable wheels across release bumps; refresh the cascading
-        # packages explicitly. Public-PyPI readiness and release installs stay uncached.
-        run: >-
-          "${UV_BINARY}" sync --locked --dev --no-sources
-          --refresh-package abx-plugins --refresh-package abxpkg --refresh-package abxbus
+        run: '"${UV_BINARY}" sync --no-cache --locked --dev --no-sources'
 
       - name: Install real search backend dependency
         if: matrix.file == 'tests/test_search_command_lifecycle.py'
