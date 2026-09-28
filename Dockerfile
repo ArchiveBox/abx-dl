@@ -205,7 +205,7 @@ RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_ARCHIVEBOX_UID}..."
 # uses the real runtime cache path once so uv may seed its tiny interpreter
 # index; a strict size cap prevents package payloads from slipping back in.
 RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=abxpkg-tmp-$TARGETARCH$TARGETVARIANT \
-    echo "[+] Installing Chrome and plugin dependencies..." \
+    echo "[+] Installing Chrome and every supported downloader plugin dependency..." \
     && export HOME=/var/tmp/abxpkg-cache XDG_CACHE_HOME=/var/tmp/abxpkg-cache ABXPKG_TMP_CACHE_DIR=/var/tmp/abxpkg-cache \
     && export ABX_DOCKER_PLUGINS="$(/venv/bin/python3 -c 'from abx_dl.catalog import PluginCatalog; print(" ".join(PluginCatalog.discover(runtime="abx-dl")))')" \
     && abx-dl install chrome \
