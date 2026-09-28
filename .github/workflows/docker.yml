@@ -232,13 +232,14 @@ jobs:
             abxpkg=${{ runner.temp }}/abxpkg
             abx-plugins=${{ runner.temp }}/abx-plugins
           platforms: ${{ matrix.platform }}
-          # Balance compression time against the unchanged downloader and
-          # downstream ArchiveBox size gates. Do not force recompression: :main contains only
+          # BuildKit maps levels 9+ to the same slowest encoder; 8 selects
+          # SpeedBetterCompression. Keep the existing image size gates.
+          # Do not force recompression: :main contains only
           # zstd layers plus inline metadata, so BuildKit can reuse those exact
           # compressed blobs. force-compression would discard that reuse and
           # recompress ~700 MiB on every no-op release.
           outputs: |
-            ${{ inputs.push_digests && format('type=image,"name={0},{1}",push-by-digest=true,name-canonical=true,push=true,compression=zstd,compression-level=12', env.DOCKERHUB_IMAGE, env.GHCR_IMAGE) || '' }}
+            ${{ inputs.push_digests && format('type=image,"name={0},{1}",push-by-digest=true,name-canonical=true,push=true,compression=zstd,compression-level=8', env.DOCKERHUB_IMAGE, env.GHCR_IMAGE) || '' }}
           # Keep one cache authority. A separate GHA cache can retain gzip
           # variants of these same layers; BuildKit may then choose those over
           # :main's zstd blobs, making an otherwise identical image larger and
