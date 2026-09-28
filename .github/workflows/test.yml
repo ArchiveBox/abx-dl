@@ -237,6 +237,13 @@ jobs:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.ANTHROPIC_API_KEY == '' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
       TWOCAPTCHA_API_KEY: ${{ secrets.TWOCAPTCHA_API_KEY }}
+      # Each crawl owns its prover; unrelated public sessions must not decide
+      # whether this release can produce and validate a real TLSNotary proof.
+      TLSNOTARY_COMPOSE_PROJECT: tlsnotary-ci-${{ github.run_id }}-${{ github.run_attempt }}
+      TLSNOTARY_STATE_DIR: ${{ runner.temp }}/tlsnotary-state
+      TLSNOTARY_PORT: "0"
+      TLSNOTARY_MIN_AVAILABLE_MEMORY_MB: "1024"
+      COMPOSE_PROFILES: ""
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -274,6 +281,43 @@ jobs:
           plugins_dir="$("${UV_BINARY}" run --no-cache --no-sync --no-sources python -c 'from abx_plugins import get_plugins_dir; print(get_plugins_dir())')"
           test -d "$plugins_dir"
           echo "ABX_PLUGINS_DIR=$plugins_dir" >> "$GITHUB_ENV"
+
+      - name: Start isolated TLSNotary verifier
+        id: tlsnotary
+        run: |
+          set -Eeuo pipefail
+          export TLSNOTARY_SERVER_DIR="$ABX_PLUGINS_DIR/tlsnotary/server"
+          test -f "$TLSNOTARY_SERVER_DIR/docker-compose.yml"
+          test -f "$TLSNOTARY_SERVER_DIR/Dockerfile"
+          export TLSNOTARY_UID="$(id -u)"
+          export TLSNOTARY_GID="$(id -g)"
+          mkdir -p "$TLSNOTARY_STATE_DIR"
+          openssl genpkey -algorithm ED25519 -out "$TLSNOTARY_STATE_DIR/signing.pem"
+          chmod 600 "$TLSNOTARY_STATE_DIR/signing.pem"
+          TLSNOTARY_TRUSTED_KEY="$(openssl pkey -in "$TLSNOTARY_STATE_DIR/signing.pem" -pubout -outform DER | base64 -w 0)"
+          compose=(docker compose --env-file /dev/null --project-name "$TLSNOTARY_COMPOSE_PROJECT" -f "$TLSNOTARY_SERVER_DIR/docker-compose.yml")
+          echo "started=true" >> "$GITHUB_OUTPUT"
+          if ! "${compose[@]}" up --detach --build --wait verifier gateway; then
+            "${compose[@]}" logs --no-color gateway || true
+            exit 1
+          fi
+          binding="$("${compose[@]}" port gateway 7047)"
+          test -n "$binding"
+          TLSNOTARY_VERIFIER_URL="http://${binding}"
+          deadline="$(( $(date +%s) + 10 ))"
+          until "$CURL_BINARY" --fail --silent --max-time 2 "$TLSNOTARY_VERIFIER_URL/key" |
+            "$JQ_BINARY" --exit-status --arg key "$TLSNOTARY_TRUSTED_KEY" '.publicKey == $key' >/dev/null; do
+            if (( $(date +%s) >= deadline )); then
+              "${compose[@]}" logs --no-color gateway || true
+              exit 1
+            fi
+            sleep 0.1
+          done
+          {
+            echo "TLSNOTARY_TRUSTED_KEY=$TLSNOTARY_TRUSTED_KEY"
+            echo "TLSNOTARY_VERIFIER_URL=$TLSNOTARY_VERIFIER_URL"
+          } >> "$GITHUB_ENV"
+          echo "TLSNotary verifier ready at $TLSNOTARY_VERIFIER_URL"
 
       - name: Enable every auto-run Snapshot plugin
         run: |
@@ -319,6 +363,17 @@ jobs:
           name: test-output
           path: ./test-output/
           retention-days: 7
+
+      - name: Stop isolated TLSNotary verifier
+        if: always() && steps.tlsnotary.outputs.started == 'true'
+        run: |
+          set -Eeuo pipefail
+          TLSNOTARY_SERVER_DIR="$ABX_PLUGINS_DIR/tlsnotary/server"
+          export TLSNOTARY_UID="$(id -u)"
+          export TLSNOTARY_GID="$(id -g)"
+          compose=(docker compose --env-file /dev/null --project-name "$TLSNOTARY_COMPOSE_PROJECT" -f "$TLSNOTARY_SERVER_DIR/docker-compose.yml")
+          "${compose[@]}" logs --no-color gateway || true
+          "${compose[@]}" down --volumes --remove-orphans
 
   package-artifacts:
     name: Build release artifacts
