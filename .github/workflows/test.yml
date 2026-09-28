@@ -229,6 +229,8 @@ jobs:
             ${{ runner.temp }}/abx-dl-docs-output/stdout.log
             ${{ runner.temp }}/abx-dl-docs-output/stderr.log
             ${{ runner.temp }}/abx-dl-docs-output/index.jsonl
+            ${{ runner.temp }}/abx-dl-docs-output/dom/output.html
+            ${{ runner.temp }}/abx-dl-docs-output/readability/
 
   test-all:
     name: All plugins

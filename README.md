@@ -66,7 +66,9 @@ test -s pdf/output.pdf
 test -s readability/content.html
 grep -q 'Example Domain' title/title.txt
 grep -q 'Example Domain' wget/example.com/index.html
-grep -q 'Example Domain' readability/content.txt
+# Readability extracts article body, which may omit the heading. The live
+# example.com DOM now does; title extraction is checked separately above.
+grep -Fq 'This domain is for use in documentation examples without needing permission.' readability/content.txt
 grep -q '"plugin": "wget".*"status": "succeeded"' index.jsonl
 grep -q '"plugin": "screenshot".*"status": "succeeded"' index.jsonl
 grep -q '"plugin": "pdf".*"status": "succeeded"' index.jsonl
