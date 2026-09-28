@@ -173,7 +173,7 @@ jobs:
       - name: Run repo test suite
         env:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
-        run: $UV_BINARY run --no-cache --no-sync --no-sources pytest -q "${{ matrix.file }}"
+        run: $UV_BINARY run --no-cache --no-sync --no-sources pytest -q --durations=20 "${{ matrix.file }}"
 
   documentation:
     name: Documentation code blocks
