@@ -301,7 +301,7 @@ jobs:
             --env PERSONAS_DIR=/out/personas --env CRAWL_DIR=/out \
             --workdir /venv/lib/python3.13/site-packages/abx_plugins/plugins/archivewebpage \
             --entrypoint /bin/bash '${{ matrix.local_tag }}' -c \
-            'set -Eeuo pipefail; PYTHONPROFILEIMPORTTIME=1 ./on_CrawlSetup__80_archivewebpage_prepare.py --url=https://example.com >/dev/null; test -s /out/chrome/extensions/archivewebpage.extension.json; grep -Fq '"'"'"version": "0.17.0"'"'"' /out/chrome/extensions/archivewebpage.extension.json; grep -Fq '"'"'"unpacked_path": "/out/personas/.archivewebpage/0.17.0-service-workers2"'"'"' /out/chrome/extensions/archivewebpage.extension.json; grep -Fq '"'"'"Network.setBypassServiceWorker",{bypass:!1}'"'"' /out/personas/.archivewebpage/0.17.0-service-workers2/bg.js' 2>&1)"; then
+            'set -Eeuo pipefail; PYTHONPROFILEIMPORTTIME=1 ./on_CrawlSetup__80_archivewebpage_prepare.py --url=https://example.com >/dev/null; test -s /out/chrome/extensions/archivewebpage.extension.json; grep -Fq '"'"'"version": "0.17.0"'"'"' /out/chrome/extensions/archivewebpage.extension.json; grep -Fq '"'"'"unpacked_path": "/out/personas/.archivewebpage/0.17.0-service-workers4"'"'"' /out/chrome/extensions/archivewebpage.extension.json; grep -Fq '"'"'"Network.setBypassServiceWorker",{bypass:!1}'"'"' /out/personas/.archivewebpage/0.17.0-service-workers4/bg.js' 2>&1)"; then
             printf '%s\n' "$IMPORT_PROFILE"
             exit 1
           fi
