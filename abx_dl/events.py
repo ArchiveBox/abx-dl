@@ -398,6 +398,9 @@ class ProcessStderrEvent(BaseEvent):
     start_ts: str = ""
     end_ts: str = ""
     event_timeout: float | None = 360.0
+    # Consumers receive diagnostics live; the process completion record and
+    # hook log own their durable copy. No later runtime query needs this line.
+    event_ttl: float | None = 0
 
 
 # ── Machine config update ────────────────────────────────────────────────────

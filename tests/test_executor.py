@@ -25,6 +25,7 @@ from abx_dl.events import (
     ProcessEvent,
     ProcessKillEvent,
     ProcessStartedEvent,
+    ProcessStderrEvent,
     ProcessStdoutEvent,
     SnapshotCleanupEvent,
     SnapshotCompletedEvent,
@@ -1931,14 +1932,33 @@ def test_crawl_abort_during_foreground_setup_interrupts_hook_and_stops_later_set
     assert later_started == []
 
 
+@pytest.mark.parametrize("history_pressure", [False, True])
 def test_crawl_abort_cleans_real_chrome_process_tree_and_foreground_hook(
     tmp_path: Path,
     httpserver: HTTPServer,
+    history_pressure: bool,
 ) -> None:
     plugin = PluginCatalog.discover()["chrome"]
     stream_url, response_started, release_response = _streaming_http_response(httpserver, "/chrome-abort")
     output_dir = tmp_path / "run"
     bus = create_bus(total_timeout=300.0, name=f"real_chrome_abort_{tmp_path.name}")
+    diagnostics: list[str] = []
+    completed_events: list[ProcessCompletedEvent] = []
+    kill_events: list[ProcessKillEvent] = []
+
+    def record_diagnostic(event: ProcessStderrEvent) -> None:
+        diagnostics.append(event.line)
+
+    bus.on(ProcessStderrEvent, record_diagnostic)
+
+    def record_completed(event: ProcessCompletedEvent) -> None:
+        completed_events.append(event)
+
+    def record_kill(event: ProcessKillEvent) -> None:
+        kill_events.append(event)
+
+    bus.on(ProcessCompletedEvent, record_completed)
+    bus.on(ProcessKillEvent, record_kill)
 
     async def run() -> tuple[int, int, int, list[ProcessCompletedEvent], list[ProcessKillEvent]]:
         download_task = asyncio.create_task(
@@ -1981,12 +2001,24 @@ def test_crawl_abort_cleans_real_chrome_process_tree_and_foreground_hook(
 
         crawl = await bus.find(CrawlEvent, past=True, future=False)
         assert isinstance(crawl, CrawlEvent)
+        if history_pressure:
+            bus.event_history.max_history_size = 32
+            hook = PluginCatalog.discover()["parse_txt_urls"].hooks[0]
+            for index in range(16):
+                parsed = await execute_hook(
+                    hook,
+                    output_dir=tmp_path / "parsed" / str(index),
+                    env=os.environ.copy(),
+                    arguments={"url": "https://example.com"},
+                    bus=bus,
+                )
+                assert parsed.exit_code == 0
         await bus.emit(CrawlAbortEvent(event_parent_id=crawl.event_id)).now()
         await download_task
         await bus.wait_until_idle()
-        completed = await bus.filter(ProcessCompletedEvent, past=True, future=False)
-        kills = await bus.filter(ProcessKillEvent, past=True, future=False)
-        return launch_started.pid, chrome_pid, navigate_started.pid, completed, kills
+        assert diagnostics
+        assert await bus.filter(ProcessStderrEvent, past=True, future=False) == []
+        return launch_started.pid, chrome_pid, navigate_started.pid, completed_events, kill_events
 
     try:
         launch_pid, chrome_pid, navigate_pid, completed, kills = asyncio.run(run())

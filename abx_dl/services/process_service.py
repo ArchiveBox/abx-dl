@@ -645,6 +645,11 @@ class ProcessService(BaseService):
             # Otherwise Ctrl+C in that await sees no active hook despite its PID
             # file already existing and lets a real subprocess escape the pause.
             self._active_hooks[event.event_id] = (event, started_event)
+            # The started fact completes before a background subprocess does.
+            # Keep its ancestry available to cleanup/result consumers until the
+            # existing reader scope closes after ProcessCompletedEvent handling.
+            assert reader_stack is not None
+            reader_stack.enter_context(self.bus.event_history.retain(started_event))
             await event.emit(started_event).now()
             proc = Process(
                 cmd=cmd,
