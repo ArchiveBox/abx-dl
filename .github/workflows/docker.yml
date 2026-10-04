@@ -288,6 +288,10 @@ jobs:
             --workdir /out --entrypoint /bin/bash '${{ matrix.local_tag }}' -c \
             'set -Eeuo pipefail; find /opt/archivebox/lib -name derived.env -type f -exec sha256sum {} + | sort > /tmp/cache-before; if ! abx-dl install >/tmp/install.log 2>&1; then cat /tmp/install.log; exit 1; fi; find /opt/archivebox/lib -name derived.env -type f -exec sha256sum {} + | sort > /tmp/cache-after; diff -u /tmp/cache-before /tmp/cache-after'
 
+          "${DOCKER_BINARY}" run --rm --user 911:911 --platform '${{ matrix.platform }}' \
+            --entrypoint /usr/bin/uv '${{ matrix.local_tag }}' run --no-project python -c \
+            'from pathlib import Path; from abxpkg.config import load_derived_cache; records = load_derived_cache(Path("/opt/archivebox/lib/env/derived.env")); plans = [projection["validation"] for record in records.values() for projection in record.get("request_exec_projections", {}).values()]; assert plans and {plan["euid"] for plan in plans} == {911}, [(record["bin_name"], projection["validation"]["euid"]) for record in records.values() for projection in record.get("request_exec_projections", {}).values()]'
+
           # The script's shebang launches abxpkg first; the hook's own Python
           # process loads pydantic through load_config. Keep the launcher lean
           # and verify that the hook prepared its real extension output.
