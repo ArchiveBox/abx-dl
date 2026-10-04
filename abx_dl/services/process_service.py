@@ -479,6 +479,10 @@ class ProcessService(BaseService):
                     child.kill()
             except psutil.Error:
                 pass
+        # SIGKILL delivery is asynchronous. Reap/wait for the killed descendants
+        # before the caller's immediate os._exit(), so CLI exit also means its
+        # children have stopped. This is bounded, without a graceful-shutdown wait.
+        psutil.wait_procs(descendants, timeout=1.0)
 
     async def on_ProcessEvent(self, event: ProcessEvent) -> Process | None:
         """Run each ProcessEvent exactly once even if the bus observes it twice."""
