@@ -303,7 +303,10 @@ def test_runtime_setup_hooks_run_before_dependent_extractors() -> None:
             key=lambda item: item[1].sort_key,
         )
     ]
-    assert snapshot_hooks[:3] == [
+    # Archive.org only needs the URL, so its remote wait overlaps browser setup.
+    # Browser-dependent extractors must still follow launch, tab, and recording.
+    assert snapshot_hooks[:4] == [
+        ("archivedotorg", "on_Snapshot__00_archivedotorg.finite.bg"),
         ("chrome", "on_Snapshot__00_chrome_launch.daemon.bg"),
         ("chrome", "on_Snapshot__01_chrome_tab.daemon.bg"),
         ("chrome_screencast", "on_Snapshot__02_chrome_screencast.daemon.bg"),
