@@ -27,10 +27,12 @@ grep -q 'on_Snapshot__35_wget' <<<"$plugin_info"
 ## Verification
 
 The normal CI workflow assigns every repository test file exactly once across
-Linux, macOS, and every supported Python minor version. It also runs every
-non-Docker documentation snippet and a real crawl across every Snapshot hook
-from the pinned `abx-plugins` release. The Docker workflow builds and tests both
-amd64 and arm64 images and runs every snippet marked `docker_required`.
+Linux, macOS, and every supported Python minor version. It also runs a real crawl
+across every Snapshot hook from the pinned `abx-plugins` release. The Docker
+workflow builds and tests both amd64 and arm64 images. Documentation snippets,
+including those marked `docker_required`, run twice daily when the source has
+changed since the last successful docs run. Docker snippets use the published
+image for that exact source revision.
 
 Run the repository's complete static verification before publishing changes:
 

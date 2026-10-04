@@ -14,7 +14,7 @@ on:
         default: false
         type: boolean
       full_tests:
-        description: Run documentation and real-crawl validation in addition to release smoke checks
+        description: Run real-crawl validation in addition to release smoke checks
         required: false
         default: true
         type: boolean
@@ -105,7 +105,7 @@ jobs:
             test "$("${GIT_BINARY}" -C "$checkout" rev-parse HEAD)" = "$remote_sha"
           done
 
-      - name: Install documentation test dependencies
+      - name: Install crawl validation dependencies
         if: inputs.full_tests
         run: $UV_BINARY sync --no-cache --locked --group dev --no-sources
 
@@ -260,12 +260,6 @@ jobs:
         run: |
           "${DOCKER_BINARY}" pull --platform '${{ matrix.platform }}' "$IMAGE"
           "${DOCKER_BINARY}" tag "$IMAGE" '${{ matrix.local_tag }}'
-
-      - name: Test Docker documentation commands
-        if: inputs.full_tests && matrix.platform == 'linux/amd64'
-        env:
-          ABXDL_IMAGE: ${{ matrix.local_tag }}
-        run: $UV_BINARY run --no-cache --no-sync --no-sources pytest -vv --tb=long -m docker_required README.md AGENTS.md CLAUDE.md skills
 
       - name: Validate real crawl inside Docker image
         id: real_crawl
