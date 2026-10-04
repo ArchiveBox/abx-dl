@@ -122,7 +122,7 @@ jobs:
         run: '"${UV_BINARY}" sync --no-cache --locked --dev --no-sources'
 
       - name: Install real search backend dependency
-        if: matrix.file == 'tests/test_search_command_lifecycle.py'
+        if: contains(matrix.files, 'tests/test_search_command_lifecycle.py')
         env:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
         run: $UV_BINARY run --no-cache --no-sync --no-sources abx-dl install search_backend_ripgrep
@@ -130,7 +130,7 @@ jobs:
       - name: Run repo test suite
         env:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
-        run: $UV_BINARY run --no-cache --no-sync --no-sources pytest -q -n 2 --durations=20 "${{ matrix.file }}"
+        run: $UV_BINARY run --no-cache --no-sync --no-sources pytest -q -n 2 --durations=20 ${{ matrix.files_arg }}
 
   test-all:
     if: inputs.platform == 'linux'
