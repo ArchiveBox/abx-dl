@@ -24,6 +24,8 @@ jobs:
       contents: write
     outputs:
       run_tests: ${{ github.event_name != 'push' || steps.version.outputs.action == 'ready' || steps.version.outputs.action == 'reserved' }}
+      tests: ${{ steps.matrix.outputs.tests }}
+      runner: ${{ steps.runner.outputs.use-runner || '["ubuntu-24.04"]' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -39,11 +41,75 @@ jobs:
           tag-prefix: v
           version-scheme: patch
 
+      - name: Select available CI capacity
+        id: runner
+        if: (github.event_name != 'push' || steps.version.outputs.action == 'ready' || steps.version.outputs.action == 'reserved') && (vars.UGNAS_CI_ENABLED != 'false' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main')
+        uses: ArchiveBox/monorepo/.github/actions/select-ci-runner@main
+        with:
+          github-token: ${{ secrets.RUNNER_STATUS_TOKEN }}
+
+      - name: Install uv
+        if: github.event_name != 'push' || steps.version.outputs.action == 'ready' || steps.version.outputs.action == 'reserved'
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.10.6"
+          enable-cache: false
+
+      - name: Build test matrix
+        if: github.event_name != 'push' || steps.version.outputs.action == 'ready' || steps.version.outputs.action == 'reserved'
+        id: matrix
+        env:
+          UGNAS_CI_MAX_JOBS: ${{ vars.UGNAS_CI_MAX_JOBS || 3 }}
+        run: |
+          uv run --no-cache --no-project python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          cells = (
+              ("ubuntu-24.04", "3.12"),
+              ("ubuntu-24.04", "3.13"),
+              ("ubuntu-24.04", "3.14"),
+              ("macos-15", "3.12"),
+              ("macos-15", "3.13"),
+              ("macos-15", "3.14"),
+          )
+          test_files = sorted(
+              str(path)
+              for root in (Path("tests"), Path("server/tests"))
+              for path in root.glob("test_*.py")
+          )
+          if not test_files:
+              raise SystemExit("No test files discovered")
+
+          matrix = []
+          capacity = int(os.environ["UGNAS_CI_MAX_JOBS"])
+          for index, test_file in enumerate(test_files):
+              os_name, python_version = cells[index % len(cells)]
+              eligible = os_name == "ubuntu-24.04" and "# ci-runner: hosted" not in Path(test_file).read_text().splitlines()[:5]
+              use_nas = eligible and capacity > 0
+              capacity -= int(use_nas)
+              matrix.append({"file": test_file, "os": os_name, "python": python_version, "ugnas": use_nas})
+          assigned_files = [entry["file"] for entry in matrix]
+          assigned_cells = {(entry["os"], entry["python"]) for entry in matrix}
+          if sorted(assigned_files) != test_files or len(assigned_files) != len(set(assigned_files)):
+              raise SystemExit("Test matrix must assign every discovered file exactly once")
+          if assigned_cells != set(cells):
+              raise SystemExit("Test matrix must cover every supported OS/Python cell")
+
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+              output.write(f"tests={json.dumps(matrix, separators=(',', ':'))}\n")
+          print(json.dumps(matrix, indent=2))
+          PY
+
   tests:
     needs: prepare
     if: needs.prepare.outputs.run_tests == 'true'
     name: Full test suite
     uses: ./.github/workflows/test.yml
+    with:
+      tests: ${{ needs.prepare.outputs.tests }}
+      runner: ${{ needs.prepare.outputs.runner }}
     secrets: inherit
 
   docker:
