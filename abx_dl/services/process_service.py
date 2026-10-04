@@ -501,7 +501,10 @@ class ProcessService(BaseService):
         plugin_output_dir = Path(event.output_dir)
         # ProcessService owns creation for both direct and scheduled hooks.
         # Repeating mkdir in each phase adds a remote metadata round trip.
-        plugin_output_dir.mkdir(parents=True, exist_ok=True)
+        # Remote mounts can synchronously upload a directory marker here (B2
+        # measured up to 0.8s). Never block stdout readiness, background process
+        # completion, or other snapshots on this hook's filesystem round trip.
+        await asyncio.to_thread(plugin_output_dir.mkdir, parents=True, exist_ok=True)
 
         cmd = _process_command(event)
         proc = Process(
@@ -525,10 +528,10 @@ class ProcessService(BaseService):
 
         # UUID-scoped names never reuse an earlier attempt's logs. Probing
         # nonexistent old names here adds remote I/O without preserving anything.
-        write_cmd_file(cmd_file, cmd)
+        await asyncio.to_thread(write_cmd_file, cmd_file, cmd)
         # Track the directory contents before the hook runs so completion can
         # report only newly created output files.
-        files_before = set(plugin_output_dir.rglob("*")) if plugin_output_dir.exists() else set()
+        files_before = await asyncio.to_thread(lambda: set(plugin_output_dir.rglob("*")))
 
         process: asyncio.subprocess.Process | None = None
         started_event: ProcessStartedEvent | None = None
@@ -818,8 +821,9 @@ class ProcessService(BaseService):
         stdout_reader.close()
         stderr_reader.close()
 
-        files_after = set(plugin_output_dir.rglob("*")) if plugin_output_dir.exists() else set()
-        new_files = scan_output_files(
+        files_after = await asyncio.to_thread(lambda: set(plugin_output_dir.rglob("*")))
+        new_files = await asyncio.to_thread(
+            scan_output_files,
             plugin_output_dir,
             file_paths=files_after - files_before,
             containment_root=plugin_output_dir.parent,

@@ -1,5 +1,6 @@
 """ArchiveResultService — owns ArchiveResult construction from hook output."""
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any, ClassVar
@@ -101,7 +102,11 @@ class ArchiveResultService(BaseService):
         assert isinstance(snapshot_event, SnapshotEvent)
 
         output_dir = Path(event.output_dir)
-        output_files = scan_output_files(
+        # Keep sanitization and metadata validation, but not on the event loop:
+        # a remote tree walk must not prevent unrelated hooks from reporting
+        # readiness/exiting, or delay the cleanup that lets the snapshot seal.
+        output_files = await asyncio.to_thread(
+            scan_output_files,
             output_dir,
             containment_root=output_dir.parent,
         )
