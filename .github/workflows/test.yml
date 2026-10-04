@@ -57,7 +57,7 @@ jobs:
     steps:
       - name: Select available CI capacity
         id: runner
-        if: vars.UGNAS_CI_ENABLED != 'false' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: vars.UGNAS_CI_ENABLED != 'false' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
         uses: ArchiveBox/monorepo/.github/actions/select-ci-runner@main
         with:
           github-token: ${{ secrets.RUNNER_STATUS_TOKEN }}
