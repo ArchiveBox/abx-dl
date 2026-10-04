@@ -499,23 +499,28 @@ def get_required_binary_requests(
     run_output_dir: Path | None = None,
 ) -> list[dict[str, Any]]:
     """Hydrate one plugin's ``required_binaries`` into BinaryRequest payloads."""
+    if not binaries:
+        return []
     plugin_config = _load_plugin_config_model(
         plugin,
         user_env=overrides,
         derived_env=derived_overrides,
     )
-    request_config = _load_plugin_config_model(
-        plugin,
-        user_env=overrides,
-    )
     env = PluginEnv.from_config(
         plugin_config,
         run_output_dir=run_output_dir or Path.cwd(),
     ).to_env()
-    request_env = PluginEnv.from_config(
-        request_config,
-        run_output_dir=run_output_dir or Path.cwd(),
-    ).to_env()
+    # Names must retain the user's selection even when derived provider paths
+    # hydrate the install arguments. Without derived values these environments
+    # are identical: resolving the schema/settings twice adds work to every
+    # install and version diagnostic without changing a request.
+    request_env = env
+    if derived_overrides:
+        request_config = _load_plugin_config_model(plugin, user_env=overrides)
+        request_env = PluginEnv.from_config(
+            request_config,
+            run_output_dir=run_output_dir or Path.cwd(),
+        ).to_env()
     requests: list[dict[str, Any]] = []
     for spec in binaries:
         record = spec.model_dump(mode="json", exclude_none=True)
