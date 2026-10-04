@@ -264,7 +264,6 @@ class SnapshotService(BaseService):
             timeout = plugin_config[timeout_key] if timeout_key in plugin.config.properties else plugin_config.TIMEOUT
             self._hook_timeouts[(plugin.name, hook.name)] = timeout
             plugin_output_dir = self.output_dir / plugin.name
-            plugin_output_dir.mkdir(parents=True, exist_ok=True)
             # Snapshot background hooks own resources that are explicitly
             # shut down by SnapshotCleanupEvent. Do not give abxbus a
             # wall-clock handler timeout for them; cleanup owns termination.

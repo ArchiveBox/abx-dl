@@ -131,7 +131,6 @@ class CrawlService(BaseService):
             timeout_key = f"{plugin.name.upper()}_TIMEOUT"
             timeout = runtime[timeout_key] if timeout_key in plugin.config.properties else runtime.TIMEOUT
             plugin_output_dir = self.output_dir / plugin.name
-            plugin_output_dir.mkdir(parents=True, exist_ok=True)
             # CrawlSetup background hooks own a crawl-scoped resource for
             # the *whole crawl* and are torn down by the explicit
             # ``CrawlCleanupEvent`` SIGTERM below — they must not have a

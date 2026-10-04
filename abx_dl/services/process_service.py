@@ -102,7 +102,6 @@ def _permanently_drop_child_privileges(uid: int, gid: int) -> Callable[[], None]
 class _OutputStreamState:
     stdout_lines: list[str] = field(default_factory=list)
     pending_line: str = ""
-    offset: int = 0
     stop_requested: bool = False
 
 
@@ -134,37 +133,6 @@ def _process_status(exit_code: int) -> ProcessStatus:
 
 def _process_command(event: ProcessEvent) -> list[str]:
     return [event.hook_path, *event.hook_args]
-
-
-def _rotate_existing_log(path: Path) -> Path | None:
-    """Move an existing non-empty log file aside before reusing its canonical name.
-
-    Hook retries reuse the same ``{hook_name}.stdout.log`` / ``.stderr.log`` paths.
-    Without rotation, a later retry overwrites the previous attempt's logs, and a
-    later successful retry deletes the canonical files entirely. Preserve the old
-    contents under a timestamped filename so failed attempts remain debuggable.
-    """
-    if not path.exists():
-        return None
-
-    try:
-        if path.stat().st_size == 0:
-            path.unlink(missing_ok=True)
-            return None
-    except OSError:
-        return None
-
-    timestamp = time.strftime("%Y%m%dT%H%M%S", time.gmtime())
-    suffix = path.suffix
-    stem = path.name[: -len(suffix)] if suffix else path.name
-    archived = path.with_name(f"{stem}.{timestamp}{suffix}")
-    counter = 1
-    while archived.exists():
-        archived = path.with_name(f"{stem}.{timestamp}.{counter}{suffix}")
-        counter += 1
-
-    path.replace(archived)
-    return archived
 
 
 @contextmanager
@@ -531,6 +499,8 @@ class ProcessService(BaseService):
         if await wait_for_crawl_resume(self.bus) or self.abort_requested:
             return None
         plugin_output_dir = Path(event.output_dir)
+        # ProcessService owns creation for both direct and scheduled hooks.
+        # Repeating mkdir in each phase adds a remote metadata round trip.
         plugin_output_dir.mkdir(parents=True, exist_ok=True)
 
         cmd = _process_command(event)
@@ -553,9 +523,8 @@ class ProcessService(BaseService):
         pid_file = plugin_output_dir / f"{artifact_stem}.pid"
         cmd_file = plugin_output_dir / f"{artifact_stem}.sh"
 
-        _rotate_existing_log(stdout_file)
-        _rotate_existing_log(stderr_file)
-
+        # UUID-scoped names never reuse an earlier attempt's logs. Probing
+        # nonexistent old names here adds remote I/O without preserving anything.
         write_cmd_file(cmd_file, cmd)
         # Track the directory contents before the hook runs so completion can
         # report only newly created output files.
@@ -1163,9 +1132,10 @@ class ProcessService(BaseService):
         emit_partial: bool,
         event_class: type[ProcessStdoutEvent] | type[ProcessStderrEvent] = ProcessStdoutEvent,
     ) -> None:
-        stdout_reader.seek(state.offset)
+        # Each stream has one retained reader; read() already advances it,
+        # including after EOF when the child appends more data. Re-seeking on
+        # every poll adds remote I/O without changing the read position.
         chunk = stdout_reader.read()
-        state.offset = stdout_reader.tell()
 
         if not chunk and not (emit_partial and state.pending_line):
             return
