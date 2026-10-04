@@ -65,6 +65,9 @@ def isolated_config(tmp_path: Path, tmp_path_factory: pytest.TempPathFactory):
     personas_dir.mkdir(parents=True, exist_ok=True)
     tmp_dir.mkdir(parents=True, exist_ok=True)
     lib_dir = Path(provided_abxpkg_lib_dir) if provided_abxpkg_lib_dir else tmp_path_factory.getbasetemp() / "abxpkg-lib"
+    if worker := os.environ.get("PYTEST_XDIST_WORKER"):
+        # Each worker has its own pytest session and managed binary installs.
+        lib_dir /= worker
     lib_dir.mkdir(parents=True, exist_ok=True)
 
     os.chdir(tmp_path)

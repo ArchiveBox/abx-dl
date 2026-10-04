@@ -3,6 +3,9 @@ name: Full test suite
 on:
   workflow_call:
     inputs:
+      platform:
+        required: true
+        type: string
       tests:
         required: true
         type: string
@@ -17,6 +20,7 @@ env:
 
 jobs:
   prek:
+    if: inputs.platform == 'linux'
     name: Prek
     runs-on: ubuntu-24.04
 
@@ -102,9 +106,10 @@ jobs:
       - name: Run repo test suite
         env:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
-        run: $UV_BINARY run --no-cache --no-sync --no-sources pytest -q --durations=20 "${{ matrix.file }}"
+        run: $UV_BINARY run --no-cache --no-sync --no-sources pytest -q -n 2 --durations=20 "${{ matrix.file }}"
 
   test-all:
+    if: inputs.platform == 'linux'
     name: All plugins
     runs-on: ubuntu-24.04
     env:
