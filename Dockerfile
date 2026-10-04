@@ -224,6 +224,13 @@ RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=
     && STDLIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("stdlib"))')" \
     && PURELIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
     && /venv/bin/python -m compileall --invalidation-mode checked-hash -q "$STDLIB_DIR" "$PURELIB_DIR" \
+    # UvProvider exposes its installed package environments to hook scripts via
+    # PYTHONPATH. Compiling only /venv leaves those imports recompiling source on
+    # every hook because runtime PYTHONDONTWRITEBYTECODE=1 forbids cache writes.
+    # Compile matching-interpreter environments before normalizing mtimes;
+    # checked hashes keep this bytecode valid after that reproducibility step.
+    && PYTHON_LIB="$(/venv/bin/python -c 'import sys; print(f"python{sys.version_info.major}.{sys.version_info.minor}")')" \
+    && find "$ABXPKG_LIB_DIR/uv" -type d -path "*/lib/$PYTHON_LIB/site-packages" -prune -exec /venv/bin/python -m compileall --invalidation-mode checked-hash -q {} + \
     && env HOME=/home/archivebox XDG_CACHE_HOME=/var/tmp/abxpkg-cache setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups abx-dl install $ABX_DOCKER_PLUGINS \
     && find /venv "$ABXPKG_LIB_DIR" -exec touch -h -d '@946684800' {} + \
     && find "$ABXPKG_LIB_DIR/cache" -mindepth 1 -maxdepth 1 -exec rm -rf {} + \
