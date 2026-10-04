@@ -82,6 +82,15 @@ jobs:
           version: "0.10.6"
           enable-cache: false
 
+      # Ordinary tests reuse installs; cold-install tests choose their own libs.
+      - name: Reuse validated runtime dependencies
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/runtime-abx-lib
+          key: abxpkg-v1-${{ matrix.os }}-${{ runner.arch }}-${{ runner.environment }}-${{ matrix.python }}-${{ matrix.file }}-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            abxpkg-v1-${{ matrix.os }}-${{ runner.arch }}-${{ runner.environment }}-${{ matrix.python }}-${{ matrix.file }}-
+
       - name: Project host CI tools through abxpkg
         env:
           ABXPKG_LIB_DIR: ${{ runner.temp }}/runtime-abx-lib
