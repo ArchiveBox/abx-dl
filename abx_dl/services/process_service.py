@@ -449,8 +449,10 @@ class ProcessService(BaseService):
                 pass
         # SIGKILL delivery is asynchronous. Wait until descendants stop before
         # the caller's os._exit(), but leave reaping to their subprocess owners.
-        # wait_procs() competes with asyncio's child watcher for exit statuses;
-        # its pidfd path can also raise EINVAL for exiting Linux descendants.
+        # wait_procs() competes with asyncio's child watcher for exit statuses.
+        # Keep this non-reaping observation even after the temporary psutil
+        # 7.2.2 exclusion is removed: its upstream pidfd/EINVAL fix does not make
+        # two independent waiters safe. Only the subprocess owner may reap.
         deadline = time.monotonic() + 1.0
         while descendants:
             running = []

@@ -47,7 +47,15 @@ dependencies = [
     "pydantic-settings>=2.0.0",
     "platformdirs>=4.0.0",
     "requests>=2.28.0",
-    # 7.2.2 races on Linux pidfd_open after child exit (psutil#2715).
+    # psutil 7.2.2 can raise EINVAL from pidfd_open when a child exits during
+    # Process.wait()/wait_procs(), breaking real ripgrep close/timeout cleanup
+    # in Linux CI: https://github.com/giampaolo/psutil/issues/2715
+    # Upstream fix: 0195d11ed0f6106ff1371ff379bb47454130d770 (planned for 7.2.3).
+    # Remove this exclusion only when the minimum version is a published release
+    # containing that fix and tests/test_search_command_lifecycle.py passes on
+    # Linux with it. A closed issue or a newer installed version is insufficient:
+    # keeping the >=7.2.1 floor without the exclusion still permits broken 7.2.2.
+    # Later versions remain allowed; this is not a ceiling on psutil upgrades.
     "psutil>=7.2.1,!=7.2.2",
 ]
 
