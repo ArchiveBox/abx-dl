@@ -233,10 +233,10 @@ RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=
     && find "$ABXPKG_LIB_DIR/uv" -type d -path "*/lib/$PYTHON_LIB/site-packages" -prune -exec /venv/bin/python -m compileall --invalidation-mode checked-hash -q {} + \
     && env HOME=/home/archivebox XDG_CACHE_HOME=/var/tmp/abxpkg-cache setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups abx-dl install $ABX_DOCKER_PLUGINS \
     && find /venv "$ABXPKG_LIB_DIR" -exec touch -h -d '@946684800' {} + \
-    # Host discovery during root provisioning is not runtime execution state.
-    # Rebuild env metadata once as UID 911 after the final filesystem changes;
-    # retain every managed installation and its provider provenance/cache.
-    && rm -f "$ABXPKG_LIB_DIR/env/derived.env" \
+    # Execution plans from root provisioning cannot serve the runtime user.
+    # Discard only those plans; keep valid runtime plans and binary provenance.
+    && setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups \
+        /usr/bin/uv run --no-project python -c 'import os; from pathlib import Path; from abxpkg.config import load_derived_cache, save_derived_cache; path = Path(os.environ["ABXPKG_LIB_DIR"]) / "env/derived.env"; records = load_derived_cache(path); [record.update(request_exec_projections={key: projection for key, projection in record["request_exec_projections"].items() if projection["validation"]["euid"] == os.geteuid()}) for record in records.values() if "request_exec_projections" in record]; save_derived_cache(path, records)' \
     && find "$ABXPKG_LIB_DIR/cache" -mindepth 1 -maxdepth 1 -exec rm -rf {} + \
     && env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox XDG_CACHE_HOME="$ABXPKG_LIB_DIR/cache" setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups abx-dl install $ABX_DOCKER_PLUGINS \
     && CACHE_BYTES="$(du -sb "$ABXPKG_LIB_DIR/cache" | cut -f1)" \
