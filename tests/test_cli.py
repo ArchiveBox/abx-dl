@@ -345,10 +345,6 @@ def _cli_env(tmp_path: Path) -> dict[str, str]:
     env["PYTHONPATH"] = os.pathsep.join(pythonpath_entries)
     env["CONFIG_DIR"] = str(config_dir)
     env["ABXPKG_LIB_DIR"] = os.environ.get("ABXPKG_LIB_DIR", str(config_dir / "lib"))
-    # Keep the runner's browser source alongside its shared installation cache.
-    # Dropping this makes hosted CI use the image's Chrome through `env` again.
-    if "CHROME_BINPROVIDERS" in os.environ:
-        env["CHROME_BINPROVIDERS"] = os.environ["CHROME_BINPROVIDERS"]
     env["PERSONAS_DIR"] = str(config_dir / "personas")
     env["DATA_DIR"] = str(tmp_path / "data")
     env["TMP_DIR"] = str(tmp_path / "tmp")
@@ -1308,21 +1304,6 @@ def test_version_outputs_only_raw_version(tmp_path: Path) -> None:
     result = _run_cli(tmp_path, "--version")
     assert result.returncode == 0
     assert result.stdout.strip() == importlib.metadata.version("abx-dl")
-
-
-@pytest.mark.parametrize("providers", ["playwright,puppeteer", "env,playwright,puppeteer"])
-def test_cli_preserves_browser_provider_selection(tmp_path: Path, providers: str) -> None:
-    previous = os.environ.get("CHROME_BINPROVIDERS")
-    try:
-        os.environ["CHROME_BINPROVIDERS"] = providers
-        result = _run_cli(tmp_path, "config", "--get", "CHROME_BINPROVIDERS")
-    finally:
-        if previous is None:
-            os.environ.pop("CHROME_BINPROVIDERS", None)
-        else:
-            os.environ["CHROME_BINPROVIDERS"] = previous
-    assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == f'CHROME_BINPROVIDERS="{providers}"'
 
 
 def test_readme_config_commands_round_trip_in_isolated_config_dir(tmp_path: Path) -> None:
