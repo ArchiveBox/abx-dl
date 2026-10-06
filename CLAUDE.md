@@ -21,16 +21,18 @@ grep -q 'Usage:' <<<"$help_output"
 set -Eeuo pipefail
 plugin_info="$(uv run --no-sync --no-sources abx-dl plugins wget)"
 grep -q 'WGET_BINARY=wget' <<<"$plugin_info"
-grep -q 'on_Snapshot__06_wget' <<<"$plugin_info"
+grep -q 'on_Snapshot__35_wget' <<<"$plugin_info"
 ```
 
 ## Verification
 
-The normal CI workflow runs the complete repository suite on Linux and macOS
-with every supported Python minor version, every documentation snippet, every
-test directory from the pinned `abx-plugins` release, and a real all-plugin
-crawl. The Docker workflow builds and tests both amd64 and arm64 images and
-runs every snippet marked `docker_required`.
+The normal CI workflow assigns every repository test file exactly once across
+Linux, macOS, and every supported Python minor version. It also runs a real crawl
+across every Snapshot hook from the pinned `abx-plugins` release. The Docker
+workflow builds and tests both amd64 and arm64 images. Documentation snippets,
+including those marked `docker_required`, run twice daily when the source has
+changed since the last successful docs run. Docker snippets use the published
+image for that exact source revision.
 
 Run the repository's complete static verification before publishing changes:
 

@@ -6,9 +6,11 @@ import mimetypes
 import os
 import stat
 from pathlib import Path
-from collections.abc import Iterable
+from collections import defaultdict
+from collections.abc import Iterable, Mapping
+from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 
 
 for strict in (True, False):
@@ -24,10 +26,90 @@ BROKEN_SYMLINK_SUFFIX = ".broken-symlink.txt"
 class OutputFile(BaseModel):
     """Metadata for a file emitted by a hook."""
 
+    model_config = ConfigDict(extra="allow")
+
     path: str
     extension: str = ""
     mimetype: str = ""
     size: int = 0
+
+
+class OutputManifest(BaseModel):
+    """Canonical normalized metadata for one hook output directory."""
+
+    files: list[OutputFile] = Field(default_factory=list)
+    total_size: int = 0
+    mimetypes: list[str] = Field(default_factory=list)
+
+    @classmethod
+    def from_files(cls, files: Iterable[OutputFile | Mapping[str, Any]]) -> OutputManifest:
+        normalized = [item if isinstance(item, OutputFile) else OutputFile.model_validate(item) for item in files]
+        normalized.sort(key=lambda item: item.path)
+        mime_sizes: dict[str, int] = defaultdict(int)
+        total_size = 0
+        for output_file in normalized:
+            size = max(int(output_file.size or 0), 0)
+            total_size += size
+            if output_file.mimetype:
+                mime_sizes[output_file.mimetype] += size
+        mimetypes = [name for name, _size in sorted(mime_sizes.items(), key=lambda item: (-item[1], item[0]))]
+        return cls(files=normalized, total_size=total_size, mimetypes=mimetypes)
+
+    @classmethod
+    def from_value(cls, value: Any) -> OutputManifest:
+        if value is None:
+            return cls()
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, str):
+            import json
+
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                # Callers also pass a single unencoded path. Preserve it as one
+                # file instead of silently turning malformed JSON into no output.
+                pass
+            if isinstance(value, str):
+                value = [value]
+        if isinstance(value, Mapping):
+            files = []
+            for path, metadata in value.items():
+                payload = dict(metadata) if isinstance(metadata, Mapping) else {}
+                payload["path"] = str(path)
+                payload.setdefault("extension", Path(str(path)).suffix.lower().lstrip("."))
+                payload.setdefault("mimetype", guess_mimetype(str(path)))
+                files.append(payload)
+            return cls.from_files(files)
+        if isinstance(value, Iterable):
+            files = []
+            for item in value:
+                if isinstance(item, str):
+                    files.append({"path": item, "extension": Path(item).suffix.lower().lstrip("."), "mimetype": guess_mimetype(item)})
+                elif isinstance(item, OutputFile):
+                    files.append(item)
+                elif isinstance(item, Mapping) and item.get("path"):
+                    path = str(item["path"])
+                    payload = dict(item)
+                    payload["path"] = path
+                    payload.setdefault("extension", Path(path).suffix.lower().lstrip("."))
+                    payload.setdefault("mimetype", guess_mimetype(path))
+                    files.append(payload)
+            return cls.from_files(files)
+        return cls()
+
+    @classmethod
+    def scan(
+        cls,
+        output_dir: Path,
+        file_paths: Iterable[Path] | None = None,
+        *,
+        containment_root: Path | None = None,
+    ) -> OutputManifest:
+        return cls.from_files(scan_output_files(output_dir, file_paths, containment_root=containment_root))
+
+    def as_mapping(self) -> dict[str, dict[str, Any]]:
+        return {output_file.path: output_file.model_dump(exclude={"path"}) for output_file in self.files}
 
 
 def guess_mimetype(path: str | Path) -> str:
@@ -62,11 +144,16 @@ def output_file_from_path(file_path: Path, *, relative_to: Path) -> OutputFile:
     )
 
 
-def scan_output_files(output_dir: Path, file_paths: Iterable[Path] | None = None) -> list[OutputFile]:
+def scan_output_files(
+    output_dir: Path,
+    file_paths: Iterable[Path] | None = None,
+    *,
+    containment_root: Path | None = None,
+) -> list[OutputFile]:
     """Collect metadata for real hook output files, excluding process artifacts.
 
     Also sanitizes the tree as it walks: strips +x from regular files, and
-    replaces symlinks whose target escapes ``output_dir`` with a plain-text
+    replaces symlinks whose target escapes ``containment_root`` with a plain-text
     ``{name}.broken-symlink.txt`` sibling holding the original target string.
     Both operations are naturally idempotent.
     """
@@ -74,9 +161,9 @@ def scan_output_files(output_dir: Path, file_paths: Iterable[Path] | None = None
         return []
 
     try:
-        containment_root = output_dir.resolve()
+        containment_root = (containment_root or output_dir).resolve()
     except OSError:
-        containment_root = output_dir
+        containment_root = containment_root or output_dir
 
     paths = output_dir.rglob("*") if file_paths is None else file_paths
     output_files = []
@@ -89,6 +176,8 @@ def scan_output_files(output_dir: Path, file_paths: Iterable[Path] | None = None
             _neutralize_escaping_symlink(file_path, containment_root)
             continue
         if not stat.S_ISREG(stat_result.st_mode):
+            continue
+        if ".hooks" in file_path.relative_to(output_dir).parts:
             continue
         if stat_result.st_mode & EXECUTABLE_BITS:
             try:

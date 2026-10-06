@@ -37,33 +37,7 @@ grep -q 'Usage:' <<<"$help_output"
 set -Eeuo pipefail
 plugin_info="$(uv run abx-dl plugins wget)"
 grep -q 'WGET_BINARY=wget' <<<"$plugin_info"
-grep -q 'on_Snapshot__06_wget' <<<"$plugin_info"
-```
-
-Docker:
-
-<!--pytest.mark.docker_required-->
-```bash
-set -Eeuo pipefail
-output_dir="$(mktemp -d)"
-image="${ABXDL_IMAGE:-archivebox/abx-dl:latest}"
-trap 'rm -rf "$output_dir"' EXIT
-docker run --rm \
-  --env OUTPUT_UID="$(id -u)" \
-  --env OUTPUT_GID="$(id -g)" \
-  --volume "$output_dir:/out" \
-  --entrypoint bash \
-  "$image" \
-  -c 'set -Eeuo pipefail
-cleanup() { chown -R "$OUTPUT_UID:$OUTPUT_GID" /out; }
-trap cleanup EXIT
-/venv/bin/abx-dl "$@"' \
-  -- --no-install --max-urls=1 --plugins=title,wget 'https://example.com'
-test -s "$output_dir/index.jsonl"
-test -s "$output_dir/title/title.txt"
-test -s "$output_dir/wget/example.com/index.html"
-grep -q 'Example Domain' "$output_dir/title/title.txt"
-grep -q 'Example Domain' "$output_dir/wget/example.com/index.html"
+grep -q 'on_Snapshot__35_wget' <<<"$plugin_info"
 ```
 
 ## Basic Usage
@@ -78,12 +52,20 @@ uv run abx-dl config --get TIMEOUT
 
 ## Verification
 
-Use targeted tests and real user-facing commands:
+Use targeted live user-facing commands:
 
 ```bash
 set -Eeuo pipefail
-uv run pytest tests/test_cli.py::test_readme_install_command_runs_real_install_pipeline -q
+tmpdir="$(mktemp -d)"
+cd "$tmpdir"
+uv run --project /path/to/abx-dl abx-dl dl --plugins=chrome,consolelog,headers,wget 'https://example.com'
+test -s index.jsonl
 ```
 
-The skill's live wget check covers extractor output. The main test workflow runs
-the exhaustive repository suite and the separate Prek job runs every hook.
+The main CI workflow runs the exhaustive repository suite and the separate Prek
+job runs every hook.
+Background hook scheduling is based only on `bg` vs `fg`; filename words like
+`daemon` and `finite` are human hints only. Background hooks advance the
+scheduler on their first stdout line or successful completion; that first stdout
+line must mean the hook is ready for the next hook to launch, and non-ready
+diagnostics belong on stderr.

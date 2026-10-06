@@ -1,4 +1,4 @@
-"""CrawlService — orchestrates the install + crawl lifecycle phases."""
+"""Plugin crawl-hook execution and cleanup listeners."""
 
 import asyncio
 from inspect import isawaitable
@@ -7,28 +7,24 @@ from typing import ClassVar
 from collections.abc import Awaitable, Callable
 
 from abxbus import BaseEvent, EventBus
-from abxpkg import BinProvider
-from abxpkg.binary_service import BinaryEvent
 
+from ..catalog import PluginCatalog
 from ..config import get_config, get_plugin_env
 from ..events import (
     CrawlAbortEvent,
     CrawlCleanupEvent,
-    CrawlCompletedEvent,
     CrawlEvent,
-    CrawlStartEvent,
     CrawlSetupEvent,
     ProcessCompletedEvent,
     ProcessEvent,
     ProcessKillEvent,
     ProcessStartedEvent,
-    SnapshotCompletedEvent,
-    SnapshotEvent,
     slow_warning_timeout,
 )
 from ..models import Snapshot
-from ..models import Hook, Plugin, filter_plugins
-from .base import BaseService
+from ..models import Hook, Plugin
+from .base import BaseService, wait_for_process_ready, wait_for_crawl_resume
+from .binary_service import build_plugin_process_env
 
 
 async def _wait_for_process_completed(event: ProcessCompletedEvent | None, timeout: float | None) -> ProcessCompletedEvent | None:
@@ -47,44 +43,21 @@ async def _run_event_now(event: BaseEvent, timeout: float | None = None) -> Base
 
 
 class CrawlService(BaseService):
-    """Orchestrates the crawl lifecycle after the install phase.
+    """Run plugin ``CrawlSetup`` hooks and clean up their processes.
 
-    Lifecycle::
-
-        CrawlEvent                                    # emitted by orchestrator
-        │
-        ├── CrawlSetupEvent                           # on_CrawlSetup hooks run here
-        │   ├── on_CrawlSetup__90_chrome_launch.daemon.bg
-        │   └── on_CrawlSetup__91_chrome_wait
-        │
-        ├── CrawlStartEvent                  # triggers snapshot phase
-        │   └── SnapshotEvent (full snapshot lifecycle)
-        │
-        ├── CrawlCleanupEvent                         # SIGTERMs bg crawl daemons
-        │   └── ProcessKillEvent × N
-        │
-        └── CrawlCompletedEvent                       # informational
-
-    CrawlEvent is the root crawl-lifecycle driver. InstallEvent is handled by
-    BinaryService before the crawl phase starts. Crawl setup per-hook handlers
-    are registered on CrawlSetupEvent so phase ordering stays explicit.
+    This service deliberately does not drive the crawl lifecycle. Embedders can
+    attach it wherever plugin crawl hooks are wanted; standalone downloads also
+    attach :class:`CrawlLifecycleService` to emit the phase events.
     """
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [
-        CrawlEvent,
         CrawlAbortEvent,
         CrawlSetupEvent,
-        CrawlStartEvent,
         CrawlCleanupEvent,
     ]
     EMITS: ClassVar[list[type[BaseEvent]]] = [
-        CrawlSetupEvent,
-        CrawlStartEvent,
-        CrawlCleanupEvent,
-        CrawlCompletedEvent,
         ProcessEvent,
         ProcessKillEvent,
-        SnapshotEvent,
     ]
 
     def __init__(
@@ -94,50 +67,27 @@ class CrawlService(BaseService):
         url: str,
         snapshot: Snapshot,
         output_dir: Path,
-        plugins: dict[str, Plugin],
-        crawl_setup_enabled: bool = True,
-        crawl_start_enabled: bool = True,
-        crawl_cleanup_enabled: bool = True,
-        crawl_completed_enabled: bool = True,
-        crawl_event_enabled: bool = True,
-        crawl_setup_phase_timeout: float = 300.0,
-        snapshot_phase_timeout: float = 300.0,
-        snapshot_cleanup_phase_timeout: float = 300.0,
-        crawl_cleanup_phase_timeout: float = 300.0,
+        catalog: PluginCatalog,
         abort_requested: Callable[[], bool | Awaitable[bool]] | None = None,
     ):
         self.url = url
         self.snapshot = snapshot
         self.output_dir = output_dir
-        self.plugins = plugins
+        self.catalog = catalog
         self.crawl_setup_hooks: list[tuple[Plugin, Hook]] = []
-        for plugin in plugins.values():
+        for plugin in catalog.values():
             for hook in plugin.filter_hooks("CrawlSetup"):
                 self.crawl_setup_hooks.append((plugin, hook))
         self.crawl_setup_hooks.sort(key=lambda item: item[1].sort_key)
-        self.crawl_setup_enabled = crawl_setup_enabled
-        self.crawl_start_enabled = crawl_start_enabled
-        self.crawl_cleanup_enabled = crawl_cleanup_enabled
-        self.crawl_completed_enabled = crawl_completed_enabled
-        self.crawl_event_enabled = crawl_event_enabled
-        self.crawl_setup_phase_timeout = crawl_setup_phase_timeout
-        self.snapshot_phase_timeout = snapshot_phase_timeout
-        self.snapshot_cleanup_phase_timeout = snapshot_cleanup_phase_timeout
-        self.crawl_cleanup_phase_timeout = crawl_cleanup_phase_timeout
         self.abort_requested = False
         self.abort_requested_callback = abort_requested
-        self._active_crawl_event_ids: set[str] = set()
-        self._completed_crawl_event_ids: set[str] = set()
         super().__init__(bus)
         self.bus.on(CrawlSetupEvent, self.on_CrawlSetupEvent)
-        if self.crawl_event_enabled:
-            self.bus.on(CrawlEvent, self.on_CrawlEvent)
         self.bus.on(CrawlAbortEvent, self.on_CrawlAbortEvent)
-        self.bus.on(CrawlStartEvent, self.on_CrawlStartEvent)
         self.bus.on(CrawlCleanupEvent, self.on_CrawlCleanupEvent)
 
     async def should_abort(self) -> bool:
-        if self.abort_requested:
+        if self.abort_requested or await wait_for_crawl_resume(self.bus):
             return True
         if self.abort_requested_callback is None:
             return False
@@ -165,28 +115,22 @@ class CrawlService(BaseService):
                 config=config,
                 extra_context={
                     "snapshot_id": self.snapshot.id,
-                    "snapshot_depth": self.snapshot.depth,
                     "plugin": plugin.name,
                     "hook_name": hook.name,
                 },
             )
-            env = runtime.to_env()
-            env_plugin_names = set(filter_plugins(self.plugins, [plugin.name], include_providers=True))
-            binary_events = await self.bus.filter(
-                BinaryEvent,
-                past=True,
-                where=lambda candidate: str(candidate.extra_context.get("plugin_name") or "") in env_plugin_names,
+            if plugin.enabled_key in plugin.config.properties and not runtime[plugin.enabled_key]:
+                return
+            runtime_env = runtime.to_env()
+            env = await build_plugin_process_env(
+                self.bus,
+                catalog=self.catalog,
+                plugin=plugin,
+                runtime_env=runtime_env,
             )
-            for binary_event in reversed(binary_events):
-                if binary_event.env:
-                    env = BinProvider.build_exec_env(
-                        base_env=env,
-                        extra_env=binary_event.env,
-                    )
             timeout_key = f"{plugin.name.upper()}_TIMEOUT"
             timeout = runtime[timeout_key] if timeout_key in plugin.config.properties else runtime.TIMEOUT
             plugin_output_dir = self.output_dir / plugin.name
-            plugin_output_dir.mkdir(parents=True, exist_ok=True)
             # CrawlSetup background hooks own a crawl-scoped resource for
             # the *whole crawl* and are torn down by the explicit
             # ``CrawlCleanupEvent`` SIGTERM below — they must not have a
@@ -194,9 +138,7 @@ class CrawlService(BaseService):
             if hook.is_background:
                 handler_timeout: float | None = None
                 handler_slow_timeout: float | None = None
-                # Spawn + PEP-723 cold-cache dep install fits comfortably in
-                # 60s; ``None`` would silently hang on a failed spawn.
-                started_wait_timeout = 60.0
+                started_wait_timeout = float(timeout or 0) + 30.0
             else:
                 handler_timeout = float(timeout or 0) + 30.0
                 handler_slow_timeout = slow_warning_timeout(handler_timeout)
@@ -217,9 +159,6 @@ class CrawlService(BaseService):
             )
             if hook.is_background:
                 background_process = event.emit(process_event)
-                # See snapshot_service.py — PEP-723 hooks with cold uv caches
-                # routinely need >5s to resolve + install inline-script deps
-                # before they can emit ProcessStartedEvent. Bumped to 60s.
                 started_process = await self.bus.find(
                     ProcessStartedEvent,
                     child_of=background_process,
@@ -230,9 +169,16 @@ class CrawlService(BaseService):
                     return
                 if started_process is None:
                     raise RuntimeError(f"Background hook {hook.name} did not start")
+                await wait_for_process_ready(
+                    started_process,
+                    started_wait_timeout,
+                    self.should_abort,
+                )
             else:
                 foreground_process = event.emit(process_event)
                 await _run_event_now(foreground_process, handler_timeout)
+                if await self.should_abort():
+                    return
                 completed_process = await self.bus.find(
                     ProcessCompletedEvent,
                     child_of=foreground_process,
@@ -260,124 +206,6 @@ class CrawlService(BaseService):
             await self.on_CrawlSetupEvent__for_hook(plugin, hook)(event)
             if await self.should_abort():
                 return
-
-    async def on_CrawlEvent(self, event: CrawlEvent) -> None:
-        """Drive the full crawl lifecycle by emitting phase events in sequence.
-
-        CrawlSetupEvent → CrawlStartEvent → CrawlCleanupEvent → CrawlCompletedEvent
-        """
-        if event.output_dir != str(self.output_dir):
-            return
-        if event.event_id in self._active_crawl_event_ids or event.event_id in self._completed_crawl_event_ids:
-            return
-        self._active_crawl_event_ids.add(event.event_id)
-        try:
-            await self._run_root_crawl_event(event)
-        finally:
-            self._active_crawl_event_ids.discard(event.event_id)
-            self._completed_crawl_event_ids.add(event.event_id)
-
-    async def _run_root_crawl_event(self, event: CrawlEvent) -> None:
-        url = self.url
-        snapshot_id = self.snapshot.id
-        output_dir = str(self.output_dir)
-        if self.crawl_setup_enabled:
-            await _run_event_now(
-                event.emit(
-                    CrawlSetupEvent(
-                        url=url,
-                        snapshot_id=snapshot_id,
-                        output_dir=output_dir,
-                        event_timeout=self.crawl_setup_phase_timeout,
-                        event_handler_slow_timeout=slow_warning_timeout(self.crawl_setup_phase_timeout),
-                    ),
-                ),
-                self.crawl_setup_phase_timeout,
-            )
-        if await self.should_abort():
-            if self.crawl_cleanup_enabled:
-                await _run_event_now(
-                    event.emit(
-                        CrawlCleanupEvent(
-                            url=url,
-                            snapshot_id=snapshot_id,
-                            output_dir=output_dir,
-                            event_timeout=self.crawl_cleanup_phase_timeout,
-                            event_handler_slow_timeout=slow_warning_timeout(self.crawl_cleanup_phase_timeout),
-                        ),
-                    ),
-                    self.crawl_cleanup_phase_timeout,
-                )
-                return
-            if self.crawl_completed_enabled:
-                await _run_event_now(
-                    event.emit(CrawlCompletedEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir)),
-                    CrawlCompletedEvent.model_fields["event_timeout"].default,
-                )
-            return
-        if self.crawl_start_enabled:
-            await _run_event_now(
-                event.emit(
-                    CrawlStartEvent(
-                        url=url,
-                        snapshot_id=snapshot_id,
-                        output_dir=output_dir,
-                        event_timeout=self.snapshot_phase_timeout,
-                        event_handler_slow_timeout=slow_warning_timeout(self.snapshot_phase_timeout),
-                    ),
-                ),
-                self.snapshot_phase_timeout,
-            )
-        if self.crawl_cleanup_enabled:
-            await _run_event_now(
-                event.emit(
-                    CrawlCleanupEvent(
-                        url=url,
-                        snapshot_id=snapshot_id,
-                        output_dir=output_dir,
-                        event_timeout=self.crawl_cleanup_phase_timeout,
-                        event_handler_slow_timeout=slow_warning_timeout(self.crawl_cleanup_phase_timeout),
-                    ),
-                ),
-                self.crawl_cleanup_phase_timeout,
-            )
-            return
-        if self.crawl_completed_enabled:
-            await _run_event_now(
-                event.emit(CrawlCompletedEvent(url=url, snapshot_id=snapshot_id, output_dir=output_dir)),
-                CrawlCompletedEvent.model_fields["event_timeout"].default,
-            )
-
-    async def on_CrawlStartEvent(self, event: CrawlStartEvent) -> None:
-        """Start the snapshot phase after crawl setup completes.
-
-        Skipped when snapshot execution is disabled for this run.
-        """
-        if event.output_dir != str(self.output_dir):
-            return
-        if not self.crawl_start_enabled:
-            return
-        if await self.should_abort():
-            return
-        snapshot_event = event.emit(
-            SnapshotEvent(
-                url=self.url,
-                snapshot_id=self.snapshot.id,
-                output_dir=str(self.output_dir),
-                depth=0,
-                event_timeout=event.event_timeout,
-                event_handler_slow_timeout=slow_warning_timeout(event.event_timeout),
-            ),
-        )
-        await _run_event_now(snapshot_event, event.event_timeout)
-        completed_snapshot = await self.bus.find(
-            SnapshotCompletedEvent,
-            child_of=snapshot_event,
-            past=True,
-            future=event.event_timeout,
-        )
-        if completed_snapshot is None:
-            raise RuntimeError(f"Snapshot {self.snapshot.id} did not complete")
 
     async def on_CrawlCleanupEvent(self, event: CrawlCleanupEvent) -> None:
         """SIGTERM any crawl setup hooks that should still be running."""
@@ -416,19 +244,6 @@ class CrawlService(BaseService):
                 and (candidate.plugin_name, candidate.hook_name) in setup_hook_keys
             ),
         )
-        grace_by_hook: dict[tuple[str, str], int] = {}
-        config = await get_config(self.bus)
-        for plugin, hook in self.crawl_setup_hooks:
-            plugin_config = await get_plugin_env(
-                self.bus,
-                plugin=plugin,
-                run_output_dir=self.output_dir,
-                config=config,
-            )
-            timeout_key = f"{plugin.name.upper()}_TIMEOUT"
-            grace_by_hook[(plugin.name, hook.name)] = (
-                plugin_config[timeout_key] if timeout_key in plugin.config.properties else plugin_config.TIMEOUT
-            )
         started_processes: list[tuple[ProcessEvent, ProcessStartedEvent]] = []
         for process_event in setup_process_events:
             started_process = await self.bus.find(
@@ -467,11 +282,11 @@ class CrawlService(BaseService):
                     plugin_name=started_process.plugin_name,
                     hook_name=started_process.hook_name,
                     pid=started_process.pid,
-                    grace_period=grace_by_hook[(started_process.plugin_name, started_process.hook_name)],
-                    event_timeout=grace_by_hook[(started_process.plugin_name, started_process.hook_name)] + 10.0,
+                    grace_period=float(process_event.timeout),
+                    event_timeout=float(process_event.timeout) + 10.0,
                 ),
             )
-            for _, started_process in started_processes
+            for process_event, started_process in started_processes
         ]
 
         # await the killing of any setup hooks that should still be running
@@ -487,23 +302,12 @@ class CrawlService(BaseService):
                             ProcessCompletedEvent,
                             child_of=process_event,
                             past=True,
-                            future=grace_by_hook[(process_event.plugin_name, process_event.hook_name)] + 10.0,
+                            future=float(process_event.timeout) + 10.0,
                         ),
-                        grace_by_hook[(process_event.plugin_name, process_event.hook_name)] + 10.0,
+                        float(process_event.timeout) + 10.0,
                     )
                     for process_event, _ in started_processes
                 ],
-            )
-        if self.crawl_completed_enabled:
-            await _run_event_now(
-                event.emit(
-                    CrawlCompletedEvent(
-                        url=event.url,
-                        snapshot_id=event.snapshot_id,
-                        output_dir=event.output_dir,
-                    ),
-                ),
-                CrawlCompletedEvent.model_fields["event_timeout"].default,
             )
 
     async def on_CrawlAbortEvent(self, event: CrawlAbortEvent) -> None:

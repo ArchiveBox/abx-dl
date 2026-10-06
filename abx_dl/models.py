@@ -1,9 +1,9 @@
 """
-Data models and plugin discovery for abx-dl.
+Data models for abx-dl.
 
 All domain models (Hook, Plugin, Process, Snapshot, ArchiveResult) are defined
-here as Pydantic BaseModels. Plugin discovery functions (discover_plugins,
-filter_plugins, etc.) are also here since they operate on these models.
+here as Pydantic BaseModels. Hook filename parsing and selection live in
+``abx_dl.catalog``.
 """
 
 import importlib.metadata
@@ -12,19 +12,16 @@ import os
 import platform
 import re
 import socket
-import sys
-from datetime import datetime
+import sysconfig
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
 from abxpkg import BinaryOverrides
-from abxpkg.base_types import is_forbidden_convenience_lib_bin
 from pydantic import BaseModel, ConfigDict, Field
-from abx_plugins import get_plugins_dir
 
 from .output_files import OutputFile
-
 
 try:
     LIBRARY_VERSION = importlib.metadata.version("abx-dl")
@@ -37,12 +34,12 @@ except importlib.metadata.PackageNotFoundError:
 
 def uuid7() -> str:
     """Generate a UUIDv7-like string (timestamp-based for sortability)."""
-    ts = int(datetime.now().timestamp() * 1000)
+    ts = int(datetime.now(UTC).timestamp() * 1000)
     return f"{ts:012x}{uuid4().hex[:20]}"
 
 
 def now_iso() -> str:
-    return datetime.now().isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 # ── Plugin models ──────────────────────────────────────────────────────────
@@ -84,13 +81,24 @@ class Hook(BaseModel):
         return (self.order, self.name)
 
 
+class PluginCommand(BaseModel):
+    """A manifest-declared executable command owned by one plugin."""
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    name: str
+    plugin_name: str
+    path: Path
+    args: list[str] = Field(default_factory=list)
+
+
 class RequiredBinary(BaseModel):
     """A single required binary definition from plugins/<pluginname>/config.json > required_binaries[]"""
 
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="allow")
 
     name: str
-    binproviders: str = "env"
+    binproviders: str | None = None
     min_version: str | None = None
     overrides: BinaryOverrides = Field(default_factory=dict)
 
@@ -101,12 +109,18 @@ class PluginConfig(BaseModel):
     title: str = ""
     description: str = ""
     x_runtimes: list[str] = Field(default_factory=list, alias="x-runtimes")
-    x_install_when_disabled: bool = Field(default=False, alias="x-install-when-disabled")
+    x_auto_run: bool = Field(default=True, alias="x-auto-run")
     x_accepts_internal_input: bool = Field(default=False, alias="x-accepts-internal-input")
     output_mimetypes: list[str] = Field(default_factory=list)  # e.g. ['text/html', 'video/']
     properties: dict[str, dict[str, Any]] = Field(default_factory=dict)  # JSONSchema format describing plugin config
-    required_binaries: list[RequiredBinary] = Field(default_factory=list)  # e.g. [{'name': 'wget', 'binproviders': 'env,apt,brew'}]
+    required_binaries: list[RequiredBinary] = Field(default_factory=list)  # e.g. [{'name': 'wget', 'binproviders': 'env,brew,apt'}]
     required_plugins: list[str] = Field(default_factory=list)  # e.g. ['chrome', 'pdf']
+    wait_for_plugins: list[str] = Field(default_factory=list)
+    wait_for_background_cleanup: bool = False
+    category: str = ""
+    display_order: int = 1000
+    hidden: bool = False
+    commands: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class Plugin(BaseModel):
@@ -115,7 +129,7 @@ class Plugin(BaseModel):
     Plugins are discovered from the plugins directory (`ABX_PLUGINS_DIR` env var
     or the installed `abx_plugins` package). Each plugin directory may contain:
 
-    - `config.json`: schema with metadata, config properties, and `required_plugins`
+    - `config.json`: schema with metadata, config properties, and plugin dependencies
     - `on_*` scripts: hook executables matching the naming convention
     """
 
@@ -124,6 +138,7 @@ class Plugin(BaseModel):
     name: str
     path: Path
     config: PluginConfig = Field(default_factory=PluginConfig)
+    manifest: dict[str, Any] = Field(default_factory=dict)
     hooks: list[Hook] = Field(default_factory=list)
 
     @property
@@ -233,52 +248,10 @@ class PluginEnv(BaseModel):
             if value is not None:
                 env[key] = dump_to_dotenv_format(value)
 
-        # Python hooks import the same installed abx-dl/abx-plugins deps that
-        # launched the crawl. The managed env provider may also expose a cached
-        # ``python3`` shim for user-facing convenience, but that interpreter is
-        # not guaranteed to have hook deps like rich_click installed. Publish
-        # the active runtime interpreter through abxpkg's normal manual binary
-        # override path so ``abxpkg run --script ... python3`` preserves the
-        # package environment instead of drifting to a bare system Python.
-        env.setdefault("PYTHON3_BINARY", sys.executable)
-
-        runtime_bin_dirs: list[str] = []
-
-        for key, raw_value in env.items():
-            if not key.endswith("_BINARY"):
-                continue
-            value = str(raw_value).strip()
-            if not value:
-                continue
-            path_value = Path(value).expanduser()
-            if not (path_value.is_absolute() or "/" in value or "\\" in value):
-                continue
-            binary_dir = str(path_value.resolve(strict=False).parent)
-            if binary_dir and binary_dir not in runtime_bin_dirs and not is_forbidden_convenience_lib_bin(binary_dir):
-                runtime_bin_dirs.append(binary_dir)
-
-        for extra_dir in (
-            str(Path(env["ABXPKG_LIB_DIR"]) / "env" / "bin"),
-            str(Path(sys.executable).parent),
-            str(Path(env["PIP_BIN_DIR"])),
-            str(Path(env["PNPM_BIN_DIR"])),
-            str(Path(env["NPM_BIN_DIR"])),
-        ):
-            if extra_dir and extra_dir not in runtime_bin_dirs and not is_forbidden_convenience_lib_bin(extra_dir):
-                runtime_bin_dirs.append(extra_dir)
-        if "UV" in env:
-            uv_bin_dir = str(Path(env["UV"]).expanduser().resolve(strict=False).parent)
-            if uv_bin_dir not in runtime_bin_dirs and not is_forbidden_convenience_lib_bin(uv_bin_dir):
-                runtime_bin_dirs.append(uv_bin_dir)
-
-        # Prepend runtime dirs even if they already appear later in PATH. Hooks
-        # are executed via shebangs like ``abxpkg run --script``; a stale abxpkg
-        # in the managed pip venv must not shadow the active ArchiveBox runtime.
-        path_dirs: list[str] = []
-        for extra_dir in (*runtime_bin_dirs, *env["PATH"].split(os.pathsep)):
-            if extra_dir and extra_dir not in path_dirs and not is_forbidden_convenience_lib_bin(extra_dir):
-                path_dirs.append(extra_dir)
-        env["PATH"] = os.pathsep.join(path_dirs)
+        scripts_dir = sysconfig.get_path("scripts")
+        path_entries = [entry for entry in env.get("PATH", "").split(os.pathsep) if entry]
+        if scripts_dir:
+            env["PATH"] = os.pathsep.join([scripts_dir, *(entry for entry in path_entries if entry != scripts_dir)])
 
         return env
 
@@ -315,12 +288,19 @@ class Process(BaseModel):
 class Snapshot(BaseModel):
     """A URL being archived — one per download() call."""
 
-    model_config = ConfigDict(extra="ignore")
+    # Parser plugins attach import metadata such as title, tags, bookmarked_at,
+    # and the producing plugin. Keep it on discovery facts so embedders can
+    # persist the complete record without reparsing plugin output files.
+    model_config = ConfigDict(extra="allow")
 
     url: str
     id: str = Field(default_factory=uuid7)
     depth: int = 0
     crawl_id: str | None = None
+    title: str | None = None
+    tags: str | None = None
+    bookmarked_at: str | None = None
+    plugin: str | None = None
 
     def to_jsonl(self) -> str:
         d = {k: v for k, v in self.model_dump().items() if v is not None}
@@ -374,38 +354,13 @@ def write_jsonl(path: Path, record: Any, also_print: bool = False):
         print(line, flush=True)
 
 
-# ── Plugin discovery ──────────────────────────────────────────────────────
-
-
-def _default_plugins_dir() -> Path:
-    return get_plugins_dir()
-
-
-def _plugin_dirs(plugins_dir: Path | None = None) -> list[Path]:
-    if plugins_dir is not None:
-        return [plugins_dir]
-
-    dirs = [Path(get_plugins_dir())]
-    override = os.environ.get("ABX_PLUGINS_DIR")
-    if override:
-        for raw_path in override.split(os.pathsep):
-            path = Path(raw_path).expanduser()
-            if path and path not in dirs:
-                # Runtime/user plugin dirs extend the packaged plugin set; they
-                # do not replace it. Name collisions below intentionally let
-                # later dirs override packaged plugins.
-                dirs.append(path)
-    return dirs
-
-
-# Plugins directory
-PLUGINS_DIR = _default_plugins_dir()
+# ── Hook filename parsing ──────────────────────────────────────────────────────
 
 
 def parse_hook_filename(filename: str) -> tuple[str, int, bool] | None:
     """Parse a hook filename to extract (event_type, order, is_background).
 
-    Format: `on_{Event}__[{order}_]{description}[.bg].{ext}`
+    Format: `on_{Event}__[{order}_]{description}[.bg].{ext}`.
 
     Returns None if the filename doesn't match the hook convention.
     Never attempt to determine .finite/.daemon/interpreter, hooks should be treated like black-box executables.
@@ -420,193 +375,3 @@ def parse_hook_filename(filename: str) -> tuple[str, int, bool] | None:
     is_background = ".bg." in filename
 
     return (event, order, is_background)
-
-
-def _plugin_runtime_enabled(config: PluginConfig, runtime: str | None = None) -> bool:
-    allowed_runtimes = {str(item).strip().lower() for item in config.x_runtimes if str(item).strip()}
-    if not allowed_runtimes:
-        return True
-    current_runtime = str(runtime or os.environ.get("ABX_RUNTIME") or "abx-dl").strip().lower()
-    return current_runtime in allowed_runtimes
-
-
-def load_plugin(plugin_dir: Path, *, runtime: str | None = None) -> Plugin | None:
-    """Load a single plugin from a directory.
-
-    Reads config.json for metadata/schema/dependencies and discovers hook scripts
-    matching the `on_*` naming convention.
-    """
-    if not plugin_dir.is_dir():
-        return None
-
-    plugin_name = plugin_dir.name
-
-    # Skip hidden dirs and special dirs
-    if plugin_name.startswith(".") or plugin_name.startswith("_"):
-        return None
-
-    plugin = Plugin(name=plugin_name, path=plugin_dir)
-
-    # Load config schema
-    config_file = plugin_dir / "config.json"
-    if config_file.exists():
-        plugin.config = PluginConfig.model_validate_json(config_file.read_text())
-        if not _plugin_runtime_enabled(plugin.config, runtime=runtime):
-            return None
-
-    # Discover hooks
-    for hook_file in plugin_dir.glob("on_*"):
-        if not hook_file.is_file():
-            continue
-        if not os.access(hook_file, os.X_OK):
-            continue
-
-        parsed = parse_hook_filename(hook_file.name)
-        if not parsed:
-            continue
-
-        event, order, is_background = parsed
-
-        hook = Hook(
-            name=hook_file.stem,
-            event=event,
-            plugin_name=plugin_name,
-            path=hook_file,
-            order=order,
-            is_background=is_background,
-        )
-        plugin.hooks.append(hook)
-
-    return plugin
-
-
-def discover_plugins(plugins_dir: Path | None = None, *, runtime: str | None = None) -> dict[str, Plugin]:
-    """Discover plugins from packaged plugins plus optional runtime plugin dirs."""
-    plugins = {}
-
-    for base_dir in _plugin_dirs(plugins_dir):
-        if not base_dir.exists():
-            continue
-        for plugin_dir in sorted(base_dir.iterdir()):
-            plugin = load_plugin(plugin_dir, runtime=runtime)
-            if plugin:
-                plugins[plugin.name] = plugin
-
-    return plugins
-
-
-def _expand_extension_to_mimetypes(token: str) -> list[str]:
-    """If *token* looks like a file extension (e.g. 'html', 'pdf'), return
-    all MIME types that map to that extension.  Returns an empty list when the
-    token is not a recognised extension (so the caller can fall back to treating
-    it as a MIME-type category prefix like 'video' -> 'video/').
-    """
-    import mimetypes
-
-    mimetypes.init()
-
-    ext = token if token.startswith(".") else f".{token}"
-    # types_map gives the canonical mapping; check both built-in maps
-    results: list[str] = []
-    for type_map in (mimetypes.types_map, mimetypes.common_types):
-        mt = type_map.get(ext)
-        if mt and mt not in results:
-            results.append(mt)
-    # Also try guess_type which consults user-installed MIME databases
-    guessed, _ = mimetypes.guess_type(f"file{ext}")
-    if guessed and guessed not in results:
-        results.append(guessed)
-    return results
-
-
-def plugins_matching_output(plugins: dict[str, Plugin], output_prefixes: list[str]) -> list[str]:
-    """Return plugin names whose output_mimetypes match any of the given prefixes.
-
-    Prefixes without a '/' get one appended so 'video' matches 'video/*'.
-    Matching is bidirectional: 'video/' matches 'video/mp4', and a plugin
-    declaring 'video/' matches a query for 'video/mp4'.
-
-    Bare tokens that correspond to a known file extension (e.g. 'html', 'pdf',
-    'json') are expanded to their MIME types first, so
-    ``--output=html,pdf,video`` works alongside ``--output=text/html,video/``.
-    """
-    # Expand each user-supplied token into one or more MIME-type prefixes.
-    # Bare tokens are treated as *both* a category prefix ('video' -> 'video/')
-    # and a file extension ('mp4' -> 'video/mp4').  The category prefix is
-    # always added so that e.g. 'text' matches 'text/*' even though '.text'
-    # also resolves to 'text/plain'.  Spurious prefixes like 'html/' are
-    # harmless — they just won't match any plugin.
-    prefixes: list[str] = []
-    for p in output_prefixes:
-        if "/" in p:
-            prefixes.append(p)
-        else:
-            # Always treat as a potential category prefix
-            prefixes.append(p + "/")
-            # Also expand as a file extension if possible
-            prefixes.extend(_expand_extension_to_mimetypes(p))
-
-    matched: list[str] = []
-    for name, plugin in plugins.items():
-        for mimetype in plugin.config.output_mimetypes:
-            if any(mimetype.startswith(p) or p.startswith(mimetype) for p in prefixes):
-                matched.append(name)
-                break
-    return matched
-
-
-def filter_plugins(
-    plugins: dict[str, Plugin],
-    names: list[str] | None,
-    *,
-    include_providers: bool = True,
-    disabled_names: list[str] | None = None,
-) -> dict[str, Plugin]:
-    """Filter plugins to only include specified names, plus transitive dependencies.
-
-    Dependencies are resolved via `required_plugins` in each plugin's
-    config.json. `include_providers` is retained only as a caller hint; binary
-    provider names are handled by abxpkg providers, not plugin dependencies.
-    """
-    disabled = {n.lower() for n in disabled_names or []}
-    explicit_names = names is not None
-    if not names:
-        if not disabled:
-            return plugins
-        names = [name for name in plugins if name.lower() not in disabled]
-    else:
-        names = [name for name in names if name.lower() not in disabled]
-    if not names:
-        return {} if explicit_names else plugins
-
-    # walk the required_plugins DAG and add required plugins
-    resolved: set[str] = set()
-    blocked: set[str] = set()
-    queue = [n.lower() for n in names]
-    while queue:
-        name = queue.pop()
-        if name in disabled:
-            blocked.add(name)
-            continue
-        if name in resolved or name in blocked:
-            continue
-        plugin = next((plugin for plugin_name, plugin in plugins.items() if plugin_name.lower() == name), None)
-        required = {dep.lower() for dep in plugin.config.required_plugins} if plugin else set()
-        if required.intersection(disabled | blocked):
-            blocked.add(name)
-            continue
-        resolved.add(name)
-        queue.extend(dep for dep in required if dep not in resolved)
-
-    while True:
-        newly_blocked = {
-            name.lower()
-            for name, plugin in plugins.items()
-            if name.lower() in resolved and any(dep.lower() in blocked for dep in plugin.config.required_plugins)
-        }
-        if not newly_blocked:
-            break
-        resolved.difference_update(newly_blocked)
-        blocked.update(newly_blocked)
-
-    return {name: plugin for name, plugin in plugins.items() if name.lower() in resolved}

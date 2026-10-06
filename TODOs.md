@@ -16,7 +16,7 @@ Core Renames
 - `BinaryEvent` -> `BinaryRequestEvent`
 - `BinaryEvent` -> `BinaryEvent`
 - `on_Binary__*` -> `on_BinaryRequest__*`
-- `config.json > required_binaries` + `InstallEvent` preflight replace old install-hook bootstrapping
+- `config.json > required_binaries` + `InstallEvent` power explicit install operations
 - `on_Crawl__{setup|launch|config|wait|start|...}` -> `on_CrawlSetup__*`
 - keep all `on_Snapshot__*` unchanged
 - remove `archivebox://install`
@@ -27,10 +27,10 @@ Behavior Rules
 --------------
 - `BinaryRequest` never carries resolved metadata like `abspath`, `version`, `sha256`.
 - `Binary` always carries resolved metadata.
-- `InstallEvent` is orchestrator-only; provider plugins participate via `on_BinaryRequest__*`.
+- `InstallEvent` is used by explicit install/dependency-check operations; provider plugins participate via `on_BinaryRequest__*`.
 - `on_CrawlSetup__*` emits `Machine` and `Process` only, never `ArchiveResult`.
 - `on_BinaryRequest__*` emits `Binary`.
-- `download()` emits `InstallEvent` before `CrawlEvent`.
+- normal hook execution resolves dependencies through each hook's `abxpkg run --script --deps-from=...` shebang.
 - `abx-dl install` and `archivebox install` emit `InstallEvent` directly.
 - cache hits from `config.env` / DB should respond to `BinaryRequestEvent` by emitting synthetic `BinaryEvent`.
 

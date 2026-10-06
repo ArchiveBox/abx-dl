@@ -1,16 +1,23 @@
 """ProcessService — owns hook subprocess execution and raw process events."""
 
 import asyncio
+import contextvars
+import os
 import re
 import signal
+import sys
+import select
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import ClassVar, Literal, TextIO
+from typing import BinaryIO, ClassVar, Literal, TextIO
+from collections.abc import Awaitable, Callable
 
-from abxbus import BaseEvent, EventBus
 import click
+import psutil
+from abxbus import BaseEvent, EventBus
+
 from ..events import (
     PROCESS_EXIT_SKIPPED,
     CrawlAbortEvent,
@@ -24,17 +31,37 @@ from ..events import (
     ProcessKillEvent,
     ProcessStartedEvent,
     ProcessStdoutEvent,
+    ProcessStderrEvent,
     SnapshotCleanupEvent,
     SnapshotEvent,
 )
-from ..models import Process, write_jsonl, now_iso
+from ..models import Process, now_iso, write_jsonl
 from ..output_files import scan_output_files
-from ..process_utils import write_pid_file_with_mtime, write_cmd_file, graceful_kill_process, graceful_kill_by_pid_file
-from .base import BaseService
-
+from ..process_utils import (
+    GRACEFUL_SHUTDOWN_TIMEOUT,
+    graceful_kill_by_pid_file,
+    graceful_kill_process,
+    validate_pid_file,
+    write_cmd_file,
+    write_pid_file_with_mtime,
+    _send_signal,
+)
+from .base import BaseService, wait_for_crawl_resume, wait_for_process_ready
 
 ProcessStatus = Literal["succeeded", "failed", "skipped"]
-STDOUT_POLL_INTERVAL = 0.5
+
+
+def interrupted_hook_prompt_text(hook_name: str) -> str:
+    return (
+        f"Interrupted {hook_name}. Choose what to do next:\n"
+        "  Enter: continue and skip the aborted hook\n"
+        "  r: continue and retry the aborted hook\n"
+        "  a or Ctrl+C: exit now and abort the whole crawl\n"
+        "Choice [skip]: "
+    )
+
+
+STDOUT_POLL_INTERVAL = 0.05
 SHELL_SIGNAL_STDERR_RE = re.compile(r"(?:Terminated|Killed):\s*(\d+)")
 POLITE_CLEANUP_SIGNAL_EXIT_CODES = {
     -signal.SIGINT,
@@ -44,12 +71,55 @@ POLITE_CLEANUP_SIGNAL_EXIT_CODES = {
 }
 
 
+def _hook_child_identity(
+    *,
+    real_uid: int | None = None,
+    effective_uid: int | None = None,
+    effective_gid: int | None = None,
+) -> tuple[int, int] | None:
+    """Return the permanent identity needed by a mixed-root hook child."""
+
+    real_uid = os.getuid() if real_uid is None else real_uid
+    effective_uid = os.geteuid() if effective_uid is None else effective_uid
+    effective_gid = os.getegid() if effective_gid is None else effective_gid
+    if real_uid == 0 and effective_uid != 0:
+        return effective_uid, effective_gid
+    return None
+
+
+def _permanently_drop_child_privileges(uid: int, gid: int) -> Callable[[], None]:
+    def drop_privileges() -> None:
+        if os.getuid() == 0 and os.geteuid() != 0:
+            os.seteuid(0)
+        os.setgroups([gid])
+        os.setgid(gid)
+        os.setuid(uid)
+
+    return drop_privileges
+
+
 @dataclass
-class _StdoutStreamState:
+class _OutputStreamState:
     stdout_lines: list[str] = field(default_factory=list)
     pending_line: str = ""
-    offset: int = 0
     stop_requested: bool = False
+
+
+def _open_process_spawn_files(
+    stdout_file: Path,
+    stderr_file: Path,
+    reader_stack: ExitStack,
+) -> tuple[ExitStack, BinaryIO, TextIO, TextIO, TextIO]:
+    spawn_stack = ExitStack()
+    try:
+        out_fh = spawn_stack.enter_context(stdout_file.open("wb"))
+        err_fh = spawn_stack.enter_context(stderr_file.open("w"))
+        stdout_reader = reader_stack.enter_context(stdout_file.open(errors="replace"))
+        stderr_reader = reader_stack.enter_context(stderr_file.open(errors="replace"))
+    except Exception:
+        spawn_stack.close()
+        raise
+    return spawn_stack, out_fh, err_fh, stdout_reader, stderr_reader
 
 
 def _process_status(exit_code: int) -> ProcessStatus:
@@ -65,54 +135,17 @@ def _process_command(event: ProcessEvent) -> list[str]:
     return [event.hook_path, *event.hook_args]
 
 
-def _rotate_existing_log(path: Path) -> Path | None:
-    """Move an existing non-empty log file aside before reusing its canonical name.
-
-    Hook retries reuse the same ``{hook_name}.stdout.log`` / ``.stderr.log`` paths.
-    Without rotation, a later retry overwrites the previous attempt's logs, and a
-    later successful retry deletes the canonical files entirely. Preserve the old
-    contents under a timestamped filename so failed attempts remain debuggable.
-    """
-    if not path.exists():
-        return None
-
-    try:
-        if path.stat().st_size == 0:
-            path.unlink(missing_ok=True)
-            return None
-    except OSError:
-        return None
-
-    timestamp = time.strftime("%Y%m%dT%H%M%S", time.gmtime())
-    suffix = path.suffix
-    stem = path.name[: -len(suffix)] if suffix else path.name
-    archived = path.with_name(f"{stem}.{timestamp}{suffix}")
-    counter = 1
-    while archived.exists():
-        archived = path.with_name(f"{stem}.{timestamp}.{counter}{suffix}")
-        counter += 1
-
-    path.replace(archived)
-    return archived
-
-
 @contextmanager
 def _default_sigint_during_prompt():
-    """Restore Python's default SIGINT-raises-KeyboardInterrupt behavior while a
-    synchronous user-input prompt is open.
+    """Let the synchronous terminal owner's prompt turn SIGINT into abort.
 
-    The CLI installs an asyncio-level SIGINT handler
-    (``loop.add_signal_handler``) that emits a ``CrawlPauseEvent`` /
-    ``CrawlAbortEvent`` on Ctrl+C. That handler can only fire when the
-    asyncio loop is running, but the interrupt prompt below blocks the loop
-    on a synchronous ``click.getchar`` call — so Ctrl+C would be silently
-    absorbed by asyncio's signal-handler queue and the user would see their
-    ``^C`` keystrokes accumulate with no effect. Installing Python's default
-    SIGINT handler for the prompt's duration restores the normal "Ctrl+C
-    raises KeyboardInterrupt" path that the prompt's own ``except`` clause
-    catches and turns into an ``"abort"`` choice. The CLI's asyncio handler
-    is reinstated on exit, so the second-press-aborts behavior is preserved
-    for any subsequent prompts.
+    Add's supervisor transport normally queues SIGINT until its XML-RPC call
+    finishes. While reading a choice there is no request to protect: a second
+    SIGINT must cancel the input wait immediately instead of sitting in that
+    queue. asyncio.run translates this cancellation to KeyboardInterrupt, which
+    the adapter converts to an abort answer. Always restore the transport's
+    handler afterward. Async terminal owners use the shared controller directly
+    and never enter this temporary synchronous-adapter signal context.
     """
     try:
         previous = signal.signal(signal.SIGINT, signal.default_int_handler)
@@ -140,10 +173,10 @@ class ProcessService(BaseService):
     4. wait for exit or kill
     5. emit ``ProcessCompletedEvent``
 
-    Background behavior is owned by abxbus and the dispatch site. The
-    ``ProcessEvent`` itself stays alive until the subprocess exits; parent events
-    can still proceed because background ProcessEvents are parallel and do not
-    block parent completion.
+    Background ProcessEvent handlers return after spawn; a retained completion
+    task owns each subprocess and its logs until it exits. The outer controller
+    handles terminal intent independently of both foreground and background
+    completion. No hook or per-hook waiter decides when to read user input.
     """
 
     LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [
@@ -158,6 +191,7 @@ class ProcessService(BaseService):
         CrawlResumeAndSkipEvent,
         ProcessStartedEvent,
         ProcessStdoutEvent,
+        ProcessStderrEvent,
         ProcessCompletedEvent,
         ProcessKillEvent,
     ]
@@ -168,13 +202,19 @@ class ProcessService(BaseService):
         *,
         emit_jsonl: bool,
         interactive_tty: bool,
+        interrupted_hook_prompt: Callable[[str], Awaitable[Literal["abort", "retry", "skip"]]] | None = None,
     ):
         self.emit_jsonl = emit_jsonl
         self.interactive_tty = interactive_tty
-        self.pause_requested = asyncio.Event()
+        self.interrupted_hook_prompt = interrupted_hook_prompt
+        self._abort_signal = asyncio.Event()
+        self._interrupt_task: asyncio.Task[None] | None = None
+        self._active_hooks: dict[str, tuple[ProcessEvent, ProcessStartedEvent]] = {}
+        self._interrupt_choices: dict[str, asyncio.Future[str]] = {}
         self.abort_requested = False
         self._active_process_event_tasks: dict[str, asyncio.Task[Process | None]] = {}
         self._background_completion_tasks: set[asyncio.Task[Process | None]] = set()
+        self._shutdown_hook_ids: set[str] = set()
         self._completed_process_event_ids: set[str] = set()
         super().__init__(bus)
         self.bus.on(CrawlPauseEvent, self.on_CrawlPauseEvent)
@@ -182,51 +222,251 @@ class ProcessService(BaseService):
         self.bus.on(ProcessEvent, self.on_ProcessEvent)
         self.bus.on(ProcessKillEvent, self.on_ProcessKillEvent)
 
+    async def wait_for_background_completions(self) -> None:
+        """Finish owned hook readers and completion events before bus teardown."""
+
+        while self._background_completion_tasks:
+            results = await asyncio.gather(*tuple(self._background_completion_tasks), return_exceptions=True)
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
+
+    async def stop_background_hooks(self) -> None:
+        """Stop remaining owned background hooks and record their completions."""
+
+        running = [
+            (event, started)
+            for event, started in tuple(self._active_hooks.values())
+            if event.is_background and started.subprocess.returncode is None
+        ]
+        self._shutdown_hook_ids.update(event.event_id for event, _ in running)
+        await asyncio.gather(
+            *(
+                self.bus.emit(
+                    ProcessKillEvent(
+                        event_parent_id=started.event_id,
+                        plugin_name=started.plugin_name,
+                        hook_name=started.hook_name,
+                        pid=started.pid,
+                        grace_period=min(float(started.timeout), GRACEFUL_SHUTDOWN_TIMEOUT),
+                    ),
+                ).now()
+                for _, started in running
+            ),
+        )
+        await self.wait_for_background_completions()
+
     # ── Event handlers ──────────────────────────────────────────────────────
 
-    def on_InterruptedHookPrompt(self, hook_name: str) -> Literal["abort", "retry", "skip"]:
-        """Ask the user what to do after interrupting one foreground hook.
+    @staticmethod
+    async def read_interrupt_choice(
+        hook_name: str,
+        *,
+        render: bool = True,
+        is_active: Callable[[], bool] | None = None,
+        on_abort: Callable[[], None] | None = None,
+    ) -> Literal["abort", "retry", "skip"] | None:
+        """Read one decision in the outer terminal without blocking its loop.
 
-        Runs synchronously inside the orchestrator's asyncio loop, so
-        ``loop.add_signal_handler(SIGINT, ...)`` installed by the CLI can't
-        fire while ``click.getchar`` blocks — the loop's pending callbacks
-        only run between awaits, and we're not yielding. Temporarily swap in
-        Python's default SIGINT handler so Ctrl+C actually raises
-        ``KeyboardInterrupt`` while the prompt is open; the ``except`` below
-        catches it and turns it into ``"abort"``.
+        Standalone abx-dl and direct ArchiveBox run own both terminal and event
+        loop: background completion must keep rendering ABOVE the live prompt.
+        Supervised add uses the same reader from its synchronous transport loop.
+        Raw Ctrl+C is a byte here; an OS SIGINT still reaches the outer controller
+        (or the synchronous adapter below). Hooks never inherit terminal input.
         """
-        click.echo("", err=True)
-        click.echo(f"Interrupted {hook_name}. Choose what to do next:", err=True)
-        click.echo("  Enter: continue and skip the aborted hook", err=True)
-        click.echo("  r: continue and retry the aborted hook", err=True)
-        click.echo("  a or Ctrl+C: exit now and abort the whole crawl", err=True)
-        try:
-            with _default_sigint_during_prompt():
-                click.echo("Choice [skip]: ", nl=False, err=True)
-                while True:
-                    choice_char = click.getchar()
+        import termios
+        import tty
+
+        with ExitStack() as terminal:
+            input_fd = sys.stdin.fileno() if sys.stdin.isatty() else terminal.enter_context(open("/dev/tty")).fileno()
+            old_settings = termios.tcgetattr(input_fd)
+            terminal.callback(termios.tcsetattr, input_fd, termios.TCSADRAIN, old_settings)
+            # The UI may already have displayed the prompt (especially across
+            # add's worker/parent boundary). TCSAFLUSH, used by click's helper,
+            # discards an Enter or r typed in that interval and appears frozen.
+            # Preserve queued input when entering raw mode; users should never
+            # need to wait for an invisible terminal-mode transition.
+            tty.setraw(input_fd, when=termios.TCSANOW)
+            # Keep background rows' newlines anchored at column zero while
+            # waiting for a key; raw mode normally clears output processing too.
+            settings = termios.tcgetattr(input_fd)
+            settings[1] |= termios.OPOST | termios.ONLCR
+            termios.tcsetattr(input_fd, termios.TCSANOW, settings)
+            if render:
+                click.echo("\n" + interrupted_hook_prompt_text(hook_name), nl=False, err=True)
+            while True:
+                if is_active is not None and not is_active():
+                    return None
+                if not select.select([input_fd], [], [], 0)[0]:
+                    await asyncio.sleep(0.05)
+                    continue
+                choice = os.read(input_fd, 1).decode("utf-8", errors="replace")
+                if render:
                     click.echo("", err=True)
-                    if choice_char in ("\x03", "\x04"):
-                        return "abort"
-                    if choice_char in ("\r", "\n", "3", "s", "S"):
-                        return "skip"
-                    if choice_char in ("1", "a", "A"):
-                        return "abort"
-                    if choice_char in ("2", "r", "R"):
-                        return "retry"
+                if not choice or choice in ("\x03", "\x04", "1", "a", "A"):
+                    # Record the decision at the keypress, before restoring
+                    # terminal mode or returning to a caller that may await
+                    # cleanup. The next OS SIGINT must already mean force exit.
+                    if on_abort is not None:
+                        on_abort()
+                    return "abort"
+                if choice in ("\r", "\n", "3", "s", "S"):
+                    return "skip"
+                if choice in ("2", "r", "R"):
+                    return "retry"
+                if render:
                     click.echo("Press Enter to skip, r to retry, or a/Ctrl+C to abort.", err=True)
                     click.echo("Choice [skip]: ", nl=False, err=True)
+
+    @staticmethod
+    def on_InterruptedHookPrompt(
+        hook_name: str,
+        *,
+        render: bool = True,
+        is_active: Callable[[], bool] | None = None,
+        on_abort: Callable[[], None] | None = None,
+    ) -> Literal["abort", "retry", "skip"] | None:
+        """Synchronous adapter for add's supervisor/log transport, not hook code.
+
+        The transport normally queues SIGINT at safe XML-RPC boundaries. While
+        reading input it must instead turn a second SIGINT into an abort answer.
+        Restoring the prior handler afterward preserves safe RPC transport and
+        takeover semantics. Prompt liveness checks must not perform XML-RPC here.
+        """
+        try:
+            with _default_sigint_during_prompt():
+                return asyncio.run(ProcessService.read_interrupt_choice(hook_name, render=render, is_active=is_active, on_abort=on_abort))
         except (EOFError, KeyboardInterrupt, click.Abort):
+            if on_abort is not None:
+                on_abort()
             return "abort"
 
     async def on_CrawlPauseEvent(self, event: CrawlPauseEvent) -> None:
-        """Wake the current foreground hook so it can interrupt itself cleanly."""
-        self.pause_requested.set()
+        """One outer-runner controller owns every Ctrl+C, including idle gaps.
+
+        Signals are user intent, not subprocess I/O. Never require a foreground
+        hook to notice a flag: the runner may be installing, awaiting background
+        readiness, or between hooks. The pause fact gates scheduling immediately;
+        stopping a selected hook and reading the answer happen independently.
+        A second interrupt always aborts, even before the prompt is displayed.
+        """
+        if self.abort_requested:
+            return
+        if not self.interactive_tty or (self._interrupt_task is not None and not self._interrupt_task.done()):
+            await self.bus.emit(CrawlAbortEvent()).now()
+            return
+        # Detached from the short signal-event handler, just like background
+        # process completion. Human input has no hook/event execution deadline.
+        self._interrupt_task = asyncio.create_task(self._handle_interrupt(), context=contextvars.Context())
+
+    async def _handle_interrupt(self) -> None:
+        choice_future = None
+        try:
+            active = [pair for pair in self._active_hooks.values() if pair[1].subprocess.returncode is None]
+            # Foreground work is the scheduling barrier the user is most likely
+            # waiting for. With only background work, stop the most recently
+            # started hook. This selection never decides whether we can prompt.
+            foreground = [pair for pair in active if not pair[0].is_background]
+            selected = (foreground or active)[-1] if active else None
+            if selected is not None:
+                process_event, started = selected
+                choice_future = asyncio.get_running_loop().create_future()
+                self._interrupt_choices[process_event.event_id] = choice_future
+                started.interruption_done = asyncio.Event()
+                await self.bus.emit(
+                    ProcessKillEvent(
+                        event_parent_id=started.event_id,
+                        plugin_name=started.plugin_name,
+                        hook_name=started.hook_name,
+                        pid=started.pid,
+                        grace_period=min(float(started.timeout), GRACEFUL_SHUTDOWN_TIMEOUT),
+                    ),
+                ).now()
+                await started.subprocess.wait()
+            hook_name = selected[0].hook_name if selected else "crawl (between hooks)"
+            if self.abort_requested:
+                action = "abort"
+            elif self.interrupted_hook_prompt is not None:
+                action = await self.interrupted_hook_prompt(hook_name)
+            else:
+                action = await self.read_interrupt_choice(hook_name, is_active=lambda: not self.abort_requested) or "abort"
+            assert action is not None
+            if choice_future is not None and not choice_future.done():
+                choice_future.set_result(action)
+            if not self.abort_requested:
+                await self.bus.emit(
+                    {
+                        "abort": CrawlAbortEvent,
+                        "retry": CrawlResumeAndRetryEvent,
+                        "skip": CrawlResumeAndSkipEvent,
+                    }[action](),
+                ).now()
+        except asyncio.CancelledError:
+            if choice_future is not None and not choice_future.done():
+                choice_future.set_result("abort")
+            raise
+        except Exception:
+            # A broken prompt must release paused schedulers into cleanup, never
+            # silently strand a crawl behind a gate that nobody can reopen.
+            await self.bus.emit(CrawlAbortEvent()).now()
+            raise
 
     async def on_CrawlAbortEvent(self, event: CrawlAbortEvent) -> None:
-        """Interrupt any current foreground hook and abort the crawl."""
+        """Abort is sticky for this runner; starting another hook cannot reset it."""
         self.abort_requested = True
-        self.pause_requested.set()
+        self._abort_signal.set()
+        for choice in self._interrupt_choices.values():
+            if not choice.done():
+                choice.set_result("abort")
+
+    @property
+    def interrupt_in_progress(self) -> bool:
+        return self._interrupt_task is not None and not self._interrupt_task.done()
+
+    def force_kill_owned_processes(self) -> None:
+        """Immediately kill only this runner's children after a confirmed abort.
+
+        This runs from the terminal owner's signal path, where awaiting the
+        normal per-hook grace period would defeat a third Ctrl+C. Hook PID files
+        carry start-time identity so a reused PID cannot receive SIGKILL; hook
+        groups include browser descendants that a plain parent kill can leave
+        behind. Remaining descendants cover installs still running before a
+        ProcessStartedEvent exists. The caller exits only its own CLI/worker.
+        """
+        self.abort_requested = True
+        try:
+            descendants = psutil.Process(os.getpid()).children(recursive=True)
+        except psutil.Error:
+            descendants = []
+        for _event, started in tuple(self._active_hooks.values()):
+            if started.subprocess.returncode is None and validate_pid_file(started.pid_file, started.cmd_file):
+                _send_signal(started.pid, signal.SIGKILL)
+        for child in reversed(descendants):
+            try:
+                if child.is_running() and child.status() != psutil.STATUS_ZOMBIE:
+                    child.kill()
+            except psutil.Error:
+                pass
+        # SIGKILL delivery is asynchronous. Wait until descendants stop before
+        # the caller's os._exit(), but leave reaping to their subprocess owners.
+        # wait_procs() competes with asyncio's child watcher for exit statuses.
+        # Keep this non-reaping observation even after the temporary psutil
+        # 7.2.2 exclusion is removed: its upstream pidfd/EINVAL fix does not make
+        # two independent waiters safe. Only the subprocess owner may reap.
+        deadline = time.monotonic() + 1.0
+        while descendants:
+            running = []
+            for child in descendants:
+                try:
+                    if child.is_running() and child.status() != psutil.STATUS_ZOMBIE:
+                        running.append(child)
+                except psutil.NoSuchProcess:
+                    pass
+            remaining = deadline - time.monotonic()
+            if not running or remaining <= 0:
+                break
+            descendants = running
+            time.sleep(min(0.01, remaining))
 
     async def on_ProcessEvent(self, event: ProcessEvent) -> Process | None:
         """Run each ProcessEvent exactly once even if the bus observes it twice."""
@@ -234,6 +474,10 @@ class ProcessService(BaseService):
             return None
         active_task = self._active_process_event_tasks.get(event.event_id)
         if active_task is not None:
+            # A duplicate event observer does not own this subprocess. Cancelling
+            # that observer must not cancel the original owner's task. This shield
+            # is ONLY deduplication protection: the real owner remains cancellable
+            # on takeover, and explicit abort uses _abort_signal through the shield.
             return await asyncio.shield(active_task)
 
         task = asyncio.create_task(self._run_process_event(event))
@@ -249,16 +493,20 @@ class ProcessService(BaseService):
     async def _run_process_event(self, event: ProcessEvent) -> Process | None:
         """Spawn one hook subprocess and emit ProcessStartedEvent.
 
-        Foreground hooks stay inside this one handler for spawn, stdout, user
-        interrupts, completion, retry, and abort. ProcessStartedEvent is only a
-        notification record for downstream consumers like the TUI and cleanup.
+        Foreground execution holds the scheduling barrier through completion and
+        retry; background execution hands lifetime ownership to a retained task.
+        Both obey the same crawl-control gate. ProcessStartedEvent publishes the
+        actual process identity for progress, readiness, and explicit cleanup.
         """
-        foreground_interrupts = not event.is_background
-        if foreground_interrupts:
-            self.pause_requested.clear()
-            self.abort_requested = False
+        if await wait_for_crawl_resume(self.bus) or self.abort_requested:
+            return None
         plugin_output_dir = Path(event.output_dir)
-        plugin_output_dir.mkdir(parents=True, exist_ok=True)
+        # ProcessService owns creation for both direct and scheduled hooks.
+        # Repeating mkdir in each phase adds a remote metadata round trip.
+        # Remote mounts can synchronously upload a directory marker here (B2
+        # measured up to 0.8s). Never block stdout readiness, background process
+        # completion, or other snapshots on this hook's filesystem round trip.
+        await asyncio.to_thread(plugin_output_dir.mkdir, parents=True, exist_ok=True)
 
         cmd = _process_command(event)
         proc = Process(
@@ -280,28 +528,33 @@ class ProcessService(BaseService):
         pid_file = plugin_output_dir / f"{artifact_stem}.pid"
         cmd_file = plugin_output_dir / f"{artifact_stem}.sh"
 
-        _rotate_existing_log(stdout_file)
-        _rotate_existing_log(stderr_file)
-
-        write_cmd_file(cmd_file, cmd)
+        # UUID-scoped names never reuse an earlier attempt's logs. Probing
+        # nonexistent old names here adds remote I/O without preserving anything.
+        await asyncio.to_thread(write_cmd_file, cmd_file, cmd)
         # Track the directory contents before the hook runs so completion can
         # report only newly created output files.
-        files_before = set(plugin_output_dir.rglob("*")) if plugin_output_dir.exists() else set()
+        files_before = await asyncio.to_thread(lambda: set(plugin_output_dir.rglob("*")))
 
         process: asyncio.subprocess.Process | None = None
         started_event: ProcessStartedEvent | None = None
         stdout_reader: TextIO | None = None
         stderr_reader: TextIO | None = None
+        reader_stack: ExitStack | None = None
         completion_owns_process = False
         try:
             try:
-                with open(stdout_file, "wb") as out_fh, open(stderr_file, "w") as err_fh:
+                reader_stack = ExitStack()
+                spawn_stack, out_fh, err_fh, stdout_reader, stderr_reader = _open_process_spawn_files(
+                    stdout_file,
+                    stderr_file,
+                    reader_stack,
+                )
+                with spawn_stack:
                     # Open independent readers before awaiting spawn. Snapshot
                     # hooks may mutate their output tree while background hooks
                     # are still running, so there must never be a window where
                     # the only durable reference to these inodes is a pathname.
-                    stdout_reader = open(stdout_file, errors="replace")
-                    stderr_reader = open(stderr_file, errors="replace")
+                    child_identity = _hook_child_identity()
                     process = await asyncio.create_subprocess_exec(
                         *cmd,
                         cwd=str(plugin_output_dir),
@@ -312,9 +565,10 @@ class ProcessService(BaseService):
                         # cleanup can target the hook explicitly instead of relying
                         # on terminal-delivered SIGINT reaching the right child.
                         start_new_session=True,
+                        preexec_fn=(_permanently_drop_child_privileges(*child_identity) if child_identity is not None else None),
                     )
                 write_pid_file_with_mtime(pid_file, process.pid, time.time())
-            except Exception as e:
+            except (OSError, ValueError) as e:
                 # If spawn partially succeeded, shut it down before surfacing the
                 # failure as a normal ProcessCompletedEvent.
                 if process is not None:
@@ -353,35 +607,42 @@ class ProcessService(BaseService):
                     ),
                 ).now()
                 return proc
-            started_event = await event.emit(
-                ProcessStartedEvent(
-                    plugin_name=event.plugin_name,
-                    hook_name=event.hook_name,
-                    hook_path=event.hook_path,
-                    hook_args=event.hook_args,
-                    output_dir=event.output_dir,
-                    env=event.env,
-                    timeout=event.timeout,
-                    pid=process.pid,
-                    is_background=event.is_background,
-                    url=event.url,
-                    process_type=event.process_type,
-                    worker_type=event.worker_type,
-                    start_ts=proc.started_at or "",
-                    # These runtime-only fields carry the rest of the subprocess
-                    # lifetime through bus history.
-                    subprocess=process,
-                    stdout_file=stdout_file,
-                    stderr_file=stderr_file,
-                    pid_file=pid_file,
-                    cmd_file=cmd_file,
-                    files_before=files_before,
-                    event_timeout=event.timeout + 30.0,
-                    event_handler_timeout=event.timeout + 30.0,
-                    event_handler_slow_timeout=10000.0,
-                ),
-            ).now()
-            assert started_event is not None
+            started_event = ProcessStartedEvent(
+                plugin_name=event.plugin_name,
+                hook_name=event.hook_name,
+                hook_path=event.hook_path,
+                hook_args=event.hook_args,
+                output_dir=event.output_dir,
+                env=event.env,
+                timeout=event.timeout,
+                pid=process.pid,
+                is_background=event.is_background,
+                url=event.url,
+                process_type=event.process_type,
+                worker_type=event.worker_type,
+                start_ts=proc.started_at or "",
+                # These runtime-only fields carry the rest of the subprocess
+                # lifetime through bus history.
+                subprocess=process,
+                stdout_file=stdout_file,
+                stderr_file=stderr_file,
+                pid_file=pid_file,
+                cmd_file=cmd_file,
+                files_before=files_before,
+                event_timeout=event.timeout + 30.0,
+                event_handler_timeout=event.timeout + 30.0,
+                event_handler_slow_timeout=10000.0,
+            )
+            # Publish control ownership before awaiting persistence/UI observers.
+            # Otherwise Ctrl+C in that await sees no active hook despite its PID
+            # file already existing and lets a real subprocess escape the pause.
+            self._active_hooks[event.event_id] = (event, started_event)
+            # The started fact completes before a background subprocess does.
+            # Keep its ancestry available to cleanup/result consumers until the
+            # existing reader scope closes after ProcessCompletedEvent handling.
+            assert reader_stack is not None
+            reader_stack.enter_context(self.bus.event_history.retain(started_event))
+            await event.emit(started_event).now()
             proc = Process(
                 cmd=cmd,
                 pwd=event.output_dir,
@@ -407,23 +668,30 @@ class ProcessService(BaseService):
                         stderr_reader=stderr_reader,
                         pid_file=pid_file,
                         files_before=files_before,
-                        foreground_interrupts=foreground_interrupts,
                     )
                 finally:
-                    stdout_reader.close()
-                    stderr_reader.close()
+                    self._active_hooks.pop(event.event_id, None)
+                    self._interrupt_choices.pop(event.event_id, None)
+                    if started_event.interruption_done is not None:
+                        started_event.interruption_done.set()
+                    if reader_stack is not None:
+                        reader_stack.close()
 
             completion = complete_and_close_readers()
             if event.is_background:
-                completion_task = asyncio.create_task(completion)
+                # This task outlives the ProcessEvent handler. Inheriting that
+                # handler's context makes later stdout/completion emissions
+                # look like work from a finished handler, which abxbus rejects.
+                # Stdout/completion events carry their parent ID explicitly.
+                completion_task = asyncio.create_task(completion, context=contextvars.Context())
                 self._background_completion_tasks.add(completion_task)
 
                 def forget_background_completion(task: asyncio.Task[Process | None]) -> None:
                     self._background_completion_tasks.discard(task)
                     try:
                         task.result()
-                    except Exception:
-                        pass
+                    except (RuntimeError, OSError, ValueError, asyncio.CancelledError) as err:
+                        click.echo(f"Background hook completion failed: {err}", err=True)
 
                 completion_task.add_done_callback(forget_background_completion)
                 completion_owns_process = True
@@ -435,12 +703,8 @@ class ProcessService(BaseService):
                 await graceful_kill_process(process)
             raise
         finally:
-            if not completion_owns_process:
-                if stdout_reader is not None:
-                    stdout_reader.close()
-                if stderr_reader is not None:
-                    stderr_reader.close()
-            self.pause_requested.clear()
+            if not completion_owns_process and reader_stack is not None:
+                reader_stack.close()
 
     async def _complete_process_event(
         self,
@@ -456,27 +720,36 @@ class ProcessService(BaseService):
         stderr_reader: TextIO,
         pid_file: Path,
         files_before: set[Path],
-        foreground_interrupts: bool,
     ) -> Process | None:
-        stdout_state = _StdoutStreamState()
+        stdout_state = _OutputStreamState()
+        # Independent offsets preserve both complete logs. Stderr is observed
+        # for progress only: it must never satisfy stdout readiness or JSONL
+        # consumers, even if a diagnostic happens to contain valid JSON.
+        stderr_state = _OutputStreamState()
         stream_task = asyncio.create_task(
-            self._stream_stdout(
+            self._stream_output(
                 event=started_event,
                 proc=proc,
                 stdout_reader=stdout_reader,
                 state=stdout_state,
+                stderr_reader=stderr_reader,
+                stderr_state=stderr_state,
             ),
         )
         wait_task = asyncio.create_task(process.wait())
         interrupted = False
         timed_out = False
+        cancellation: asyncio.CancelledError | None = None
         try:
             deadline = asyncio.get_running_loop().time() + event.timeout if event.timeout and not event.is_background else None
             while True:
                 pending = {wait_task}
-                interrupt_task: asyncio.Task[bool] | None = None
-                if foreground_interrupts:
-                    interrupt_task = asyncio.create_task(self.pause_requested.wait())
+                # Cleanup owns background resource termination. Waking those
+                # processes here would route them through the foreground user
+                # interrupt path before cleanup can record the scoped stop.
+                interrupt_task = None
+                if not event.is_background:
+                    interrupt_task = asyncio.create_task(self._abort_signal.wait())
                     pending.add(interrupt_task)
                 remaining = None if deadline is None else max(deadline - asyncio.get_running_loop().time(), 0.0)
                 done, pending = await asyncio.wait(
@@ -494,14 +767,14 @@ class ProcessService(BaseService):
                 if wait_task in done:
                     break
                 if interrupt_task is not None and interrupt_task in done:
-                    self.pause_requested.clear()
                     interrupted = True
-                    await started_event.emit(
+                    await self.bus.emit(
                         ProcessKillEvent(
+                            event_parent_id=started_event.event_id,
                             plugin_name=event.plugin_name,
                             hook_name=event.hook_name,
                             pid=process.pid,
-                            grace_period=float(event.timeout),
+                            grace_period=min(float(event.timeout), GRACEFUL_SHUTDOWN_TIMEOUT),
                         ),
                     ).now()
                     await wait_task
@@ -511,8 +784,8 @@ class ProcessService(BaseService):
             # offset, cancel ArchiveResult consumers, and then lose the line
             # before the final drain below.
             stdout_state.stop_requested = True
-            await self._finish_stream_stdout(stream_task)
-            await self._emit_new_stdout_lines(
+            await self._finish_stream_output(stream_task)
+            await self._emit_new_output_lines(
                 event=started_event,
                 proc=proc,
                 stdout_reader=stdout_reader,
@@ -522,15 +795,26 @@ class ProcessService(BaseService):
         except TimeoutError:
             timed_out = True
             await graceful_kill_process(process)
-        except asyncio.CancelledError:
-            stream_task.cancel()
-            await self._finish_stream_stdout(stream_task)
+        except asyncio.CancelledError as error:
+            # Cancelling the runner still has to finalize this process/result.
+            # Re-raising here used to bypass ProcessCompletedEvent, leaving an
+            # earlier succeeded DB row intact after the hook was killed.
+            cancellation = error
             await graceful_kill_process(process)
-            raise
+            stdout_state.stop_requested = True
+            await self._finish_stream_output(stream_task)
         except Exception:
             await graceful_kill_process(process)
             raise
 
+        await self._emit_new_output_lines(
+            event=started_event,
+            proc=proc,
+            stdout_reader=stderr_reader,
+            state=stderr_state,
+            emit_partial=True,
+            event_class=ProcessStderrEvent,
+        )
         returncode = process.returncode if process.returncode is not None else 0
         stdout_reader.seek(0)
         stdout = stdout_reader.read()
@@ -539,10 +823,12 @@ class ProcessService(BaseService):
         stdout_reader.close()
         stderr_reader.close()
 
-        files_after = set(plugin_output_dir.rglob("*")) if plugin_output_dir.exists() else set()
-        new_files = scan_output_files(
+        files_after = await asyncio.to_thread(lambda: set(plugin_output_dir.rglob("*")))
+        new_files = await asyncio.to_thread(
+            scan_output_files,
             plugin_output_dir,
             file_paths=files_after - files_before,
+            containment_root=plugin_output_dir.parent,
         )
         if returncode == 0 and not stdout.strip() and (signal_match := SHELL_SIGNAL_STDERR_RE.search(stderr)):
             returncode = 128 + int(signal_match.group(1))
@@ -551,9 +837,21 @@ class ProcessService(BaseService):
             returncode = -1
             stderr = f"Hook timed out after {event.timeout} seconds"
 
+        if cancellation is not None:
+            returncode = 130
+            stderr = "Hook execution cancelled"
+
+        # A user stopping work has not discovered an extractor/site failure.
+        # Carry that intent explicitly so consumers can discard the unfinished
+        # attempt, without classifying organic crashes by their signal number.
+        cancelled = interrupted or cancellation is not None or event.event_id in self._shutdown_hook_ids
+        if event.is_background and self.abort_requested:
+            cancelled = cancelled or await self._process_was_stopped_by_cleanup(event, process.pid)
+
         if (
             event.is_background
             and not timed_out
+            and cancellation is None
             and returncode in POLITE_CLEANUP_SIGNAL_EXIT_CODES
             and await self._process_was_stopped_by_cleanup(event, process.pid)
         ):
@@ -564,28 +862,25 @@ class ProcessService(BaseService):
             # archive results look broken in index.jsonl and Docker smoke tests.
             # SIGKILL escalation and organic nonzero exits still surface as
             # failures because they do not match this polite cleanup path.
+            # This normalizes Process lifecycle only. A zero exit without an
+            # explicit output record becomes noresult in ArchiveResultService;
+            # it must never manufacture a successful capture from readiness.
             returncode = 0
             stderr = SHELL_SIGNAL_STDERR_RE.sub("", stderr).strip()
 
         action = "skip"
+        choice_future = self._interrupt_choices.get(event.event_id)
+        interrupted = interrupted or choice_future is not None
+        cancelled = cancelled or interrupted
         status = _process_status(returncode)
         if interrupted:
-            returncode = PROCESS_EXIT_SKIPPED
-            status = "skipped"
+            returncode = 130
+            status = "failed"
             stderr = "Hook interrupted by user"
-            if self.abort_requested:
-                action = "abort"
-            elif not self.interactive_tty:
-                action = "abort"
-            else:
-                action = self.on_InterruptedHookPrompt(event.hook_name)
-            await event.emit(
-                {
-                    "abort": CrawlAbortEvent,
-                    "retry": CrawlResumeAndRetryEvent,
-                    "skip": CrawlResumeAndSkipEvent,
-                }[action](),
-            ).now()
+            # Completion records the stopped attempt, but never reads stdin or
+            # chooses crawl control. Holding completion until the answer also
+            # keeps a background-only capture from entering cleanup mid-prompt.
+            action = await choice_future if choice_future is not None else "abort"
 
         proc.exit_code = returncode
         proc.status = status
@@ -598,12 +893,13 @@ class ProcessService(BaseService):
 
         pid_file.unlink(missing_ok=True)
 
-        if returncode == 0:
+        if returncode == 0 and not cancelled:
             stdout_file.unlink(missing_ok=True)
             stderr_file.unlink(missing_ok=True)
 
-        await started_event.emit(
+        await self.bus.emit(
             ProcessCompletedEvent(
+                event_parent_id=started_event.event_id,
                 plugin_name=event.plugin_name,
                 hook_name=event.hook_name,
                 hook_path=event.hook_path,
@@ -614,6 +910,7 @@ class ProcessService(BaseService):
                 stderr=stderr,
                 exit_code=returncode,
                 status=status,
+                cancelled=cancelled,
                 output_dir=event.output_dir,
                 output_files=new_files,
                 is_background=event.is_background,
@@ -628,9 +925,14 @@ class ProcessService(BaseService):
                 event_handler_slow_timeout=event.event_handler_slow_timeout,
             ),
         ).now()
+        if cancellation is not None:
+            # Preserve cancellation control flow, after consumers
+            # have corrected the durable result for this same hook.
+            raise cancellation
         if action == "retry":
-            await event.emit(
+            retry_event = self.bus.emit(
                 ProcessEvent(
+                    event_parent_id=event.event_id,
                     plugin_name=event.plugin_name,
                     hook_name=event.hook_name,
                     hook_path=event.hook_path,
@@ -646,7 +948,19 @@ class ProcessService(BaseService):
                     event_handler_timeout=event.event_handler_timeout,
                     event_handler_slow_timeout=event.event_handler_slow_timeout,
                 ),
-            ).now()
+            )
+            await retry_event.now()
+            if event.is_background and not self.abort_requested:
+                restarted = await self.bus.find(ProcessStartedEvent, event_parent_id=retry_event.event_id, past=True, future=False)
+                if restarted is not None:
+                    # Retrying startup must re-establish the same readiness
+                    # barrier as the first attempt. Merely spawning its PID
+                    # would let dependent hooks run before listeners/resources
+                    # exist, recreating the original readiness race on retry.
+                    async def retry_aborted() -> bool:
+                        return self.abort_requested or await wait_for_crawl_resume(self.bus)
+
+                    await wait_for_process_ready(restarted, float(event.timeout), retry_aborted)
         return proc
 
     async def _process_was_stopped_by_cleanup(self, event: ProcessEvent, pid: int) -> bool:
@@ -677,7 +991,7 @@ class ProcessService(BaseService):
                 return True
         return False
 
-    async def _finish_stream_stdout(self, stream_task: asyncio.Task[list[str]]) -> list[str]:
+    async def _finish_stream_output(self, stream_task: asyncio.Task[list[str]]) -> list[str]:
         """Finish reading hook stdout after the hook process exits."""
         if stream_task.done():
             return await stream_task
@@ -717,7 +1031,7 @@ class ProcessService(BaseService):
                     where=lambda candidate: self.bus.event_is_parent_of(candidate, event),
                 )
             if not isinstance(parent_event, (SnapshotCleanupEvent, CrawlCleanupEvent)):
-                raise RuntimeError(f"Missing cleanup parent for ProcessKillEvent {event.event_id}")
+                raise TypeError(f"Missing cleanup parent for ProcessKillEvent {event.event_id}")
             root_event: SnapshotEvent | CrawlEvent | None
             if isinstance(parent_event, SnapshotCleanupEvent):
                 found_root_event = await self.bus.find(
@@ -752,28 +1066,37 @@ class ProcessService(BaseService):
                     f"Expected exactly one ProcessStartedEvent for {event.plugin_name}:{event.hook_name}, found {len(matches)}",
                 )
             started_process = matches[0]
+        # Capture timeouts can be hours. A user abort still lets recorders flush,
+        # but must not wait an entire capture timeout for a hook ignoring SIGTERM.
+        # The abort event is visible in bus history before its parallel handlers
+        # have all updated their local flags. Cleanup must honor that fact when
+        # choosing a grace period for hooks that ignore SIGTERM.
+        aborting = self.abort_requested or await self.bus.find(CrawlAbortEvent, past=True, future=False) is not None
+        grace_period = min(event.grace_period, GRACEFUL_SHUTDOWN_TIMEOUT) if aborting else event.grace_period
         if started_process.subprocess.returncode is None:
             await graceful_kill_process(
                 started_process.subprocess,
-                grace_period=event.grace_period,
+                grace_period=grace_period,
             )
             return
 
         await graceful_kill_by_pid_file(
             started_process.pid_file,
             started_process.cmd_file,
-            grace_period=event.grace_period,
+            grace_period=grace_period,
         )
 
-    async def _stream_stdout(
+    async def _stream_output(
         self,
         *,
         event: ProcessStartedEvent,
         proc: Process,
         stdout_reader: TextIO,
-        state: _StdoutStreamState,
+        state: _OutputStreamState,
+        stderr_reader: TextIO,
+        stderr_state: _OutputStreamState,
     ) -> list[str]:
-        """Stream hook stdout from its log file and emit ProcessStdoutEvent lines.
+        """Stream stdout records and stderr diagnostics as separate event types.
 
         Hooks write stdout directly to a regular file instead of an asyncio pipe.
         Some browser/provider hooks spawn descendants that inherit stdout; if
@@ -783,12 +1106,20 @@ class ProcessService(BaseService):
         """
         try:
             while not state.stop_requested:
-                await self._emit_new_stdout_lines(
+                await self._emit_new_output_lines(
                     event=event,
                     proc=proc,
                     stdout_reader=stdout_reader,
                     state=state,
                     emit_partial=False,
+                )
+                await self._emit_new_output_lines(
+                    event=event,
+                    proc=proc,
+                    stdout_reader=stderr_reader,
+                    state=stderr_state,
+                    emit_partial=False,
+                    event_class=ProcessStderrEvent,
                 )
                 if state.stop_requested:
                     break
@@ -797,18 +1128,20 @@ class ProcessService(BaseService):
             return state.stdout_lines
         return state.stdout_lines
 
-    async def _emit_new_stdout_lines(
+    async def _emit_new_output_lines(
         self,
         *,
         event: ProcessStartedEvent,
         proc: Process,
         stdout_reader: TextIO,
-        state: _StdoutStreamState,
+        state: _OutputStreamState,
         emit_partial: bool,
+        event_class: type[ProcessStdoutEvent] | type[ProcessStderrEvent] = ProcessStdoutEvent,
     ) -> None:
-        stdout_reader.seek(state.offset)
+        # Each stream has one retained reader; read() already advances it,
+        # including after EOF when the child appends more data. Re-seeking on
+        # every poll adds remote I/O without changing the read position.
         chunk = stdout_reader.read()
-        state.offset = stdout_reader.tell()
 
         if not chunk and not (emit_partial and state.pending_line):
             return
@@ -825,11 +1158,13 @@ class ProcessService(BaseService):
         for line in lines:
             state.stdout_lines.append(line)
             stripped = line.strip()
-            if event.env.get("ABX_RUNTIME", "").lower() == "archivebox" and '"type": "Snapshot"' in stripped:
-                continue
             try:
-                await event.emit(
-                    ProcessStdoutEvent(
+                # Background readers can outlive the handler that spawned them.
+                # Emit on the owning bus with explicit ancestry rather than using
+                # event.emit(), whose ambient handler context may already be gone.
+                await self.bus.emit(
+                    event_class(
+                        event_parent_id=event.event_id,
                         line=stripped,
                         plugin_name=event.plugin_name,
                         hook_name=event.hook_name,
@@ -840,5 +1175,9 @@ class ProcessService(BaseService):
                 ).now()
             except RuntimeError as err:
                 if "event has no bus attached" in str(err):
+                    # Stdout progress events are best-effort during shutdown.
+                    # The owning runner may already have detached the bus after
+                    # a SIGINT/SIGTERM; do not turn that late cosmetic flush
+                    # into an unhandled task exception while the process exits.
                     return
                 raise

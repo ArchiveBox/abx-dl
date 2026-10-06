@@ -3,8 +3,8 @@ import shutil
 import stat
 from pathlib import Path
 
-from abx_dl.models import discover_plugins
-from abx_dl.output_files import scan_output_files
+from abx_dl.catalog import PluginCatalog
+from abx_dl.output_files import OutputManifest, scan_output_files
 
 
 def test_scan_output_files_excludes_symlinked_files_and_dirs(tmp_path: Path) -> None:
@@ -24,7 +24,7 @@ def test_scan_output_files_excludes_symlinked_files_and_dirs(tmp_path: Path) -> 
 
 def test_scan_output_files_strips_executable_bits(tmp_path: Path) -> None:
     script = tmp_path / "script.sh.x"
-    real_hook = discover_plugins()["wget"].hooks[0].path
+    real_hook = PluginCatalog.discover()["wget"].hooks[0].path
     shutil.copy2(real_hook, script)
     assert stat.S_IMODE(script.lstat().st_mode) & 0o111
 
@@ -63,6 +63,28 @@ def test_scan_output_files_leaves_internal_symlinks_alone(tmp_path: Path) -> Non
     assert not (tmp_path / "alias.broken-symlink").exists()
 
 
+def test_scan_output_files_allows_symlinks_within_snapshot(tmp_path: Path) -> None:
+    snap_dir = tmp_path / "snap"
+    plugin_dir = snap_dir / "readability"
+    response = snap_dir / "responses" / "image.svg"
+    plugin_dir.mkdir(parents=True)
+    response.parent.mkdir()
+    response.write_text("<svg></svg>")
+    link = plugin_dir / "image.svg"
+    link.symlink_to(os.path.relpath(response, plugin_dir))
+    outside = tmp_path / "outside.svg"
+    outside.write_text("<svg></svg>")
+    escaping_link = plugin_dir / "outside.svg"
+    escaping_link.symlink_to(outside)
+
+    scan_output_files(plugin_dir, containment_root=snap_dir)
+
+    assert link.is_symlink()
+    assert link.resolve() == response.resolve()
+    assert not escaping_link.exists() and not escaping_link.is_symlink()
+    assert (plugin_dir / "outside.svg.broken-symlink.txt").is_file()
+
+
 def test_scan_output_files_symlink_neutralization_is_idempotent(tmp_path: Path) -> None:
     outside = tmp_path / "outside.txt"
     outside.write_text("x")
@@ -77,3 +99,36 @@ def test_scan_output_files_symlink_neutralization_is_idempotent(tmp_path: Path) 
     assert record.is_file() and not record.is_symlink()
     assert record.read_text().strip() == str(outside)
     assert not (snap_dir / "leak").exists()
+
+
+def test_output_manifest_is_the_canonical_mapping_and_summary(tmp_path: Path) -> None:
+    (tmp_path / "page.html").write_text("<h1>Hello</h1>")
+    (tmp_path / "data.json").write_text('{"ok": true}')
+
+    manifest = OutputManifest.scan(tmp_path)
+
+    assert list(manifest.as_mapping()) == ["data.json", "page.html"]
+    assert manifest.total_size == len("<h1>Hello</h1>") + len('{"ok": true}')
+    assert manifest.mimetypes == ["text/html", "application/json"]
+    assert OutputManifest.from_value(manifest.as_mapping()) == manifest
+
+
+def test_output_manifest_normalizes_string_and_list_metadata() -> None:
+    assert OutputManifest.from_value("page.html").files[0].model_dump() == {
+        "path": "page.html",
+        "extension": "html",
+        "mimetype": "text/html",
+        "size": 0,
+    }
+    assert OutputManifest.from_value('"data.json"').files[0].model_dump() == {
+        "path": "data.json",
+        "extension": "json",
+        "mimetype": "application/json",
+        "size": 0,
+    }
+    assert OutputManifest.from_value([{"path": "archive.warc"}]).files[0].model_dump() == {
+        "path": "archive.warc",
+        "extension": "warc",
+        "mimetype": "application/warc",
+        "size": 0,
+    }

@@ -1,70 +1,64 @@
-"""Required binary request orchestration and abx-dl cache projection."""
+"""Required binary requests and in-memory plugin config projection."""
 
 from __future__ import annotations
 
-import asyncio
-import builtins
-import copy
-import json
 import re
-import shlex
-import shutil
 from collections.abc import Awaitable, Callable, Mapping
-from datetime import datetime, timedelta, timezone
 from inspect import isawaitable
 from pathlib import Path
 from typing import Any, ClassVar
 
 from abxbus import BaseEvent, EventBus
-from abxpkg import Binary as AbxBinary
-from abxpkg import BinProvider, PROVIDER_CLASS_BY_NAME
-from abxpkg.binary_service import BinaryRequestEvent
+from abxpkg import BinProvider
+from abxpkg.binary_service import BinaryEvent, BinaryRequestEvent
 
+from ..catalog import PluginCatalog
 from ..config import RuntimeConfig, get_config, get_plugin_env, get_required_binary_requests, is_path_like_env_value
 from ..events import CrawlAbortEvent, InstallEvent, MachineEvent
 from ..models import Plugin, Snapshot, uuid7
 from .base import BaseService
 
-
 _TEMPLATE_NAME_RE = re.compile(r"^\{([A-Z0-9_]+)\}$")
 
 
-def _is_app_bundle_binary(path: Path) -> bool:
-    parts = path.expanduser().parts
-    try:
-        app_index = next(index for index, part in enumerate(parts) if part.endswith(".app"))
-    except StopIteration:
-        return False
-    return len(parts) > app_index + 2 and parts[app_index + 1 : app_index + 3] == ("Contents", "MacOS")
+async def build_plugin_process_env(
+    bus: EventBus,
+    *,
+    catalog: PluginCatalog,
+    plugin: Plugin,
+    runtime_env: dict[str, str],
+) -> dict[str, str]:
+    """Overlay provider-owned binary environment changes onto one hook run.
 
-
-def _write_binary_wrapper(wrapper_path: Path, target: Path) -> None:
-    target_abspath = target.expanduser().resolve(strict=False)
-    wrapper_path.write_text(f'#!/bin/sh\nexec {shlex.quote(str(target_abspath))} "$@"\n')
-    wrapper_path.chmod(0o755)
-
-
-def _provider_names(binproviders: str | list[str] | None) -> list[str]:
-    if isinstance(binproviders, str):
-        raw_names = [part.strip() for part in binproviders.split(",")]
-    elif binproviders:
-        raw_names = [str(part).strip() for part in binproviders]
-    else:
-        raw_names = ["env"]
-    names: list[str] = []
-    for name in raw_names:
-        if name and name not in names:
-            names.append(name)
-    return names or ["env"]
-
-
-def _providers_for_names(names: list[str]) -> list[BinProvider]:
-    providers: list[BinProvider] = []
-    for name in names:
-        provider_class = PROVIDER_CLASS_BY_NAME.get(name)
-        if provider_class is not None:
-            providers.append(provider_class())
-    return providers
+    ``BinaryEvent.env`` is the fully materialized environment from the install
+    request.  A shared bus can reuse that binary for later snapshots, so
+    replaying the full mapping would also replay stale request context such as
+    ``SNAP_DIR`` and ``EXTRA_CONTEXT``.  Compare it to its request base and
+    carry forward only values the provider actually changed.
+    """
+    env = runtime_env
+    env_plugin_names = set(catalog.select([plugin.name]))
+    binary_events = await bus.filter(
+        BinaryEvent,
+        past=True,
+        where=lambda candidate: str(candidate.extra_context.get("plugin_name") or "") in env_plugin_names,
+    )
+    for binary_event in reversed(binary_events):
+        if binary_event.env:
+            binary_request = await bus.find(
+                BinaryRequestEvent,
+                past=True,
+                future=False,
+                where=lambda candidate: candidate.event_id == binary_event.event_parent_id,
+            )
+            binary_env = binary_event.env
+            if isinstance(binary_request, BinaryRequestEvent) and binary_request.base_env is not None:
+                binary_env = {key: value for key, value in binary_event.env.items() if binary_request.base_env.get(key) != value}
+            env = BinProvider.build_exec_env(
+                base_env=env,
+                extra_env=binary_env,
+            )
+    return env
 
 
 def _config_bool(value: Any) -> bool:
@@ -74,8 +68,6 @@ def _config_bool(value: Any) -> bool:
 
 
 def _plugin_enabled_from_user_config(plugin: Plugin, user_config: RuntimeConfig) -> bool:
-    if plugin.config.x_install_when_disabled:
-        return True
     enabled_key = plugin.enabled_key
     if enabled_key not in plugin.config.properties:
         return True
@@ -88,62 +80,6 @@ def _plugin_enabled_from_user_config(plugin: Plugin, user_config: RuntimeConfig)
     return True
 
 
-_ABXPKG_OVERRIDE_KEYS = {
-    "PATH",
-    "INSTALLER_BIN",
-    "euid",
-    "install_root",
-    "bin_dir",
-    "dry_run",
-    "postinstall_scripts",
-    "min_release_age",
-    "install_timeout",
-    "version_timeout",
-    "abspath",
-    "version",
-    "install_args",
-    "packages",
-    "install",
-    "update",
-    "uninstall",
-    "docs_url",
-    "search",
-}
-
-
-def split_abxpkg_binary_request_overrides(
-    overrides: Mapping[str, Any] | None,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Split abxpkg-native overrides from plugin-owned request metadata."""
-    if not isinstance(overrides, Mapping):
-        return {}, {}
-
-    native: dict[str, Any] = {}
-    provider_metadata: dict[str, Any] = {}
-    raw_overrides = copy.deepcopy(dict(overrides))
-
-    for provider_name, provider_overrides in overrides.items():
-        provider_key = str(provider_name)
-        if isinstance(provider_overrides, list):
-            native[provider_key] = {"install_args": provider_overrides}
-            continue
-        if not isinstance(provider_overrides, Mapping):
-            continue
-        native_values = {str(key): value for key, value in provider_overrides.items() if str(key) in _ABXPKG_OVERRIDE_KEYS}
-        metadata_values = {str(key): value for key, value in provider_overrides.items() if str(key) not in _ABXPKG_OVERRIDE_KEYS}
-        if native_values:
-            native[provider_key] = native_values
-        if metadata_values:
-            provider_metadata[provider_key] = metadata_values
-
-    extra_context: dict[str, Any] = {}
-    if provider_metadata:
-        extra_context["provider_metadata"] = provider_metadata
-    if provider_metadata or native != raw_overrides:
-        extra_context["raw_overrides"] = raw_overrides
-    return native, extra_context
-
-
 class PluginBinariesService(BaseService):
     """Emit abxpkg BinaryRequestEvents for enabled plugins' required binaries."""
 
@@ -154,7 +90,7 @@ class PluginBinariesService(BaseService):
         self,
         bus: EventBus,
         *,
-        plugins: dict[str, Plugin],
+        catalog: PluginCatalog,
         auto_install: bool,
         install_plugins: list[Plugin] | None = None,
         output_dir: Path | None = None,
@@ -162,7 +98,7 @@ class PluginBinariesService(BaseService):
         abort_requested: Callable[[], bool | Awaitable[bool]] | None = None,
     ):
         self.auto_install = auto_install
-        self.plugins = plugins
+        self.catalog = catalog
         self.install_plugins = install_plugins or []
         self.output_dir = output_dir
         self.snapshot = snapshot
@@ -200,17 +136,24 @@ class PluginBinariesService(BaseService):
         current_config = await get_config(self.bus)
         current_user_config = current_config.user
         current_derived_config = current_config.derived
-        install_cache = _install_cache_from_config(current_config)
-        pruned_install_cache = _prune_install_cache(install_cache)
-        install_cache_changed = pruned_install_cache != install_cache
-
-        seen: set[str] = set()
         request_events: list[BinaryRequestEvent] = []
         for plugin in self.install_plugins:
             if await self.should_abort():
                 break
             if not _plugin_enabled_from_user_config(plugin, current_config):
                 continue
+            # Resolved *_BINARY paths are outputs of this phase, not inputs to
+            # it. Feeding process-local derived values back into base_env makes
+            # identical invocations alternate between two cache projections.
+            plugin_base_env = (
+                await get_plugin_env(
+                    self.bus,
+                    plugin=plugin,
+                    run_output_dir=self.output_dir,
+                    include_derived=False,
+                    config=current_config,
+                )
+            ).to_env()
             plugin_output_dir = self.output_dir / plugin.name
             for record in get_required_binary_requests(
                 plugin,
@@ -221,25 +164,16 @@ class PluginBinariesService(BaseService):
             ):
                 if await self.should_abort():
                     break
-                signature = json.dumps(record, sort_keys=True, default=str)
-                if signature in seen:
-                    continue
-                seen.add(signature)
-                install_cache_key = f"binary_request/{signature}"
                 request_payload = {
                     key: value for key, value in record.items() if key in BinaryRequestEvent.model_fields and key != "extra_context"
                 }
-                native_overrides, override_extra_context = split_abxpkg_binary_request_overrides(record.get("overrides"))
-                if native_overrides:
-                    request_payload["overrides"] = native_overrides
-                else:
-                    request_payload.pop("overrides", None)
                 if current_user_config.ABXPKG_NO_CACHE:
                     request_payload["no_cache"] = True
                 request_event = BinaryRequestEvent(
                     **request_payload,
                     auto_install=self.auto_install,
                     lib_dir=current_user_config.ABXPKG_LIB_DIR,
+                    base_env=plugin_base_env,
                     dry_run=current_user_config.DRY_RUN,
                     extra_context={
                         "plugin_name": plugin.name,
@@ -247,116 +181,47 @@ class PluginBinariesService(BaseService):
                         "output_dir": str(plugin_output_dir),
                         "binary_id": uuid7(),
                         "machine_id": "",
-                        "install_cache_key": install_cache_key,
-                        "install_cache_hit": install_cache_key in pruned_install_cache,
-                        **override_extra_context,
                     },
                 )
                 request_events.append(request_event)
             if await self.should_abort():
                 break
 
-        requests_by_binary: dict[str, list[BinaryRequestEvent]] = {}
         for request_event in request_events:
-            requests_by_binary.setdefault(request_event.name, []).append(request_event)
-
-        async def resolve_binary_requests(binary_requests: list[BinaryRequestEvent]) -> None:
-            for request_event in binary_requests:
-                emitted_request: BaseEvent = event.emit(request_event)
-                completed_request = await emitted_request.now()
-                await completed_request.event_results_list(raise_if_none=False)
-
-        await asyncio.gather(*(resolve_binary_requests(binary_requests) for binary_requests in requests_by_binary.values()))
-        if install_cache_changed:
-            await event.emit(
-                MachineEvent(
-                    method="update",
-                    key="config/ABX_INSTALL_CACHE",
-                    value=pruned_install_cache,
-                    config_type="derived",
-                ),
-            ).now()
+            emitted_request: BaseEvent = event.emit(request_event)
+            completed_request = await emitted_request.now()
+            await completed_request.event_results_list(raise_if_none=False)
 
 
-class AbxDlEnvConfigFileBinaryCacheBackend:
-    """Project abxpkg Binary events onto abx-dl derived config and symlinks."""
+class PluginBinaryEnvService(BaseService):
+    """Project resolved abxpkg binaries into the current plugin environment."""
 
-    def __init__(self, bus: EventBus, *, plugins: dict[str, Plugin]):
+    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [BinaryEvent]
+    EMITS: ClassVar[list[type[BaseEvent]]] = [MachineEvent]
+
+    def __init__(self, bus: EventBus, *, catalog: PluginCatalog):
         self.bus = bus
-        self.plugins = plugins
+        self.catalog = catalog
+        super().__init__(bus)
+        self.bus.on(BinaryEvent, self.on_BinaryEvent)
 
-    async def get(self, request: BinaryRequestEvent) -> AbxBinary | None:
+    async def on_BinaryEvent(self, event: BinaryEvent) -> None:
         current_config = await get_config(self.bus)
-        registered_value, stale_config_keys = await self._cached_binary_registration(request, config=current_config)
-        for config_key in stale_config_keys:
-            await request.emit(
-                MachineEvent(
-                    method="unset",
-                    key=f"config/{config_key}",
-                    config_type="derived",
-                ),
-            ).now()
-        if registered_value is None:
-            return None
-        registered_path = Path(registered_value).expanduser()
-        return AbxBinary.model_validate(
-            {
-                "name": request.name,
-                "description": request.description,
-                "binproviders": _providers_for_names(_provider_names(request.binproviders)),
-                "overrides": request.overrides or {},
-                "loaded_abspath": str(registered_path),
-                "loaded_version": None,
-                "loaded_sha256": None,
-                "loaded_binprovider": None,
-                "env": {},
-            },
-        )
-
-    async def set(self, request: BinaryRequestEvent | None, binary: AbxBinary) -> None:
-        current_config = await get_config(self.bus)
-        install_cache = _install_cache_from_config(current_config)
-        request_context = request.extra_context if request is not None else {}
-        install_cache_key = str(request_context.get("install_cache_key") or binary.name)
-        install_cache[install_cache_key] = datetime.now(timezone.utc).isoformat()
-        if request is not None:
-            await request.emit(
-                MachineEvent(
-                    method="update",
-                    key="config/ABX_INSTALL_CACHE",
-                    value=install_cache,
-                    config_type="derived",
-                ),
-            ).now()
-        if binary.loaded_abspath:
-            await self._link_installed_binary(binary.name, str(binary.loaded_abspath), config=current_config)
-            if request is not None:
-                await self._persist_binary_abspath_in_config(request, str(binary.loaded_abspath), config=current_config)
-
-    async def invalidate(self, request: BinaryRequestEvent, binary: AbxBinary, reason: str) -> None:
-        current_config = await get_config(self.bus)
-        for config_key in await self._config_keys_for_binary_request(request, config=current_config):
-            await request.emit(
-                MachineEvent(
-                    method="unset",
-                    key=f"config/{config_key}",
-                    config_type="derived",
-                ),
-            ).now()
+        await self._project_binary_abspath(event, event.abspath, config=current_config)
 
     def _request_run_output_dir(self, output_dir: str, plugin_name: str) -> Path:
         path = Path(output_dir).expanduser()
         return path.parent if plugin_name and path.name == plugin_name else path
 
-    async def _config_keys_for_binary_request(
+    async def _config_keys_for_binary_event(
         self,
-        request: BinaryRequestEvent,
+        event: BinaryEvent,
         *,
         config: RuntimeConfig | None = None,
     ) -> list[str]:
-        plugin_name = str(request.extra_context.get("plugin_name") or "")
-        output_dir = str(request.extra_context.get("output_dir") or "")
-        plugin = self.plugins.get(plugin_name)
+        plugin_name = str(event.extra_context.get("plugin_name") or "")
+        output_dir = str(event.extra_context.get("output_dir") or "")
+        plugin = self.catalog.get(plugin_name)
         if plugin is None:
             return []
 
@@ -378,9 +243,9 @@ class AbxDlEnvConfigFileBinaryCacheBackend:
             key = match.group(1)
             try:
                 hydrated_name = template_name.format(**runtime_env)
-            except Exception:
+            except KeyError:
                 continue
-            if hydrated_name == request.name:
+            if hydrated_name == event.name:
                 matching_keys.append(key)
         if matching_keys:
             return list(dict.fromkeys(matching_keys))
@@ -390,65 +255,23 @@ class AbxDlEnvConfigFileBinaryCacheBackend:
             configured_value = str(runtime_env[key] or prop.get("default") or "").strip()
             if not configured_value:
                 continue
-            if configured_value == request.name:
+            if configured_value == event.name:
                 matching_keys.append(key)
                 continue
-            if is_path_like_env_value(configured_value) and Path(configured_value).expanduser().name == request.name:
+            if is_path_like_env_value(configured_value) and Path(configured_value).expanduser().name == event.name:
                 matching_keys.append(key)
         return list(dict.fromkeys(matching_keys))
 
-    async def _cached_binary_registration(
+    async def _project_binary_abspath(
         self,
-        request: BinaryRequestEvent,
-        *,
-        config: RuntimeConfig | None = None,
-    ) -> tuple[str | None, builtins.set[str]]:
-        request_name = request.name
-        current_config = config or await get_config(self.bus)
-        current_derived_config = current_config.derived
-
-        # Explicit path requests are provider inputs, not cache registrations.
-        # EnvProvider must validate them and project host paths into env/bin.
-        if is_path_like_env_value(request_name):
-            return None, set()
-
-        values: list[str] = []
-        stale_config_keys: set[str] = set()
-        for config_key in await self._config_keys_for_binary_request(request, config=current_config):
-            if config_key not in current_derived_config:
-                continue
-            derived_value = str(current_derived_config[config_key]).strip()
-            if not derived_value:
-                continue
-            if not is_path_like_env_value(derived_value):
-                stale_config_keys.add(config_key)
-                continue
-            derived_path = Path(derived_value).expanduser()
-            if not derived_path.exists():
-                stale_config_keys.add(config_key)
-                continue
-            if derived_path.name != request_name:
-                stale_config_keys.add(config_key)
-                continue
-            values.append(derived_value)
-
-        unique_values = list(dict.fromkeys(values))
-        if len(unique_values) != 1:
-            # No ordered fallback across competing registrations. A canonical
-            # abxpkg provider resolution will refresh all matching derived keys.
-            return None, stale_config_keys
-        return unique_values[0], stale_config_keys
-
-    async def _persist_binary_abspath_in_config(
-        self,
-        request: BinaryRequestEvent,
+        event: BinaryEvent,
         abspath: str,
         *,
         config: RuntimeConfig | None = None,
     ) -> None:
         current_config = config or await get_config(self.bus)
-        for config_key in await self._config_keys_for_binary_request(request, config=current_config):
-            await request.emit(
+        for config_key in await self._config_keys_for_binary_event(event, config=current_config):
+            await event.emit(
                 MachineEvent(
                     method="update",
                     key=f"config/{config_key}",
@@ -456,62 +279,3 @@ class AbxDlEnvConfigFileBinaryCacheBackend:
                     config_type="derived",
                 ),
             ).now()
-
-    async def _link_installed_binary(
-        self,
-        binary_name: str,
-        binary_abspath: str,
-        *,
-        config: RuntimeConfig | None = None,
-    ) -> None:
-        if is_path_like_env_value(binary_name):
-            return
-        current_user_config = (config or await get_config(self.bus)).user
-        if current_user_config.ABXPKG_LIB_DIR is None:
-            return
-        lib_bin_dir = current_user_config.ABXPKG_LIB_DIR / "bin"
-        lib_bin_dir.mkdir(parents=True, exist_ok=True)
-
-        target = Path(binary_abspath).expanduser().resolve(strict=False)
-        link_path = lib_bin_dir / binary_name
-        if target == link_path:
-            return
-        if _is_app_bundle_binary(target):
-            if link_path.is_symlink() or link_path.is_file():
-                link_path.unlink()
-            elif link_path.exists():
-                shutil.rmtree(link_path)
-            return
-        if link_path.is_symlink() or link_path.is_file():
-            link_path.unlink()
-        elif link_path.exists():
-            shutil.rmtree(link_path)
-        _write_binary_wrapper(link_path, target)
-
-
-def _install_cache_from_config(config: RuntimeConfig) -> dict[str, str]:
-    install_cache: dict[str, str] = {}
-    current_derived_config = config.derived
-    if "ABX_INSTALL_CACHE" in current_derived_config:
-        install_cache_value = current_derived_config["ABX_INSTALL_CACHE"]
-        if not isinstance(install_cache_value, dict):
-            raise TypeError("ABX_INSTALL_CACHE must be a dict[str, str].")
-        install_cache = {str(binary_name): str(cached_at) for binary_name, cached_at in install_cache_value.items()}
-    return install_cache
-
-
-def _prune_install_cache(install_cache: dict[str, str]) -> dict[str, str]:
-    now = datetime.now(timezone.utc)
-    pruned_install_cache: dict[str, str] = {}
-    for binary_name, cached_at in install_cache.items():
-        if not binary_name.startswith("binary_request/"):
-            continue
-        try:
-            cache_time = datetime.fromisoformat(str(cached_at))
-        except ValueError:
-            continue
-        if cache_time.tzinfo is None:
-            cache_time = cache_time.replace(tzinfo=timezone.utc)
-        if now - cache_time < timedelta(hours=24):
-            pruned_install_cache[str(binary_name)] = cache_time.isoformat()
-    return pruned_install_cache

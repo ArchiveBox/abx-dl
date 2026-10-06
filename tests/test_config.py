@@ -1,15 +1,22 @@
 import asyncio
 import json
 import os
+import shutil
+import subprocess
+import sys
+import sysconfig
 from pathlib import Path
 from typing import Any
 
-from platformdirs import user_config_path
-
-from abx_dl.config import GlobalConfig, RuntimeConfig, get_config, get_initial_env, get_plugin_env
+import pytest
+from abxpkg.binary_service import BinaryEvent
+from abx_dl.config import GlobalConfig, RuntimeConfig, get_config, get_explicit_user_env, get_initial_env, get_plugin_env
 from abx_dl.events import MachineEvent
-from abx_dl.models import PluginEnv, discover_plugins
+from abx_dl.catalog import PluginCatalog
+from abx_dl.models import PluginEnv
 from abx_dl.orchestrator import create_bus, install_plugins
+from abx_dl.services.binary_service import build_plugin_process_env
+from platformdirs import user_config_path
 
 
 def assemble_env(*, overrides: dict[str, Any] | None = None, run_output_dir: Path) -> dict[str, str]:
@@ -17,7 +24,50 @@ def assemble_env(*, overrides: dict[str, Any] | None = None, run_output_dir: Pat
     return PluginEnv.from_config(config, run_output_dir=run_output_dir).to_env()
 
 
-def test_plugin_env_sets_run_dirs_and_node_path(tmp_path: Path) -> None:
+def test_chrome_hook_receives_other_plugins_enabled_flags(tmp_path: Path) -> None:
+    catalog = PluginCatalog.discover()
+    runtime = asyncio.run(
+        get_plugin_env(
+            None,
+            plugin=catalog["chrome"],
+            run_output_dir=tmp_path,
+            config=RuntimeConfig(user=GlobalConfig(UBLOCK_ENABLED=False, SINGLEFILE_ENABLED=True), derived={}),
+        ),
+    )
+    env = runtime.to_env()
+    assert env["UBLOCK_ENABLED"] == "False"
+    assert env["SINGLEFILE_ENABLED"] == "True"
+
+
+def test_plugin_env_prioritizes_current_runtime_when_already_on_path(tmp_path: Path) -> None:
+    scripts_dir = sysconfig.get_path("scripts")
+    inherited_path = os.pathsep.join(["/usr/bin", scripts_dir, "/bin"])
+    result = subprocess.run(
+        [sys.executable, "-c", "from abx_dl.models import PluginEnv; import json; print(json.dumps(PluginEnv().to_env()['PATH']))"],
+        env={**os.environ, "PATH": inherited_path},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert json.loads(result.stdout).split(os.pathsep) == [scripts_dir, "/usr/bin", "/bin"]
+
+
+@pytest.mark.parametrize("_fixture_case", range(2))
+def test_isolated_config_shares_managed_binaries_but_isolates_mutable_state(
+    _fixture_case: int,
+    tmp_path: Path,
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    session_lib_dir = Path(os.environ["_ABX_DL_TEST_ABXPKG_LIB_DIR"])
+
+    assert Path(os.environ["ABXPKG_LIB_DIR"]) == session_lib_dir
+    assert Path(os.environ["CONFIG_DIR"]).is_relative_to(tmp_path)
+    assert Path(os.environ["DATA_DIR"]).is_relative_to(tmp_path)
+    assert Path(os.environ["PERSONAS_DIR"]).is_relative_to(tmp_path)
+    assert Path(os.environ["TMP_DIR"]).is_relative_to(tmp_path)
+
+
+def test_plugin_env_sets_run_dirs_without_projecting_binary_paths(tmp_path: Path) -> None:
     for key in (
         "CRAWL_DIR",
         "SNAP_DIR",
@@ -42,15 +92,21 @@ def test_plugin_env_sets_run_dirs_and_node_path(tmp_path: Path) -> None:
     assert env["CRAWL_DIR"] == str(tmp_path)
     assert env["SNAP_DIR"] == str(tmp_path)
     assert Path(env["ABXPKG_LIB_DIR"]) == expected_lib_dir
-    assert env["NODE_PATH"] == env["NODE_MODULES_DIR"]
-    assert env["PIP_BIN_DIR"] in env["PATH"].split(":")
-    assert env["PNPM_BIN_DIR"] in env["PATH"].split(":")
-    assert env["NPM_BIN_DIR"] in env["PATH"].split(":")
+    assert "NODE_MODULES_DIR" not in env
+    assert "NODE_PATH" not in env
+    assert "PIP_BIN_DIR" not in env
+    assert "PNPM_BIN_DIR" not in env
+    assert "NPM_BIN_DIR" not in env
+    assert "PUPPETEER_CACHE_DIR" not in env
     assert "VIRTUAL_ENV" not in env
+    expected_path = [entry for entry in os.environ["PATH"].split(os.pathsep) if entry]
+    scripts_dir = sysconfig.get_path("scripts")
+    expected_path = [scripts_dir, *(entry for entry in expected_path if entry != scripts_dir)]
+    assert env["PATH"].split(os.pathsep) == expected_path
 
 
 def test_plugin_timeout_defaults_only_yield_to_explicit_global_timeout(tmp_path: Path) -> None:
-    plugin = discover_plugins()["claudecodecleanup"]
+    plugin = PluginCatalog.discover()["claudecodecleanup"]
     default_user = GlobalConfig.__pydantic_validator__.validate_python({})
     override_user = GlobalConfig.__pydantic_validator__.validate_python({"TIMEOUT": 90})
 
@@ -80,7 +136,7 @@ def test_plugin_timeout_defaults_only_yield_to_explicit_global_timeout(tmp_path:
 
 
 def test_plugin_timeout_defaults_without_event_bus(tmp_path: Path) -> None:
-    plugin = discover_plugins()["claudecodecleanup"]
+    plugin = PluginCatalog.discover()["claudecodecleanup"]
 
     env = asyncio.run(
         get_plugin_env(
@@ -116,81 +172,72 @@ def test_machine_event_config_rebuild_applies_events_oldest_to_newest(tmp_path: 
     assert runtime_config.derived["ABXPKG_LIB_DIR"] == str(tmp_path / "lib-c")
 
 
-def test_plugin_env_exports_shared_runtime_paths_after_real_install_phase(
-    tmp_path: Path,
-) -> None:
+def test_plugin_env_exports_abxpkg_runtime_after_real_install_phase(tmp_path: Path) -> None:
     os.environ.pop("VIRTUAL_ENV", None)
     run_output_dir = tmp_path / "run"
-    plugins = discover_plugins()
+    current_output_dir = tmp_path / "current-run"
+    plugins = PluginCatalog.discover()
     bus = create_bus(total_timeout=300.0, name=f"test_config_shared_runtime_{tmp_path.name}")
-    try:
-        asyncio.run(
-            install_plugins(
-                plugin_names=["ytdlp", "puppeteer"],
-                plugins=plugins,
-                output_dir=run_output_dir,
-                bus=bus,
-            ),
+
+    async def run() -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
+        selected = plugins.select(["ytdlp"])
+        install_config = {
+            **get_explicit_user_env(),
+            "EXTRA_CONTEXT": json.dumps({"snapshot_id": "install-snapshot"}),
+            "SNAP_DIR": str(run_output_dir),
+        }
+        await install_plugins(
+            selected,
+            config=install_config,
+            output_dir=run_output_dir,
+            bus=bus,
         )
-        ytdlp_env = asyncio.run(
-            get_plugin_env(
+        current_config = RuntimeConfig(
+            user=GlobalConfig(
+                **{
+                    **install_config,
+                    "EXTRA_CONTEXT": json.dumps({"snapshot_id": "current-snapshot"}),
+                    "SNAP_DIR": str(current_output_dir),
+                },
+            ),
+            derived={},
+        )
+        base_env = (
+            await get_plugin_env(
                 bus,
                 plugin=plugins["ytdlp"],
-                run_output_dir=run_output_dir,
-            ),
+                run_output_dir=current_output_dir,
+                config=current_config,
+            )
         ).to_env()
+        process_env = await build_plugin_process_env(
+            bus,
+            catalog=plugins,
+            plugin=plugins["ytdlp"],
+            runtime_env=base_env,
+        )
+        binary_events = await bus.filter(
+            BinaryEvent,
+            past=True,
+            where=lambda event: event.name == "yt-dlp",
+        )
+        assert binary_events
+        return base_env, process_env, binary_events[-1].env
+
+    try:
+        base_env, process_env, binary_env = asyncio.run(run())
     finally:
         asyncio.run(bus.wait_until_idle())
 
-    lib_dir = Path(ytdlp_env["ABXPKG_LIB_DIR"])
-    pip_venv = lib_dir / "pip" / "venv"
-    pnpm_prefix = lib_dir / "pnpm" / "packages" / "chrome"
-    pnpm_bin_dir = pnpm_prefix / "node_modules" / ".bin"
-
-    assert "VIRTUAL_ENV" not in ytdlp_env
-    assert ytdlp_env["PIP_BIN_DIR"] == str(pip_venv / "bin")
-    assert ytdlp_env["PIP_BIN_DIR"] in ytdlp_env["PATH"].split(":")
-    assert ytdlp_env["PNPM_HOME"] == str(pnpm_prefix)
-    assert ytdlp_env["PNPM_BIN_DIR"] == str(pnpm_bin_dir)
-    assert ytdlp_env["NPM_HOME"] == str(pnpm_prefix)
-    assert ytdlp_env["NODE_MODULES_DIR"] == str(pnpm_prefix / "node_modules")
-    assert ytdlp_env["NODE_PATH"] == str(pnpm_prefix / "node_modules")
-    assert ytdlp_env["NPM_BIN_DIR"] == str(pnpm_bin_dir)
-    assert ytdlp_env["PNPM_BIN_DIR"] in ytdlp_env["PATH"].split(":")
-    assert ytdlp_env["NPM_BIN_DIR"] in ytdlp_env["PATH"].split(":")
-
-
-def test_plugin_env_derives_puppeteer_cache_from_effective_lib_dir(tmp_path: Path) -> None:
-    env = assemble_env(overrides={"ABXPKG_LIB_DIR": str(tmp_path / "lib")}, run_output_dir=tmp_path)
-
-    assert env["PUPPETEER_CACHE_DIR"] == str(tmp_path / "lib" / "puppeteer")
-
-
-def test_plugin_env_treats_empty_optional_node_paths_as_unset(tmp_path: Path) -> None:
-    lib_dir = tmp_path / "lib"
-    node_path = ":".join(
-        [
-            "/home/archivebox/.npm/lib/node_modules",
-            str(lib_dir / "pnpm" / "packages" / "chrome" / "node_modules"),
-            "/usr/share/archivebox/lib/pnpm/packages/chrome/node_modules",
-        ],
-    )
-    env = assemble_env(
-        overrides={
-            "ABXPKG_LIB_DIR": str(lib_dir),
-            "NODE_MODULES_DIR": "",
-            "PNPM_BIN_DIR": "",
-            "NPM_BIN_DIR": "",
-            "NODE_PATH": node_path,
-        },
-        run_output_dir=tmp_path / "run",
-    )
-
-    assert env["NODE_MODULES_DIR"] == str(lib_dir / "pnpm" / "packages" / "chrome" / "node_modules")
-    assert env["PNPM_BIN_DIR"] == str(lib_dir / "pnpm" / "packages" / "chrome" / "node_modules" / ".bin")
-    assert env["NPM_BIN_DIR"] == str(lib_dir / "pnpm" / "packages" / "chrome" / "node_modules" / ".bin")
-    assert env["NODE_PATH"] == node_path
-    assert env["NODE_MODULES_DIR"] in env["NODE_PATH"].split(":")
+    ytdlp_binary = shutil.which(process_env["YTDLP_BINARY"], path=process_env["PATH"])
+    assert "VIRTUAL_ENV" not in base_env
+    assert ytdlp_binary
+    ytdlp_path = Path(ytdlp_binary)
+    assert ytdlp_path.is_file()
+    assert binary_env.get("PATH")
+    assert str(ytdlp_path.parent) in process_env["PATH"].split(os.pathsep)
+    assert json.loads(process_env["EXTRA_CONTEXT"])["snapshot_id"] == "current-snapshot"
+    assert process_env["SNAP_DIR"] == str(current_output_dir)
 
 
 def test_plugin_env_keeps_chrome_sandbox_enabled_by_default(tmp_path: Path) -> None:
@@ -253,7 +300,7 @@ def test_plugin_env_preserves_user_runtime_dirs_when_derived_config_has_defaults
     ):
         os.environ.pop(key, None)
 
-    plugins = discover_plugins()
+    plugins = PluginCatalog.discover()
     bus = create_bus(total_timeout=60.0, name=f"test_config_derived_runtime_dirs_{tmp_path.name}")
     data_dir = tmp_path / "data"
     crawl_dir = tmp_path / "crawl"
@@ -291,11 +338,11 @@ def test_plugin_env_preserves_user_runtime_dirs_when_derived_config_has_defaults
     assert env["CRAWL_DIR"] == str(crawl_dir)
     assert env["SNAP_DIR"] == str(snap_dir)
     assert env["ABXPKG_LIB_DIR"] == str(lib_dir)
-    assert env["PNPM_HOME"] == str(lib_dir / "pnpm" / "packages" / "chrome")
-    assert env["NPM_HOME"] == str(lib_dir / "pnpm" / "packages" / "chrome")
-    assert env["NODE_MODULES_DIR"] == str(lib_dir / "pnpm" / "packages" / "chrome" / "node_modules")
-    assert env["NODE_PATH"] == str(lib_dir / "pnpm" / "packages" / "chrome" / "node_modules")
-    assert env["PUPPETEER_CACHE_DIR"] == str(lib_dir / "puppeteer")
+    assert "PNPM_HOME" not in env
+    assert "NPM_HOME" not in env
+    assert env["NODE_MODULES_DIR"] == ""
+    assert env["NODE_PATH"] == ""
+    assert "PUPPETEER_CACHE_DIR" not in env
 
 
 def test_plugin_env_ignores_direct_chrome_profile_env(
@@ -303,7 +350,7 @@ def test_plugin_env_ignores_direct_chrome_profile_env(
 ) -> None:
     configured_profile = str(tmp_path / "stale" / "chrome_profile")
 
-    plugins = discover_plugins()
+    plugins = PluginCatalog.discover()
     bus = create_bus(total_timeout=60.0, name=f"test_config_archivebox_runtime_{tmp_path.name}")
 
     async def emit_runtime_config() -> None:
@@ -360,7 +407,7 @@ def test_plugin_env_omits_none_runtime_overrides(tmp_path: Path) -> None:
 
 
 def test_plugin_env_accepts_structured_extra_context_from_machine_events(tmp_path: Path) -> None:
-    plugins = discover_plugins()
+    plugins = PluginCatalog.discover()
     bus = create_bus(total_timeout=60.0, name=f"test_config_extra_context_{tmp_path.name}")
 
     async def emit_runtime_config() -> None:
@@ -379,7 +426,7 @@ def test_plugin_env_accepts_structured_extra_context_from_machine_events(tmp_pat
                 bus,
                 plugin=plugins["favicon"],
                 run_output_dir=tmp_path,
-                extra_context={"plugin": "favicon", "hook_name": "on_Snapshot__11_favicon.finite.bg"},
+                extra_context={"plugin": "favicon", "hook_name": "on_Snapshot__37_favicon.finite.bg"},
             ),
         ).to_env()
     finally:

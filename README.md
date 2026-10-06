@@ -10,7 +10,7 @@ exec >stdout.log
 -->
 <!--pytest-codeblocks:cont-->
 ```bash
-uvx abx-dl --plugins=title,wget 'https://example.com'
+uvx abx-dl 'https://example.com'
 ```
 
 <!--pytest-codeblocks:cont-->
@@ -22,29 +22,6 @@ test -s wget/example.com/index.html
 ```
 -->
 
-<!--pytest.mark.docker_required-->
-```bash
-set -Eeuo pipefail
-output_dir="$(mktemp -d)"
-image="${ABXDL_IMAGE:-archivebox/abx-dl:latest}"
-trap 'rm -rf "$output_dir"' EXIT
-docker run --rm \
-  --env OUTPUT_UID="$(id -u)" \
-  --env OUTPUT_GID="$(id -g)" \
-  --volume "$output_dir:/out" \
-  --entrypoint bash \
-  "$image" \
-  -c 'set -Eeuo pipefail
-cleanup() { chown -R "$OUTPUT_UID:$OUTPUT_GID" /out; }
-trap cleanup EXIT
-/venv/bin/abx-dl "$@"' \
-  -- --no-install --max-urls=1 --plugins=title,wget 'https://example.com'
-test -s "$output_dir/index.jsonl"
-test -s "$output_dir/title/title.txt"
-test -s "$output_dir/wget/example.com/index.html"
-grep -q 'Example Domain' "$output_dir/title/title.txt"
-grep -q 'Example Domain' "$output_dir/wget/example.com/index.html"
-```
 ---
 
 ✨ *Ever wish you could `yt-dlp`, `gallery-dl`, `wget`, `curl`, `puppeteer`, etc. all in one command?*
@@ -52,7 +29,7 @@ grep -q 'Example Domain' "$output_dir/wget/example.com/index.html"
 `abx-dl` is an all-in-one CLI tool for downloading URLs "by any means necessary".
 
 It's useful for scraping, downloading, OSINT, digital preservation, and more.
-`abx-dl` provides a simpler one-shot CLI interface to the [ArchiveBox plugin ecosystem](https://archivebox.github.io/abx-plugins/).
+`abx-dl` provides a simpler one-shot CLI interface to the [ArchiveBox plugin ecosystem](https://plugins.archivebox.io/).
 
 <img width="1000" height="1082" alt="Screenshot 2026-03-11 at 6 53 03 AM" src="https://github.com/user-attachments/assets/4e19d985-1a93-4f65-9970-2565be16b718" />
 
@@ -65,8 +42,12 @@ It's useful for scraping, downloading, OSINT, digital preservation, and more.
 
 <!--
 ```bash
-cd "$(mktemp -d)"
-exec >stdout.log
+set -Eeuo pipefail
+trap 'status=$?; printf "README crawl failed: %s (exit %s)\n" "$BASH_COMMAND" "$status" >failure.log; find . -maxdepth 3 -type f | sort >>failure.log; exit "$status"' ERR
+scratch_dir="${ABX_DL_DOCS_OUTPUT_DIR:-$(mktemp -d)}"
+mkdir -p "$scratch_dir"
+cd "$scratch_dir"
+exec >stdout.log 2>stderr.log
 ```
 -->
 <!--pytest-codeblocks:cont-->
@@ -85,7 +66,9 @@ test -s pdf/output.pdf
 test -s readability/content.html
 grep -q 'Example Domain' title/title.txt
 grep -q 'Example Domain' wget/example.com/index.html
-grep -q 'Example Domain' readability/content.txt
+# Readability extracts article body, which may omit the heading. The live
+# example.com DOM now does; title extraction is checked separately above.
+grep -Fq 'This domain is for use in documentation examples without needing permission.' readability/content.txt
 grep -q '"plugin": "wget".*"status": "succeeded"' index.jsonl
 grep -q '"plugin": "screenshot".*"status": "succeeded"' index.jsonl
 grep -q '"plugin": "pdf".*"status": "succeeded"' index.jsonl
@@ -100,25 +83,44 @@ grep -q '"plugin": "readability".*"status": "succeeded"' index.jsonl
 - audio, video, subtitles, playlists, comments
 - snapshot of the page as a PDF, screenshot, and [Singlefile](https://github.com/gildas-lormeau/single-file-cli) HTML
 - article text, `git` source code
-- [and much more](https://archivebox.github.io/abx-plugins/)...
+- [and much more](https://plugins.archivebox.io/)...
 
 <br/>
 
 #### 🧩 How does it work?
 
-`abx-dl` uses the **[Plugin Library](https://archivebox.github.io/abx-plugins/)** (shared with [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox)) to run a collection of downloading and scraping tools.
+`abx-dl` uses the **[Plugin Library](https://plugins.archivebox.io/)** (shared with [ArchiveBox](https://github.com/ArchiveBox/ArchiveBox)) to run a collection of downloading and scraping tools.
 
 Plugins are loaded from the installed [`abx-plugins`](https://pypi.org/project/abx-plugins/) package (or from `ABX_PLUGINS_DIR` if you override it) and execute in distinct phases:
-1. **Install phase** runner reads plugins `config.json`: `required_binaries` and emits `BinaryRequestEvent`s for `abxpkg.binary_service.BinaryService`, which resolves or installs binaries using built-in providers such as env, pip, npm, brew, apt, cargo, and browser-specific providers. `BinaryCacheService` and the `abx-dl` cache backend then project resolved state into `derived.env`.
-2. **CrawlSetup hooks** (`on_CrawlSetup__*`) launch/configure expensive crawl-scoped processes like chrome, or trigger side effects. they emit no stdout JSONL records.
-4. **Snapshot hooks** (`on_Snapshot__*`) run per URL to extract content and emit only `ArchiveResult`, `Snapshot`, and `Tag` records
+1. **Install phase** runner reads plugins `config.json`: `required_binaries` and emits `BinaryRequestEvent`s for `abxpkg.binary_service.BinaryService`, which resolves or installs binaries using built-in providers such as env, pip, npm, brew, apt, cargo, and browser-specific providers. `abxpkg` owns the persistent binary cache; `abx-dl` only projects resolved paths into the current run's in-memory config.
+2. **CrawlSetup hooks** (`on_CrawlSetup__*`) launch/configure expensive crawl-scoped processes like chrome, or trigger side effects. background hooks use their first stdout line as the readiness boundary and emit no stdout JSONL records.
+3. **Snapshot hooks** (`on_Snapshot__*`) run per URL to extract content. background hooks use their first stdout line as the readiness boundary; JSONL records after that are `ArchiveResult`, `Snapshot`, and `Tag`.
+
+Applications embedding the runtime use the same framework-free interfaces as
+the CLI: `PluginCatalog` for inventory, `PluginConfigResolver` for config,
+the service classes for explicit listener composition, typed events for phase
+dispatch, `execute_hook()` for a single finite hook, and `OutputManifest` for
+output metadata. These APIs accept plain mappings, filesystem paths,
+environment variables, and CLI arguments; they do not depend on Django or an
+application database.
+
+Standalone `download()` attaches both `CrawlService` (plugin crawl hooks) and
+`CrawlLifecycleService` (phase sequencing). Embedders can attach only the
+listener suites whose behavior they want and dispatch the corresponding typed
+events directly.
+
+`parse_input(source_text, catalog, output_dir)` is the framework-free import
+path for pasted text and bookmark/feed exports. It writes
+`staticfile/stdin.txt`, runs only plugins declaring
+`x-accepts-internal-input`, and returns metadata-preserving `Snapshot` facts at
+depth zero. It does not create a crawl, database row, or synthetic URL.
 
 
 <br/>
 
 #### ⚙️ Configuration
 
-Configuration is handled via environment variables plus a user config file under the platformdirs user config path (`<user-config>/abx/config.env`). Runtime-derived cache entries such as resolved binary paths are stored separately in `<user-config>/abx/derived.env`:
+Configuration is handled via environment variables plus a user config file under the platformdirs user config path (`<user-config>/abx/config.env`). Resolved binary paths are projected into the current run in memory; persistent binary state lives only in the abxpkg library cache:
 
 <!--
 ```bash
@@ -226,6 +228,31 @@ uvx abx-dl version
 abx-dl install wget title
 ```
 
+#### Docker
+
+The image includes the downloader plugins and their dependencies. Mount an
+output directory at `/out` to keep the downloaded files:
+
+<!--pytest.mark.docker_required-->
+```bash
+set -Eeuo pipefail
+output_dir="$(mktemp -d)"
+image="${ABXDL_IMAGE:-archivebox/abx-dl:latest}"
+trap 'rm -rf "$output_dir"' EXIT
+docker run --rm \
+  --volume "$output_dir:/out" \
+  "$image" \
+  --no-install --plugins=title,wget 'https://example.com'
+test -s "$output_dir/index.jsonl"
+test -s "$output_dir/title/title.txt"
+test -s "$output_dir/wget/example.com/index.html"
+grep -q 'Example Domain' "$output_dir/title/title.txt"
+grep -q 'Example Domain' "$output_dir/wget/example.com/index.html"
+```
+
+To persist browser personas, also mount their directory at `/data/personas`.
+The image does not create an anonymous persona volume.
+
 <br/>
 
 ### 🔠 Usage
@@ -303,13 +330,13 @@ abx-dl plugins wget title
 ```
 
 ```text
-abx-dl 'https://example.com'              # auto-installs missing deps on-the-fly
+abx-dl 'https://example.com'              # checks and installs missing deps before hooks run
 abx-dl --no-install 'https://example.com' # skips plugins with missing deps and emits warnings
 abx-dl install wget singlefile ytdlp      # installs dependencies for specific plugins only
 abx-dl plugins                            # checks which dependencies are available/missing
 ```
 
-Successful preflight installs are cached for 24 hours in `derived.env` under `ABX_INSTALL_CACHE`, keyed by binary name. If a binary was installed successfully recently, `abx-dl` skips re-running the install preflight for that binary. Cached abspaths are still validated at use time, and stale cache entries fall back to `abxpkg` provider resolution.
+Every preflight request is resolved through `abxpkg`. Compatible host binaries are selected first and projected into `ABXPKG_LIB_DIR/env/bin`; otherwise the configured managed provider installs and projects the dependency. Hook subprocesses then use the resolved Python or Node interpreter and projected runtime environment directly.
 
 The normal runtime flow after dependency preflight is:
 - `CrawlEvent` (internal lifecycle root)
@@ -319,9 +346,10 @@ The normal runtime flow after dependency preflight is:
 - `SnapshotCleanupEvent` / `CrawlCleanupEvent`
 
 Hook output contract:
+- `EXTRA_CONTEXT` is opaque correlation data reflected into output records only. Hooks must never inspect it. Snapshot hooks receive `--url`, `--snapshot-id`, and `--depth` as explicit arguments; archived titles/tags stay in filesystem data. Embedders provide `download(snapshot=Snapshot(...))` for an existing snapshot, not identity or depth hidden in configuration.
 - binary preflight is driven by plugin `required_binaries` and handled by `abxpkg`, not by plugin hooks
-- `on_CrawlSetup__*` hooks emit no stdout JSONL records
-- `on_Snapshot__*` hooks emit only `ArchiveResult`, `Snapshot`, and `Tag`
+- `on_CrawlSetup__*` background hooks emit a first stdout readiness line, but no stdout JSONL records
+- `on_Snapshot__*` background hooks emit a first stdout readiness line; hook JSONL records after that are only `ArchiveResult`, `Snapshot`, and `Tag`
 - the TUI and services consume structured events derived from those hook records
 
 Dependencies are installed to `<user-config>/abx/lib/{arch}/` using the appropriate package manager:
@@ -448,7 +476,7 @@ This repo includes an `abx-dl` skill for coding agents that need to run the stan
 
 `abx-dl` is built on these components:
 
-- **`abx_dl/plugins.py`** - Plugin discovery from `abx-plugins` or `ABX_PLUGINS_DIR`
+- **`abx_dl/catalog.py`** - Plugin discovery, selection, and config resolution from `abx-plugins` or `ABX_PLUGINS_DIR`
 - **`abx_dl/executor.py`** - Hook execution engine with config propagation
 - **`abx_dl/config.py`** - Environment variable configuration
 - **`abx_dl/cli.py`** - Rich CLI with live progress display
@@ -457,7 +485,7 @@ This repo includes an `abx-dl` skill for coding agents that need to run the stan
 
 - `abxbus` https://abxbus.archivebox.io https://github.com/archiveBox/abxbus
 - `abxpkg` https://abxpkg.archivebox.io https://github.com/archiveBox/abxpkg
-- `abx-plugins` https://abx-plugins.archivebox.io https://github.com/ArchiveBox/abx-plugins
+- `abx-plugins` https://plugins.archivebox.io https://github.com/ArchiveBox/abx-plugins
 - `archivebox` https://archivebox.io https://github.com/ArchiveBox/ArchiveBox
 - And lots more...
   - https://github.com/stars/pirate/lists/internet-archiving
@@ -467,3 +495,9 @@ This repo includes an `abx-dl` skill for coding agents that need to run the stan
 
 For more advanced use with collections, parallel downloading, a Web UI + REST API, etc.
 See: [`ArchiveBox/ArchiveBox`](https://github.com/ArchiveBox/ArchiveBox)
+
+`abx-dl` runs one snapshot at a time. `--snapshot-max-size` stops starting more
+hooks once reported output reaches the budget; cleanup still runs to preserve
+recordings. Accounting lives only in memory for that run, so retrying an output
+directory starts fresh and preserves partial artifacts until hooks overwrite them.
+Crawl-wide URL, size, and time limits belong to ArchiveBox and its database.
