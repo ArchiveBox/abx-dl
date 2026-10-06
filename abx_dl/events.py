@@ -2,10 +2,6 @@
 
 Events form this phase order during execution::
 
-    InstallEvent                                    # orchestrator preflight only
-    └── BinaryRequestEvent × N                      # from config.json required_binaries
-        └── abxpkg BinaryService → BinaryEvent
-
     CrawlEvent                                      # internal lifecycle root
     ├── CrawlSetupEvent                             # plugin on_CrawlSetup hooks run here
     │   ├── ProcessEvent (on_CrawlSetup hooks)
@@ -14,7 +10,7 @@ Events form this phase order during execution::
     │   └── SnapshotEvent (depth=0)
     │       ├── ProcessEvent (on_Snapshot hooks)
     │       │   ├── ProcessStdoutEvent
-    │       │   │   ├── SnapshotEvent (depth>0, ignored by abx-dl)
+    │       │   │   ├── SnapshotDiscoveredEvent
     │       │   │   ├── TagEvent
     │       │   │   └── ArchiveResultEvent (inline)
     │       │   └── ProcessCompletedEvent
@@ -35,8 +31,8 @@ Event types:
   typed events used by the rest of the runtime
 - **Command events** trigger actions: ProcessEvent, ProcessKillEvent,
   BinaryRequestEvent, MachineEvent
-- **Completion events** notify results: ProcessCompletedEvent,
-  ArchiveResultEvent, BinaryEvent
+- **Fact/completion events** notify results: SnapshotDiscoveredEvent,
+  ProcessCompletedEvent, ArchiveResultEvent, BinaryEvent
 
 abxbus behavior:
 - Each event has ``event_timeout`` — the hard deadline for the event and all its
@@ -54,6 +50,7 @@ from typing import Any, Literal
 from abxbus import BaseEvent, EventConcurrencyMode, EventHandlerConcurrencyMode
 from pydantic import ConfigDict, Field
 
+from .models import Snapshot
 from .output_files import OutputFile
 
 
@@ -74,8 +71,7 @@ class InstallEvent(BaseEvent):
     """Root pre-run phase for required binary resolution.
 
     Emitted by the orchestrator before CrawlEvent. BinaryService handles it by
-    reading each enabled plugin's ``config.json > required_binaries`` and
-    emitting BinaryRequestEvent records for provider plugins to satisfy.
+    reading enabled plugins' ``config.json > required_binaries`` declarations.
     """
 
     url: str
@@ -87,8 +83,8 @@ class InstallEvent(BaseEvent):
 class CrawlEvent(BaseEvent):
     """Root event: kicks off the full crawl → snapshot → cleanup lifecycle.
 
-    Emitted once by orchestrator.download() after InstallEvent completes.
-    CrawlService.on_CrawlEvent handles this by emitting the lifecycle chain:
+    Emitted once by orchestrator.download(). CrawlLifecycleService handles
+    this by emitting the lifecycle chain:
     CrawlSetupEvent → CrawlStartEvent → CrawlCleanupEvent → CrawlCompletedEvent.
     """
 
@@ -101,7 +97,7 @@ class CrawlEvent(BaseEvent):
 class CrawlSetupEvent(BaseEvent):
     """Phase: run all on_CrawlSetup hooks (daemons and shared runtime setup).
 
-    Emitted by CrawlService.on_CrawlEvent. Per-hook handlers are registered
+    Emitted by CrawlLifecycleService. Per-hook handlers are registered
     on this event, so they run serially in hook sort order. Crawl setup hooks
     are expected to prepare shared state and emit no stdout JSONL records.
     """
@@ -117,9 +113,8 @@ class CrawlSetupEvent(BaseEvent):
 class CrawlStartEvent(BaseEvent):
     """Phase: crawl setup finished, start the actual crawl (snapshot extraction).
 
-    Emitted by CrawlService.on_CrawlEvent after CrawlSetupEvent completes.
-    CrawlService.on_CrawlStartEvent emits SnapshotEvent when snapshot
-    execution is enabled for the current run.
+    Emitted by CrawlLifecycleService after CrawlSetupEvent completes.
+    CrawlLifecycleService emits SnapshotEvent for standalone execution.
     """
 
     url: str
@@ -131,7 +126,7 @@ class CrawlStartEvent(BaseEvent):
 class CrawlCleanupEvent(BaseEvent):
     """Phase: SIGTERM all background crawl hooks.
 
-    Emitted by CrawlService.on_CrawlEvent after snapshot phase completes.
+    Emitted by CrawlLifecycleService after snapshot phase completes.
     """
 
     url: str
@@ -150,7 +145,7 @@ class CrawlCompletedEvent(BaseEvent):
 
 
 class CrawlPauseEvent(BaseEvent):
-    """Request interruption of the current foreground hook and pause the crawl."""
+    """Request an outer-runner pause, independent of the active hook or phase."""
 
     event_concurrency: EventConcurrencyMode | None = EventConcurrencyMode.PARALLEL
     event_handler_concurrency: EventHandlerConcurrencyMode | None = EventHandlerConcurrencyMode.PARALLEL
@@ -158,21 +153,22 @@ class CrawlPauseEvent(BaseEvent):
 
 
 class CrawlAbortEvent(BaseEvent):
-    """Abort the crawl after the current interrupted hook has been handled."""
+    """Abort the whole crawl and release all paused schedulers into cleanup."""
 
+    user_initiated: bool = True
     event_concurrency: EventConcurrencyMode | None = EventConcurrencyMode.PARALLEL
     event_handler_concurrency: EventHandlerConcurrencyMode | None = EventHandlerConcurrencyMode.PARALLEL
     event_timeout: float | None = 60.0
 
 
 class CrawlResumeAndRetryEvent(BaseEvent):
-    """Resume the crawl by retrying the foreground hook that was interrupted."""
+    """Resume the crawl by retrying the hook that was interrupted."""
 
     event_timeout: float | None = 60.0
 
 
 class CrawlResumeAndSkipEvent(BaseEvent):
-    """Resume the crawl and leave the interrupted foreground hook skipped."""
+    """Resume the crawl and leave the interrupted hook skipped."""
 
     event_timeout: float | None = 60.0
 
@@ -183,15 +179,12 @@ class CrawlResumeAndSkipEvent(BaseEvent):
 class SnapshotEvent(BaseEvent):
     """Phase: run all on_Snapshot hooks (extraction + discovery).
 
-    Emitted by CrawlService.on_CrawlStartEvent as a child of
+    Emitted by CrawlLifecycleService as a child of
     CrawlStartEvent. Per-hook handlers are registered on this event.
 
-    Also emitted by SnapshotService.on_ProcessStdoutEvent when a hook
-    outputs ``{"type": "Snapshot", ...}`` JSONL. Snapshot hooks emit
-    ``ArchiveResult`` records for their own result and may also emit
-    ``Snapshot`` and ``Tag`` discovery records. In abx-dl, SnapshotService
-    ignores events with ``depth > 0``. ArchiveBox handles recursive crawling
-    by processing all depths.
+    Hook-emitted ``{"type": "Snapshot", ...}`` JSONL records become
+    SnapshotDiscoveredEvent facts instead. Discovery cannot accidentally
+    execute another snapshot.
     """
 
     event_handler_concurrency: EventHandlerConcurrencyMode | None = EventHandlerConcurrencyMode.SERIAL
@@ -203,15 +196,32 @@ class SnapshotEvent(BaseEvent):
     event_timeout: float | None = 300.0
 
 
+class SnapshotDiscoveredEvent(BaseEvent):
+    """Fact: a snapshot hook discovered a URL and its import metadata.
+
+    This is deliberately separate from ``SnapshotEvent``, which is a command
+    to execute snapshot hooks. Collection applications may persist these facts
+    or turn them into later work without discovery recursively executing work
+    inside abx-dl.
+    """
+
+    snapshot: Snapshot
+    plugin_name: str = ""
+    hook_name: str = ""
+    event_timeout: float | None = 10.0
+
+
 class SnapshotCleanupEvent(BaseEvent):
     """Phase: SIGTERM all background snapshot hooks.
 
-    Emitted by SnapshotService.on_SnapshotEvent after all snapshot hooks complete.
+    Emitted after snapshot hooks complete, or before a final-file consumer with
+    finalize_snapshot=False to flush producers without marking the snapshot done.
     """
 
     url: str
     snapshot_id: str
     output_dir: str
+    finalize_snapshot: bool = True
     event_timeout: float | None = 30.0
 
 
@@ -296,6 +306,9 @@ class ProcessStartedEvent(BaseEvent):
     process_type: str = ""
     worker_type: str = ""
     start_ts: str = ""
+    # Runtime-only barrier: an interrupted startup is neither readiness failure
+    # nor permission to advance. Wait until skip is recorded or retry is ready.
+    interruption_done: asyncio.Event | None = Field(default=None, exclude=True, repr=False)
     subprocess: asyncio.subprocess.Process = Field(exclude=True, repr=False)
     stdout_file: Path = Field(exclude=True, repr=False)
     stderr_file: Path = Field(exclude=True, repr=False)
@@ -324,6 +337,9 @@ class ProcessCompletedEvent(BaseEvent):
     stderr: str
     exit_code: int
     status: Literal["succeeded", "failed", "skipped"]
+    # Set from scheduler intent, not inferred from an exit code: the same
+    # signal can mean user cancellation, normal recorder cleanup, or a crash.
+    cancelled: bool = False
     output_dir: str
     output_files: list[OutputFile] = Field(default_factory=list)
     is_background: bool = False
@@ -343,15 +359,16 @@ class ProcessStdoutEvent(BaseEvent):
     parses the line and checks for the JSON shape it cares about. In the
     current hook contract:
 
-    - snapshot hooks emit ``{"type": "Snapshot", ...}`` → SnapshotEvent
+    - snapshot hooks emit ``{"type": "Snapshot", ...}`` → SnapshotDiscoveredEvent
     - snapshot hooks emit ``{"type": "Tag", ...}`` → TagEvent
     - snapshot hooks emit ``{"type": "ArchiveResult", ...}`` → ArchiveResultEvent
 
     Context fields from the parent ProcessEvent are passed through for
     services that need them.
 
-    Uses ``await bus.emit(...).now()`` (queue-jump) so the emitted typed event and its
-    entire handler chain complete before the next stdout line is read.
+    Uses ``await bus.emit(...).now()`` (queue-jump) so direct stdout consumers
+    finish before the next line is read. Consumers may enqueue downstream domain
+    events without holding the subprocess open while those event handlers run.
     """
 
     line: str
@@ -364,16 +381,36 @@ class ProcessStdoutEvent(BaseEvent):
     event_timeout: float | None = 360.0
 
 
+class ProcessStderrEvent(BaseEvent):
+    """A diagnostic line for live progress, NOT a hook protocol record.
+
+    Background hooks deliberately stay silent on stdout until they are ready.
+    Stderr can report dependency waits, PID/CDP details or errors before/after
+    that boundary. Giving stderr its own event lets users see those diagnostics
+    without releasing the scheduler early or interpreting JSON logs as results.
+    Never merge this channel into ProcessStdoutEvent for display convenience.
+    """
+
+    line: str
+    plugin_name: str = ""
+    hook_name: str = ""
+    output_dir: str = ""
+    start_ts: str = ""
+    end_ts: str = ""
+    event_timeout: float | None = 360.0
+    # Consumers receive diagnostics live; the process completion record and
+    # hook log own their durable copy. No later runtime query needs this line.
+    event_ttl: float | None = 0
+
+
 # ── Machine config update ────────────────────────────────────────────────────
 
 
 class MachineEvent(BaseEvent):
     """Update runtime machine config.
 
-    Emitted internally by services like ``BinaryService``. Handled by
-    ``MachineService.on_MachineEvent``, which updates either runtime
-    ``user_config`` or ``derived_config`` and persists derived values to
-    ``derived.env`` for future runs.
+    Consumers reconstruct the current runtime config from these events in bus
+    history. No machine config derived during a run is persisted by abx-dl.
     """
 
     model_config = ConfigDict(populate_by_name=True)
@@ -408,9 +445,12 @@ class ArchiveResultEvent(BaseEvent):
        fields (output_files, start_ts, end_ts) reflect the current process
        context at the moment the line was emitted.
 
-    2. **Synthetic fallback**: on ProcessCompletedEvent, only if the hook didn't
-       already report an ArchiveResult — e.g. failed (nonzero exit) or succeeded
-       with output files but no explicit JSONL output.
+    2. **Completion reconciliation**: an abnormal exit corrects any earlier
+       result to failed (or skipped for the explicit skipped sentinel). Without
+       a reported result, a clean exit produces noresult, never inferred success
+       from files that may be metadata or leftovers from another hook/attempt.
+       A cancelled event withdraws the attempt from the DB rather than storing
+       a failure: the user stopped execution before its outcome was known.
 
     Both cases carry output_files, start_ts, end_ts copied from the process context.
     """

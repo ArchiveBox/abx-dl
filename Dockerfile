@@ -2,8 +2,34 @@
 
 # Dockerfile for abx-dl. This image owns the shared downloader runtime layer:
 # Python, Node, abx-dl/abxpkg/abx-plugins, Chromium, and downloader plugin-managed tools.
-# ArchiveBox-specific server pieces such as sonic and supervisor intentionally
-# remain owned by the ArchiveBox image.
+# WHY: abx-dl is the reusable downloader runtime. Only extraction dependencies
+# belong here. ArchiveBox-only services (Sonic, OpenCode, supervisor, Django)
+# must be installed in ArchiveBox's added layers, never this shared base.
+# REQUIRED INSTALLATION CONTRACT — do not work around failures:
+# 1. IMAGE CONSTRUCTION: preinstall ALL plugins supported by runtime="abx-dl"
+#    and ALL their required_binaries, including disabled-by-default plugins
+#    (Java/OpenDataLoader, TLSNotary, OpenTimestamps, Claude capture tools).
+#    Use the normal plugin dependency pipeline: abx-dl install -> config.json
+#    required_binaries -> abxpkg. Enabled defaults control captures, NOT image
+#    contents. Never add manual apt/pip/npm installs to hide pipeline failures.
+#    OS/interpreter bootstrap needed to run that pipeline is a separate concern;
+#    it must not become a second hand-maintained list of plugin dependencies.
+# 2. FINISHED IMAGE: every dependency is already present in the image layers.
+#    Verify the ENTIRE supported catalog offline as UID 911. Installation must
+#    discover the existing binaries and be a no-op: no downloads, package
+#    installs, sudo, or root repair. A missing dependency means the image build
+#    or dependency discovery is broken; fix that cause and rebuild the image.
+#    Never change the runtime verification to root or preinstall before it.
+# 3. NON-CONTAINER CI: test real runtime auto-installation through the same
+#    CLI/required_binaries/abxpkg path users invoke. GitHub's runner has
+#    passwordless sudo; abxpkg must escalate automatically when needed. Never
+#    preinstall test dependencies manually or wrap the tested command in sudo
+#    to conceal a broken installer. This is distinct from the image no-op test.
+# 4. SIZE: the complete compressed image budget is 900 MiB. Only mechanical or
+#    internal optimizations preserving ALL user-facing functionality are allowed.
+#    Never remove dependencies, disable plugins/features, weaken assertions, or
+#    skip checks to pass. If the complete image exceeds the limit, LET CI FAIL
+#    and explicitly ask the maintainer what to do. Do not raise it unilaterally.
 #
 # Build from the abx-dl package directory:
 #   docker buildx build ./abx-dl -f ./abx-dl/Dockerfile \
@@ -12,10 +38,13 @@
 #       --build-context abx-plugins=./abx-plugins \
 #       -t archivebox/abx-dl:dev
 
-ARG NODE_VERSION=24
+ARG NODE_VERSION=24.18.0
+ARG UV_VERSION=0.10.6
 
 FROM --platform=$TARGETPLATFORM node:${NODE_VERSION}-trixie-slim AS node-runtime
 FROM --platform=$TARGETPLATFORM debian:trixie-slim AS abx-dl-runtime-base
+
+ARG UV_VERSION
 
 LABEL name="abx-dl" \
     maintainer="Nick Sweeting <dockerfile@archivebox.io>" \
@@ -46,8 +75,8 @@ ENV TZ=UTC \
     PIP_ONLY_BINARY=aiohttp \
     npm_config_loglevel=error
 
-ENV PYTHON_VERSION=3.13 \
-    NODE_VERSION=24
+ENV PYTHON_VERSION=3.13.12 \
+    NODE_VERSION=24.18.0
 
 ENV ARCHIVEBOX_USER=archivebox \
     DEFAULT_ARCHIVEBOX_UID=911 \
@@ -58,7 +87,6 @@ ENV CODE_DIR=/app \
     DATA_DIR=/out \
     CONFIG_DIR=/opt/archivebox \
     ABXPKG_LIB_DIR=/opt/archivebox/lib \
-    PLAYWRIGHT_BROWSERS_PATH=/opt/archivebox/lib/playwright/cache \
     PERSONAS_DIR=/data/personas \
     CHROME_HEADLESS=true \
     CHROME_SANDBOX=false \
@@ -96,7 +124,7 @@ RUN (echo "[i] Docker build for abx-dl starting..." \
 RUN echo "[+] APT Installing abx-dl bootstrap dependencies for $TARGETPLATFORM..." \
     && apt-get update -qq \
     && apt-get install -qq -y \
-        ca-certificates curl dumb-init util-linux procps openssl unzip xz-utils zlib1g \
+        ca-certificates curl dumb-init findutils util-linux procps openssl unzip xz-utils zlib1g \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=node-runtime /usr/local /opt/node
@@ -104,12 +132,15 @@ COPY --from=node-runtime /usr/local /opt/node
 RUN export PATH="/opt/node/bin:$PATH" \
     && (which node && which npm) | tee -a /VERSION.txt
 
-RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/bin sh
+RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | env UV_INSTALL_DIR=/bin sh
 
+# Normalize the managed interpreter in its creation layer so cache fingerprints
+# survive OCI layer materialization without copying the Python tree up later.
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
     echo "[+] UV Creating /venv using python ${PYTHON_VERSION} for ${TARGETPLATFORM}..." \
     && uv venv /venv --python "${PYTHON_VERSION}" \
     && uv pip install setuptools pip wheel \
+    && touch -h -d "@$(date +%s)" "$(readlink -f /venv/bin/python)" \
     && (which python3 && which uv && uv python find) | tee -a /VERSION.txt
 
 ########################################################################################################
@@ -120,8 +151,16 @@ COPY --from=abxbus --chown=root:root --chmod=755 pyproject.toml README.md LICENS
 COPY --from=abxpkg --chown=root:root --chmod=755 pyproject.toml README.md LICENSE /src/abxpkg/
 COPY --from=abx-plugins --chown=root:root --chmod=755 pyproject.toml README.md LICENSE /src/abx-plugins/
 COPY --chown=root:root --chmod=755 pyproject.toml README.md LICENSE "$CODE_DIR/"
-RUN --mount=type=bind,source=pyproject.toml,target=/app/pyproject.toml \
-    --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
+# Release automation changes only these version fields on its follow-up commit.
+# Install a canonical version while building the expensive browser/tool layer so
+# that metadata-only bumps do not invalidate it; the real versions are overlaid
+# from the original contexts after every binary has been installed and checked.
+RUN sed -i -E 's/^version = "[^"]+"/version = "0.0.0"/' \
+        /src/abxbus/pyproject.toml \
+        /src/abxpkg/pyproject.toml \
+        /src/abx-plugins/pyproject.toml \
+        "$CODE_DIR/pyproject.toml"
+RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
     echo "[+] UV Installing external Python dependencies from local package metadata..." \
     && /venv/bin/python3 -c 'import re, tomllib; paths = ["/src/abxbus/pyproject.toml", "/src/abxpkg/pyproject.toml", "/src/abx-plugins/pyproject.toml", "/app/pyproject.toml"]; skip = {"abxbus", "abxpkg", "abx-plugins", "abx-dl"}; deps = []; [deps.extend(tomllib.load(open(path, "rb"))["project"].get("dependencies", [])) for path in paths]; seen = set(); print("\n".join(dep for dep in deps if (name := re.split(r"[<>=!~;\\[]", dep, 1)[0].strip().lower()) not in skip and not (dep in seen or seen.add(dep))))' > /tmp/abx-dl-requirements.txt \
     && uv pip install --refresh -r /tmp/abx-dl-requirements.txt
@@ -130,98 +169,161 @@ COPY --from=abxbus --chown=root:root --chmod=755 abxbus /src/abxbus/abxbus
 COPY --from=abxpkg --chown=root:root --chmod=755 abxpkg /src/abxpkg/abxpkg
 COPY --from=abx-plugins --chown=root:root --chmod=755 abx_plugins /src/abx-plugins/abx_plugins
 COPY --chown=root:root --chmod=755 abx_dl "$CODE_DIR/abx_dl"
-COPY --chown=root:root --chmod=755 .git "$CODE_DIR/.git"
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
     echo "[*] Installing local abxbus/abxpkg/abx-plugins/abx-dl Python source code..." \
-    && COMMIT_HASH="$( \
-        if [[ -f "$CODE_DIR/.git/HEAD" ]]; then \
-            HEAD_REF="$(cat "$CODE_DIR/.git/HEAD")"; \
-            if [[ "$HEAD_REF" =~ ^[0-9a-fA-F]{40}$ ]]; then \
-                echo "$HEAD_REF"; \
-            elif [[ "$HEAD_REF" == ref:\ * ]]; then \
-                REF_PATH="${HEAD_REF#ref: }"; \
-                cat "$CODE_DIR/.git/$REF_PATH" 2>/dev/null || awk -v ref="$REF_PATH" '$2 == ref {print $1}' "$CODE_DIR/.git/packed-refs" 2>/dev/null || true; \
-            fi; \
-        fi)" \
-    && if [[ "$COMMIT_HASH" =~ ^[0-9a-fA-F]{40}$ ]]; then echo "COMMIT_HASH=$COMMIT_HASH" | tee -a /VERSION.txt; fi \
     && uv pip install --no-deps /src/abxbus /src/abxpkg /src/abx-plugins "$CODE_DIR" \
     && /usr/bin/uv pip show abx-dl | tee -a /VERSION.txt \
     && rm -f /venv/bin/uv /venv/bin/uvx \
     && rm -rf /venv/lib/python3.*/site-packages/pip* /venv/lib/python3.*/site-packages/setuptools* /venv/lib/python3.*/site-packages/wheel* /venv/bin/pip /venv/bin/pip3 /venv/bin/pip3.* /venv/bin/wheel \
-    && (which abx-dl && abx-dl version) | tee -a /VERSION.txt
+    && (which abx-dl && abx-dl --version) | tee -a /VERSION.txt
 
 ########################################################################################################
 FROM abx-dl-runtime-base
 
 COPY --from=abx-dl-builder /venv /venv
 COPY --from=abx-dl-builder /VERSION.txt /VERSION.txt
+COPY --chown=root:root --chmod=755 bin/docker_entrypoint.sh /usr/local/bin/abx-dl-docker-entrypoint
 
 RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_ARCHIVEBOX_UID}..." \
     && groupadd --system "$ARCHIVEBOX_USER" \
     && useradd --system --create-home --gid "$ARCHIVEBOX_USER" --groups audio,video "$ARCHIVEBOX_USER" \
     && usermod -u "$DEFAULT_ARCHIVEBOX_UID" "$ARCHIVEBOX_USER" \
     && groupmod -g "$DEFAULT_ARCHIVEBOX_GID" "$ARCHIVEBOX_USER" \
-    && install -d -o "$DEFAULT_ARCHIVEBOX_UID" -g "$DEFAULT_ARCHIVEBOX_GID" "$DATA_DIR" "$CONFIG_DIR" "$ABXPKG_LIB_DIR" "$PLAYWRIGHT_BROWSERS_PATH" \
+    && install -d -o "$DEFAULT_ARCHIVEBOX_UID" -g "$DEFAULT_ARCHIVEBOX_GID" "$DATA_DIR" "$CONFIG_DIR" "$ABXPKG_LIB_DIR" \
     && echo "ARCHIVEBOX_USER=$ARCHIVEBOX_USER ARCHIVEBOX_UID=$(id -u "$ARCHIVEBOX_USER") ARCHIVEBOX_GID=$(id -g "$ARCHIVEBOX_USER")" | tee -a /VERSION.txt
 
-RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.npm,sharing=locked,id=npm-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/npm,sharing=locked,id=abxpkg-npm-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/pnpm,sharing=locked,id=abxpkg-pnpm-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/pip,sharing=locked,id=pip-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/root/.cache/ms-playwright,sharing=locked,id=browsers-$TARGETARCH$TARGETVARIANT \
-    --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=abxpkg-tmp-$TARGETARCH$TARGETVARIANT \
-    echo "[+] Installing Chrome and plugin dependencies..." \
-    && apt-get update -qq \
-    && apt-get install -qq -y --no-install-recommends binutils \
-    && export HOME=/var/tmp/abxpkg-cache ABXPKG_TMP_CACHE_DIR=/var/tmp/abxpkg-cache \
-    && python3 -c 'from abx_dl.models import discover_plugins; [print(f"export {plugin.enabled_key}=True") for plugin in discover_plugins(runtime="abx-dl").values() if plugin.enabled_key in plugin.config.properties]' > /tmp/abx-dl-enable-plugins.env \
-    && sort /tmp/abx-dl-enable-plugins.env | tee -a /VERSION.txt \
-    && source /tmp/abx-dl-enable-plugins.env \
-    && ABXPKG_NO_CACHE=True ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 abx-dl install chrome \
-    && ABXPKG_NO_CACHE=True ABXPKG_INSTALL_TIMEOUT=900 ABXPKG_POSTINSTALL_SCRIPTS=True ABXPKG_MIN_RELEASE_AGE=0 TIMEOUT=900 abx-dl install \
-    && mkdir -p "$ABXPKG_LIB_DIR/env/bin" \
-    && ln -sf /usr/bin/git "$ABXPKG_LIB_DIR/env/bin/git" \
-    && rm -rf "$ABXPKG_LIB_DIR"/playwright/cache/ffmpeg-* \
-    && find "$ABXPKG_LIB_DIR"/chromewebstore -type f -name '*.crx' -delete \
-    && find "$ABXPKG_LIB_DIR"/playwright/cache -path '*/chrome-linux*/locales/*' ! -name 'en-US.pak' -delete \
-    && find "$ABXPKG_LIB_DIR"/playwright/cache -path '*/chrome-linux*/*.pak.info' -delete \
-    && rm -f "$ABXPKG_LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/libvk_swiftshader.so "$ABXPKG_LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/libGLESv2.so \
-    && rm -f "$ABXPKG_LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/chrome_200_percent.pak \
-    && rm -rf "$ABXPKG_LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/MEIPreload "$ABXPKG_LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/PrivacySandboxAttestationsPreloaded "$ABXPKG_LIB_DIR"/playwright/cache/chromium-*/chrome-linux*/WidevineCdm \
-    && rm -rf "$ABXPKG_LIB_DIR"/pnpm/packages/singlefile/node_modules/.pnpm/selenium-webdriver@*/node_modules/selenium-webdriver/bin/macos "$ABXPKG_LIB_DIR"/pnpm/packages/singlefile/node_modules/.pnpm/selenium-webdriver@*/node_modules/selenium-webdriver/bin/windows \
-    && if [[ "$TARGETARCH" == "arm64" ]]; then rm -f "$ABXPKG_LIB_DIR"/pnpm/packages/liteparse/node_modules/.pnpm/@llamaindex+liteparse@*/node_modules/@llamaindex/liteparse/liteparse.linux-x64-gnu.node "$ABXPKG_LIB_DIR"/pnpm/packages/liteparse/node_modules/.pnpm/@llamaindex+liteparse@*/node_modules/@llamaindex/liteparse/libpdfium.so; fi \
-    && find "$ABXPKG_LIB_DIR"/pnpm /opt/node -type f -name '*.map' -delete \
+# abxpkg fingerprints installed files by size, mode, owner, and nanosecond
+# mtime. Install and compile everything first, then canonicalize mtimes to a
+# fixed epoch because OCI layer materialization cannot preserve arbitrary
+# installer mtimes consistently. checked-hash pycs remain valid after the
+# normalization. This one scratch mount intentionally backs HOME,
+# XDG_CACHE_HOME, and ABXPKG_TMP_CACHE_DIR: package managers disagree about
+# cache locations, and leaving XDG pointed at /opt would silently bake their
+# downloads into the runtime image despite the BuildKit mount. Installed tools
+# and abxpkg's derived state remain under ABXPKG_LIB_DIR; only disposable
+# download state goes into this mount. After cleanup, the last in-layer install
+# uses the real runtime cache path once so uv may seed its tiny interpreter
+# index; a strict size cap prevents package payloads from slipping back in.
+RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=abxpkg-tmp-$TARGETARCH$TARGETVARIANT \
+    echo "[+] Installing Chrome, then the complete downloader plugin catalog..." \
+    && export HOME=/var/tmp/abxpkg-cache XDG_CACHE_HOME=/var/tmp/abxpkg-cache ABXPKG_TMP_CACHE_DIR=/var/tmp/abxpkg-cache \
+    && export ABX_DOCKER_PLUGINS="$(/venv/bin/python3 -c 'from abx_dl.catalog import PluginCatalog; print(" ".join(PluginCatalog.discover(runtime="abx-dl")))')" \
+    && abx-dl install chrome \
+    # Explicit names install every downloader plugin, including disabled opt-ins.
+    && abx-dl install $ABX_DOCKER_PLUGINS \
+    # pnpm installs both libc variants; Debian can only execute the glibc one.
+    # Keep Claude and all plugins installed, removing only the unusable variant.
+    && find "$ABXPKG_LIB_DIR/pnpm/packages/claudecode/node_modules" -type l -name 'claude-code-linux-*-musl' -delete \
+    && find "$ABXPKG_LIB_DIR/pnpm/packages/claudecode/node_modules/.pnpm" -maxdepth 1 -type d -name '@anthropic-ai+claude-code-linux-*-musl@*' -exec rm -rf {} + \
     && rm -rf /usr/lib/*-linux-gnu/dri /usr/lib/*-linux-gnu/libLLVM*.so* /usr/lib/*-linux-gnu/libz3.so.* \
     && rm -rf /usr/share/icons /usr/share/doc /usr/share/man /usr/share/bash-completion /usr/share/zsh /usr/share/info /usr/share/lintian /usr/share/bug \
-    && rm -rf /opt/node/include /opt/node/share/doc /opt/node/share/man \
-    && rm -f /opt/node/CHANGELOG.md /opt/node/README.md /opt/node/LICENSE \
+    && install -d -m 755 /usr/share/man/man1 \
     && rm -f /usr/lib/jvm/java-*-openjdk-*/lib/server/classes*.jsa \
-    && (find "$ABXPKG_LIB_DIR" -type f \( -name '*.so' -o -name '*.node' \) -exec strip --strip-unneeded {} + 2>/dev/null || true) \
-    && apt-get purge -y --auto-remove binutils \
     && rm -f /venv/bin/uv /venv/bin/uvx \
-    && find "$ABXPKG_LIB_DIR" \( ! -user "$DEFAULT_ARCHIVEBOX_UID" -o ! -group "$DEFAULT_ARCHIVEBOX_GID" \) -exec chown "$DEFAULT_ARCHIVEBOX_UID:$DEFAULT_ARCHIVEBOX_GID" {} + \
+    && find "$ABXPKG_LIB_DIR" \( ! -user "$DEFAULT_ARCHIVEBOX_UID" -o ! -group "$DEFAULT_ARCHIVEBOX_GID" \) -exec chown -h "$DEFAULT_ARCHIVEBOX_UID:$DEFAULT_ARCHIVEBOX_GID" {} + \
+    && STDLIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("stdlib"))')" \
+    && PURELIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
+    && /venv/bin/python -m compileall --invalidation-mode checked-hash -q "$STDLIB_DIR" "$PURELIB_DIR" \
+    # UvProvider exposes its installed package environments to hook scripts via
+    # PYTHONPATH. Compiling only /venv leaves those imports recompiling source on
+    # every hook because runtime PYTHONDONTWRITEBYTECODE=1 forbids cache writes.
+    # Compile matching-interpreter environments before normalizing mtimes;
+    # checked hashes keep this bytecode valid after that reproducibility step.
+    && PYTHON_LIB="$(/venv/bin/python -c 'import sys; print(f"python{sys.version_info.major}.{sys.version_info.minor}")')" \
+    && find "$ABXPKG_LIB_DIR/uv" -type d -path "*/lib/$PYTHON_LIB/site-packages" -prune -exec /venv/bin/python -m compileall --invalidation-mode checked-hash -q {} + \
+    && env HOME=/home/archivebox XDG_CACHE_HOME=/var/tmp/abxpkg-cache setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups abx-dl install $ABX_DOCKER_PLUGINS \
+    && find /venv "$ABXPKG_LIB_DIR" -exec touch -h -d '@946684800' {} + \
+    # Execution plans from root provisioning cannot serve the runtime user.
+    # Discard only those plans; keep valid runtime plans and binary provenance.
+    && setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups \
+        /usr/bin/uv run --no-project python -c 'import os; from pathlib import Path; from abxpkg.config import load_derived_cache, save_derived_cache; path = Path(os.environ["ABXPKG_LIB_DIR"]) / "env/derived.env"; records = load_derived_cache(path); [record.update(request_exec_projections={key: projection for key, projection in record["request_exec_projections"].items() if projection["validation"]["euid"] == os.geteuid()}) for record in records.values() if "request_exec_projections" in record]; save_derived_cache(path, records)' \
+    && find "$ABXPKG_LIB_DIR/cache" -mindepth 1 -maxdepth 1 -exec rm -rf {} + \
+    && env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox XDG_CACHE_HOME="$ABXPKG_LIB_DIR/cache" setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups abx-dl install $ABX_DOCKER_PLUGINS \
+    && CACHE_BYTES="$(du -sb "$ABXPKG_LIB_DIR/cache" | cut -f1)" \
+    && (( CACHE_BYTES < 1048576 )) \
     && rm -rf /var/lib/apt/lists/* /tmp/*
 
-RUN (echo -e "\n\n[+] abx-dl runtime versions" \
-    && abx-dl version \
-    && abxpkg load --binproviders=env /opt/node/bin/node \
-    && abxpkg load --binproviders=env /venv/bin/python3 \
-    && python3 -c 'from abx_dl.models import discover_plugins; [print(f"export {plugin.enabled_key}=True") for plugin in discover_plugins(runtime="abx-dl").values() if plugin.enabled_key in plugin.config.properties]' > /tmp/abx-dl-enable-plugins.env \
-    && source /tmp/abx-dl-enable-plugins.env \
-    && abx-dl plugins \
-    && abxpkg load --binproviders=env rg \
-    && ! command -v gcc \
-    && ! command -v g++ \
-    && ! command -v make \
-    && ! command -v cargo \
-    && ! command -v sonic \
-    && ! command -v supervisord \
-    && echo -e "\n\n[√] Finished abx-dl Docker build successfully." \
-    && echo -e "BUILD_END_TIME=$(date +"%Y-%m-%d %H:%M:%S %s")\n\n" \
-    ) | tee -a /VERSION.txt
+# These values are deliberately declared after the expensive tool layer. CI
+# canonicalizes version-only metadata before BuildKit hashes its contexts, then
+# supplies the exact released values here so autobumps invalidate only the
+# package overlay and provenance, never the installed browser/toolchain.
+ARG ABXBUS_VERSION
+ARG DIST_ABXPKG_VERSION
+ARG ABX_PLUGINS_VERSION
+ARG ABX_DL_VERSION
+ARG ABX_DL_COMMIT_HASH
+
+# The canonical build already installed and compiled these exact source trees;
+# reinstalling them here just to change four version strings would duplicate
+# every package in a new OCI layer and make the ArchiveBox child image repeat
+# those bytes again when repairing ownership. Metadata readers disagree here:
+# importlib reads METADATA, while uv also trusts the dist-info directory name.
+# Therefore copy/rename only that tiny directory and adjust RECORD; package
+# code remains untouched. PEP 376 explicitly allows an empty hash/size for an
+# installed RECORD entry, so blank only the METADATA checksum we intentionally
+# mutate instead of adding checksum-recalculation machinery. overlayfs cannot
+# rename a directory out of a lower OCI layer, hence the small copy + whiteout.
+RUN PURELIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
+    && for package_version in \
+        "abxbus|$ABXBUS_VERSION" \
+        "abxpkg|$DIST_ABXPKG_VERSION" \
+        "abx_plugins|$ABX_PLUGINS_VERSION" \
+        "abx_dl|$ABX_DL_VERSION"; do \
+        IFS='|' read -r package version <<< "$package_version"; \
+        [[ -n "$version" ]] || continue; \
+        old_name="${package}-0.0.0.dist-info"; \
+        new_name="${package}-${version}.dist-info"; \
+        cp -a "$PURELIB_DIR/$old_name" "$PURELIB_DIR/$new_name"; \
+        sed -i -E "s/^Version: .*/Version: $version/; s|^$old_name/|$new_name/|" "$PURELIB_DIR/$new_name/METADATA" "$PURELIB_DIR/$new_name/RECORD"; \
+        sed -i -E "s|^($new_name/METADATA),.*$|\1,,|" "$PURELIB_DIR/$new_name/RECORD"; \
+        rm -rf "$PURELIB_DIR/$old_name"; \
+    done
+RUN /usr/bin/uv pip show abx-dl | tee -a /VERSION.txt \
+    && if [[ "$ABX_DL_COMMIT_HASH" =~ ^[0-9a-fA-F]{40}$ ]]; then echo "COMMIT_HASH=$ABX_DL_COMMIT_HASH" | tee -a /VERSION.txt; fi
+
+# The diagnostics below do not install binaries, but they exercise both
+# check-mode and install-mode projections, whose derived cache shapes differ.
+# Stabilize once after all checks and only then take the baseline hash. The
+# final install is intentional and must not be removed as redundant: with
+# networking disabled, both abxpkg's derived records and uv's small runtime
+# index must remain byte-for-byte unchanged. If it repairs metadata or attempts
+# an install, the image build fails.
+RUN --network=none export ABX_DOCKER_PLUGINS="$(/venv/bin/python3 -c 'from abx_dl.catalog import PluginCatalog; print(" ".join(PluginCatalog.discover(runtime="abx-dl")))')" \
+    && env -u ABXPKG_TMP_CACHE_DIR HOME=/home/archivebox \
+    setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups \
+    bash -c '(echo -e "\n\n[+] abx-dl runtime versions" \
+        && abx-dl version \
+        && test -f "$(/venv/bin/python -c "import json; print(json.__cached__)")" \
+        && test -f "$(/venv/bin/python -c "import abxpkg.cli; print(abxpkg.cli.__cached__)")" \
+        && test -f "$(/venv/bin/python -c "import pydantic; print(pydantic.__cached__)")" \
+        && abxpkg load /opt/node/bin/node \
+        && abxpkg load /venv/bin/python3 \
+        && abx-dl plugins \
+        && abxpkg load rg \
+        && abxpkg load --binproviders=env --min-version=11.0.0 java \
+        && abxpkg run --binproviders=uv opendataloader-pdf --help \
+        && "$ABXPKG_LIB_DIR/pnpm/packages/claudecode/node_modules/.bin/claude" --version \
+        && ! command -v gcc \
+        && ! command -v g++ \
+        && ! command -v make \
+        && ! command -v cargo \
+        && ! command -v sonic \
+        && ! command -v supervisord \
+        && ! command -v opencode \
+        && test ! -e "$ABXPKG_LIB_DIR/pnpm/packages/opencode" \
+        && abx-dl install $ABX_DOCKER_PLUGINS \
+        && (find "$ABXPKG_LIB_DIR" -name derived.env -type f -exec sha256sum {} +; find "$XDG_CACHE_HOME" -type f -exec sha256sum {} +) | sort > /tmp/cache-before \
+        && abx-dl install $ABX_DOCKER_PLUGINS \
+        && (find "$ABXPKG_LIB_DIR" -name derived.env -type f -exec sha256sum {} +; find "$XDG_CACHE_HOME" -type f -exec sha256sum {} +) | sort > /tmp/cache-after \
+        && diff -u /tmp/cache-before /tmp/cache-after \
+        && rm -f /tmp/cache-before /tmp/cache-after \
+        && echo -e "\n\n[√] Finished abx-dl Docker build successfully." \
+        && echo -e "BUILD_END_TIME=$(date +"%Y-%m-%d %H:%M:%S %s")\n\n" \
+        )' | tee -a /VERSION.txt
 
 WORKDIR /out
-VOLUME ["/out", "/data/personas"]
-ENTRYPOINT ["dumb-init", "--", "abx-dl"]
+# Do not declare /data/personas: an anonymous nested volume hides personas in
+# ArchiveBox's documented bind mount of the parent /data collection directory.
+VOLUME ["/out"]
+ENTRYPOINT ["dumb-init", "--", "abx-dl-docker-entrypoint"]
 CMD ["--help"]

@@ -25,62 +25,22 @@ unset VIRTUAL_ENV
 -->
 <!--pytest-codeblocks:cont-->
 ```bash
+set -Eeuo pipefail
 uv sync
-uv run abx-dl --help
-uv run abx-dl plugins wget
+help_output="$(uv run abx-dl --help)"
+grep -q 'Usage:' <<<"$help_output"
 ```
 
-## User-Facing Setup
+## Plugin Inspection
 
-<!--
 ```bash
-cd "$(mktemp -d)"
-exec >stdout.log
-```
--->
-<!--pytest-codeblocks:cont-->
-```bash
-uvx abx-dl dl --plugins=title,wget 'https://example.com'
-```
-
-<!--pytest-codeblocks:cont-->
-<!--
-```bash
-test -s index.jsonl
-test -s title/title.txt
-test -s wget/example.com/index.html
-```
--->
-
-Docker:
-
-<!--pytest.mark.skip(reason="requires interactive TTY")-->
-```bash
-docker run -it -v "$PWD:/out" archivebox/abxdl 'https://example.com'
+set -Eeuo pipefail
+plugin_info="$(uv run abx-dl plugins wget)"
+grep -q 'WGET_BINARY=wget' <<<"$plugin_info"
+grep -q 'on_Snapshot__35_wget' <<<"$plugin_info"
 ```
 
 ## Basic Usage
-
-<!--
-```bash
-cd "$(mktemp -d)"
-exec >stdout.log
-```
--->
-<!--pytest-codeblocks:cont-->
-```bash
-uv run abx-dl dl --plugins=title,wget --dir ./downloads 'https://example.com'
-```
-
-<!--pytest-codeblocks:cont-->
-<!--
-```bash
-test -s downloads/index.jsonl
-test -s downloads/title/title.txt
-test -s downloads/wget/example.com/index.html
-grep -q 'Example Domain' downloads/title/title.txt
-```
--->
 
 ```text
 uv run abx-dl dl --plugins=title,wget,screenshot,pdf 'https://example.com'
@@ -92,19 +52,20 @@ uv run abx-dl config --get TIMEOUT
 
 ## Verification
 
-Use targeted tests and real user-facing commands:
-
-<!--pytest.mark.skip(reason="pytest invocation")-->
-```bash
-uv run pytest tests/test_cli.py -q
-uv run prek run --all-files
-```
-
-For extractor behavior, run in a clean directory and inspect `index.jsonl` plus plugin output files:
+Use targeted live user-facing commands:
 
 ```bash
-cd "$(mktemp -d)"
-exec >stdout.log
-uv run --project /path/to/abx-dl abx-dl dl --plugins=title,wget 'https://example.com'
-find . -maxdepth 3 -type f | sort
+set -Eeuo pipefail
+tmpdir="$(mktemp -d)"
+cd "$tmpdir"
+uv run --project /path/to/abx-dl abx-dl dl --plugins=chrome,consolelog,headers,wget 'https://example.com'
+test -s index.jsonl
 ```
+
+The main CI workflow runs the exhaustive repository suite and the separate Prek
+job runs every hook.
+Background hook scheduling is based only on `bg` vs `fg`; filename words like
+`daemon` and `finite` are human hints only. Background hooks advance the
+scheduler on their first stdout line or successful completion; that first stdout
+line must mean the hook is ready for the next hook to launch, and non-ready
+diagnostics belong on stderr.

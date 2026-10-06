@@ -213,9 +213,8 @@ async def graceful_kill_process(
     """Graceful shutdown of a live asyncio subprocess: SIGTERM → wait → SIGKILL.
 
     Uses ``process.wait()`` for reliable exit detection (tied to asyncio's
-    subprocess watcher). This is the right choice when we have the process
-    handle — i.e., killing a subprocess from the same handler that spawned it
-    (timeout path, exception path in ProcessService.on_ProcessEvent).
+    subprocess watcher). Hooks run in dedicated process groups, so signaling
+    the group reaches both an interpreter wrapper and the actual hook.
 
     Args:
         process: The asyncio subprocess to kill.
@@ -237,7 +236,7 @@ async def graceful_kill_process(
     except TimeoutError:
         pass
 
-    # Process ignored SIGTERM — force kill
+    # Process ignored SIGTERM — force kill the whole hook process group.
     _send_signal(pid, signal.SIGKILL)
     try:
         await asyncio.wait_for(process.wait(), timeout=2.0)
@@ -311,24 +310,3 @@ def _poll_intervals(total: float):
         yield interval
         elapsed += interval
         interval = min(interval * 1.5, 1.0)
-
-
-# ── Sync fire-and-forget (deprecated) ──────────────────────────────────────
-
-
-def safe_kill_process(pid_file: Path, cmd_file: Path | None = None, signal_num: int = 15) -> bool:
-    """Send a single signal after PID validation. No escalation.
-
-    Deprecated: prefer ``graceful_kill_by_pid_file()`` which does SIGTERM → wait
-    → SIGKILL escalation. This sync version is kept for callers that can't await.
-    """
-    if not validate_pid_file(pid_file, cmd_file):
-        pid_file.unlink(missing_ok=True)
-        return False
-
-    try:
-        pid = int(pid_file.read_text().strip())
-        os.kill(pid, signal_num)
-        return True
-    except (OSError, ValueError, ProcessLookupError):
-        return False

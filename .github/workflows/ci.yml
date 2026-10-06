@@ -1,0 +1,185 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    - cron: '37 2,10,18 * * *'
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Test platform (macOS runs only when changed)
+        type: choice
+        options: [linux, macos]
+        default: linux
+
+permissions:
+  actions: read
+  contents: read
+  packages: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
+
+jobs:
+  prepare:
+    name: Prepare the version before starting expensive jobs
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    outputs:
+      run_tests: ${{ steps.gate.outputs.run_tests }}
+      platform: ${{ steps.gate.outputs.platform }}
+      scheduled_key: ${{ steps.changes.outputs.key }}
+      tests: ${{ steps.matrix.outputs.tests }}
+      runner: ${{ steps.runner.outputs.use-runner || '["ubuntu-24.04"]' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          token: ${{ github.event_name == 'push' && secrets.RELEASE_GH_TOKEN || github.token }}
+
+      - id: version
+        if: github.event_name == 'push'
+        uses: ArchiveBox/monorepo/.github/actions/prepare-release-version@main
+        with:
+          package: abx-dl
+          branch: main
+          tag-prefix: v
+          version-scheme: patch
+
+      - name: Check scheduled macOS inputs
+        id: changes
+        if: github.event_name == 'schedule' || inputs.platform == 'macos'
+        uses: ArchiveBox/monorepo/.github/actions/changed-scheduled-inputs@main
+
+      - name: Select test platform and cadence
+        id: gate
+        env:
+          MACOS: ${{ github.event_name == 'schedule' || inputs.platform == 'macos' }}
+          CHANGED: ${{ steps.changes.outputs.changed }}
+          VERSION_READY: ${{ github.event_name != 'push' || steps.version.outputs.action == 'ready' || steps.version.outputs.action == 'reserved' }}
+        run: |
+          if [[ "$MACOS" == true ]]; then
+            echo 'platform=macos' >> "$GITHUB_OUTPUT"
+            echo "run_tests=$CHANGED" >> "$GITHUB_OUTPUT"
+          else
+            echo 'platform=linux' >> "$GITHUB_OUTPUT"
+            echo "run_tests=$VERSION_READY" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Select available CI capacity
+        id: runner
+        if: steps.gate.outputs.run_tests == 'true' && steps.gate.outputs.platform == 'linux' && (vars.UGNAS_CI_ENABLED != 'false' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main')
+        uses: ArchiveBox/monorepo/.github/actions/select-ci-runner@main
+        with:
+          github-token: ${{ secrets.RUNNER_STATUS_TOKEN }}
+
+      - name: Install uv
+        if: steps.gate.outputs.run_tests == 'true'
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.10.6"
+          enable-cache: false
+
+      - name: Build test matrix
+        if: steps.gate.outputs.run_tests == 'true'
+        id: matrix
+        env:
+          CI_TEST_PLATFORM: ${{ steps.gate.outputs.platform }}
+          UGNAS_CI_MAX_JOBS: ${{ vars.UGNAS_CI_MAX_JOBS || 3 }}
+        run: |
+          uv run --no-cache --no-project python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          cells = (
+              ("ubuntu-24.04", "3.12"),
+              ("ubuntu-24.04", "3.13"),
+              ("ubuntu-24.04", "3.14"),
+              ("macos-15", "3.12"),
+              ("macos-15", "3.13"),
+              ("macos-15", "3.14"),
+          )
+          test_files = sorted(
+              str(path)
+              for root in (Path("tests"), Path("server/tests"))
+              for path in root.glob("test_*.py")
+          )
+          if not test_files:
+              raise SystemExit("No test files discovered")
+
+          platform = os.environ["CI_TEST_PLATFORM"]
+          expected_files = []
+          matrix = []
+          durations = json.loads(Path(".github/test-durations.json").read_text())
+          batches = {}
+          for index, test_file in enumerate(test_files):
+              os_name, python_version = cells[index % len(cells)]
+              if platform == "macos":
+                  if os_name != "macos-15":
+                      continue
+              else:
+                  os_name = "ubuntu-24.04"
+              expected_files.append(test_file)
+              eligible = os_name == "ubuntu-24.04" and "# ci-runner: hosted" not in Path(test_file).read_text().splitlines()[:5]
+              # Keep each file's Python assignment. Only batch measured short,
+              # ordinary tests; plugin-specific tests remain in abx-plugins.
+              if eligible and durations.get(test_file, 60) < 30:
+                  batches.setdefault((os_name, python_version), []).append(test_file)
+              else:
+                  matrix.append({"file": test_file, "files": [test_file], "os": os_name, "python": python_version, "ugnas": False})
+          for (os_name, python_version), paths in batches.items():
+              matrix.append({"file": f"batch/py{python_version}", "files": paths, "os": os_name, "python": python_version, "ugnas": False})
+          matrix.sort(key=lambda item: sum(durations.get(path, 60) for path in item["files"]), reverse=True)
+          eligible = [item for item in reversed(matrix) if item["os"] == "ubuntu-24.04" and not any("# ci-runner: hosted" in Path(path).read_text().splitlines()[:5] for path in item["files"])]
+          for item in eligible[:max(0, int(os.environ["UGNAS_CI_MAX_JOBS"]))]:
+              item["ugnas"] = True
+          for item in matrix:
+              item["files_arg"] = " ".join(item["files"])
+          assigned_files = [path for entry in matrix for path in entry["files"]]
+          assigned_cells = {(entry["os"], entry["python"]) for entry in matrix}
+          if sorted(assigned_files) != expected_files or len(assigned_files) != len(set(assigned_files)):
+              raise SystemExit("Test matrix must assign every discovered file exactly once")
+          expected_cells = {("macos-15" if platform == "macos" else "ubuntu-24.04", python) for _, python in cells}
+          if assigned_cells != expected_cells:
+              raise SystemExit("Test matrix must cover every supported OS/Python cell")
+
+          with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+              output.write(f"tests={json.dumps(matrix, separators=(',', ':'))}\n")
+          print(json.dumps(matrix, indent=2))
+          PY
+
+  tests:
+    needs: prepare
+    if: needs.prepare.outputs.run_tests == 'true'
+    name: Full test suite
+    uses: ./.github/workflows/test.yml
+    with:
+      tests: ${{ needs.prepare.outputs.tests }}
+      platform: ${{ needs.prepare.outputs.platform }}
+      runner: ${{ needs.prepare.outputs.runner }}
+    secrets: inherit
+
+  docker:
+    needs: prepare
+    if: needs.prepare.outputs.run_tests == 'true' && needs.prepare.outputs.platform == 'linux'
+    name: Docker build and test
+    uses: ./.github/workflows/docker.yml
+    with:
+      checkout_ref: ${{ github.sha }}
+      push_digests: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    secrets: inherit
+
+  scheduled-complete:
+    name: 'Scheduled inputs: ${{ needs.prepare.outputs.scheduled_key }}'
+    needs: [prepare, tests]
+    if: needs.prepare.outputs.run_tests == 'true' && needs.prepare.outputs.platform == 'macos'
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo 'Scheduled macOS coverage completed successfully.'

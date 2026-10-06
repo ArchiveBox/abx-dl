@@ -7,9 +7,8 @@ the entire lifecycle. Everything else is driven by services reacting to events.
 
 Full event tree for a typical run::
 
-    InstallEvent                                # emitted here first by download()
-    └── BinaryRequestEvent × N                  # emitted from config.json required_binaries
-        └── abxpkg BinaryService → BinaryEvent
+    InstallEvent                                # dependency preflight
+    └── BinaryRequestEvent × N                  # config.json required_binaries
 
     CrawlEvent                                  # internal lifecycle root
     ├── CrawlSetupEvent                         # plugin on_CrawlSetup hooks run here
@@ -22,7 +21,7 @@ Full event tree for a typical run::
     │   └── SnapshotEvent (depth=0)
     │       ├── ProcessEvent  (on_Snapshot hooks)
     │       │   ├── ProcessStdoutEvent
-    │       │   │   ├── SnapshotEvent (depth>0, ignored by abx-dl)
+    │       │   │   ├── SnapshotDiscoveredEvent
     │       │   │   ├── TagEvent
     │       │   │   └── ArchiveResultEvent (from hook JSONL)
     │       │   └── ProcessCompletedEvent
@@ -39,9 +38,8 @@ Full event tree for a typical run::
 Result collection:
 - ArchiveResultEvents are only emitted during the snapshot phase (under
   CrawlStartEvent → SnapshotEvent).
-- Install preflight emits ``BinaryRequestEvent`` records from
-  ``required_binaries``. abxpkg's ``BinaryService`` resolves or installs them,
-  and ``BinaryCacheService`` projects runtime cache/env state.
+- Install preflight resolves ``required_binaries`` through abxpkg and projects
+  the resulting runtime environment before any hooks start.
 - Crawl setup hooks emit no stdout JSONL records. Snapshot hooks emit
   ``ArchiveResult`` and may also emit ``Snapshot`` and ``Tag``.
 - ArchiveResultService emits ArchiveResultEvents in two cases: directly from
@@ -61,11 +59,9 @@ Key abxbus concepts used:
   see config updates from all prior hooks.
 
 - **Queue-jump** (``await bus.emit(...).now()``): the emitted event and ALL its
-  descendants complete synchronously before the await returns. This is how
-  config propagation works: InstallEvent emits BinaryRequestEvent →
-  abxpkg resolves/installs it → BinaryEvent updates runtime binary state,
-  and snapshot hook stdout records like ``ArchiveResult`` / ``Snapshot`` / ``Tag``
-  are also fully routed before the next stdout line is read.
+  descendants complete synchronously before the await returns. Snapshot hook
+  stdout records like ``ArchiveResult`` / ``Snapshot`` / ``Tag`` are fully
+  routed before the next stdout line is read.
 
 - **Fire-and-forget** (``bus.emit(...)`` without await): the event becomes a
   concurrent child of the current event. It runs in the background and is
@@ -78,201 +74,63 @@ Key abxbus concepts used:
 
 from __future__ import annotations
 
-import asyncio
-import json
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from contextlib import nullcontext
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Literal, Any
 
 from abxbus import EventBus, EventBusMiddleware, EventConcurrencyMode, EventHandlerCompletionMode, EventHandlerConcurrencyMode
-from abxpkg.binary_service import BinaryCacheBackend, BinaryCacheService, BinaryRequestEvent, BinaryService
+from abxpkg.binary_service import BinaryRequestEvent, BinaryService
 
-from .config import get_initial_env, get_derived_config
+from .config import GlobalConfig, RuntimeConfig, ensure_default_persona_dir
+from .catalog import PluginCatalog
 from .events import (
     CrawlEvent,
     InstallEvent,
     MachineEvent,
+    SnapshotDiscoveredEvent,
+    SnapshotEvent,
     slow_warning_timeout,
 )
-from .heartbeat import CrawlHeartbeat
-from .models import Snapshot, write_jsonl
-from .models import Hook, Plugin, RequiredBinary, discover_plugins, filter_plugins
+from .models import Hook, Plugin, RequiredBinary, Snapshot, write_jsonl
 from .services import (
-    AbxDlEnvConfigFileBinaryCacheBackend,
     ArchiveResultService,
+    CrawlLifecycleService,
     CrawlService,
-    MachineService,
-    ProcessService,
     PluginBinariesService,
+    PluginBinaryEnvService,
+    ProcessService,
     SnapshotService,
     TagService,
 )
 
 
-def setup_services(
-    bus: EventBus,
-    *,
-    plugins: dict[str, Plugin],
-    url: str | None = None,
-    snapshot: Snapshot | None = None,
-    output_dir: Path | None = None,
-    config_overrides: dict[str, Any] | None = None,
-    derived_config_overrides: dict[str, Any] | None = None,
-    install_enabled: bool = True,
-    crawl_setup_enabled: bool = True,
-    crawl_start_enabled: bool = True,
-    snapshot_cleanup_enabled: bool = True,
-    crawl_cleanup_enabled: bool = True,
-    crawl_completed_enabled: bool = True,
-    crawl_event_enabled: bool = True,
-    crawl_setup_phase_timeout: float = 300.0,
-    snapshot_phase_timeout: float = 300.0,
-    snapshot_cleanup_phase_timeout: float = 300.0,
-    crawl_cleanup_phase_timeout: float = 300.0,
-    persist_derived: bool = True,
-    auto_install: bool = True,
-    emit_jsonl: bool = True,
-    interactive_tty: bool | None = None,
-    abort_requested: Any | None = None,
-    MachineService: type[MachineService] | None = MachineService,
-    PluginBinariesService: type[PluginBinariesService] | None = PluginBinariesService,
-    BinaryCacheService: type[BinaryCacheService] | None = BinaryCacheService,
-    BinaryCacheBackend: BinaryCacheBackend | None = None,
-    BinaryService: type[BinaryService] | None = BinaryService,
-    ProcessService: type[ProcessService] | None = ProcessService,
-    ArchiveResultService: type[ArchiveResultService] | None = ArchiveResultService,
-    TagService: type[TagService] | None = TagService,
-    CrawlService: type[CrawlService] | None = CrawlService,
-    SnapshotService: type[SnapshotService] | None = SnapshotService,
-) -> None:
-    """Attach the shared abx-dl services to an existing bus.
-
-    This is the public entrypoint for embedding abx-dl as an event-driven
-    runtime without immediately starting a crawl via ``download()``.
-    """
-    if interactive_tty is None:
-        interactive_tty = sys.stdout.isatty() or sys.stderr.isatty()
-
-    initial_user_config = None
-    initial_derived_config = None
-    if config_overrides is not None or derived_config_overrides is not None:
-        initial_user_config = get_initial_env()
-        if config_overrides:
-            initial_user_config.update(config_overrides)
-        initial_derived_config = get_derived_config(initial_user_config)
-        if derived_config_overrides:
-            initial_derived_config.update(derived_config_overrides)
-
-    if MachineService is not None:
-        MachineService(bus, persist_derived=persist_derived)
-
-    if initial_user_config is not None:
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            pass
-        else:
-            bus.emit(
-                MachineEvent(
-                    config=initial_user_config,
-                    config_type="user",
-                ),
-            )
-            if initial_derived_config:
-                bus.emit(
-                    MachineEvent(
-                        config=initial_derived_config,
-                        config_type="derived",
-                    ),
-                )
-
-    if BinaryCacheService is not None:
-        BinaryCacheService(
-            bus,
-            backend=BinaryCacheBackend or AbxDlEnvConfigFileBinaryCacheBackend(bus, plugins=plugins),
-        )
-
-    if BinaryService is not None:
-        BinaryService(
-            bus,
-            auto_install=auto_install,
-        )
-
-    if install_enabled and PluginBinariesService is not None:
-        install_plugins = get_install_plugins(plugins)
-        PluginBinariesService(
-            bus,
-            plugins=plugins,
-            auto_install=auto_install,
-            install_plugins=install_plugins,
-            output_dir=output_dir,
-            snapshot=snapshot,
-            abort_requested=abort_requested,
-        )
-
-    if ProcessService is not None:
-        ProcessService(
-            bus,
-            emit_jsonl=emit_jsonl,
-            interactive_tty=bool(interactive_tty),
-        )
-
-    if ArchiveResultService is not None:
-        ArchiveResultService(
-            bus,
-            emit_jsonl=emit_jsonl,
-        )
-
-    if TagService is not None:
-        TagService(bus)
-
-    if (
-        CrawlService is not None
-        and url is not None
-        and snapshot is not None
-        and output_dir is not None
-        and (crawl_setup_enabled or crawl_start_enabled or crawl_cleanup_enabled)
-    ):
-        CrawlService(
-            bus,
-            url=url,
-            snapshot=snapshot,
-            output_dir=output_dir,
-            plugins=plugins,
-            crawl_setup_enabled=crawl_setup_enabled,
-            crawl_start_enabled=crawl_start_enabled,
-            crawl_cleanup_enabled=crawl_cleanup_enabled,
-            crawl_completed_enabled=crawl_completed_enabled,
-            crawl_event_enabled=crawl_event_enabled,
-            crawl_setup_phase_timeout=crawl_setup_phase_timeout,
-            snapshot_phase_timeout=snapshot_phase_timeout,
-            snapshot_cleanup_phase_timeout=snapshot_cleanup_phase_timeout,
-            crawl_cleanup_phase_timeout=crawl_cleanup_phase_timeout,
-            abort_requested=abort_requested,
-        )
-        if SnapshotService is not None and (crawl_start_enabled or snapshot_cleanup_enabled):
-            SnapshotService(
-                bus,
-                url=url,
-                snapshot=snapshot,
-                output_dir=output_dir,
-                plugins=plugins,
-                snapshot_phase_timeout=snapshot_phase_timeout,
-                snapshot_cleanup_enabled=snapshot_cleanup_enabled,
-                snapshot_cleanup_phase_timeout=snapshot_cleanup_phase_timeout,
-                abort_requested=abort_requested,
-            )
-
-    return None
-
-
-def get_install_plugins(plugins: dict[str, Plugin]) -> list[Plugin]:
+def get_install_plugins(catalog: PluginCatalog) -> list[Plugin]:
     """Return plugins that declare required binaries for the install phase."""
-    return [plugin for plugin in plugins.values() if plugin.config.required_binaries]
+    return [plugin for plugin in catalog.values() if plugin.config.required_binaries]
+
+
+def get_phase_hooks(catalog: PluginCatalog, phase: str) -> list[tuple[Plugin, Hook]]:
+    """Return every hook selected for one lifecycle phase."""
+    return [(plugin, hook) for plugin in catalog.values() for hook in plugin.filter_hooks(phase)]
+
+
+def _claim_fresh_bus(bus: EventBus, operation: str) -> None:
+    """Reserve a caller-provided bus for one orchestration run.
+
+    Orchestrator services remain attached so callers can inspect event history
+    after completion. Reusing that bus would register a second listener suite
+    and execute hooks more than once, so fail before attaching any services.
+    """
+    previous_operation = getattr(bus, "_abx_dl_orchestrator_operation", None)
+    if previous_operation is not None:
+        raise RuntimeError(
+            f"EventBus was already used by {previous_operation}; create a fresh EventBus for each orchestration call",
+        )
+    setattr(bus, "_abx_dl_orchestrator_operation", operation)
 
 
 def _positive_int(value: Any) -> int | None:
@@ -299,31 +157,25 @@ def get_binary_request_install_timeout(record: RequiredBinary | dict[str, Any], 
 
 
 def compute_install_phase_timeout(plugins: list[Plugin], config: dict[str, Any] | None = None) -> float:
-    """Sum timeout budgets across binary requests emitted during install."""
-    total = 0
+    """Return the largest timeout budget among concurrent per-binary lanes."""
+    lane_budgets: dict[str, int] = {}
     for plugin in plugins:
         plugin_timeout = get_plugin_timeout(plugin, config)
         for record in plugin.config.required_binaries:
-            total += max(plugin_timeout, get_binary_request_install_timeout(record, config))
-    return max(float(total), 60.0)
+            request_budget = max(plugin_timeout, get_binary_request_install_timeout(record, config))
+            lane_budgets[record.name] = lane_budgets.get(record.name, 0) + request_budget
+    return max(float(max(lane_budgets.values(), default=0)), 60.0)
 
 
 async def install_plugins(
-    plugin_names: Sequence[str] | None = None,
+    catalog: PluginCatalog,
     *,
-    plugins: dict[str, Plugin] | None = None,
+    config: dict[str, Any] | None = None,
+    derived_config: dict[str, Any] | None = None,
+    runtime: str = "abx-dl",
     output_dir: Path | None = None,
-    config_overrides: dict[str, Any] | None = None,
-    derived_config_overrides: dict[str, Any] | None = None,
     emit_jsonl: bool = False,
     bus: EventBus | None = None,
-    dry_run: bool = False,
-    MachineService: type[MachineService] | None = MachineService,
-    PluginBinariesService: type[PluginBinariesService] | None = PluginBinariesService,
-    BinaryCacheService: type[BinaryCacheService] | None = BinaryCacheService,
-    BinaryCacheBackend: BinaryCacheBackend | None = None,
-    BinaryService: type[BinaryService] | None = BinaryService,
-    ProcessService: type[ProcessService] | None = ProcessService,
 ):
     """Run only the dependency preflight on an existing bus or a temporary one.
 
@@ -331,23 +183,12 @@ async def install_plugins(
     ``config.json > required_binaries`` through abxpkg, without starting the
     later ``on_CrawlSetup__*`` or ``on_Snapshot__*`` plugin phases.
     """
-    all_plugins = plugins or discover_plugins()
-    selected = filter_plugins(all_plugins, list(plugin_names), include_providers=True) if plugin_names else all_plugins
-    if not selected:
+    if not catalog:
         return []
 
-    merged_config = dict(config_overrides or {})
-    if plugin_names:
-        for plugin in selected.values():
-            if plugin.enabled_key in plugin.config.properties:
-                merged_config[plugin.enabled_key] = True
-    if dry_run:
-        merged_config["DRY_RUN"] = True
-    initial_user_config = get_initial_env()
-    initial_user_config.update(merged_config)
-    initial_derived_config = get_derived_config(initial_user_config)
-    if derived_config_overrides:
-        initial_derived_config.update(derived_config_overrides)
+    user_config = dict(config or {})
+    user_config["ABX_RUNTIME"] = runtime
+    install_timeout = compute_install_phase_timeout(get_install_plugins(catalog), user_config)
 
     install_output_dir = output_dir
     temp_dir_ctx = nullcontext(output_dir) if output_dir is not None else TemporaryDirectory(prefix="abx-dl-install-")
@@ -355,88 +196,182 @@ async def install_plugins(
     with temp_dir_ctx as temp_dir:
         install_output_dir = install_output_dir or Path(temp_dir)
         install_output_dir.mkdir(parents=True, exist_ok=True)
-        bus = bus or create_bus(total_timeout=60.0)
+        bus = bus or create_bus(total_timeout=install_timeout)
+        _claim_fresh_bus(bus, "install_plugins")
         snapshot = Snapshot(url="")
-        install_plugins_for_phase = get_install_plugins(selected)
-
-        setup_services(
+        PluginBinaryEnvService(bus, catalog=catalog)
+        BinaryService(bus, auto_install=True)
+        PluginBinariesService(
             bus,
-            plugins=selected,
-            url="",
-            snapshot=snapshot,
-            output_dir=install_output_dir,
-            install_enabled=True,
-            crawl_setup_enabled=False,
-            crawl_start_enabled=False,
-            snapshot_cleanup_enabled=False,
-            crawl_cleanup_enabled=False,
-            crawl_setup_phase_timeout=60.0,
-            snapshot_phase_timeout=60.0,
-            snapshot_cleanup_phase_timeout=60.0,
-            crawl_cleanup_phase_timeout=60.0,
-            persist_derived=True,
+            catalog=catalog,
             auto_install=True,
-            emit_jsonl=emit_jsonl,
-            interactive_tty=sys.stdout.isatty() or sys.stderr.isatty(),
-            MachineService=MachineService,
-            PluginBinariesService=PluginBinariesService,
-            BinaryCacheService=BinaryCacheService,
-            BinaryCacheBackend=BinaryCacheBackend,
-            BinaryService=BinaryService,
-            ProcessService=ProcessService,
-            ArchiveResultService=None,
-            TagService=None,
+            install_plugins=get_install_plugins(catalog),
+            output_dir=install_output_dir,
+            snapshot=snapshot,
         )
-        await bus.emit(
-            MachineEvent(
-                config=initial_user_config,
-                config_type="user",
-            ),
-        ).now()
-        if initial_derived_config:
-            await bus.emit(
-                MachineEvent(
-                    config=initial_derived_config,
-                    config_type="derived",
-                ),
-            ).now()
-        install_phase_timeout = compute_install_phase_timeout(install_plugins_for_phase, merged_config or None)
+        ProcessService(
+            bus,
+            emit_jsonl=emit_jsonl,
+            interactive_tty=sys.stdin.isatty() and (sys.stdout.isatty() or sys.stderr.isatty()),
+        )
+        await bus.emit(MachineEvent(config=user_config, config_type="user")).now()
+        if derived_config:
+            await bus.emit(MachineEvent(config=dict(derived_config), config_type="derived")).now()
         try:
             install_event = bus.emit(
                 InstallEvent(
                     url="",
                     snapshot_id=snapshot.id,
                     output_dir=str(install_output_dir),
-                    event_timeout=install_phase_timeout,
-                    event_handler_slow_timeout=slow_warning_timeout(install_phase_timeout),
+                    event_timeout=install_timeout,
+                    event_handler_slow_timeout=slow_warning_timeout(install_timeout),
                 ),
             )
-            await install_event.now(timeout=install_phase_timeout)
-            await install_event.wait(timeout=install_phase_timeout)
+            await install_event.now(timeout=install_timeout)
+            await install_event.wait(timeout=install_timeout)
             await install_event.event_results_list()
         finally:
             await bus.wait_until_idle()
 
 
+async def parse_input(
+    source_text: str,
+    catalog: PluginCatalog,
+    output_dir: Path,
+    *,
+    config: dict[str, Any] | None = None,
+    derived_config: dict[str, Any] | None = None,
+    runtime: str = "abx-dl",
+    auto_install: bool = True,
+    bus: EventBus | None = None,
+    emit_jsonl: bool = False,
+) -> list[Snapshot]:
+    """Parse imported text through opted-in snapshot hooks and return URL facts.
+
+    The source is durably written to ``staticfile/stdin.txt``. Parser hooks run
+    against that real file URL using an in-memory Snapshot context; no database,
+    pseudo URL, crawl lifecycle, or persistent ingestion state is involved.
+    Returned facts retain hook metadata and are normalized to depth zero so a
+    collection application can persist them as initial crawl snapshots.
+    """
+
+    output_dir = output_dir.expanduser().resolve()
+    input_path = output_dir / "staticfile" / "stdin.txt"
+    input_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_input_path = input_path.with_name(f".{input_path.name}.{os.getpid()}.tmp")
+    temporary_input_path.write_text(source_text, encoding="utf-8")
+    temporary_input_path.replace(input_path)
+
+    parser_catalog = PluginCatalog(
+        {name: plugin for name, plugin in catalog.items() if plugin.config.x_accepts_internal_input and plugin.filter_hooks("Snapshot")},
+    )
+    if not parser_catalog:
+        return []
+
+    user_config = dict(config or {})
+    user_config["ABX_RUNTIME"] = runtime
+    runtime_config = RuntimeConfig(user=GlobalConfig(**user_config), derived=dict(derived_config or {}))
+    snapshot = Snapshot(url=input_path.as_uri())
+    install_timeout = compute_install_phase_timeout(get_install_plugins(parser_catalog), user_config)
+    snapshot_hooks = get_phase_hooks(parser_catalog, "Snapshot")
+    snapshot_timeout = compute_phase_timeout(snapshot_hooks, user_config)
+    owns_bus = bus is None
+    bus = bus or create_bus(total_timeout=install_timeout + (snapshot_timeout * 2), name=f"AbxDlInput_{snapshot.id}")
+    _claim_fresh_bus(bus, "parse_input")
+
+    PluginBinaryEnvService(bus, catalog=parser_catalog)
+    BinaryService(bus, auto_install=auto_install)
+    PluginBinariesService(
+        bus,
+        catalog=parser_catalog,
+        auto_install=auto_install,
+        install_plugins=get_install_plugins(parser_catalog),
+        output_dir=output_dir,
+        snapshot=snapshot,
+    )
+    ProcessService(bus, emit_jsonl=emit_jsonl, interactive_tty=False)
+    ArchiveResultService(bus, emit_jsonl=emit_jsonl)
+    TagService(bus)
+    SnapshotService(
+        bus,
+        url=snapshot.url,
+        snapshot=snapshot,
+        output_dir=output_dir,
+        catalog=parser_catalog,
+        config=runtime_config,
+        snapshot_phase_timeout=snapshot_timeout,
+        snapshot_cleanup_phase_timeout=snapshot_timeout,
+    )
+    await bus.emit(MachineEvent(config=user_config, config_type="user")).now()
+    if derived_config:
+        await bus.emit(MachineEvent(config=dict(derived_config), config_type="derived")).now()
+
+    try:
+        install_event = bus.emit(
+            InstallEvent(
+                url=snapshot.url,
+                snapshot_id=snapshot.id,
+                output_dir=str(output_dir),
+                event_timeout=install_timeout,
+                event_handler_slow_timeout=slow_warning_timeout(install_timeout),
+            ),
+        )
+        await install_event.now(timeout=install_timeout)
+        await install_event.wait(timeout=install_timeout)
+        await install_event.event_results_list()
+        await bus.wait_until_idle()
+
+        snapshot_event = bus.emit(
+            SnapshotEvent(
+                url=snapshot.url,
+                snapshot_id=snapshot.id,
+                output_dir=str(output_dir),
+                depth=0,
+                event_timeout=snapshot_timeout,
+                event_handler_slow_timeout=slow_warning_timeout(snapshot_timeout),
+            ),
+        )
+        await snapshot_event.now(timeout=snapshot_timeout)
+        await snapshot_event.wait(timeout=snapshot_timeout)
+        await snapshot_event.event_results_list()
+        await bus.wait_until_idle()
+        discoveries = await bus.filter(
+            SnapshotDiscoveredEvent,
+            child_of=snapshot_event,
+            past=True,
+            future=False,
+        )
+        return [event.snapshot.model_copy(update={"depth": 0}) for event in reversed(discoveries)]
+    finally:
+        if owns_bus:
+            await bus.wait_until_idle()
+
+
 def get_plugin_timeout(plugin: Plugin, config: dict[str, Any] | None = None) -> int:
-    """Resolve a plugin's timeout from config overrides and schema defaults.
+    """Resolve a plugin's timeout from runtime config and schema defaults.
 
     Checks (in priority order):
     1. ``{PLUGIN_NAME}_TIMEOUT`` in *config*
-    2. ``TIMEOUT`` in *config*
-    3. ``{PLUGIN_NAME}_TIMEOUT`` default from the plugin's config properties
-    4. Global default (60s)
+    2. ``{PLUGIN_NAME}_TIMEOUT`` in the process environment
+    3. ``TIMEOUT`` in *config*
+    4. ``TIMEOUT`` in the process environment
+    5. ``{PLUGIN_NAME}_TIMEOUT`` default from the plugin's config properties
+    6. Global default (60s)
     """
     name_upper = plugin.name.upper()
     cfg = config or {}
     # Check config overrides first
     if f"{name_upper}_TIMEOUT" in cfg:
         return int(cfg[f"{name_upper}_TIMEOUT"])
+    if f"{name_upper}_TIMEOUT" in os.environ:
+        return int(os.environ[f"{name_upper}_TIMEOUT"])
     if "TIMEOUT" in cfg:
         return int(cfg["TIMEOUT"])
+    if "TIMEOUT" in os.environ:
+        return int(os.environ["TIMEOUT"])
     # Check plugin schema defaults
     schema_key = f"{name_upper}_TIMEOUT"
-    schema_def = plugin.config.properties[schema_key] if schema_key in plugin.config.properties else {}
+    schema_def = plugin.config.properties.get(schema_key, {})
     if isinstance(schema_def, dict) and "default" in schema_def:
         return int(schema_def["default"])
     return 60
@@ -513,66 +448,43 @@ def create_bus(
 
 async def download(
     url: str,
-    plugins: dict[str, Plugin],
+    catalog: PluginCatalog,
     output_dir: Path,
-    selected_plugins: list[str] | None = None,
-    config_overrides: dict[str, Any] | None = None,
-    derived_config_overrides: dict[str, Any] | None = None,
     auto_install: bool = True,
     *,
+    config: dict[str, Any] | None = None,
+    derived_config: dict[str, Any] | None = None,
+    runtime: str = "abx-dl",
     bus: EventBus | None = None,
     emit_jsonl: bool | None = None,
     interactive_tty: bool | None = None,
-    install_enabled: bool = True,
-    crawl_setup_enabled: bool = True,
-    crawl_start_enabled: bool = True,
-    snapshot_cleanup_enabled: bool = True,
-    crawl_cleanup_enabled: bool = True,
-    crawl_completed_enabled: bool = True,
-    crawl_event_enabled: bool = True,
-    dry_run: bool = False,
-    MachineService: type[MachineService] | None = MachineService,
-    PluginBinariesService: type[PluginBinariesService] | None = PluginBinariesService,
-    BinaryCacheService: type[BinaryCacheService] | None = BinaryCacheService,
-    BinaryCacheBackend: BinaryCacheBackend | None = None,
-    BinaryService: type[BinaryService] | None = BinaryService,
-    ProcessService: type[ProcessService] | None = ProcessService,
-    ArchiveResultService: type[ArchiveResultService] | None = ArchiveResultService,
-    TagService: type[TagService] | None = TagService,
-    CrawlService: type[CrawlService] | None = CrawlService,
-    SnapshotService: type[SnapshotService] | None = SnapshotService,
+    interrupted_hook_prompt: Callable[[str], Awaitable[Literal["abort", "retry", "skip"]]] | None = None,
+    on_process_service_created: Callable[[ProcessService], None] | None = None,
+    snapshot: Snapshot | None = None,
 ):
     """Download a URL using plugins, coordinated through a abxbus EventBus.
 
     This is the only public function in the orchestrator. It:
     1. Discovers and sorts hooks from selected plugins
     2. Wires up all services on the bus
-    3. Emits InstallEvent for dependency preflight, then CrawlEvent as the
-       internal lifecycle root for the CrawlSetup → CrawlStart → Snapshot →
-       SnapshotCleanup → CrawlCleanup sequence (unless phase flags request a subset)
+    3. Emits InstallEvent for dependency preflight, then CrawlEvent for the
+       CrawlSetup → CrawlStart → Snapshot →
+       SnapshotCleanup → CrawlCleanup sequence
     4. Leaves all result collection to bus subscribers attached during setup
 
     Args:
         url: The URL to download/archive.
-        plugins: All discovered plugins (from discover_plugins()).
+        catalog: The selected plugins to execute.
         output_dir: Where to write output files and index.jsonl.
-        selected_plugins: If set, only use these plugins (with dependency resolution).
-        config_overrides: Extra config values (e.g. TIMEOUT) merged into user_config.
         auto_install: Whether to auto-install missing binaries.
+        snapshot: Explicit snapshot input, including its ID and depth. Defaults to a new snapshot.
         bus: Pre-configured EventBus to run against. If None, a default bus is
             created via create_bus().
         emit_jsonl: Whether to print JSONL to stdout. Defaults to True if not a TTY.
 
     """
 
-    config_overrides = dict(config_overrides or {})
-    if dry_run:
-        config_overrides["DRY_RUN"] = True
-    initial_user_config = get_initial_env()
-    initial_user_config.update(config_overrides)
-    initial_derived_config = get_derived_config(initial_user_config)
-    if derived_config_overrides:
-        initial_derived_config.update(derived_config_overrides)
+    ensure_default_persona_dir()
     # Hook subprocesses run with cwd set to SNAP_DIR/<plugin>, while hook env
     # carries shared crawl/snapshot paths like SNAP_DIR and CRAWL_DIR. Keeping
     # those paths absolute here prevents JS/Python hooks from resolving the
@@ -584,147 +496,114 @@ async def download(
     if emit_jsonl is None:
         emit_jsonl = not stdout_is_tty
     if interactive_tty is None:
-        interactive_tty = stdout_is_tty or sys.stderr.isatty()
+        interactive_tty = sys.stdin.isatty() and (stdout_is_tty or sys.stderr.isatty())
+    assert isinstance(interactive_tty, bool)
 
-    # Filter plugins for runtime phases; binary providers are handled by abxpkg.
-    if selected_plugins:
-        plugins = filter_plugins(plugins, selected_plugins)
+    user_config = dict(config or {})
+    user_config["ABX_RUNTIME"] = runtime
+    runtime_config = RuntimeConfig(user=GlobalConfig(**user_config), derived=dict(derived_config or {}))
 
-    # Create snapshot record and write it as the first line of index.jsonl
-    snapshot_payload: dict[str, Any] = {"url": url}
-    if config_overrides.get("EXTRA_CONTEXT"):
-        extra_context = config_overrides["EXTRA_CONTEXT"]
-        if isinstance(extra_context, str):
-            extra_context = json.loads(extra_context)
-        if not isinstance(extra_context, dict):
-            raise TypeError("EXTRA_CONTEXT must be an object")
-        if "snapshot_id" in extra_context:
-            snapshot_payload["id"] = str(extra_context["snapshot_id"])
-        if "snapshot_depth" in extra_context:
-            snapshot_payload["depth"] = int(extra_context["snapshot_depth"])
-        if "crawl_id" in extra_context:
-            snapshot_payload["crawl_id"] = str(extra_context["crawl_id"])
-    snapshot = Snapshot(**snapshot_payload)
-    write_jsonl(index_path, snapshot, also_print=emit_jsonl)
+    # Create the snapshot record that owns this run.
+    snapshot = snapshot if snapshot is not None else Snapshot(url=url)
+    if snapshot.url != url:
+        raise ValueError("snapshot.url must match the download URL")
 
-    # Collect and sort hooks by (order, name) so execution order matches
-    # the numeric prefix in hook filenames (e.g. __10, __41, __70, __90, __91)
-    install_plugins_for_phase = get_install_plugins(plugins)
-    crawl_setup_hooks: list[tuple[Plugin, Hook]] = []
-    snapshot_hooks: list[tuple[Plugin, Hook]] = []
-    for plugin in plugins.values():
-        for hook in plugin.filter_hooks("CrawlSetup"):
-            crawl_setup_hooks.append((plugin, hook))
-        for hook in plugin.filter_hooks("Snapshot"):
-            snapshot_hooks.append((plugin, hook))
-    crawl_setup_hooks.sort(key=lambda x: x[1].sort_key)
-    snapshot_hooks.sort(key=lambda x: x[1].sort_key)
-
-    # Compute per-phase timeouts from plugin-specific settings
-    install_phase_timeout = compute_install_phase_timeout(install_plugins_for_phase, config_overrides or None)
-    crawl_setup_phase_timeout = compute_phase_timeout(crawl_setup_hooks, config_overrides or None)
-    snapshot_phase_timeout = compute_phase_timeout(snapshot_hooks, config_overrides or None)
+    crawl_setup_hooks = get_phase_hooks(catalog, "CrawlSetup")
+    snapshot_hooks = get_phase_hooks(catalog, "Snapshot")
+    install_phase_timeout = compute_install_phase_timeout(get_install_plugins(catalog), user_config)
+    crawl_setup_phase_timeout = compute_phase_timeout(crawl_setup_hooks, user_config)
+    snapshot_phase_timeout = compute_phase_timeout(snapshot_hooks, user_config)
     snapshot_cleanup_phase_timeout = snapshot_phase_timeout
     crawl_cleanup_phase_timeout = crawl_setup_phase_timeout
     total_timeout = (
-        (install_phase_timeout if install_enabled else 0.0)
-        + (crawl_setup_phase_timeout if crawl_setup_enabled else 0.0)
-        + (snapshot_phase_timeout if crawl_start_enabled else 0.0)
-        + (snapshot_cleanup_phase_timeout if snapshot_cleanup_enabled else 0.0)
-        + (crawl_cleanup_phase_timeout if crawl_cleanup_enabled else 0.0)
+        install_phase_timeout
+        + crawl_setup_phase_timeout
+        + snapshot_phase_timeout
+        + snapshot_cleanup_phase_timeout
+        + crawl_cleanup_phase_timeout
     )
 
     owns_bus = bus is None
     if bus is None:
         bus = create_bus(total_timeout=total_timeout)
     assert bus is not None
+    _claim_fresh_bus(bus, "download")
 
-    setup_services(
+    # Keep the owning snapshot as the first line of index.jsonl.
+    write_jsonl(index_path, snapshot, also_print=emit_jsonl)
+
+    PluginBinaryEnvService(bus, catalog=catalog)
+    BinaryService(bus, auto_install=auto_install)
+    PluginBinariesService(
         bus,
-        plugins=plugins,
+        catalog=catalog,
+        auto_install=auto_install,
+        install_plugins=get_install_plugins(catalog),
+        output_dir=output_dir,
+        snapshot=snapshot,
+    )
+    process_service = ProcessService(
+        bus,
+        emit_jsonl=emit_jsonl,
+        interactive_tty=interactive_tty,
+        interrupted_hook_prompt=interrupted_hook_prompt,
+    )
+    if on_process_service_created is not None:
+        # Terminal owners need the exact service instance that owns hook PIDs
+        # for a confirmed-abort force exit. Publishing it here avoids walking
+        # unrelated processes or trying to inspect a busy event bus in SIGINT.
+        on_process_service_created(process_service)
+    ArchiveResultService(bus, emit_jsonl=emit_jsonl)
+    TagService(bus)
+    CrawlService(bus, url=url, snapshot=snapshot, output_dir=output_dir, catalog=catalog)
+    SnapshotService(
+        bus,
         url=url,
         snapshot=snapshot,
         output_dir=output_dir,
-        install_enabled=install_enabled,
-        crawl_setup_enabled=crawl_setup_enabled,
-        crawl_start_enabled=crawl_start_enabled,
-        snapshot_cleanup_enabled=snapshot_cleanup_enabled,
-        crawl_cleanup_enabled=crawl_cleanup_enabled,
-        crawl_completed_enabled=crawl_completed_enabled,
-        crawl_event_enabled=crawl_event_enabled,
-        crawl_setup_phase_timeout=crawl_setup_phase_timeout,
+        catalog=catalog,
+        config=runtime_config,
         snapshot_phase_timeout=snapshot_phase_timeout,
         snapshot_cleanup_phase_timeout=snapshot_cleanup_phase_timeout,
-        crawl_cleanup_phase_timeout=crawl_cleanup_phase_timeout,
-        persist_derived=True,
-        auto_install=auto_install,
-        emit_jsonl=emit_jsonl,
-        interactive_tty=interactive_tty,
-        MachineService=MachineService,
-        PluginBinariesService=PluginBinariesService,
-        BinaryCacheService=BinaryCacheService,
-        BinaryCacheBackend=BinaryCacheBackend,
-        BinaryService=BinaryService,
-        ProcessService=ProcessService,
-        ArchiveResultService=ArchiveResultService,
-        TagService=TagService,
-        CrawlService=CrawlService,
-        SnapshotService=SnapshotService,
     )
-    await bus.emit(
-        MachineEvent(
-            config=initial_user_config,
-            config_type="user",
-        ),
-    ).now()
-    if initial_derived_config:
-        await bus.emit(
-            MachineEvent(
-                config=initial_derived_config,
-                config_type="derived",
-            ),
-        ).now()
-
-    heartbeat = None
-    if crawl_setup_enabled or crawl_start_enabled or crawl_cleanup_enabled:
-        heartbeat = CrawlHeartbeat(
-            output_dir,
-            runtime=str(initial_user_config.get("ABX_RUNTIME", "abx-dl")),
-            crawl_id=snapshot.crawl_id or snapshot.id,
-        )
-        await heartbeat.start()
+    CrawlLifecycleService(
+        bus,
+        url=url,
+        snapshot=snapshot,
+        output_dir=output_dir,
+        crawl_setup_phase_timeout=crawl_setup_phase_timeout,
+        snapshot_phase_timeout=snapshot_phase_timeout,
+        crawl_cleanup_phase_timeout=crawl_cleanup_phase_timeout,
+    )
+    await bus.emit(MachineEvent(config=user_config, config_type="user")).now()
+    if derived_config:
+        await bus.emit(MachineEvent(config=dict(derived_config), config_type="derived")).now()
 
     try:
-        if install_enabled:
-            install_event = bus.emit(
-                InstallEvent(
-                    url=url,
-                    snapshot_id=snapshot.id,
-                    output_dir=str(output_dir),
-                    event_timeout=install_phase_timeout,
-                    event_handler_slow_timeout=slow_warning_timeout(install_phase_timeout),
-                ),
-            )
-            await install_event.now(timeout=install_phase_timeout)
-            await install_event.wait(timeout=install_phase_timeout)
-            await install_event.event_results_list()
-            await bus.wait_until_idle()
-        if crawl_setup_enabled or crawl_start_enabled or crawl_cleanup_enabled:
-            crawl_event_timeout = (
-                (crawl_setup_phase_timeout if crawl_setup_enabled else 0.0)
-                + (snapshot_phase_timeout if crawl_start_enabled else 0.0)
-                + (crawl_cleanup_phase_timeout if crawl_cleanup_enabled else 0.0)
-            )
-            crawl_event = CrawlEvent(
+        install_event = bus.emit(
+            InstallEvent(
                 url=url,
                 snapshot_id=snapshot.id,
                 output_dir=str(output_dir),
-                event_timeout=crawl_event_timeout,
-                event_handler_slow_timeout=slow_warning_timeout(crawl_event_timeout),
-            )
-            await bus.emit(crawl_event).now()
+                event_timeout=install_phase_timeout,
+                event_handler_slow_timeout=slow_warning_timeout(install_phase_timeout),
+            ),
+        )
+        await install_event.now(timeout=install_phase_timeout)
+        await install_event.wait(timeout=install_phase_timeout)
+        await install_event.event_results_list()
+        await bus.wait_until_idle()
+        crawl_event_timeout = crawl_setup_phase_timeout + snapshot_phase_timeout + crawl_cleanup_phase_timeout
+        crawl_event = CrawlEvent(
+            url=url,
+            snapshot_id=snapshot.id,
+            output_dir=str(output_dir),
+            event_timeout=crawl_event_timeout,
+            event_handler_slow_timeout=slow_warning_timeout(crawl_event_timeout),
+        )
+        emitted_crawl_event = bus.emit(crawl_event)
+        await emitted_crawl_event.now()
+        await emitted_crawl_event.event_results_list()
     finally:
-        if heartbeat is not None:
-            await heartbeat.stop()
         if owns_bus:
             await bus.wait_until_idle()

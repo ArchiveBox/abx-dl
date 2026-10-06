@@ -12,7 +12,7 @@ repos:
           - tomli
 
   - repo: https://github.com/asottile/pyupgrade
-    rev: v3.20.0
+    rev: v3.21.2
     hooks:
       - id: pyupgrade
         args: [--py311-plus]
@@ -36,7 +36,7 @@ repos:
         types_or: [python, pyi]
       - id: ty-check
         name: ty-check
-        entry: bash -lc 'ARGS=""; [ -d ./abx-plugins ] && ARGS="$ARGS --extra-search-path ./abx-plugins"; [ -d ../abx-plugins ] && ARGS="$ARGS --extra-search-path ../abx-plugins"; [ -d ./abxpkg ] && ARGS="$ARGS --extra-search-path ./abxpkg"; [ -d ../abxpkg ] && ARGS="$ARGS --extra-search-path ../abxpkg"; [ -d ./archivebox ] && ARGS="$ARGS --extra-search-path ./archivebox"; [ -d ../archivebox ] && ARGS="$ARGS --extra-search-path ../archivebox"; uv run --active --no-sync ty check $ARGS'
+        entry: bash -lc 'ARGS=""; [ -d ./abx-plugins ] && ARGS="$ARGS --extra-search-path ./abx-plugins"; [ -d ../abx-plugins ] && ARGS="$ARGS --extra-search-path ../abx-plugins"; [ -d ./abxpkg ] && ARGS="$ARGS --extra-search-path ./abxpkg"; [ -d ../abxpkg ] && ARGS="$ARGS --extra-search-path ../abxpkg"; uv run --active --no-sync ty check $ARGS'
         language: system
         files: ^(abx_dl/|tests/|server/)
         pass_filenames: false
@@ -68,7 +68,6 @@ repos:
       - id: end-of-file-fixer
       # best practices enforcement
       - id: detect-private-key
-      # - id: check-docstring-first
       - id: debug-statements
       - id: forbid-submodules
       - id: check-added-large-files

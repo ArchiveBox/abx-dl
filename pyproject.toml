@@ -1,7 +1,7 @@
 [project]
 name = "abx-dl"
-version = "1.11.231"
-requires-python = ">=3.12"
+version = "1.13.127"
+requires-python = ">=3.12,<3.15"
 description = "All-in-one CLI tool to download and extract content from URLs"
 authors = [{name = "Nick Sweeting"}, {name = "ArchiveBox"}]
 license = {text = "MIT"}
@@ -40,15 +40,23 @@ classifiers = [
 dependencies = [
     "rich-click>=1.8.0",
     "rich>=13.0.0",
-    "abxbus==2.5.10",
-    "abxpkg>=1.11.224",
-    "abx-plugins>=1.11.224",
-    "jambo>=0.1.7",
+    "abxbus==2.5.74",
+    "abxpkg==1.13.35",
+    "abx-plugins==1.13.162",
     "pydantic>=2.0.0",
     "pydantic-settings>=2.0.0",
     "platformdirs>=4.0.0",
     "requests>=2.28.0",
-    "psutil>=7.2.1",
+    # psutil 7.2.2 can raise EINVAL from pidfd_open when a child exits during
+    # Process.wait()/wait_procs(), breaking real ripgrep close/timeout cleanup
+    # in Linux CI: https://github.com/giampaolo/psutil/issues/2715
+    # Upstream fix: 0195d11ed0f6106ff1371ff379bb47454130d770 (planned for 7.2.3).
+    # Remove this exclusion only when the minimum version is a published release
+    # containing that fix and tests/test_search_command_lifecycle.py passes on
+    # Linux with it. A closed issue or a newer installed version is insufficient:
+    # keeping the >=7.2.1 floor without the exclusion still permits broken 7.2.2.
+    # Later versions remain allowed; this is not a ceiling on psutil upgrades.
+    "psutil>=7.2.1,!=7.2.2",
 ]
 
 [dependency-groups]
@@ -70,6 +78,7 @@ dev = [
     "pyright>=1.1.408",
     "ruff>=0.15.7",
     "ty>=0.0.24",
+    "markdown>=3.10.3",
 ]
 
 [build-system]
@@ -80,15 +89,6 @@ build-backend = "pdm.backend"
 [tool.pdm.build]
 includes = [
     "abx_dl/",
-    # Package the same minimal git metadata shape ArchiveBox uses, so
-    # abx-dl resolves COMMIT_HASH by reading .git in both dev and installs.
-    ".git/HEAD",
-    ".git/refs/heads/main",
-]
-source-includes = [
-    # Keep sdists self-contained; pdm_build.py mirrors these files into wheels.
-    ".git/HEAD",
-    ".git/refs/heads/main",
 ]
 excludes = [
     ".DS_Store",
@@ -109,8 +109,11 @@ exclude = ["*.pyi", "typings/", "migrations/", "vendor/"]
 ignore = ["E731", "E303", "E266", "E241", "E222"]
 
 [tool.pytest.ini_options]
-testpaths = [ "tests", "server/tests", "README.md", "AGENTS.md", "skills" ]
+testpaths = [ "tests", "server/tests", "README.md", "AGENTS.md", "CLAUDE.md", "skills" ]
 addopts = ["--codeblocks"]
+markers = [
+    "docker_required: documentation commands that require the current abx-dl Docker image",
+]
 timeout = 600
 timeout_method = "thread"
 
@@ -123,13 +126,6 @@ exclude-newer-package = { abx-dl = "2100-01-01T00:00:00Z", abxpkg = "2100-01-01T
 mypy_path = "abx_dl,tests,server,abx_dl/typings"
 namespace_packages = true
 explicit_package_bases = true
-# follow_imports = "silent"
-# ignore_missing_imports = true
-# disallow_incomplete_defs = true
-# disallow_untyped_defs = true
-# disallow_untyped_decorators = true
-# exclude = "tests/.*"
-plugins = ["mypy_django_plugin.main"]
 
 [tool.pyright]
 include = [
@@ -157,8 +153,6 @@ exclude = [
 stubPath = "./abx_dl/typings"
 venvPath = "."
 venv = ".venv"
-# ignore = ["src/oldstuff"]
-# defineConstant = { DEBUG = true }
 reportMissingImports = true
 reportMissingTypeStubs = false
 pythonVersion = "3.12"
@@ -168,9 +162,9 @@ pythonPlatform = "Linux"
 abx-dl = "abx_dl:main"
 
 [project.urls]
-Homepage = "https://github.com/ArchiveBox/abx-dl"
+Homepage = "https://abx-dl.archivebox.io/"
 Source = "https://github.com/ArchiveBox/abx-dl"
-Documentation = "https://github.com/ArchiveBox/abx-dl"
+Documentation = "https://abx-dl.archivebox.io/"
 "Bug Tracker" = "https://github.com/ArchiveBox/abx-dl/issues"
 Changelog = "https://github.com/ArchiveBox/abx-dl/releases"
 Community = "https://github.com/ArchiveBox/ArchiveBox/wiki/Web-Archiving-Community"

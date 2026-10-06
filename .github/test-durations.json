@@ -1,0 +1,16 @@
+{
+  "tests/test_ci_matrix.py": 3,
+  "tests/test_cli.py": 135,
+  "tests/test_config.py": 9,
+  "tests/test_dependencies.py": 2,
+  "tests/test_discovery_throughput.py": 7,
+  "tests/test_executor.py": 105,
+  "tests/test_hook_inputs.py": 3,
+  "tests/test_install_phase.py": 6,
+  "tests/test_output_files.py": 5,
+  "tests/test_packaging.py": 3,
+  "tests/test_permissions.py": 2,
+  "tests/test_plugins.py": 4,
+  "tests/test_search_command_lifecycle.py": 4,
+  "tests/test_validate_crawl.py": 2
+}
