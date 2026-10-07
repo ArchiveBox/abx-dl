@@ -173,6 +173,9 @@ class ProcessService(BaseService):
     4. wait for exit or kill
     5. emit ``ProcessCompletedEvent``
 
+    Embedders may project the final child environment with ``env_filter``;
+    the parent environment and standalone defaults remain unchanged.
+
     Background ProcessEvent handlers return after spawn; a retained completion
     task owns each subprocess and its logs until it exits. The outer controller
     handles terminal intent independently of both foreground and background
@@ -203,10 +206,12 @@ class ProcessService(BaseService):
         emit_jsonl: bool,
         interactive_tty: bool,
         interrupted_hook_prompt: Callable[[str], Awaitable[Literal["abort", "retry", "skip"]]] | None = None,
+        env_filter: Callable[[dict[str, str]], dict[str, str]] | None = None,
     ):
         self.emit_jsonl = emit_jsonl
         self.interactive_tty = interactive_tty
         self.interrupted_hook_prompt = interrupted_hook_prompt
+        self.env_filter = env_filter
         self._abort_signal = asyncio.Event()
         self._interrupt_task: asyncio.Task[None] | None = None
         self._active_hooks: dict[str, tuple[ProcessEvent, ProcessStartedEvent]] = {}
@@ -500,6 +505,8 @@ class ProcessService(BaseService):
         """
         if await wait_for_crawl_resume(self.bus) or self.abort_requested:
             return None
+        if self.env_filter is not None:
+            event.env = self.env_filter(event.env)
         plugin_output_dir = Path(event.output_dir)
         # ProcessService owns creation for both direct and scheduled hooks.
         # Repeating mkdir in each phase adds a remote metadata round trip.

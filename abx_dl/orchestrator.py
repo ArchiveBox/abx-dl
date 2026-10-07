@@ -245,6 +245,7 @@ async def parse_input(
     auto_install: bool = True,
     bus: EventBus | None = None,
     emit_jsonl: bool = False,
+    env_filter: Callable[[dict[str, str]], dict[str, str]] | None = None,
 ) -> list[Snapshot]:
     """Parse imported text through opted-in snapshot hooks and return URL facts.
 
@@ -289,7 +290,7 @@ async def parse_input(
         output_dir=output_dir,
         snapshot=snapshot,
     )
-    ProcessService(bus, emit_jsonl=emit_jsonl, interactive_tty=False)
+    ProcessService(bus, emit_jsonl=emit_jsonl, interactive_tty=False, env_filter=env_filter)
     ArchiveResultService(bus, emit_jsonl=emit_jsonl)
     TagService(bus)
     SnapshotService(

@@ -2,11 +2,45 @@ import asyncio
 import json
 from pathlib import Path
 import sqlite3
+import os
+
+import pytest
 
 from abx_dl.catalog import PluginCatalog
 from abx_dl.events import ProcessEvent
 from abx_dl.models import Snapshot
 from abx_dl.orchestrator import create_bus, download
+
+
+@pytest.mark.parametrize("filter_env", [False, True])
+def test_import_hook_environment_projection_is_optional_and_does_not_mutate_parent(tmp_path: Path, filter_env: bool):
+    from abx_dl.events import ProcessStartedEvent
+    from abx_dl.orchestrator import parse_input
+
+    os.environ["ABX_TEST_PARENT_ONLY"] = "parent-value"
+    os.environ["ABX_TEST_TOOL_SETTING"] = "tool-value"
+    catalog = PluginCatalog.discover().select(["parse_txt_urls"])
+    bus = create_bus(name=f"import_env_projection_{filter_env}", total_timeout=60)
+    started = []
+    bus.on(ProcessStartedEvent, lambda event: started.append(event))
+    source = "https://example.com/real-import"
+    snapshots = asyncio.run(
+        parse_input(
+            source,
+            catalog,
+            tmp_path / "import",
+            auto_install=False,
+            bus=bus,
+            env_filter=(lambda env: {key: value for key, value in env.items() if key != "ABX_TEST_PARENT_ONLY"}) if filter_env else None,
+        ),
+    )
+    assert [snapshot.url for snapshot in snapshots] == [source]
+    assert (tmp_path / "import/staticfile/stdin.txt").read_text() == source
+    assert started
+    for event in started:
+        assert event.env["ABX_TEST_TOOL_SETTING"] == "tool-value"
+        assert ("ABX_TEST_PARENT_ONLY" in event.env) is not filter_env
+    assert os.environ["ABX_TEST_PARENT_ONLY"] == "parent-value"
 
 
 def test_download_passes_real_hook_inputs_not_context(tmp_path: Path):
