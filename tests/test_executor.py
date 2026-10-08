@@ -2047,19 +2047,41 @@ def test_crawl_abort_cleans_real_chrome_process_tree_and_foreground_hook(
     assert not (output_dir / "chrome" / "chrome.pid").exists()
 
 
-def test_real_chrome_hook_completes_while_child_survives_then_lifecycle_cleans_it(tmp_path: Path) -> None:
+def test_real_chrome_keepalive_daemon_cleanup_preserves_child_until_adopted_cleanup(tmp_path: Path) -> None:
     plugin = PluginCatalog.discover()["chrome"]
     output_dir = tmp_path / "run"
 
     async def run() -> tuple[ProcessCompletedEvent, int, ProcessCompletedEvent]:
         keepalive_bus = create_bus(total_timeout=300.0, name=f"chrome_keepalive_parent_{tmp_path.name}")
-        await _run_crawl_setup_hooks(
+        keepalive_crawl, keepalive_snapshot = await _run_crawl_setup_hooks(
             bus=keepalive_bus,
             catalog=PluginCatalog({plugin.name: plugin}),
             url="https://example.com",
             output_dir=output_dir,
             config_overrides={"CHROME_KEEPALIVE": True},
         )
+        await keepalive_bus.wait_until_idle()
+        first_started = await keepalive_bus.find(
+            ProcessStartedEvent,
+            past=True,
+            future=False,
+            hook_name="on_CrawlSetup__90_chrome_launch.daemon.bg",
+        )
+        assert isinstance(first_started, ProcessStartedEvent)
+        chrome_pid = int((output_dir / "chrome" / "chrome.pid").read_text().strip())
+        assert _pid_is_alive(first_started.pid)
+        assert _pid_is_alive(chrome_pid)
+        keepalive_cleanup = keepalive_bus.emit(
+            CrawlCleanupEvent(
+                url=keepalive_crawl.url,
+                snapshot_id=keepalive_snapshot.id,
+                output_dir=str(output_dir),
+                event_parent_id=keepalive_crawl.event_id,
+            ),
+        )
+        await keepalive_cleanup.now()
+        await keepalive_cleanup.wait()
+        await keepalive_cleanup.event_results_list()
         await keepalive_bus.wait_until_idle()
         first_completed = await keepalive_bus.find(
             ProcessCompletedEvent,
@@ -2068,7 +2090,7 @@ def test_real_chrome_hook_completes_while_child_survives_then_lifecycle_cleans_i
             hook_name="on_CrawlSetup__90_chrome_launch.daemon.bg",
         )
         assert isinstance(first_completed, ProcessCompletedEvent)
-        chrome_pid = int((output_dir / "chrome" / "chrome.pid").read_text().strip())
+        assert not _pid_is_alive(first_started.pid)
         assert _pid_is_alive(chrome_pid)
 
         cleanup_bus = create_bus(total_timeout=300.0, name=f"chrome_adopt_cleanup_{tmp_path.name}")
