@@ -3,11 +3,11 @@ revision = 3
 requires-python = ">=3.12, <3.15"
 
 [options]
-exclude-newer = "2026-10-03T08:03:57.328230847Z"
+exclude-newer = "2026-10-03T08:30:34.965776943Z"
 exclude-newer-span = "P5D"
 
 [options.exclude-newer-package]
-abxbus = { timestamp = "2026-10-08T08:03:56.328245144Z", span = "PT1S" }
+abxbus = { timestamp = "2026-10-08T08:30:33.965790498Z", span = "PT1S" }
 abx-dl = "2100-01-01T00:00:00Z"
 abx-plugins = "2100-01-01T00:00:00Z"
 abxpkg = "2100-01-01T00:00:00Z"
@@ -51,7 +51,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "abx-plugins", specifier = "==1.13.186" },
+    { name = "abx-plugins", specifier = "==1.13.187" },
     { name = "abxbus", specifier = "==2.5.76" },
     { name = "abxpkg", specifier = "==1.13.41" },
     { name = "platformdirs", specifier = ">=4.0.0" },
@@ -85,7 +85,7 @@ dev = [
 
 [[package]]
 name = "abx-plugins"
-version = "1.13.186"
+version = "1.13.187"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "abxbus" },
@@ -94,9 +94,9 @@ dependencies = [
     { name = "rich-click" },
     { name = "uv" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/34/6c/53a92bffd50c4a2f120dd605023e2a3570787b58d75e6db762529c3508b5/abx_plugins-1.13.186.tar.gz", hash = "sha256:94802c6c51e7326e449b4bad4983eff64cdea1f8731ae04669be1639db82be30", size = 653146, upload-time = "2026-10-08T08:02:58.147Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/97/68/254e89be2e6169d73ff2a1d44a6c1b36cae92f44dddf5234d20ec5415ba0/abx_plugins-1.13.187.tar.gz", hash = "sha256:4d1ed7e07fdc9caafba4c822d7c4fd54c487ee5ceccfda61d4ccfb7c0d5d90fc", size = 653242, upload-time = "2026-10-08T08:30:11.335Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ce/ea/c00f6892f663d370c88e62adf302cd2a25959c5deaab3036d25797471376/abx_plugins-1.13.186-py3-none-any.whl", hash = "sha256:c3317ef252445d6dd3c84a491cc68e78fea13cd41e54961a5d7f9adb2b2f27f4", size = 939295, upload-time = "2026-10-08T08:02:55.887Z" },
+    { url = "https://files.pythonhosted.org/packages/91/c0/117e4607c021195d93e9a6b379538cf4cd753dcaea3a468af0f84dd0b9c1/abx_plugins-1.13.187-py3-none-any.whl", hash = "sha256:2e721c45c32bc009d29bc9d2899637e0af4fe6eea10650363d92cbc020a75c28", size = 939403, upload-time = "2026-10-08T08:30:09.285Z" },
 ]
 
 [[package]]
