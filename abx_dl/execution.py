@@ -50,6 +50,7 @@ def iter_plugin_command(
     cwd: Path | None = None,
     timeout: float = 60,
     stop_event: threading.Event | None = None,
+    termination_grace: float = 0,
 ) -> Generator[str]:
     """Run a plugin-owned command and yield its stdout lines.
 
@@ -114,6 +115,12 @@ def iter_plugin_command(
                 errors.seek(0)
                 raise subprocess.CalledProcessError(proc.returncode, argv, stderr=errors.read().decode(errors="replace"))
         finally:
+            if termination_grace > 0 and proc.poll() is None:
+                try:
+                    os.killpg(proc.pid, signal.SIGTERM)
+                    proc.wait(timeout=termination_grace)
+                except (ProcessLookupError, subprocess.TimeoutExpired):
+                    pass
             # Killing only the wrapper leaves search engines alive after an HTTP
             # disconnect or timeout. The fresh session cannot include other jobs.
             try:

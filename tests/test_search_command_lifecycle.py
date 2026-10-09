@@ -19,7 +19,8 @@ from abx_plugins.plugins.search_backend_ripgrep import search as ripgrep
 
 
 @pytest.mark.parametrize("finish", ["close", "cancel", "timeout"])
-def test_search_streams_and_reaps_ripgrep(tmp_path, finish):
+@pytest.mark.parametrize("termination_grace", [0, 0.2])
+def test_search_streams_and_reaps_ripgrep(tmp_path, finish, termination_grace):
     rg = shutil.which("rg")
     assert rg, "Install the real ripgrep binary before running this test"
     snapshot_id = str(uuid4())
@@ -48,7 +49,14 @@ def test_search_streams_and_reaps_ripgrep(tmp_path, finish):
         "RIPGREP_TIMEOUT": "30",
     }
     stop = threading.Event()
-    iterator = iter_plugin_command(command, arguments={"query": query}, env=env, timeout=2, stop_event=stop if finish == "cancel" else None)
+    iterator = iter_plugin_command(
+        command,
+        arguments={"query": query},
+        env=env,
+        timeout=2,
+        stop_event=stop if finish == "cancel" else None,
+        termination_grace=termination_grace,
+    )
     children = []
     try:
         assert next(iterator) == snapshot_id
