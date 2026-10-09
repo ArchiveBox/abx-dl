@@ -156,6 +156,11 @@ jobs:
           PY
 
   tests:
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+      id-token: write
     needs: prepare
     if: needs.prepare.outputs.run_tests == 'true'
     name: Full test suite

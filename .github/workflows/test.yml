@@ -136,6 +136,11 @@ jobs:
     if: inputs.platform == 'linux'
     name: All plugins
     runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+      id-token: write
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.ANTHROPIC_API_KEY == '' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
@@ -183,6 +188,16 @@ jobs:
           plugins_dir="$("${UV_BINARY}" run --no-cache --no-sync --no-sources python -c 'from abx_plugins import get_plugins_dir; print(get_plugins_dir())')"
           test -d "$plugins_dir"
           echo "ABX_PLUGINS_DIR=$plugins_dir" >> "$GITHUB_ENV"
+
+      # The gateway builds from Docker Hub; anonymous pulls hit the shared
+      # runner IP quota before the real capture tests can start.
+      - name: Login to Docker Hub
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@06fb636fac595d6fb4b28a5dfcb21a6f5091859c # v4.5.0
+        with:
+          username: archivebox
+        env:
+          DOCKERHUB_OIDC_CONNECTIONID: ${{ vars.DOCKERHUB_OIDC_CONNECTIONID }}
 
       - name: Start isolated TLSNotary verifier
         id: tlsnotary
