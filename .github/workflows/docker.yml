@@ -255,6 +255,16 @@ jobs:
           cache-to: |
             ${{ inputs.push_digests && 'type=inline' || '' }}
 
+      # OIDC credentials are short-lived; build time must not consume the
+      # credentials used by the separate acceptance phase.
+      - name: Refresh Docker Hub OIDC for acceptance
+        uses: docker/login-action@06fb636fac595d6fb4b28a5dfcb21a6f5091859c # v4.5.0
+        if: inputs.push_digests && inputs.full_tests
+        with:
+          username: archivebox
+        env:
+          DOCKERHUB_OIDC_CONNECTIONID: ${{ vars.DOCKERHUB_OIDC_CONNECTIONID }}
+
       - name: Load the exact pushed digest for full acceptance
         if: inputs.push_digests && inputs.full_tests
         env:
@@ -375,6 +385,14 @@ jobs:
 
           "${DOCKER_BINARY}" run --rm --platform '${{ matrix.platform }}' --entrypoint bash '${{ matrix.local_tag }}' -lc \
             '/venv/bin/python -c '\''import pathlib, sys; expected = "COMMIT_HASH='"${GITHUB_SHA}"'"; sys.exit(expected not in pathlib.Path("/VERSION.txt").read_text().splitlines())'\'''
+
+      - name: Refresh Docker Hub OIDC after acceptance
+        uses: docker/login-action@06fb636fac595d6fb4b28a5dfcb21a6f5091859c # v4.5.0
+        if: inputs.push_digests
+        with:
+          username: archivebox
+        env:
+          DOCKERHUB_OIDC_CONNECTIONID: ${{ vars.DOCKERHUB_OIDC_CONNECTIONID }}
 
       - name: Validate compressed candidate size
         if: inputs.push_digests
