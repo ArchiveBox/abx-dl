@@ -77,8 +77,12 @@ class OutputManifest(BaseModel):
             for path, metadata in value.items():
                 payload = dict(metadata) if isinstance(metadata, Mapping) else {}
                 payload["path"] = str(path)
-                payload.setdefault("extension", Path(str(path)).suffix.lower().lstrip("."))
-                payload.setdefault("mimetype", guess_mimetype(str(path)))
+                # WHY: saved manifests already contain these values; setdefault
+                # would still recompute and discard both defaults on every poll.
+                if "extension" not in payload:
+                    payload["extension"] = Path(str(path)).suffix.lower().lstrip(".")
+                if "mimetype" not in payload:
+                    payload["mimetype"] = guess_mimetype(str(path))
                 files.append(payload)
             return cls.from_files(files)
         if isinstance(value, Iterable):
@@ -92,8 +96,10 @@ class OutputManifest(BaseModel):
                     path = str(item["path"])
                     payload = dict(item)
                     payload["path"] = path
-                    payload.setdefault("extension", Path(path).suffix.lower().lstrip("."))
-                    payload.setdefault("mimetype", guess_mimetype(path))
+                    if "extension" not in payload:
+                        payload["extension"] = Path(path).suffix.lower().lstrip(".")
+                    if "mimetype" not in payload:
+                        payload["mimetype"] = guess_mimetype(path)
                     files.append(payload)
             return cls.from_files(files)
         return cls()

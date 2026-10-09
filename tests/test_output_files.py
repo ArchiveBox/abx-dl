@@ -1,7 +1,10 @@
 import os
+import cProfile
 import shutil
 import stat
 from pathlib import Path
+
+import pytest
 
 from abx_dl.catalog import PluginCatalog
 from abx_dl.output_files import OutputManifest, scan_output_files
@@ -132,3 +135,42 @@ def test_output_manifest_normalizes_string_and_list_metadata() -> None:
         "mimetype": "application/warc",
         "size": 0,
     }
+
+
+@pytest.mark.parametrize("as_list", [False, True])
+def test_saved_manifest_reuses_present_metadata(tmp_path: Path, as_list: bool) -> None:
+    for index in range(32):
+        (tmp_path / f"page-{index}.html").write_text(f"<h1>{index}</h1>")
+    original = OutputManifest.scan(tmp_path)
+    saved = original.as_mapping()
+    # Explicit empty and custom metadata must also survive round trips.
+    saved["page-0.html"].update(extension="", mimetype="")
+    saved["page-1.html"].update(extension="custom", mimetype="application/custom")
+    value = [{"path": path, **metadata} for path, metadata in saved.items()] if as_list else saved
+
+    profile = cProfile.Profile()
+    with profile:
+        restored = OutputManifest.from_value(value)
+
+    assert restored.as_mapping() == saved
+    assert restored.total_size == original.total_size
+    assert restored.mimetypes == ["text/html", "application/custom"]
+    # WHY: UI polls repeatedly parse saved manifests. Guessing types already
+    # present wastes CPU for every file, even though the guesses are discarded.
+    guess_calls = sum(
+        entry.callcount for entry in profile.getstats() if not isinstance(entry.code, str) and entry.code.co_name == "guess_mimetype"
+    )
+    assert guess_calls == 0
+
+
+@pytest.mark.parametrize("as_list", [False, True])
+def test_saved_manifest_fills_only_absent_metadata(as_list: bool) -> None:
+    saved = {"page.html": {"size": 7}, "archive.warc": {"extension": "", "mimetype": "", "size": 9}}
+    value = [{"path": path, **metadata} for path, metadata in saved.items()] if as_list else saved
+    manifest = OutputManifest.from_value(value)
+    assert manifest.as_mapping() == {
+        "archive.warc": {"extension": "", "mimetype": "", "size": 9},
+        "page.html": {"extension": "html", "mimetype": "text/html", "size": 7},
+    }
+    assert manifest.total_size == 16
+    assert manifest.mimetypes == ["text/html"]
