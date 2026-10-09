@@ -31,7 +31,7 @@ from ..events import (
 from ..limits import parse_filesize_to_bytes
 from ..models import Snapshot
 from ..models import Hook, Plugin
-from .base import BaseService, wait_for_process_ready, wait_for_crawl_resume
+from .base import BaseService, ProcessExitedBeforeReadyError, wait_for_process_ready, wait_for_crawl_resume
 from .binary_service import build_plugin_process_env
 
 
@@ -304,11 +304,16 @@ class SnapshotService(BaseService):
                 # OS spawn alone is too early: short captures can reach cleanup
                 # before this hook initializes. Stdout releases this scheduling
                 # barrier; it says nothing about whether an output succeeded.
-                await wait_for_process_ready(
-                    started_process,
-                    started_wait_timeout,
-                    self.should_abort,
-                )
+                try:
+                    await wait_for_process_ready(
+                        started_process,
+                        started_wait_timeout,
+                        self.should_abort,
+                    )
+                except ProcessExitedBeforeReadyError:
+                    # Process completion retains the actual failed result. An
+                    # extractor failure must not prevent unrelated captures.
+                    return
             else:
                 foreground_process = event.emit(process_event)
                 await _run_event_now(foreground_process, handler_timeout)

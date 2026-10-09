@@ -11,6 +11,7 @@ from typing import Any, ClassVar
 from abxbus import BaseEvent, EventBus
 from abxpkg import BinProvider
 from abxpkg.binary_service import BinaryEvent, BinaryRequestEvent
+from abxpkg.exceptions import BinaryOperationError
 
 from ..catalog import PluginCatalog
 from ..config import RuntimeConfig, get_config, get_plugin_env, get_required_binary_requests, is_path_like_env_value
@@ -96,6 +97,7 @@ class PluginBinariesService(BaseService):
         output_dir: Path | None = None,
         snapshot: Snapshot | None = None,
         abort_requested: Callable[[], bool | Awaitable[bool]] | None = None,
+        continue_on_binary_error: bool = False,
     ):
         self.auto_install = auto_install
         self.catalog = catalog
@@ -104,6 +106,7 @@ class PluginBinariesService(BaseService):
         self.snapshot = snapshot
         self.abort_requested = False
         self.abort_requested_callback = abort_requested
+        self.continue_on_binary_error = continue_on_binary_error
         super().__init__(bus)
         self.bus.on(InstallEvent, self.on_InstallEvent)
         self.bus.on(CrawlAbortEvent, self.on_CrawlAbortEvent)
@@ -189,8 +192,14 @@ class PluginBinariesService(BaseService):
 
         for request_event in request_events:
             emitted_request: BaseEvent = event.emit(request_event)
-            completed_request = await emitted_request.now()
-            await completed_request.event_results_list(raise_if_none=False)
+            try:
+                completed_request = await emitted_request.now()
+                await completed_request.event_results_list(raise_if_none=False)
+            except BinaryOperationError:
+                if not self.continue_on_binary_error:
+                    raise
+                # Capture still runs the real hook, which reports its own failure.
+                # Preserve the failed install event and resolve unrelated binaries.
 
 
 class PluginBinaryEnvService(BaseService):

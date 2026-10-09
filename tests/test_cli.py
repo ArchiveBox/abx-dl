@@ -1383,6 +1383,34 @@ def test_readme_install_command_runs_real_install_pipeline(tmp_path: Path) -> No
     assert version_result.stdout.startswith("GNU Wget")
 
 
+def test_capture_isolates_missing_plugin_binary_but_install_remains_strict(tmp_path: Path, httpserver) -> None:
+    missing_binary = tmp_path / "missing-yt-dlp"
+    configured = _run_cli(tmp_path, "config", "--set", f"YTDLP_BINARY={missing_binary}")
+    assert configured.returncode == 0, configured.stdout + configured.stderr
+    installed = _run_cli(tmp_path, "install", "ytdlp")
+    assert installed.returncode != 0
+    assert str(missing_binary) in installed.stdout + installed.stderr
+
+    content = "<html><body>Healthy capture survives another plugin's missing binary.</body></html>"
+    httpserver.expect_request("/index.html").respond_with_data(content, content_type="text/html")
+    output_dir = tmp_path / "capture"
+    captured = _run_cli(tmp_path, "dl", "--plugins=ytdlp,wget", f"--dir={output_dir}", httpserver.url_for("/index.html"))
+    assert captured.returncode == 0, captured.stdout + captured.stderr
+    records = [json.loads(line) for line in (output_dir / "index.jsonl").read_text().splitlines() if line.startswith("{")]
+    results = [record for record in records if record["type"] == "ArchiveResult"]
+    assert any(record["plugin"] == "ytdlp" and record["status"] == "failed" for record in results)
+    wget_result = next(record for record in results if record["plugin"] == "wget" and record["status"] == "succeeded")
+    assert (output_dir / wget_result["output_str"]).read_text() == content
+    assert any(
+        record["type"] == "Process"
+        and record.get("plugin") == "ytdlp"
+        and record.get("hook_name", "").startswith("on_Snapshot__")
+        and record.get("exit_code") not in (None, 0)
+        and str(missing_binary) in record.get("stderr", "")
+        for record in records
+    )
+
+
 def test_readme_dl_command_downloads_example_dot_com_with_real_output(tmp_path: Path) -> None:
     output_dir = tmp_path / "downloads"
     result = _run_cli(

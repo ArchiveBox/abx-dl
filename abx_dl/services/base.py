@@ -10,6 +10,10 @@ from abxbus import BaseEvent, EventBus
 from ..events import CrawlAbortEvent, CrawlPauseEvent, CrawlResumeAndRetryEvent, CrawlResumeAndSkipEvent, ProcessStartedEvent
 
 
+class ProcessExitedBeforeReadyError(RuntimeError):
+    """A real background process failed before publishing readiness."""
+
+
 def _log_tail(path: Path, limit: int = 4096) -> str:
     try:
         with path.open("rb") as log_file:
@@ -108,7 +112,7 @@ async def wait_for_process_ready(
                     )
                     if part
                 )
-                raise RuntimeError(
+                raise ProcessExitedBeforeReadyError(
                     "\n".join(
                         part
                         for part in (

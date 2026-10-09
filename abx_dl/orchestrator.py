@@ -542,6 +542,7 @@ async def download(
         install_plugins=get_install_plugins(catalog),
         output_dir=output_dir,
         snapshot=snapshot,
+        continue_on_binary_error=True,
     )
     process_service = ProcessService(
         bus,

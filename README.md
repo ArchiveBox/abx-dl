@@ -338,6 +338,8 @@ abx-dl plugins                            # checks which dependencies are availa
 
 Every preflight request is resolved through `abxpkg`. Compatible host binaries are selected first and projected into `ABXPKG_LIB_DIR/env/bin`; otherwise the configured managed provider installs and projects the dependency. Hook subprocesses then use the resolved Python or Node interpreter and projected runtime environment directly.
 
+During capture, a dependency failure leaves that plugin's real hook to report its failure while unrelated plugins continue. Explicit `abx-dl install` commands still fail when a requested dependency cannot be installed. Crawl setup readiness failures remain fatal because later hooks may require those shared services.
+
 The normal runtime flow after dependency preflight is:
 - `CrawlEvent` (internal lifecycle root)
 - `CrawlSetupEvent` → plugin `on_CrawlSetup__*` hooks
