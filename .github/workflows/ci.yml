@@ -167,6 +167,11 @@ jobs:
     secrets: inherit
 
   docker:
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+      id-token: write
     needs: prepare
     if: needs.prepare.outputs.run_tests == 'true' && needs.prepare.outputs.platform == 'linux'
     name: Docker build and test
