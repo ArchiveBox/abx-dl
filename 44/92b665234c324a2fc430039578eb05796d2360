@@ -1,0 +1,14 @@
+.github/workflows/test.yml
+  h_923c208e183a7b 176
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "4492b665234c324a2fc430039578eb05796d2360",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
