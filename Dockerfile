@@ -220,7 +220,6 @@ RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=
     && install -d -m 755 /usr/share/man/man1 \
     && rm -f /usr/lib/jvm/java-*-openjdk-*/lib/server/classes*.jsa \
     && rm -f /venv/bin/uv /venv/bin/uvx \
-    && find "$ABXPKG_LIB_DIR" \( ! -user "$DEFAULT_ARCHIVEBOX_UID" -o ! -group "$DEFAULT_ARCHIVEBOX_GID" \) -exec chown -h "$DEFAULT_ARCHIVEBOX_UID:$DEFAULT_ARCHIVEBOX_GID" {} + \
     && STDLIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("stdlib"))')" \
     && PURELIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
     && /venv/bin/python -m compileall --invalidation-mode checked-hash -q "$STDLIB_DIR" "$PURELIB_DIR" \
@@ -231,6 +230,9 @@ RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=
     # checked hashes keep this bytecode valid after that reproducibility step.
     && PYTHON_LIB="$(/venv/bin/python -c 'import sys; print(f"python{sys.version_info.major}.{sys.version_info.minor}")')" \
     && find "$ABXPKG_LIB_DIR/uv" -type d -path "*/lib/$PYTHON_LIB/site-packages" -prune -exec /venv/bin/python -m compileall --invalidation-mode checked-hash -q {} + \
+    # Include newly compiled bytecode before runtime installs fingerprint it;
+    # otherwise child images copy it into another layer just to fix ownership.
+    && find "$ABXPKG_LIB_DIR" \( ! -user "$DEFAULT_ARCHIVEBOX_UID" -o ! -group "$DEFAULT_ARCHIVEBOX_GID" \) -exec chown -h "$DEFAULT_ARCHIVEBOX_UID:$DEFAULT_ARCHIVEBOX_GID" {} + \
     && env HOME=/home/archivebox XDG_CACHE_HOME=/var/tmp/abxpkg-cache setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups abx-dl install $ABX_DOCKER_PLUGINS \
     && find /venv "$ABXPKG_LIB_DIR" -exec touch -h -d '@946684800' {} + \
     # Execution plans from root provisioning cannot serve the runtime user.
