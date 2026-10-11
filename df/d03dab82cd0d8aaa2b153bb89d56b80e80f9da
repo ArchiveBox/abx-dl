@@ -1,0 +1,21 @@
+abx_dl/services/binary_service.py
+  s_10bc94d001be49::t_76c059168f4f60 193,195-197,206-208
+tests/test_cli.py
+  s_10bc94d001be49::t_aa8382ff71f175 1399-1402
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "dfd03dab82cd0d8aaa2b153bb89d56b80e80f9da",
+  "prompts": {},
+  "sessions": {
+    "s_10bc94d001be49": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11f62-2c55-7051-a677-585a21b42fb4",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
