@@ -1,0 +1,18 @@
+abx_dl/events.py
+  h_923c208e183a7b 401-403
+abx_dl/services/process_service.py
+  h_923c208e183a7b 648-652
+tests/test_executor.py
+  h_923c208e183a7b 28,1935,1939,1945-1961,2004-2015,2019-2021
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "eb760d180a326a0ee7c3ba417bf9705fb2f8c501",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
