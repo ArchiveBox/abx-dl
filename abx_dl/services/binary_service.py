@@ -190,7 +190,11 @@ class PluginBinariesService(BaseService):
             if await self.should_abort():
                 break
 
+        failed_plugins: set[str] = set()
         for request_event in request_events:
+            plugin_name = str(request_event.extra_context["plugin_name"])
+            if plugin_name in failed_plugins:
+                continue
             emitted_request: BaseEvent = event.emit(request_event)
             try:
                 completed_request = await emitted_request.now()
@@ -199,7 +203,9 @@ class PluginBinariesService(BaseService):
                 if not self.continue_on_binary_error:
                     raise
                 # Capture still runs the real hook, which reports its own failure.
-                # Preserve the failed install event and resolve unrelated binaries.
+                # Its remaining installs cannot repair the failed requirement;
+                # continue other plugins' requests, including shared dependencies.
+                failed_plugins.add(plugin_name)
 
 
 class PluginBinaryEnvService(BaseService):

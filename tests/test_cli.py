@@ -1396,6 +1396,10 @@ def test_capture_isolates_missing_plugin_binary_but_install_remains_strict(tmp_p
     output_dir = tmp_path / "capture"
     captured = _run_cli(tmp_path, "dl", "--plugins=ytdlp,wget", f"--dir={output_dir}", httpserver.url_for("/index.html"))
     assert captured.returncode == 0, captured.stdout + captured.stderr
+    # A failed required binary must not leave capture waiting on this plugin's
+    # remaining installs (ffmpeg can require a full package-manager install).
+    assert "install:node" not in captured.stderr, captured.stderr
+    assert "install:ffmpeg" not in captured.stderr, captured.stderr
     records = [json.loads(line) for line in (output_dir / "index.jsonl").read_text().splitlines() if line.startswith("{")]
     results = [record for record in records if record["type"] == "ArchiveResult"]
     assert any(record["plugin"] == "ytdlp" and record["status"] == "failed" for record in results)
