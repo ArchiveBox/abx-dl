@@ -176,6 +176,19 @@ def test_plugin_config_resolver_uses_manifest_aliases_and_dependencies() -> None
     }
 
 
+def test_config_resolver_requires_opt_in_for_shipped_importer() -> None:
+    catalog = PluginCatalog.discover(runtime="archivebox")
+    resolver = PluginConfigResolver(catalog)
+    assert catalog["importer_rss"].config.x_auto_run is False
+    assert "importer_rss" not in resolver.enabled_plugin_names(environ={})
+    assert "importer_rss" not in resolver.enabled_plugin_names_from_flat({})
+    assert "wget" in resolver.enabled_plugin_names_from_flat({})
+    assert "importer_rss" in catalog.select(["importer_rss"])
+    assert "importer_rss" in resolver.enabled_plugin_names(resolved={"importer_rss": {"IMPORTER_RSS_ENABLED": True}})
+    assert "importer_rss" in resolver.enabled_plugin_names_from_flat({"IMPORTER_RSS_ENABLED": True})
+    assert "importer_rss" not in resolver.enabled_plugin_names_from_flat({"IMPORTER_RSS_ENABLED": False})
+
+
 def test_filter_plugins_does_not_add_binary_providers_for_wget() -> None:
     plugins = PluginCatalog.discover()
 

@@ -337,6 +337,10 @@ class PluginConfigResolver:
         disabled: list[str] = []
         for name, plugin in self.catalog.items():
             enabled_key = plugin.enabled_key
+            # Command-only plugins must be opted into, not made implicit roots
+            # merely because their manifest has no ENABLED property.
+            if enabled_key not in resolved_config.get(name, {}) and not plugin.config.x_auto_run:
+                continue
             value = resolved_config.get(name, {}).get(enabled_key, True)
             if isinstance(value, str):
                 value = value.strip().lower() not in {"", "0", "false", "no", "off"}
@@ -348,6 +352,10 @@ class PluginConfigResolver:
         enabled: list[str] = []
         disabled: list[str] = []
         for name, plugin in self.catalog.items():
+            # Leave unselected command plugins available as dependencies; only
+            # an explicit False should block required-plugin expansion.
+            if plugin.enabled_key not in config and not plugin.config.x_auto_run:
+                continue
             value = config.get(plugin.enabled_key, True)
             if isinstance(value, str):
                 value = value.strip().lower() not in {"", "0", "false", "no", "off"}
