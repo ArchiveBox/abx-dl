@@ -1,0 +1,16 @@
+abx_dl/execution.py
+  h_923c208e183a7b 53,118-123
+tests/test_search_command_lifecycle.py
+  h_923c208e183a7b 22-23,52-59
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "57fa3888b51fcb81fd9be1cc9b115f890e160078",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
