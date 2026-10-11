@@ -1,0 +1,18 @@
+abx_dl/package.json
+  h_923c208e183a7b 6
+pyproject.toml
+  h_923c208e183a7b 66
+uv.lock
+  h_923c208e183a7b 75,839,848,850
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "09aa960b68e54b9d525c99b53ac92a5a3dd4942c",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
