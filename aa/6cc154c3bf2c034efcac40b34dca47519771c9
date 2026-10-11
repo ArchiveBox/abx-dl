@@ -1,0 +1,18 @@
+.github/workflows/ci.yml
+  h_923c208e183a7b 170-174
+.github/workflows/docker.yml
+  h_923c208e183a7b 30,199,202-204
+.github/workflows/release.yml
+  h_923c208e183a7b 175,177-179
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "aa6cc154c3bf2c034efcac40b34dca47519771c9",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
