@@ -1,0 +1,16 @@
+abx_dl/output_files.py
+  h_923c208e183a7b 80-85,99-102
+tests/test_output_files.py
+  h_923c208e183a7b 2,7-8,138-176
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "748745a6969d2184c5c1f9ede29fddb8316b329b",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
