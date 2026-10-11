@@ -1,0 +1,22 @@
+.github/workflows/ci.yml
+  h_923c208e183a7b 8-9,11-16,33,35-37,55-74,77,83,90,93,117-118,123-128,135,137-138,153,159,166-173
+.github/workflows/release.yml
+  h_923c208e183a7b 63,70,79,147,165,172,179,187,198,203,234,245,261,277,281,288
+.github/workflows/test.yml
+  h_923c208e183a7b 6-8,23,109,112
+tests/conftest.py
+  h_923c208e183a7b 68-70
+tests/test_ci_matrix.py
+  h_923c208e183a7b 1-37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "46dad39d7c329396680676106ce7b3e42ea071f6",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
