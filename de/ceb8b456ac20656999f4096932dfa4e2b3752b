@@ -1,0 +1,14 @@
+abx_dl/services/process_service.py
+  h_923c208e183a7b 482-499
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "deceb8b456ac20656999f4096932dfa4e2b3752b",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
