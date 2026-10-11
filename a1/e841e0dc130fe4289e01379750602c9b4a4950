@@ -1,0 +1,14 @@
+bin/validate_crawl.py
+  h_923c208e183a7b 159-170
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "a1e841e0dc130fe4289e01379750602c9b4a4950",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
