@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import mimetypes
+import errno
 import os
 import stat
 from pathlib import Path
@@ -21,6 +22,23 @@ OUTPUT_FILE_METADATA_SUFFIXES = (".stdout.log", ".stderr.log", ".log", ".pid", "
 
 EXECUTABLE_BITS = 0o111
 BROKEN_SYMLINK_SUFFIX = ".broken-symlink.txt"
+
+
+def remove_empty_output_dirs(output_dirs: Iterable[Path]) -> None:
+    """Remove empty plugin directories after their hook lifecycle has finished.
+
+    Discard Finder metadata, then use atomic rmdir without removing captures,
+    failed-hook logs, subdirectories, or symlink targets.
+    """
+    for output_dir in set(output_dirs):
+        if output_dir.is_symlink():
+            continue
+        try:
+            (output_dir / ".DS_Store").unlink(missing_ok=True)
+            output_dir.rmdir()
+        except OSError as error:
+            if error.errno not in (errno.ENOENT, errno.ENOTEMPTY, errno.EEXIST, errno.ENOTDIR, errno.EISDIR):
+                raise
 
 
 class OutputFile(BaseModel):
@@ -182,6 +200,8 @@ def scan_output_files(
             _neutralize_escaping_symlink(file_path, containment_root)
             continue
         if not stat.S_ISREG(stat_result.st_mode):
+            continue
+        if file_path.name == ".DS_Store":
             continue
         if ".hooks" in file_path.relative_to(output_dir).parts:
             continue

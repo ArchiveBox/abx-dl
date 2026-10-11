@@ -36,6 +36,7 @@ from abx_dl.execution import build_hook_args, execute_hook, iter_plugin_command
 from abx_dl.catalog import PluginCatalog, PluginConfigResolver
 from abx_dl.models import Hook, PluginCommand, Snapshot
 from abx_dl.orchestrator import create_bus, download as execute_download, install_plugins, parse_input
+from abx_dl.process_utils import validate_pid_file
 from abx_dl.services.archive_result_service import ArchiveResultService
 from abx_dl.services.binary_service import PluginBinaryEnvService
 from abx_dl.services.crawl_service import CrawlService
@@ -2007,6 +2008,7 @@ def test_crawl_abort_cleans_real_chrome_process_tree_and_foreground_hook(
         if history_pressure:
             bus.event_history.max_history_size = 32
             hook = PluginCatalog.discover()["parse_txt_urls"].hooks[0]
+            parsed_events = []
             for index in range(16):
                 parsed = await execute_hook(
                     hook,
@@ -2016,6 +2018,14 @@ def test_crawl_abort_cleans_real_chrome_process_tree_and_foreground_hook(
                     bus=bus,
                 )
                 assert parsed.exit_code == 0
+                parsed_events.append(parsed)
+            assert parsed_events[0].event_id not in bus.event_history
+            assert launch_started.event_id in bus.event_history
+            assert tab_started.event_id in bus.event_history
+        assert not list(output_dir.rglob("on_*.sh"))
+        assert (output_dir / plugin.name / "cmd.sh").is_file()
+        for started in (launch_started, tab_started, navigate_started):
+            assert validate_pid_file(started.pid_file, [started.hook_path, *started.hook_args])
         await bus.emit(CrawlAbortEvent(event_parent_id=crawl.event_id)).now()
         await download_task
         await bus.wait_until_idle()
@@ -2456,6 +2466,12 @@ def test_concurrent_process_events_for_same_hook_keep_distinct_artifacts(tmp_pat
     output_dir = tmp_path / "run" / "same_hook"
     bus = create_bus(total_timeout=10.0, name=f"process_event_same_hook_{tmp_path.name}")
     ProcessService(bus, emit_jsonl=False, interactive_tty=False)
+    started_events: list[ProcessStartedEvent] = []
+
+    def record_started(event: ProcessStartedEvent) -> None:
+        started_events.append(event)
+
+    bus.on(ProcessStartedEvent, record_started)
 
     async def run() -> list[ProcessCompletedEvent]:
         events = [
@@ -2487,7 +2503,53 @@ def test_concurrent_process_events_for_same_hook_keep_distinct_artifacts(tmp_pat
     completed_events = asyncio.run(run())
 
     assert [event.status for event in completed_events] == ["succeeded", "succeeded"]
-    assert len(list(output_dir.glob(f"{real_hook.name}.*.sh"))) == 2
+    assert len(started_events) == 2
+    for attribute in ("stdout_file", "stderr_file", "pid_file"):
+        assert len({getattr(event, attribute) for event in started_events}) == 2
+    assert not list(output_dir.glob(f"{real_hook.name}.*.sh"))
+
+
+@pytest.mark.parametrize("preserve_existing", [False, True])
+@pytest.mark.parametrize("finder_metadata", [False, True])
+def test_noresults_cleanup_removes_only_empty_plugin_directories(
+    tmp_path: Path,
+    httpserver: HTTPServer,
+    preserve_existing: bool,
+    finder_metadata: bool,
+) -> None:
+    httpserver.expect_request("/no-links").respond_with_data("No links here.", content_type="text/plain")
+    output_dir = tmp_path / "capture"
+    catalog = PluginCatalog.discover()
+    plugins = [plugin.name for plugin in catalog.values() if plugin.config.x_accepts_internal_input]
+    assert plugins
+    for plugin in plugins:
+        plugin_dir = output_dir / plugin
+        if preserve_existing or finder_metadata:
+            plugin_dir.mkdir(parents=True)
+        if finder_metadata:
+            (plugin_dir / ".DS_Store").write_bytes(b"Finder directory metadata")
+        if preserve_existing:
+            (plugin_dir / "previous.bin").write_bytes(b"previous capture")
+    _run_download(
+        httpserver.url_for("/no-links"),
+        catalog,
+        output_dir,
+        selected_plugins=plugins,
+        emit_jsonl=False,
+        interactive_tty=False,
+    )
+    records = [json.loads(line) for line in (output_dir / "index.jsonl").read_text().splitlines()]
+    assert not list(output_dir.rglob("on_*.sh"))
+    for plugin in plugins:
+        plugin_dir = output_dir / plugin
+        result = next(record for record in reversed(records) if record.get("type") == "ArchiveResult" and record.get("plugin") == plugin)
+        assert result["status"] == "noresults", result
+        assert ".DS_Store" not in {output["path"] for output in result["output_files"]}
+        if preserve_existing:
+            assert (plugin_dir / "previous.bin").read_bytes() == b"previous capture"
+            assert list(plugin_dir.iterdir()) == [plugin_dir / "previous.bin"]
+        else:
+            assert not plugin_dir.exists()
 
 
 def test_process_completion_waits_for_stdout_consumers(tmp_path: Path) -> None:

@@ -313,7 +313,6 @@ class ProcessStartedEvent(BaseEvent):
     stdout_file: Path = Field(exclude=True, repr=False)
     stderr_file: Path = Field(exclude=True, repr=False)
     pid_file: Path = Field(exclude=True, repr=False)
-    cmd_file: Path = Field(exclude=True, repr=False)
     files_before: set[Path] = Field(exclude=True, repr=False)
     event_timeout: float | None = 60.0
 

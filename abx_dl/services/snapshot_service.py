@@ -31,6 +31,7 @@ from ..events import (
 from ..limits import parse_filesize_to_bytes
 from ..models import Snapshot
 from ..models import Hook, Plugin
+from ..output_files import remove_empty_output_dirs
 from .base import BaseService, ProcessExitedBeforeReadyError, wait_for_process_ready, wait_for_crawl_resume
 from .binary_service import build_plugin_process_env
 
@@ -602,6 +603,7 @@ class SnapshotService(BaseService):
             )
         if not event.finalize_snapshot or root_snapshot_event.event_id in self._failed_snapshot_event_ids:
             return
+        await asyncio.to_thread(remove_empty_output_dirs, [self.output_dir / plugin.name for plugin, _hook in self.hooks])
         completed_event = SnapshotCompletedEvent(
             url=event.url,
             snapshot_id=event.snapshot_id,

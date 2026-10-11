@@ -42,7 +42,6 @@ from ..process_utils import (
     graceful_kill_by_pid_file,
     graceful_kill_process,
     validate_pid_file,
-    write_cmd_file,
     write_pid_file_with_mtime,
     _send_signal,
 )
@@ -444,7 +443,7 @@ class ProcessService(BaseService):
         except psutil.Error:
             descendants = []
         for _event, started in tuple(self._active_hooks.values()):
-            if started.subprocess.returncode is None and validate_pid_file(started.pid_file, started.cmd_file):
+            if started.subprocess.returncode is None and validate_pid_file(started.pid_file, [started.hook_path, *started.hook_args]):
                 _send_signal(started.pid, signal.SIGKILL)
         for child in reversed(descendants):
             try:
@@ -533,11 +532,6 @@ class ProcessService(BaseService):
         stdout_file = plugin_output_dir / f"{artifact_stem}.stdout.log"
         stderr_file = plugin_output_dir / f"{artifact_stem}.stderr.log"
         pid_file = plugin_output_dir / f"{artifact_stem}.pid"
-        cmd_file = plugin_output_dir / f"{artifact_stem}.sh"
-
-        # UUID-scoped names never reuse an earlier attempt's logs. Probing
-        # nonexistent old names here adds remote I/O without preserving anything.
-        await asyncio.to_thread(write_cmd_file, cmd_file, cmd)
         # Track the directory contents before the hook runs so completion can
         # report only newly created output files.
         files_before = await asyncio.to_thread(lambda: set(plugin_output_dir.rglob("*")))
@@ -634,7 +628,6 @@ class ProcessService(BaseService):
                 stdout_file=stdout_file,
                 stderr_file=stderr_file,
                 pid_file=pid_file,
-                cmd_file=cmd_file,
                 files_before=files_before,
                 event_timeout=event.timeout + 30.0,
                 event_handler_timeout=event.timeout + 30.0,
@@ -1089,7 +1082,7 @@ class ProcessService(BaseService):
 
         await graceful_kill_by_pid_file(
             started_process.pid_file,
-            started_process.cmd_file,
+            [started_process.hook_path, *started_process.hook_args],
             grace_period=grace_period,
         )
 

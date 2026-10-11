@@ -37,8 +37,34 @@ from abx_dl.orchestrator import create_bus
 from abx_dl.output_files import OutputFile
 from rich.console import Console
 from rich.progress import Progress
+from pytest_httpserver import HTTPServer
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_cli_noresults_removes_empty_output_directories(tmp_path: Path, httpserver: HTTPServer) -> None:
+    httpserver.expect_request("/no-links").respond_with_data("No links here.", content_type="text/plain")
+    plugins = [plugin.name for plugin in PluginCatalog.discover().values() if plugin.config.x_accepts_internal_input]
+    assert plugins
+    output_dir = tmp_path / "capture"
+    result = _run_cli(
+        tmp_path,
+        "dl",
+        f"--plugins={','.join(plugins)}",
+        "--dir",
+        str(output_dir),
+        httpserver.url_for("/no-links"),
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    records = [json.loads(line) for line in (output_dir / "index.jsonl").read_text().splitlines()]
+    for plugin in plugins:
+        archive_result = next(
+            record for record in reversed(records) if record.get("type") == "ArchiveResult" and record.get("plugin") == plugin
+        )
+        assert archive_result["status"] == "noresults", archive_result
+        assert archive_result["output_files"] == [], archive_result
+        assert not (output_dir / plugin).exists()
+    assert not list(output_dir.rglob("on_*.sh"))
 
 
 @pytest.mark.parametrize("choice", ["skip", "retry", "abort", "ctrl-c", "noninteractive"])
@@ -604,7 +630,6 @@ def test_noninteractive_live_ui_streams_process_lifecycle() -> None:
             stdout_file=Path("/tmp/noninteractive_process_lifecycle.stdout.log"),
             stderr_file=Path("/tmp/noninteractive_process_lifecycle.stderr.log"),
             pid_file=Path("/tmp/noninteractive_process_lifecycle.pid"),
-            cmd_file=Path("/tmp/noninteractive_process_lifecycle.sh"),
             files_before=set(),
             start_ts="2026-03-25T12:00:00",
         )
@@ -790,7 +815,6 @@ def test_process_completed_preserves_output_files_when_inline_archive_result_has
             stdout_file=Path("/tmp/process_completed_preserve_output_files.stdout.log"),
             stderr_file=Path("/tmp/process_completed_preserve_output_files.stderr.log"),
             pid_file=Path("/tmp/process_completed_preserve_output_files.pid"),
-            cmd_file=Path("/tmp/process_completed_preserve_output_files.sh"),
             files_before=set(),
             start_ts="2026-03-25T12:00:00",
         )
@@ -857,7 +881,6 @@ def test_process_stdout_updates_live_row_with_last_non_json_line() -> None:
             stdout_file=Path("/tmp/process_stdout_live_row.stdout.log"),
             stderr_file=Path("/tmp/process_stdout_live_row.stderr.log"),
             pid_file=Path("/tmp/process_stdout_live_row.pid"),
-            cmd_file=Path("/tmp/process_stdout_live_row.sh"),
             files_before=set(),
             start_ts="2026-03-25T12:00:00",
         )

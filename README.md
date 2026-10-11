@@ -371,6 +371,12 @@ You can override the install location with `ABXPKG_LIB_DIR=/path/to/lib abx-dl i
 
 By default, `abx-dl` writes results into the current working directory. Each run creates an `index.jsonl` manifest plus one subdirectory per plugin that produced output. If you want to keep runs isolated, `cd` into a scratch directory first or pass `--dir=/path/to/run`.
 
+Hook working directories are created for execution, then removed at the end of
+snapshot/crawl cleanup if empty. Plugins returning `noresults` leave no directory
+when they wrote nothing; `.DS_Store` is discarded, while captures and failure logs are preserved. Process
+commands are recorded in `index.jsonl` and active process metadata, without
+generating per-hook shell scripts. Plugin-owned files remain unchanged.
+
 ```bash
 mkdir -p /tmp/abx-run && cd /tmp/abx-run
 uvx --from abx-dl abx-dl --plugins=title,wget 'https://example.com'

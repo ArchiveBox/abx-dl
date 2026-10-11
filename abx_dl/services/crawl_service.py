@@ -23,6 +23,7 @@ from ..events import (
 )
 from ..models import Snapshot
 from ..models import Hook, Plugin
+from ..output_files import remove_empty_output_dirs
 from .base import BaseService, wait_for_process_ready, wait_for_crawl_resume
 from .binary_service import build_plugin_process_env
 
@@ -309,6 +310,8 @@ class CrawlService(BaseService):
                     for process_event, _ in started_processes
                 ],
             )
+
+        await asyncio.to_thread(remove_empty_output_dirs, [self.output_dir / plugin.name for plugin, _hook in self.crawl_setup_hooks])
 
     async def on_CrawlAbortEvent(self, event: CrawlAbortEvent) -> None:
         """Stop scheduling any further crawl work after a user abort."""

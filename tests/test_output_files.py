@@ -7,7 +7,42 @@ from pathlib import Path
 import pytest
 
 from abx_dl.catalog import PluginCatalog
-from abx_dl.output_files import OutputManifest, scan_output_files
+from abx_dl.output_files import OutputManifest, remove_empty_output_dirs, scan_output_files
+
+
+@pytest.mark.parametrize("entry", [None, ".DS_Store", "saved.txt", "capture.stderr.log"])
+def test_empty_output_cleanup_applies_to_every_catalog_plugin(tmp_path: Path, entry: str | None) -> None:
+    directories = [tmp_path / plugin.name for plugin in PluginCatalog.discover().values()]
+    assert directories
+    for directory in directories:
+        directory.mkdir()
+        if entry:
+            (directory / entry).write_bytes(b"saved content")
+
+    remove_empty_output_dirs(directories)
+
+    for directory in directories:
+        if entry is None or entry == ".DS_Store":
+            assert not directory.exists()
+        else:
+            assert (directory / entry).read_bytes() == b"saved content"
+
+
+def test_empty_output_cleanup_preserves_subdirectories_and_symlink_targets(tmp_path: Path) -> None:
+    target = tmp_path / "target"
+    target.mkdir()
+    metadata = target / ".DS_Store"
+    metadata.write_bytes(b"Finder metadata outside the plugin directory")
+    plugin_dir = tmp_path / "plugin"
+    plugin_dir.symlink_to(target, target_is_directory=True)
+    nested_dir = tmp_path / "nested"
+    (nested_dir / "saved-empty-directory").mkdir(parents=True)
+
+    remove_empty_output_dirs([plugin_dir, nested_dir])
+
+    assert plugin_dir.is_symlink()
+    assert metadata.read_bytes() == b"Finder metadata outside the plugin directory"
+    assert (nested_dir / "saved-empty-directory").is_dir()
 
 
 def test_scan_output_files_excludes_symlinked_files_and_dirs(tmp_path: Path) -> None:

@@ -9,7 +9,6 @@ after the original exited).
 
 import asyncio
 import os
-import shlex
 import signal
 from pathlib import Path
 
@@ -31,17 +30,6 @@ def _normalize_exec_name(exec_path: str) -> str:
     if name.startswith("node"):
         return "node"
     return name
-
-
-def _read_recorded_argv(cmd_file: Path) -> list[str]:
-    """Parse the recorded command line from a generated cmd.sh helper."""
-    lines = [line.strip() for line in cmd_file.read_text().splitlines() if line.strip()]
-    if not lines:
-        return []
-    try:
-        return shlex.split(lines[-1])
-    except ValueError:
-        return []
 
 
 def _resolve_recorded_exec(exec_path: str) -> str:
@@ -71,12 +59,12 @@ def _normalize_recorded_arg(arg: str) -> str:
     return arg
 
 
-def validate_pid_file(pid_file: Path, cmd_file: Path | None = None, tolerance: float = 5.0) -> bool:
-    """Validate PID using mtime and optional cmd.sh. Returns True if process is ours.
+def validate_pid_file(pid_file: Path, expected_argv: list[str], tolerance: float = 5.0) -> bool:
+    """Validate PID using mtime and the owner's recorded command arguments.
 
     Uses psutil to check that the PID is still alive and that the process start
-    time matches the PID file's mtime (within ``tolerance`` seconds). Optionally
-    validates the running process's command line against the recorded cmd.sh.
+    time matches the PID file's mtime (within ``tolerance`` seconds), then
+    validates the running process's command line against its process metadata.
 
     Returns False (safe no-op) if:
     - PID file doesn't exist
@@ -95,15 +83,14 @@ def validate_pid_file(pid_file: Path, cmd_file: Path | None = None, tolerance: f
         if abs(pid_file.stat().st_mtime - proc.create_time()) > tolerance:
             return False  # PID reused
 
-        # Validate command if provided
-        if cmd_file and cmd_file.exists():
-            cmd = cmd_file.read_text()
+        if expected_argv:
+            cmd = " ".join(expected_argv)
             proc_argv = proc.cmdline()
             cmdline = " ".join(proc_argv)
             if "--remote-debugging-port" in cmd and "--remote-debugging-port" not in cmdline:
                 return False
 
-            recorded_argv = _read_recorded_argv(cmd_file)
+            recorded_argv = expected_argv
             recorded_exec = _resolve_recorded_exec(recorded_argv[0]) if recorded_argv else ""
             process_exec = _resolve_live_exec(proc_argv[0]) if proc_argv else ""
             shebang_rewrite = False
@@ -152,17 +139,6 @@ def write_pid_file_with_mtime(pid_file: Path, pid: int, start_time: float):
         os.utime(pid_file, (start_time, start_time))
     except OSError:
         pass  # mtime optional, validation degrades gracefully
-
-
-def write_cmd_file(cmd_file: Path, cmd: list[str]):
-    """Write shell command script for debugging and PID validation."""
-
-    script = "#!/bin/bash\n" + shlex.join(cmd) + "\n"
-    cmd_file.write_text(script)
-    try:
-        cmd_file.chmod(0o755)
-    except OSError:
-        pass
 
 
 def is_process_alive(pid: int) -> bool:
@@ -246,7 +222,7 @@ async def graceful_kill_process(
 
 async def graceful_kill_by_pid_file(
     pid_file: Path,
-    cmd_file: Path | None = None,
+    expected_argv: list[str],
     *,
     grace_period: float = GRACEFUL_SHUTDOWN_TIMEOUT,
 ) -> bool:
@@ -254,7 +230,7 @@ async def graceful_kill_by_pid_file(
 
     Used for background hook cleanup when we don't have the process handle — e.g.,
     killing a background Chrome hook from a cleanup handler that runs in a
-    different event than the one that spawned it. The PID file + cmd file are
+    different event than the one that spawned it. The PID file and command arguments are
     validated via ``validate_pid_file()`` to avoid killing an unrelated process
     that reused the PID.
 
@@ -264,14 +240,14 @@ async def graceful_kill_by_pid_file(
 
     Args:
         pid_file: Path to the PID file written by ``write_pid_file_with_mtime``.
-        cmd_file: Optional path to the cmd.sh file for command-line validation.
+        expected_argv: Command arguments retained by the process owner.
         grace_period: Seconds to wait after SIGTERM before SIGKILL.
 
     Returns:
         True if the process was found and signaled, False if validation failed
         or the process was already dead.
     """
-    if not validate_pid_file(pid_file, cmd_file):
+    if not validate_pid_file(pid_file, expected_argv):
         pid_file.unlink(missing_ok=True)
         return False
 
