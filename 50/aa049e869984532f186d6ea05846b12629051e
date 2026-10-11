@@ -1,0 +1,24 @@
+README.md
+  h_923c208e183a7b 341-342
+abx_dl/orchestrator.py
+  h_923c208e183a7b 545
+abx_dl/services/base.py
+  h_923c208e183a7b 13-16,115
+abx_dl/services/binary_service.py
+  h_923c208e183a7b 14,100,109,195-202
+abx_dl/services/snapshot_service.py
+  h_923c208e183a7b 34,307-316
+tests/test_cli.py
+  h_923c208e183a7b 1386-1413
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "50aa049e869984532f186d6ea05846b12629051e",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
