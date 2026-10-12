@@ -271,55 +271,39 @@ jobs:
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
-      - name: Verify digest set
+      - name: Promote the exact tested universal image
+        env:
+          DOCKERHUB_TAGS: ${{ steps.docker_meta.outputs.dockerhub_tags }}
+          GHCR_TAGS: ${{ steps.docker_meta.outputs.ghcr_tags }}
         shell: bash
         run: |
           set -Eeuo pipefail
-          mapfile -t DIGESTS < <("${UV_BINARY}" run --no-cache --no-project python -c 'from pathlib import Path; print("\n".join(sorted(path.name for path in Path("/tmp/digests").iterdir() if path.is_file())))')
+          mapfile -t DIGESTS < <(find /tmp/digests -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort)
           [[ "${#DIGESTS[@]}" -eq 2 ]]
+          REFS=()
           for digest in "${DIGESTS[@]}"; do
             [[ "$digest" =~ ^[0-9a-f]{64}$ ]]
-          done
-
-      - name: Create Docker Hub manifest
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          mapfile -t DIGESTS < <("${UV_BINARY}" run --no-cache --no-project python -c 'from pathlib import Path; print("\n".join(sorted(path.name for path in Path("/tmp/digests").iterdir() if path.is_file())))')
-          TAG_ARGS=()
-          while IFS= read -r tag; do
-            [[ -n "$tag" ]] && TAG_ARGS+=(--tag "$tag")
-          done <<< "${{ steps.docker_meta.outputs.dockerhub_tags }}"
-          REFS=()
-          for digest in "${DIGESTS[@]}"; do
             REFS+=("${DOCKERHUB_IMAGE}@sha256:${digest}")
           done
-          "${DOCKER_BINARY}" buildx imagetools create "${TAG_ARGS[@]}" "${REFS[@]}"
-
-      - name: Create GHCR manifest
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          mapfile -t DIGESTS < <("${UV_BINARY}" run --no-cache --no-project python -c 'from pathlib import Path; print("\n".join(sorted(path.name for path in Path("/tmp/digests").iterdir() if path.is_file())))')
-          TAG_ARGS=()
-          while IFS= read -r tag; do
-            [[ -n "$tag" ]] && TAG_ARGS+=(--tag "$tag")
-          done <<< "${{ steps.docker_meta.outputs.ghcr_tags }}"
-          REFS=()
-          for digest in "${DIGESTS[@]}"; do
-            REFS+=("${GHCR_IMAGE}@sha256:${digest}")
-          done
-          "${DOCKER_BINARY}" buildx imagetools create "${TAG_ARGS[@]}" "${REFS[@]}"
-
-      - name: Verify published Docker images run
-        shell: bash
-        run: |
-          set -Eeuo pipefail
-          VERSION='${{ needs.python-release.outputs.version }}'
-          for image in "${DOCKERHUB_IMAGE}:${VERSION}" "${GHCR_IMAGE}:${VERSION}"; do
-            "$DOCKER_BINARY" buildx imagetools inspect "$image" >/dev/null
-            INSTALLED_VERSION="$("$DOCKER_BINARY" run --rm "$image" --version)"
-            test "$INSTALLED_VERSION" = "$VERSION"
+          # Both platforms already passed runtime/version/capture checks in CI.
+          # Promotion must preserve their exact image and attestation descriptors.
+          EXPECTED="$("$DOCKER_BINARY" buildx imagetools create --dry-run "${REFS[@]}" | "$JQ_BINARY" -ceS '.manifests | sort_by(.digest)')"
+          "$JQ_BINARY" -e 'map(select(.platform.os == "linux") | .platform.architecture) | sort == ["amd64", "arm64"]' <<< "$EXPECTED"
+          for registry in DOCKERHUB GHCR; do
+            image_var="${registry}_IMAGE"
+            tags_var="${registry}_TAGS"
+            SOURCE="${!image_var}:sha-${RELEASE_SHA::12}"
+            ACTUAL="$("$DOCKER_BINARY" buildx imagetools inspect --raw "$SOURCE" | "$JQ_BINARY" -ceS '.manifests | sort_by(.digest)')"
+            [[ "$ACTUAL" == "$EXPECTED" ]]
+            TAG_ARGS=()
+            while IFS= read -r tag; do [[ -n "$tag" ]] && TAG_ARGS+=(--tag "$tag"); done <<< "${!tags_var}"
+            "$DOCKER_BINARY" buildx imagetools create "${TAG_ARGS[@]}" "$SOURCE"
+            while IFS= read -r tag; do
+              [[ -n "$tag" ]] || continue
+              ACTUAL="$("$DOCKER_BINARY" buildx imagetools inspect --raw "$tag" | "$JQ_BINARY" -ceS '.manifests | sort_by(.digest)')"
+              [[ "$ACTUAL" == "$EXPECTED" ]]
+              echo "Verified exact tested images: $tag"
+            done <<< "${!tags_var}"
           done
 
 

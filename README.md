@@ -230,6 +230,8 @@ abx-dl install wget title
 
 #### Docker
 
+`archivebox/abx-dl:main-unstable` and the universal `:sha-<12-character-commit>` image are published after both Docker build/check jobs pass, before the remaining CI finishes. They use the exact `main` checkout and its locked dependencies. After full CI passes, the same image is promoted to `:main` and the release tags without rebuilding. All tags include amd64 and arm64; ordinary installations should use the fully tested release channels.
+
 The image includes the downloader plugins and their dependencies. Mount an
 output directory at `/out` to keep the downloaded files:
 
