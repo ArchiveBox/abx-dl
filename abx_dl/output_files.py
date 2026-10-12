@@ -153,13 +153,14 @@ def guess_mimetype(path: str | Path) -> str:
     return ""
 
 
-def output_file_from_path(file_path: Path, *, relative_to: Path) -> OutputFile:
+def output_file_from_path(file_path: Path, *, relative_to: Path, size: int | None = None) -> OutputFile:
     """Build OutputFile metadata from a file path using stat + extension lookup."""
     rel_path = file_path.relative_to(relative_to)
-    try:
-        size = file_path.lstat().st_size
-    except OSError:
-        size = 0
+    if size is None:
+        try:
+            size = file_path.lstat().st_size
+        except OSError:
+            size = 0
     return OutputFile(
         path=str(rel_path),
         extension=file_path.suffix.lower().lstrip("."),
@@ -215,7 +216,9 @@ def scan_output_files(
         relative_path = file_path.relative_to(output_dir).as_posix()
         if any(relative_path.endswith(suffix) for suffix in OUTPUT_FILE_METADATA_SUFFIXES):
             continue
-        output_files.append(output_file_from_path(file_path, relative_to=output_dir))
+        # Reuse this walk's lstat: on remote archive mounts every stat is a
+        # round trip, and scans run for each result event.
+        output_files.append(output_file_from_path(file_path, relative_to=output_dir, size=stat_result.st_size))
 
     output_files.sort(key=lambda output_file: output_file.path)
     return output_files
