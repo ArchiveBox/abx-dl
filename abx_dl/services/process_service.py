@@ -507,12 +507,15 @@ class ProcessService(BaseService):
         if self.env_filter is not None:
             event.env = self.env_filter(event.env)
         plugin_output_dir = Path(event.output_dir)
-        # ProcessService owns creation for both direct and scheduled hooks.
-        # Repeating mkdir in each phase adds a remote metadata round trip.
-        # Remote mounts can synchronously upload a directory marker here (B2
-        # measured up to 0.8s). Never block stdout readiness, background process
-        # completion, or other snapshots on this hook's filesystem round trip.
-        await asyncio.to_thread(plugin_output_dir.mkdir, parents=True, exist_ok=True)
+        # ProcessService guarantees the dir for direct and scheduled hooks, even
+        # one removed mid-run. Remote mounts can synchronously upload a directory
+        # marker on mkdir (B2 measured up to 0.8s). Never block stdout readiness,
+        # background process completion, or other snapshots on this hook's
+        # filesystem round trip. SnapshotService creates snapshot dirs ahead of
+        # their hooks; check first, because even an EEXIST mkdir takes the
+        # parent dir lock and would wait behind its in-flight mkdir of a later
+        # hook's dir.
+        await asyncio.to_thread(lambda: plugin_output_dir.is_dir() or plugin_output_dir.mkdir(parents=True, exist_ok=True))
 
         cmd = _process_command(event)
         proc = Process(

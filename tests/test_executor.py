@@ -1126,6 +1126,46 @@ def test_snapshot_service_selected_hooks_by_plugin_runs_only_named_hooks(tmp_pat
     assert {event.hook_name for event in process_events}.isdisjoint(hook.name for hook in plugin.hooks if hook != selected_hook)
 
 
+def test_snapshot_creates_runnable_plugin_output_dirs_before_first_hook_finishes(tmp_path: Path, httpserver: HTTPServer) -> None:
+    httpserver.expect_request("/no-links").respond_with_data("No links here.", content_type="text/plain")
+    output_dir = tmp_path / "capture"
+    selected_plugins = ["parse_html_urls", "parse_txt_urls", "parse_rss_urls", "parse_jsonl_urls"]
+    bus = create_bus(total_timeout=60.0, name=f"snapshot_output_dirs_{tmp_path.name}")
+    dirs_while_first_hook_queued: list[set[str]] = []
+
+    async def on_ProcessEvent(event: ProcessEvent) -> None:
+        if event.plugin_name != "parse_html_urls":
+            return
+        # Hooks run serially, so the last hook cannot create its own directory
+        # while the first hook's event is still being handled.
+        for _ in range(200):
+            if (output_dir / "parse_jsonl_urls").is_dir():
+                break
+            await asyncio.sleep(0.05)
+        dirs_while_first_hook_queued.append({path.name for path in output_dir.iterdir() if path.is_dir()})
+
+    bus.on(ProcessEvent, on_ProcessEvent)
+    results = _run_download(
+        httpserver.url_for("/no-links"),
+        PluginCatalog.discover(),
+        output_dir,
+        selected_plugins=selected_plugins,
+        config_overrides={"PARSE_RSS_URLS_ENABLED": False},
+        emit_jsonl=False,
+        interactive_tty=False,
+        bus=bus,
+    )
+
+    assert dirs_while_first_hook_queued == [{"parse_html_urls", "parse_txt_urls", "parse_jsonl_urls"}]
+    assert {result.plugin: result.status for result in results} == {
+        "parse_html_urls": "noresults",
+        "parse_txt_urls": "noresults",
+        "parse_jsonl_urls": "noresults",
+    }
+    # Unused pre-created directories are still removed at snapshot completion.
+    assert not [path for path in output_dir.iterdir() if path.is_dir()]
+
+
 def test_snapshot_service_repins_snapshot_persona_after_global_config_merge(tmp_path: Path) -> None:
     bus = create_bus(total_timeout=30.0, name=f"snapshot_chrome_env_{tmp_path.name}")
     output_dir = tmp_path / "archive" / "users" / "system" / "snapshots" / "20260603" / "example.com" / "current"
@@ -1668,16 +1708,29 @@ def test_snapshot_completed_waits_for_cleanup_process_listeners(tmp_path: Path) 
 
 def test_snapshot_filesystem_failure_cleans_up_without_completion(tmp_path: Path) -> None:
     plugin = PluginCatalog.discover()["title"]
+    later_plugin = PluginCatalog.discover()["hashes"]
     output_dir = tmp_path / "run"
     output_dir.mkdir()
     (output_dir / plugin.name).symlink_to(plugin.name)
     bus = create_bus(total_timeout=10.0, name=f"snapshot_filesystem_failure_{tmp_path.name}")
+    later_dir_seen_during_failed_hook: list[bool] = []
+
+    async def on_ProcessEvent(event: ProcessEvent) -> None:
+        if event.plugin_name != plugin.name:
+            return
+        for _ in range(100):
+            if (output_dir / later_plugin.name).is_dir():
+                break
+            await asyncio.sleep(0.05)
+        later_dir_seen_during_failed_hook.append((output_dir / later_plugin.name).is_dir())
+
+    bus.on(ProcessEvent, on_ProcessEvent)
     SnapshotService(
         bus,
         url="https://example.com",
         snapshot=Snapshot(url="https://example.com", id="snap-filesystem-failure"),
         output_dir=output_dir,
-        catalog=PluginCatalog({plugin.name: plugin}),
+        catalog=PluginCatalog({plugin.name: plugin, later_plugin.name: later_plugin}),
         config=_runtime_config(CRAWL_DIR=output_dir),
         snapshot_phase_timeout=5.0,
         snapshot_cleanup_phase_timeout=5.0,
@@ -1715,6 +1768,11 @@ def test_snapshot_filesystem_failure_cleans_up_without_completion(tmp_path: Path
 
     assert cleanup is not None
     assert completed is None
+    # One unusable dir does not stop later dirs being created ahead of time,
+    # and the hooks the failure skipped do not leave theirs behind.
+    assert later_dir_seen_during_failed_hook == [True]
+    assert not (output_dir / later_plugin.name).exists()
+    assert (output_dir / plugin.name).is_symlink()
 
 
 def test_crawl_setup_background_daemon_survives_until_explicit_cleanup(tmp_path: Path) -> None:
