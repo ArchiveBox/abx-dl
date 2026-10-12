@@ -17,6 +17,7 @@ from collections.abc import Awaitable, Callable
 import click
 import psutil
 from abxbus import BaseEvent, EventBus
+from abxpkg.cli import resolve_script_exec
 
 from ..events import (
     PROCESS_EXIT_SKIPPED,
@@ -539,6 +540,27 @@ class ProcessService(BaseService):
         # report only newly created output files.
         files_before = await asyncio.to_thread(lambda: set(plugin_output_dir.rglob("*")))
 
+        # Hooks are `#!/usr/bin/env -S abxpkg run --script ...` scripts. Run by
+        # path, each one starts a fresh Python interpreter only to read abxpkg's
+        # warm cache and exec the real runtime: ~60 interpreter launches per
+        # snapshot, mostly for hooks that finish in under a second. abxpkg is
+        # already loaded here, so ask it for that same exec target and spawn it
+        # directly. It declines whenever the wrapper itself must run (cold cache,
+        # a different abxpkg launcher on the hook's PATH, ...). A child that
+        # drops privileges would judge abxpkg's per-user cache trust as another
+        # user, so those always go through the wrapper.
+        spawn_cmd, spawn_env = cmd, event.env
+        if _hook_child_identity() is None:
+            resolved = await asyncio.to_thread(
+                resolve_script_exec,
+                event.hook_path,
+                list(event.hook_args),
+                env=event.env,
+                cwd=str(plugin_output_dir),
+            )
+            if resolved is not None:
+                _exec_abspath, spawn_cmd, spawn_env = resolved
+
         process: asyncio.subprocess.Process | None = None
         started_event: ProcessStartedEvent | None = None
         stdout_reader: TextIO | None = None
@@ -560,11 +582,11 @@ class ProcessService(BaseService):
                     # the only durable reference to these inodes is a pathname.
                     child_identity = _hook_child_identity()
                     process = await asyncio.create_subprocess_exec(
-                        *cmd,
+                        *spawn_cmd,
                         cwd=str(plugin_output_dir),
                         stdout=out_fh,
                         stderr=err_fh,
-                        env=event.env,
+                        env=spawn_env,
                         # Give every hook its own process group so interrupts and
                         # cleanup can target the hook explicitly instead of relying
                         # on terminal-delivered SIGINT reaching the right child.

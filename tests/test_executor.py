@@ -81,6 +81,58 @@ def test_execute_hook_runs_without_application_framework(tmp_path):
     assert '"status":"succeeded"' in completed.stdout
 
 
+def test_warm_abxpkg_script_hook_spawns_resolved_runtime_without_python_wrapper(tmp_path):
+    node = shutil.which("node")
+    assert node is not None
+    (tmp_path / "config.json").write_text(json.dumps({"required_binaries": ["node"]}))
+    script = tmp_path / "on_Snapshot__10_example.js"
+    script.write_text(
+        "#!/usr/bin/env -S abxpkg run --script --deps-from=./config.json:required_binaries node\n"
+        "// /// script\n"
+        "// ///\n"
+        'console.log(JSON.stringify({type: "ArchiveResult", status: "succeeded", output_str: process.argv.slice(2).join(" ")}));\n',
+    )
+    script.chmod(0o755)
+    hook = Hook(
+        name=script.name,
+        event="SnapshotEvent",
+        plugin_name="example",
+        path=script,
+        order=10,
+        is_background=False,
+    )
+    env = {
+        "PATH": os.pathsep.join((str(Path(sys.executable).parent), str(Path(node).parent), os.defpath)),
+        "HOME": os.environ["HOME"],
+        "ABXPKG_LIB_DIR": str(tmp_path / "lib"),
+        # Any Python interpreter started for the hook reports its imports on
+        # stderr, which shows whether the abxpkg wrapper process ran at all.
+        "PYTHONPROFILEIMPORTTIME": "1",
+        **{key: os.environ[key] for key in ("LANG", "LC_ALL", "LC_CTYPE", "XDG_CONFIG_HOME") if key in os.environ},
+    }
+
+    def run(index: int) -> ProcessCompletedEvent:
+        return asyncio.run(
+            execute_hook(
+                hook,
+                output_dir=tmp_path / f"output-{index}",
+                env=env,
+                arguments={"url": "https://example.com"},
+            ),
+        )
+
+    cold = run(0)
+    assert cold.exit_code == 0, cold.stderr
+    assert '"output_str":"--url=https://example.com"' in cold.stdout
+    # The cold cache is resolved (and recorded) by the abxpkg wrapper itself.
+    assert "import time:" in cold.stderr
+
+    warm = run(1)
+    assert warm.exit_code == 0, warm.stderr
+    assert '"output_str":"--url=https://example.com"' in warm.stdout
+    assert "import time:" not in warm.stderr
+
+
 def test_execute_hook_reuses_one_process_service_per_bus(tmp_path):
     counter = tmp_path / "runs.txt"
     script = tmp_path / "on_Snapshot__10_example.py"
