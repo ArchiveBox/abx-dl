@@ -280,7 +280,9 @@ RUN PURELIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_pa
         sed -i -E "s|^($new_name/METADATA),.*$|\1,,|" "$PURELIB_DIR/$new_name/RECORD"; \
         rm -rf "$PURELIB_DIR/$old_name"; \
     done
-RUN /usr/bin/uv pip show abx-dl | tee -a /VERSION.txt \
+# Metadata inspection runs as root after runtime ownership is finalized. Do not
+# let uv create a root-owned cache that the runtime user cannot open for writes.
+RUN /usr/bin/uv --no-cache pip show abx-dl | tee -a /VERSION.txt \
     && if [[ "$ABX_DL_COMMIT_HASH" =~ ^[0-9a-fA-F]{40}$ ]]; then echo "COMMIT_HASH=$ABX_DL_COMMIT_HASH" | tee -a /VERSION.txt; fi
 
 # The diagnostics below do not install binaries, but they exercise both
@@ -314,6 +316,7 @@ RUN --network=none export ABX_DOCKER_PLUGINS="$(/venv/bin/python3 -c 'from abx_d
         && ! command -v opencode \
         && test ! -e "$ABXPKG_LIB_DIR/pnpm/packages/opencode" \
         && abx-dl install $ABX_DOCKER_PLUGINS \
+        && /usr/bin/uv run --no-project python -c "import abx_dl, abxpkg" \
         && (find "$ABXPKG_LIB_DIR" -name derived.env -type f -exec sha256sum {} +; find "$XDG_CACHE_HOME" -type f -exec sha256sum {} +) | sort > /tmp/cache-before \
         && abx-dl install $ABX_DOCKER_PLUGINS \
         && (find "$ABXPKG_LIB_DIR" -name derived.env -type f -exec sha256sum {} +; find "$XDG_CACHE_HOME" -type f -exec sha256sum {} +) | sort > /tmp/cache-after \
