@@ -158,7 +158,8 @@ def main() -> None:
     ]
     for failure in failures:
         # Keep the real capture failed, but do not block releases on Wayback's
-        # external rate limit. All other extraction failures remain fatal.
+        # HTTP 429: there is not much CI can do to force the service to return 200.
+        # All other extraction failures remain fatal.
         if failure == (
             "archivedotorg",
             "on_Snapshot__00_archivedotorg.finite.bg",
