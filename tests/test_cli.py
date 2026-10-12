@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import time
+import zipfile
 import psutil
 import pytest
 from datetime import UTC, datetime
@@ -40,6 +41,42 @@ from rich.progress import Progress
 from pytest_httpserver import HTTPServer
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.parametrize("isolation", ["crawl", "snapshot"])
+@pytest.mark.parametrize("attachment", [False, True])
+def test_cli_preserves_browser_download(
+    tmp_path: Path,
+    httpserver: HTTPServer,
+    isolation: str,
+    attachment: bool,
+) -> None:
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as source:
+        source.writestr("readme.txt", "ArchiveBox browser download acceptance\n")
+    expected = archive.getvalue()
+    httpserver.expect_request("/capture.zip").respond_with_data(
+        expected,
+        content_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="capture.zip"'} if attachment else {},
+    )
+    configured = _run_cli(tmp_path, "config", "--set", f"CHROME_ISOLATION={isolation}")
+    assert configured.returncode == 0, configured.stdout + configured.stderr
+    output_dir = tmp_path / "capture"
+    result = _run_cli(tmp_path, "dl", "--plugins=staticfile", "--dir", str(output_dir), httpserver.url_for("/capture.zip"))
+    records = [json.loads(line) for line in (output_dir / "index.jsonl").read_text().splitlines()]
+    saved = next(record for record in reversed(records) if record.get("type") == "ArchiveResult" and record.get("plugin") == "staticfile")
+    assert saved["status"] == "succeeded", (saved, result.stdout, result.stderr)
+    process = next(record for record in reversed(records) if record.get("type") == "Process" and record.get("plugin") == "staticfile")
+    assert process["status"] == "succeeded" and process["exit_code"] == 0, process
+    assert saved["output_files"] == [
+        {"path": "capture.zip", "extension": "zip", "mimetype": "application/zip", "size": len(expected)},
+    ]
+    files = [path for path in (output_dir / "staticfile").iterdir() if path.suffix == ".zip"]
+    assert len(files) == 1
+    assert files[0].read_bytes() == expected
+    with zipfile.ZipFile(files[0]) as source:
+        assert source.read("readme.txt") == b"ArchiveBox browser download acceptance\n"
 
 
 def test_cli_noresults_removes_empty_output_directories(tmp_path: Path, httpserver: HTTPServer) -> None:
