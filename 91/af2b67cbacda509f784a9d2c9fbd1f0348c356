@@ -1,0 +1,23 @@
+tests/test_executor.py
+  s_2b44ee96cc775e::t_5fcd0b188adc94 84-135
+abx_dl/services/process_service.py
+  s_2b44ee96cc775e::t_470c2428afffeb 20
+  s_2b44ee96cc775e::t_e2e171780e52ff 543-563
+  s_2b44ee96cc775e::t_385beab644b030 585,589
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "91af2b67cbacda509f784a9d2c9fbd1f0348c356",
+  "prompts": {},
+  "sessions": {
+    "s_2b44ee96cc775e": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a90fd5ba-5c6e-4e2a-97b0-44f409fd7cba",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
