@@ -1281,24 +1281,29 @@ def test_download_preserves_plugin_timeout_when_global_timeout_is_only_a_default
     assert process_events[0].event_handler_timeout == 210.0
 
 
-def test_download_does_not_spawn_disabled_plugin_hooks(tmp_path: Path) -> None:
-    plugin = PluginCatalog.discover()["claudecodecleanup"]
+@pytest.mark.parametrize("plugin_name", ["claudecodecleanup", "hashes", "opendataloader", "liteparse"])
+def test_download_does_not_spawn_disabled_plugin_hooks(tmp_path: Path, plugin_name: str) -> None:
+    plugin = PluginCatalog.discover()[plugin_name]
     bus = create_bus(total_timeout=30.0, name=f"disabled_plugin_{tmp_path.name}")
     process_events: list[ProcessEvent] = []
+    cleanup_events: list[SnapshotCleanupEvent] = []
     bus.on(ProcessEvent, lambda event: process_events.append(event))
+    bus.on(SnapshotCleanupEvent, lambda event: cleanup_events.append(event))
 
     _run_download(
         "https://example.com",
         PluginCatalog.discover(),
         tmp_path / "run",
         selected_plugins=[plugin.name],
-        config_overrides={"CLAUDECODECLEANUP_ENABLED": False},
+        config_overrides={plugin.enabled_key: False},
         auto_install=False,
         emit_jsonl=False,
         bus=bus,
     )
 
     assert process_events == []
+    assert len(cleanup_events) == 1
+    assert cleanup_events[0].finalize_snapshot is True
 
 
 def test_snapshot_service_selected_hooks_by_plugin_runs_only_named_hooks(tmp_path: Path) -> None:

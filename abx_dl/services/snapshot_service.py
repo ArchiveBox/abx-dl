@@ -258,6 +258,11 @@ class SnapshotService(BaseService):
                 return
             if await self.should_abort():
                 return
+            plugin_config = await self._runnable_hook_config(plugin, hook)
+            if plugin_config is None:
+                return
+            # Disabled final-file consumers must not stop the snapshot's
+            # background producers as a side effect of skipping their hook.
             if plugin.config.wait_for_background_cleanup:
                 cleanup_event = SnapshotCleanupEvent(
                     url=event.url,
@@ -268,9 +273,6 @@ class SnapshotService(BaseService):
                 )
                 await _run_event_now(event.emit(cleanup_event), self.snapshot_cleanup_phase_timeout)
             if await self.should_abort():
-                return
-            plugin_config = await self._runnable_hook_config(plugin, hook)
-            if plugin_config is None:
                 return
             runtime_env = plugin_config.to_env()
             env = await build_plugin_process_env(
