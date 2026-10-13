@@ -91,10 +91,9 @@ def test_index_append_never_blocks_the_event_loop(tmp_path):
     happen off it. A FIFO in place of the index blocks the open for real until
     a reader appears, which happens only after the loop proved it stayed live.
     """
-    script = tmp_path / "on_Snapshot__10_example.sh"
-    script.write_text('#!/bin/sh\nprintf \'{"type":"ArchiveResult","status":"succeeded"}\\n\'\n')
-    script.chmod(0o755)
-    hook = Hook(name=script.name, event="SnapshotEvent", plugin_name="example", path=script, order=10, is_background=False)
+    hook = PluginCatalog.discover()["parse_txt_urls"].filter_hooks("Snapshot")[0]
+    source = tmp_path / "input.txt"
+    source.write_text("https://example.com/discovered\n")
     index_path = tmp_path / "snapshot" / "index.jsonl"
     index_path.parent.mkdir()
     os.mkfifo(index_path)
@@ -111,9 +110,9 @@ def test_index_append_never_blocks_the_event_loop(tmp_path):
         hook_task = asyncio.create_task(
             execute_hook(
                 hook,
-                output_dir=index_path.parent / "example",
-                env={"PATH": os.environ["PATH"]},
-                arguments={"url": "https://example.com"},
+                output_dir=index_path.parent / hook.plugin_name,
+                env={**os.environ, "SNAP_DIR": str(index_path.parent)},
+                arguments={"url": source.as_uri()},
             ),
         )
         reader.start()
@@ -134,49 +133,56 @@ def test_index_append_never_blocks_the_event_loop(tmp_path):
     assert completed.exit_code == 0, completed.stderr
     # The append waited ~1.5s for its reader; the loop never did.
     assert longest_tick < 0.5
-    assert [json.loads(line)["hook_name"] for line in index_lines] == [script.name]
+    assert [json.loads(line)["hook_name"] for line in index_lines] == [hook.name]
+
+    records = [json.loads(line) for line in (index_path.parent / hook.plugin_name / "urls.jsonl").read_text().splitlines()]
+    assert [record["url"] for record in records] == ["https://example.com/discovered"]
 
 
-def test_silent_hook_completion_is_not_delayed_by_output_polling(tmp_path):
-    """Stdout polling backs off for quiet hooks; exit must still finish at once.
+def test_silent_hook_completion_is_not_delayed_by_output_polling(tmp_path, httpserver: HTTPServer):
+    """Real parsers wait for HTTP bodies long enough to enter idle backoff.
 
-    Hooks that exit 0.1s apart cover a whole idle polling interval, so if
-    completion waited for the reader's next poll, one of them would wait for
-    most of that interval wherever the polls happen to fall.
+    Staggered response completion covers the polling interval. The parser writes
+    urls.jsonl immediately before its final stdout record and exit, so that real
+    artifact's mtime measures how promptly the runner records completion.
     """
-    hooks = []
-    for index in range(5):
-        script = tmp_path / f"on_Snapshot__1{index}_example.py"
-        script.write_text(
-            f"#!{sys.executable}\n"
-            "import json, time\n"
-            f"time.sleep({2 + index / 10})\n"
-            'print(json.dumps({"type": "ArchiveResult", "status": "succeeded", "output_str": repr(time.time())}), flush=True)\n',
-        )
-        script.chmod(0o755)
-        hooks.append(
-            Hook(name=script.name, event="SnapshotEvent", plugin_name="example", path=script, order=10 + index, is_background=False),
-        )
+    hook = PluginCatalog.discover()["parse_txt_urls"].filter_hooks("Snapshot")[0]
+    responses = [
+        _streaming_http_response(httpserver, f"/slow-{index}.txt", payload=b"https://example.com/discovered\n") for index in range(5)
+    ]
 
     async def run() -> list[ProcessCompletedEvent]:
-        return await asyncio.gather(
-            *(
+        async def parse(index, response):
+            url, started, release = response
+            snapshot_dir = tmp_path / f"snapshot-{index}"
+            task = asyncio.create_task(
                 execute_hook(
                     hook,
-                    output_dir=tmp_path / "output" / hook.name,
-                    env={"PATH": os.environ["PATH"]},
-                    arguments={"url": "https://example.com"},
-                )
-                for hook in hooks
-            ),
-        )
+                    output_dir=snapshot_dir / hook.plugin_name,
+                    env={**os.environ, "SNAP_DIR": str(snapshot_dir)},
+                    arguments={"url": url},
+                ),
+            )
+            try:
+                while not started.is_set():
+                    assert not task.done(), (await task).stderr
+                    await asyncio.sleep(0.01)
+                await asyncio.sleep(2 + index / 10)
+            finally:
+                release.set()
+            return await task
+
+        tasks = [parse(index, response) for index, response in enumerate(responses)]
+        return await asyncio.gather(*tasks)
 
     delays = []
     for completed in asyncio.run(run()):
         assert completed.exit_code == 0, completed.stderr
-        printed_at = float(json.loads(completed.stdout)["output_str"])
-        # Completion is recorded only after the final drain of the hook's output.
-        delays.append(datetime.fromisoformat(completed.end_ts).timestamp() - printed_at)
+        output = Path(completed.output_dir) / "urls.jsonl"
+        records = [json.loads(line) for line in output.read_text().splitlines()]
+        assert [record["url"] for record in records] == ["https://example.com/discovered"]
+        assert any(json.loads(line).get("status") == "succeeded" for line in completed.stdout.splitlines() if line.startswith("{"))
+        delays.append(datetime.fromisoformat(completed.end_ts).timestamp() - output.stat().st_mtime)
     assert max(delays) < 0.2, delays
 
 
@@ -453,7 +459,12 @@ def _resolve_real_wget_binary(tmp_path: Path) -> BinaryEvent:
     return next(event for event in reversed(installed_events) if event.name == "wget")
 
 
-def _streaming_http_response(httpserver: HTTPServer, path: str) -> tuple[str, threading.Event, threading.Event]:
+def _streaming_http_response(
+    httpserver: HTTPServer,
+    path: str,
+    *,
+    payload: bytes = b"complete\n",
+) -> tuple[str, threading.Event, threading.Event]:
     response_started = threading.Event()
     release_response = threading.Event()
 
@@ -462,7 +473,7 @@ def _streaming_http_response(httpserver: HTTPServer, path: str) -> tuple[str, th
             response_started.set()
             yield b"ready\n"
             release_response.wait()
-            yield b"complete\n"
+            yield payload
 
         return Response(body(), content_type="text/plain")
 
