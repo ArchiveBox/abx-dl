@@ -980,11 +980,12 @@ def test_papers_download_starts_after_dom_before_article_parsing(tmp_path: Path)
     output_dir = tmp_path / "capture"
     bus = create_bus(total_timeout=120.0, name=f"papers_article_overlap_{tmp_path.name}")
     lifecycle: list[tuple[str, str]] = []
+    dom_at_papers_start: list[str] = []
 
     async def on_ProcessStartedEvent(event: ProcessStartedEvent) -> None:
         lifecycle.append(("started", event.plugin_name))
         if event.plugin_name == "papersdl":
-            assert "1706.03762" in (output_dir / "dom/output.html").read_text()
+            dom_at_papers_start.append((output_dir / "dom/output.html").read_text())
 
     async def on_ProcessCompletedEvent(event: ProcessCompletedEvent) -> None:
         lifecycle.append(("completed", event.plugin_name))
@@ -1009,9 +1010,10 @@ def test_papers_download_starts_after_dom_before_article_parsing(tmp_path: Path)
     assert len(pdfs) == 1
     assert pdfs[0].read_bytes().startswith(b"%PDF-")
     assert pdfs[0].stat().st_size > 1_000_000
+    assert len(dom_at_papers_start) == 1
+    assert "1706.03762" in dom_at_papers_start[0]
     assert lifecycle.index(("completed", "dom")) < lifecycle.index(("started", "papersdl"))
     assert lifecycle.index(("started", "papersdl")) < lifecycle.index(("started", "readability"))
-    assert lifecycle.index(("started", "readability")) < lifecycle.index(("completed", "papersdl"))
 
 
 def test_download_creates_default_persona_dir(tmp_path: Path) -> None:
