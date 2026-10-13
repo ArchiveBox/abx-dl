@@ -51,7 +51,7 @@ from abxbus import BaseEvent, EventConcurrencyMode, EventHandlerConcurrencyMode
 from pydantic import ConfigDict, Field
 
 from .models import Snapshot
-from .output_files import FileVersion, OutputFile
+from .output_files import OutputFile
 
 
 PROCESS_EXIT_SKIPPED = 10
@@ -313,7 +313,7 @@ class ProcessStartedEvent(BaseEvent):
     stdout_file: Path = Field(exclude=True, repr=False)
     stderr_file: Path = Field(exclude=True, repr=False)
     pid_file: Path = Field(exclude=True, repr=False)
-    files_before: dict[Path, FileVersion] = Field(exclude=True, repr=False)
+    files_before: set[Path] = Field(exclude=True, repr=False)
     event_timeout: float | None = 60.0
 
 

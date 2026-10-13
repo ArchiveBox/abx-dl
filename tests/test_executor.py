@@ -82,58 +82,6 @@ def test_execute_hook_runs_without_application_framework(tmp_path):
     assert '"status":"succeeded"' in completed.stdout
 
 
-def test_warm_abxpkg_script_hook_spawns_resolved_runtime_without_python_wrapper(tmp_path):
-    node = shutil.which("node")
-    assert node is not None
-    (tmp_path / "config.json").write_text(json.dumps({"required_binaries": ["node"]}))
-    script = tmp_path / "on_Snapshot__10_example.js"
-    script.write_text(
-        "#!/usr/bin/env -S abxpkg run --script --deps-from=./config.json:required_binaries node\n"
-        "// /// script\n"
-        "// ///\n"
-        'console.log(JSON.stringify({type: "ArchiveResult", status: "succeeded", output_str: process.argv.slice(2).join(" ")}));\n',
-    )
-    script.chmod(0o755)
-    hook = Hook(
-        name=script.name,
-        event="SnapshotEvent",
-        plugin_name="example",
-        path=script,
-        order=10,
-        is_background=False,
-    )
-    env = {
-        "PATH": os.pathsep.join((str(Path(sys.executable).parent), str(Path(node).parent), os.defpath)),
-        "HOME": os.environ["HOME"],
-        "ABXPKG_LIB_DIR": str(tmp_path / "lib"),
-        # Any Python interpreter started for the hook reports its imports on
-        # stderr, which shows whether the abxpkg wrapper process ran at all.
-        "PYTHONPROFILEIMPORTTIME": "1",
-        **{key: os.environ[key] for key in ("LANG", "LC_ALL", "LC_CTYPE", "XDG_CONFIG_HOME") if key in os.environ},
-    }
-
-    def run(index: int) -> ProcessCompletedEvent:
-        return asyncio.run(
-            execute_hook(
-                hook,
-                output_dir=tmp_path / f"output-{index}",
-                env=env,
-                arguments={"url": "https://example.com"},
-            ),
-        )
-
-    cold = run(0)
-    assert cold.exit_code == 0, cold.stderr
-    assert '"output_str":"--url=https://example.com"' in cold.stdout
-    # The cold cache is resolved (and recorded) by the abxpkg wrapper itself.
-    assert "import time:" in cold.stderr
-
-    warm = run(1)
-    assert warm.exit_code == 0, warm.stderr
-    assert '"output_str":"--url=https://example.com"' in warm.stdout
-    assert "import time:" not in warm.stderr
-
-
 def test_index_append_never_blocks_the_event_loop(tmp_path):
     """A slow index.jsonl append must not stall every other hook's work.
 
@@ -162,7 +110,10 @@ def test_index_append_never_blocks_the_event_loop(tmp_path):
         loop = asyncio.get_running_loop()
         hook_task = asyncio.create_task(
             execute_hook(
-                hook, output_dir=index_path.parent / "example", env={"PATH": os.environ["PATH"]}, arguments={"url": "https://example.com"}
+                hook,
+                output_dir=index_path.parent / "example",
+                env={"PATH": os.environ["PATH"]},
+                arguments={"url": "https://example.com"},
             ),
         )
         reader.start()
@@ -1078,7 +1029,18 @@ def test_snapshot_background_only_hook_finishes_before_cleanup_without_filename_
     assert not list((tmp_path / "run" / "wget").glob("*.pid"))
 
 
-def test_real_js_snapshot_hook_replays_early_sigterm_to_late_cleanup_handler(tmp_path: Path) -> None:
+def test_real_js_snapshot_hook_replays_early_sigterm_to_late_cleanup_handler(tmp_path: Path, httpserver: HTTPServer) -> None:
+    release_response = threading.Event()
+
+    def response_body():
+        # Hold the real HTTP response until cleanup: a fast public website can
+        # finish before SIGTERM and legitimately produce an HTML result.
+        assert release_response.wait(60.0)
+        yield b"<!doctype html><title>Cleanup test</title>"
+
+    httpserver.expect_request("/pending-response").respond_with_handler(
+        lambda _request: Response(response_body(), content_type="text/html"),
+    )
     plugin = PluginCatalog.discover()["staticfile"]
     chrome = PluginCatalog.discover()["chrome"]
     selected = {chrome.name: chrome, plugin.name: plugin}
@@ -1090,7 +1052,7 @@ def test_real_js_snapshot_hook_replays_early_sigterm_to_late_cleanup_handler(tmp
     async def run() -> ProcessCompletedEvent | None:
         download_task = asyncio.create_task(
             _download(
-                "https://example.com",
+                httpserver.url_for("/pending-response"),
                 selected,
                 output_dir,
                 selected_plugins=list(selected),
@@ -1145,7 +1107,10 @@ def test_real_js_snapshot_hook_replays_early_sigterm_to_late_cleanup_handler(tmp
         await bus.wait_until_idle()
         return completed if isinstance(completed, ProcessCompletedEvent) else None
 
-    completed = asyncio.run(run())
+    try:
+        completed = asyncio.run(run())
+    finally:
+        release_response.set()
     assert isinstance(completed, ProcessCompletedEvent)
     assert completed.status == "succeeded", (completed.exit_code, completed.stdout, completed.stderr)
     assert completed.exit_code == 0
@@ -3097,63 +3062,23 @@ def test_inline_archive_result_collects_current_output_files(tmp_path: Path) -> 
     assert (run_dir / "wget" / "example.com" / "index.html").is_file()
 
 
-def _write_hook(path: Path, script: str) -> None:
-    path.write_text(script, encoding="utf-8")
-    path.chmod(0o755)
-
-
-def test_hooks_sharing_a_plugin_dir_each_claim_only_their_own_files_across_reruns(tmp_path: Path) -> None:
-    """Every output file belongs to exactly one ArchiveResult, so summing output sizes never double counts.
-
-    Mirrors chrome/archivewebpage: a background daemon writes shared state, later
-    foreground hooks of the same plugin write into the same directory while it
-    runs, and the daemon reports last. The second run starts over in place and
-    rewrites identical bytes, which each hook must still own.
-    """
-    plugin_dir = tmp_path / "plugins" / "overlap"
-    plugin_dir.mkdir(parents=True)
-    _write_hook(
-        plugin_dir / "on_Snapshot__10_overlap_daemon.daemon.bg.sh",
-        "#!/bin/sh\n"
-        "printf 'daemon-shared-state' > daemon.txt\n"
-        "finish() {\n"
-        "  printf 'daemon-final-output-bytes' > daemon-final.txt\n"
-        '  echo \'{"type":"ArchiveResult","status":"succeeded","output_str":"daemon-final.txt"}\'\n'
-        "  exit 0\n"
-        "}\n"
-        "trap finish TERM\n"
-        "echo ready\n"
-        "while :; do sleep 0.1; done\n",
-    )
-    _write_hook(
-        plugin_dir / "on_Snapshot__20_overlap_first.sh",
-        '#!/bin/sh\nprintf \'first\' > first.txt\necho \'{"type":"ArchiveResult","status":"succeeded","output_str":"first.txt"}\'\n',
-    )
-    _write_hook(
-        plugin_dir / "on_Snapshot__30_overlap_second.sh",
-        "#!/bin/sh\nmkdir -p nested\nprintf 'second-output' > nested/second.bin\n"
-        'echo \'{"type":"ArchiveResult","status":"succeeded","output_str":"nested/second.bin"}\'\n',
-    )
-    catalog = PluginCatalog.discover(plugins_dir=tmp_path / "plugins")
+def test_git_recapture_keeps_unchanged_checkout_files_in_result(tmp_path: Path) -> None:
+    """Fetching the same commit retains files that still belong to the capture."""
     output_dir = tmp_path / "run"
-    expected_owners = {
-        "on_Snapshot__10_overlap_daemon.daemon.bg": {"daemon.txt", "daemon-final.txt"},
-        "on_Snapshot__20_overlap_first": {"first.txt"},
-        "on_Snapshot__30_overlap_second": {"nested/second.bin"},
-    }
-
-    for _run in range(2):
-        results = _run_download("https://example.com", catalog, output_dir, selected_plugins=["overlap"], emit_jsonl=False)
-        latest = {result.hook_name: result for result in results if result.plugin == "overlap"}
-        assert {hook_name: result.status for hook_name, result in latest.items()} == dict.fromkeys(expected_owners, "succeeded")
-
-        claimed = {hook_name: {output_file.path for output_file in result.output_files} for hook_name, result in latest.items()}
-        assert claimed == expected_owners
-        disk_files = {
-            path.relative_to(output_dir / "overlap").as_posix(): path.stat().st_size
-            for path in (output_dir / "overlap").rglob("*")
-            if path.is_file() and not path.name.endswith((".log", ".pid", ".sh"))
-        }
-        assert set(disk_files) == set().union(*expected_owners.values())
-        result_sizes = [sum(output_file.size for output_file in result.output_files) for result in latest.values()]
-        assert sum(result_sizes) == sum(disk_files.values())
+    catalog = PluginCatalog.discover()
+    for _attempt in range(2):
+        results = _run_download(
+            "https://github.com/ArchiveBox/abxpkg.git",
+            catalog,
+            output_dir,
+            selected_plugins=["git"],
+            emit_jsonl=False,
+            interactive_tty=False,
+        )
+        result = next(result for result in reversed(results) if result.plugin == "git")
+        assert result.status == "succeeded", result.error
+        readme = output_dir / "git" / "README.md"
+        assert readme.is_file()
+        files = {output_file.path: output_file for output_file in result.output_files}
+        assert "README.md" in files
+        assert files["README.md"].size == readme.stat().st_size

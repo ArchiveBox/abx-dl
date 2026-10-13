@@ -17,7 +17,6 @@ from collections.abc import Awaitable, Callable
 import click
 import psutil
 from abxbus import BaseEvent, EventBus
-from abxpkg.cli import resolve_script_exec
 
 from ..events import (
     PROCESS_EXIT_SKIPPED,
@@ -37,7 +36,7 @@ from ..events import (
     SnapshotEvent,
 )
 from ..models import Process, now_iso, write_jsonl
-from ..output_files import FileVersion, changed_output_paths, output_file_versions, scan_output_files
+from ..output_files import scan_output_files
 from ..process_utils import (
     GRACEFUL_SHUTDOWN_TIMEOUT,
     graceful_kill_by_pid_file,
@@ -538,31 +537,9 @@ class ProcessService(BaseService):
         stdout_file = plugin_output_dir / f"{artifact_stem}.stdout.log"
         stderr_file = plugin_output_dir / f"{artifact_stem}.stderr.log"
         pid_file = plugin_output_dir / f"{artifact_stem}.pid"
-        # Version every path before the hook runs so completion reports only
-        # the files this hook created or rewrote: sibling hooks' files and an
-        # earlier run's untouched leftovers share this directory.
-        files_before = await asyncio.to_thread(output_file_versions, plugin_output_dir)
-
-        # Hooks are `#!/usr/bin/env -S abxpkg run --script ...` scripts. Run by
-        # path, each one starts a fresh Python interpreter only to read abxpkg's
-        # warm cache and exec the real runtime: ~60 interpreter launches per
-        # snapshot, mostly for hooks that finish in under a second. abxpkg is
-        # already loaded here, so ask it for that same exec target and spawn it
-        # directly. It declines whenever the wrapper itself must run (cold cache,
-        # a different abxpkg launcher on the hook's PATH, ...). A child that
-        # drops privileges would judge abxpkg's per-user cache trust as another
-        # user, so those always go through the wrapper.
-        spawn_cmd, spawn_env = cmd, event.env
-        if _hook_child_identity() is None:
-            resolved = await asyncio.to_thread(
-                resolve_script_exec,
-                event.hook_path,
-                list(event.hook_args),
-                env=event.env,
-                cwd=str(plugin_output_dir),
-            )
-            if resolved is not None:
-                _exec_abspath, spawn_cmd, spawn_env = resolved
+        # Completion without a hook result reports newly created partial files.
+        # Successful hook records inventory the plugin directory separately.
+        files_before = await asyncio.to_thread(lambda: set(plugin_output_dir.rglob("*")))
 
         process: asyncio.subprocess.Process | None = None
         started_event: ProcessStartedEvent | None = None
@@ -589,11 +566,11 @@ class ProcessService(BaseService):
                     # the only durable reference to these inodes is a pathname.
                     child_identity = _hook_child_identity()
                     process = await asyncio.create_subprocess_exec(
-                        *spawn_cmd,
+                        *cmd,
                         cwd=str(plugin_output_dir),
                         stdout=out_fh,
                         stderr=err_fh,
-                        env=spawn_env,
+                        env=event.env,
                         # Give every hook its own process group so interrupts and
                         # cleanup can target the hook explicitly instead of relying
                         # on terminal-delivered SIGINT reaching the right child.
@@ -751,7 +728,7 @@ class ProcessService(BaseService):
         stdout_reader: TextIO,
         stderr_reader: TextIO,
         pid_file: Path,
-        files_before: dict[Path, FileVersion],
+        files_before: set[Path],
     ) -> Process | None:
         stdout_state = _OutputStreamState()
         # Independent offsets preserve both complete logs. Stderr is observed
@@ -855,13 +832,11 @@ class ProcessService(BaseService):
         stdout_reader.close()
         stderr_reader.close()
 
-        # A path-set difference missed files a re-run rewrites in place, so a
-        # re-run hook reported none of its own output.
-        changed_paths = await asyncio.to_thread(changed_output_paths, plugin_output_dir, files_before)
-        touched_files = await asyncio.to_thread(
+        files_after = await asyncio.to_thread(lambda: set(plugin_output_dir.rglob("*")))
+        new_files = await asyncio.to_thread(
             scan_output_files,
             plugin_output_dir,
-            file_paths=changed_paths,
+            file_paths=files_after - files_before,
             containment_root=plugin_output_dir.parent,
         )
         if returncode == 0 and not stdout.strip() and (signal_match := SHELL_SIGNAL_STDERR_RE.search(stderr)):
@@ -951,7 +926,7 @@ class ProcessService(BaseService):
                 status=status,
                 cancelled=cancelled,
                 output_dir=event.output_dir,
-                output_files=touched_files,
+                output_files=new_files,
                 is_background=event.is_background,
                 pid=process.pid,
                 url=event.url,
