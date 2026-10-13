@@ -346,10 +346,26 @@ class ArchiveResult(BaseModel):
 
 
 def write_jsonl(path: Path, record: Any, also_print: bool = False):
-    """Append a record to a JSONL file."""
+    """Append a record to a JSONL file.
+
+    Open an existing index without O_CREAT. A creating open locks the parent
+    directory exclusively, and every hook's plugin dir is a sibling in that
+    parent: on a remote mount each in-flight sibling mkdir holds the lock for a
+    whole object-store round trip (B2 directory markers: ~350ms, up to 1.5s),
+    so appending a record waited behind them. Only a missing index is created.
+    """
     line = record.to_jsonl()
-    with open(path, "a") as f:
-        f.write(line + "\n")
+    data = (line + "\n").encode()
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CLOEXEC)
+    except FileNotFoundError:
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_CLOEXEC, 0o666)
+    try:
+        written = 0
+        while written < len(data):
+            written += os.write(fd, data[written:])
+    finally:
+        os.close(fd)
     if also_print:
         print(line, flush=True)
 

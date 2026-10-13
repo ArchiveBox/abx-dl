@@ -126,10 +126,10 @@ class ArchiveResultService(BaseService):
         except ValidationError:
             return
 
-        index_path = Path(event.output_dir).parent / "index.jsonl"
-        write_jsonl(index_path, ar, also_print=self.emit_jsonl)
-
-        await event.emit(
+        # Emitting records this result's file claims in bus history at once;
+        # only then may an await (the index append, off the event loop) let a
+        # concurrent report of the same files run.
+        archive_result_event = event.emit(
             ArchiveResultEvent(
                 snapshot_id=ar.snapshot_id,
                 plugin=ar.plugin,
@@ -143,7 +143,10 @@ class ArchiveResultService(BaseService):
                 output_json=ar.output_json,
                 error=ar.error or "",
             ),
-        ).now()
+        )
+        index_path = Path(event.output_dir).parent / "index.jsonl"
+        await asyncio.to_thread(write_jsonl, index_path, ar, also_print=self.emit_jsonl)
+        await archive_result_event.now()
 
     def _unclaimed_output_files(
         self,
@@ -271,10 +274,10 @@ class ArchiveResultService(BaseService):
             ar.output_str = existing.output_str
             ar.output_json = existing.output_json
 
-        index_path = Path(event.output_dir).parent / "index.jsonl"
-        write_jsonl(index_path, ar, also_print=self.emit_jsonl)
-
-        await event.emit(
+        # Emitting records this result's file claims in bus history at once;
+        # only then may an await (the index append, off the event loop) let a
+        # concurrent report of the same files run.
+        archive_result_event = event.emit(
             ArchiveResultEvent(
                 snapshot_id=ar.snapshot_id,
                 plugin=ar.plugin,
@@ -288,4 +291,7 @@ class ArchiveResultService(BaseService):
                 output_json=ar.output_json,
                 error=ar.error or "",
             ),
-        ).now()
+        )
+        index_path = Path(event.output_dir).parent / "index.jsonl"
+        await asyncio.to_thread(write_jsonl, index_path, ar, also_print=self.emit_jsonl)
+        await archive_result_event.now()

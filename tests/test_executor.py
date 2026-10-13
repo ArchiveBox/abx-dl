@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime
 import hashlib
 import json
 import os
@@ -131,6 +132,101 @@ def test_warm_abxpkg_script_hook_spawns_resolved_runtime_without_python_wrapper(
     assert warm.exit_code == 0, warm.stderr
     assert '"output_str":"--url=https://example.com"' in warm.stdout
     assert "import time:" not in warm.stderr
+
+
+def test_index_append_never_blocks_the_event_loop(tmp_path):
+    """A slow index.jsonl append must not stall every other hook's work.
+
+    On a remote mount, opening and appending to the snapshot's index.jsonl can
+    wait seconds behind sibling plugin-dir mkdirs. The runner's event loop is
+    shared by all hooks' readiness, output and completion, so the append has to
+    happen off it. A FIFO in place of the index blocks the open for real until
+    a reader appears, which happens only after the loop proved it stayed live.
+    """
+    script = tmp_path / "on_Snapshot__10_example.sh"
+    script.write_text('#!/bin/sh\nprintf \'{"type":"ArchiveResult","status":"succeeded"}\\n\'\n')
+    script.chmod(0o755)
+    hook = Hook(name=script.name, event="SnapshotEvent", plugin_name="example", path=script, order=10, is_background=False)
+    index_path = tmp_path / "snapshot" / "index.jsonl"
+    index_path.parent.mkdir()
+    os.mkfifo(index_path)
+    index_lines: list[bytes] = []
+
+    def read_index_after_blocking() -> None:
+        with index_path.open("rb") as index_file:
+            index_lines.extend(index_file.read().splitlines())
+
+    reader = threading.Timer(1.5, read_index_after_blocking)
+
+    async def run() -> tuple[ProcessCompletedEvent, float]:
+        loop = asyncio.get_running_loop()
+        hook_task = asyncio.create_task(
+            execute_hook(
+                hook, output_dir=index_path.parent / "example", env={"PATH": os.environ["PATH"]}, arguments={"url": "https://example.com"}
+            ),
+        )
+        reader.start()
+        longest_tick = 0.0
+        last_tick = loop.time()
+        while not hook_task.done():
+            await asyncio.sleep(0.01)
+            longest_tick = max(longest_tick, loop.time() - last_tick)
+            last_tick = loop.time()
+        return await hook_task, longest_tick
+
+    try:
+        completed, longest_tick = asyncio.run(run())
+    finally:
+        reader.cancel()
+        reader.join()
+
+    assert completed.exit_code == 0, completed.stderr
+    # The append waited ~1.5s for its reader; the loop never did.
+    assert longest_tick < 0.5
+    assert [json.loads(line)["hook_name"] for line in index_lines] == [script.name]
+
+
+def test_silent_hook_completion_is_not_delayed_by_output_polling(tmp_path):
+    """Stdout polling backs off for quiet hooks; exit must still finish at once.
+
+    Hooks that exit 0.1s apart cover a whole idle polling interval, so if
+    completion waited for the reader's next poll, one of them would wait for
+    most of that interval wherever the polls happen to fall.
+    """
+    hooks = []
+    for index in range(5):
+        script = tmp_path / f"on_Snapshot__1{index}_example.py"
+        script.write_text(
+            f"#!{sys.executable}\n"
+            "import json, time\n"
+            f"time.sleep({2 + index / 10})\n"
+            'print(json.dumps({"type": "ArchiveResult", "status": "succeeded", "output_str": repr(time.time())}), flush=True)\n',
+        )
+        script.chmod(0o755)
+        hooks.append(
+            Hook(name=script.name, event="SnapshotEvent", plugin_name="example", path=script, order=10 + index, is_background=False),
+        )
+
+    async def run() -> list[ProcessCompletedEvent]:
+        return await asyncio.gather(
+            *(
+                execute_hook(
+                    hook,
+                    output_dir=tmp_path / "output" / hook.name,
+                    env={"PATH": os.environ["PATH"]},
+                    arguments={"url": "https://example.com"},
+                )
+                for hook in hooks
+            ),
+        )
+
+    delays = []
+    for completed in asyncio.run(run()):
+        assert completed.exit_code == 0, completed.stderr
+        printed_at = float(json.loads(completed.stdout)["output_str"])
+        # Completion is recorded only after the final drain of the hook's output.
+        delays.append(datetime.fromisoformat(completed.end_ts).timestamp() - printed_at)
+    assert max(delays) < 0.2, delays
 
 
 def test_execute_hook_reuses_one_process_service_per_bus(tmp_path):

@@ -62,6 +62,8 @@ def interrupted_hook_prompt_text(hook_name: str) -> str:
 
 
 STDOUT_POLL_INTERVAL = 0.05
+# Upper bound for polling a hook that has gone quiet; see _stream_output.
+STDOUT_IDLE_POLL_INTERVAL = 0.5
 SHELL_SIGNAL_STDERR_RE = re.compile(r"(?:Terminated|Killed):\s*(\d+)")
 POLITE_CLEANUP_SIGNAL_EXIT_CODES = {
     -signal.SIGINT,
@@ -102,7 +104,7 @@ def _permanently_drop_child_privileges(uid: int, gid: int) -> Callable[[], None]
 class _OutputStreamState:
     stdout_lines: list[str] = field(default_factory=list)
     pending_line: str = ""
-    stop_requested: bool = False
+    stop_requested: asyncio.Event = field(default_factory=asyncio.Event)
 
 
 def _open_process_spawn_files(
@@ -571,7 +573,11 @@ class ProcessService(BaseService):
         try:
             try:
                 reader_stack = ExitStack()
-                spawn_stack, out_fh, err_fh, stdout_reader, stderr_reader = _open_process_spawn_files(
+                # Creating files in a remote-mounted plugin dir is a metadata
+                # round trip; keep it off the event loop that every other
+                # hook's readiness, output and completion share.
+                spawn_stack, out_fh, err_fh, stdout_reader, stderr_reader = await asyncio.to_thread(
+                    _open_process_spawn_files,
                     stdout_file,
                     stderr_file,
                     reader_stack,
@@ -594,7 +600,7 @@ class ProcessService(BaseService):
                         start_new_session=True,
                         preexec_fn=(_permanently_drop_child_privileges(*child_identity) if child_identity is not None else None),
                     )
-                write_pid_file_with_mtime(pid_file, process.pid, time.time())
+                await asyncio.to_thread(write_pid_file_with_mtime, pid_file, process.pid, time.time())
             except (OSError, ValueError) as e:
                 # If spawn partially succeeded, shut it down before surfacing the
                 # failure as a normal ProcessCompletedEvent.
@@ -606,7 +612,7 @@ class ProcessService(BaseService):
                 proc.stderr = f"{type(e).__name__}: {e}"
                 proc.ended_at = now_iso()
                 index_path = plugin_output_dir.parent / "index.jsonl"
-                write_jsonl(index_path, proc, also_print=self.emit_jsonl)
+                await asyncio.to_thread(write_jsonl, index_path, proc, also_print=self.emit_jsonl)
                 await event.emit(
                     ProcessCompletedEvent(
                         plugin_name=event.plugin_name,
@@ -809,7 +815,7 @@ class ProcessService(BaseService):
             # ProcessCompletedEvent. Cancelling here could advance the file
             # offset, cancel ArchiveResult consumers, and then lose the line
             # before the final drain below.
-            stdout_state.stop_requested = True
+            stdout_state.stop_requested.set()
             await self._finish_stream_output(stream_task)
             await self._emit_new_output_lines(
                 event=started_event,
@@ -827,7 +833,7 @@ class ProcessService(BaseService):
             # earlier succeeded DB row intact after the hook was killed.
             cancellation = error
             await graceful_kill_process(process)
-            stdout_state.stop_requested = True
+            stdout_state.stop_requested.set()
             await self._finish_stream_output(stream_task)
         except Exception:
             await graceful_kill_process(process)
@@ -917,13 +923,18 @@ class ProcessService(BaseService):
         proc.ended_at = now_iso()
 
         index_path = plugin_output_dir.parent / "index.jsonl"
-        write_jsonl(index_path, proc, also_print=self.emit_jsonl)
+        keep_logs = returncode != 0 or cancelled
 
-        pid_file.unlink(missing_ok=True)
+        def record_completion() -> None:
+            write_jsonl(index_path, proc, also_print=self.emit_jsonl)
+            pid_file.unlink(missing_ok=True)
+            if not keep_logs:
+                stdout_file.unlink(missing_ok=True)
+                stderr_file.unlink(missing_ok=True)
 
-        if returncode == 0 and not cancelled:
-            stdout_file.unlink(missing_ok=True)
-            stderr_file.unlink(missing_ok=True)
+        # Remote-mount metadata round trips must not stall the event loop that
+        # every other hook's readiness, output, and completion share.
+        await asyncio.to_thread(record_completion)
 
         await self.bus.emit(
             ProcessCompletedEvent(
@@ -1132,16 +1143,17 @@ class ProcessService(BaseService):
         descendant closes it. A file keeps live logs and decouples process
         completion from inherited descriptors.
         """
+        poll_interval = STDOUT_POLL_INTERVAL
         try:
-            while not state.stop_requested:
-                await self._emit_new_output_lines(
+            while not state.stop_requested.is_set():
+                read_stdout = await self._emit_new_output_lines(
                     event=event,
                     proc=proc,
                     stdout_reader=stdout_reader,
                     state=state,
                     emit_partial=False,
                 )
-                await self._emit_new_output_lines(
+                read_stderr = await self._emit_new_output_lines(
                     event=event,
                     proc=proc,
                     stdout_reader=stderr_reader,
@@ -1149,9 +1161,21 @@ class ProcessService(BaseService):
                     emit_partial=False,
                     event_class=ProcessStderrEvent,
                 )
-                if state.stop_requested:
-                    break
-                await asyncio.sleep(STDOUT_POLL_INTERVAL)
+                # Dozens of daemon hooks stay alive and silent for a whole
+                # snapshot. Polling each at the full rate kept the shared event
+                # loop busy reading empty logs (a remote-mount read each time):
+                # back off while a hook is quiet, and return to the full rate
+                # as soon as it writes. Completion sets stop_requested, which
+                # wakes this at once for the final drain instead of finishing
+                # the current wait first.
+                if read_stdout or read_stderr:
+                    poll_interval = STDOUT_POLL_INTERVAL
+                else:
+                    poll_interval = min(poll_interval * 2, STDOUT_IDLE_POLL_INTERVAL)
+                try:
+                    await asyncio.wait_for(state.stop_requested.wait(), poll_interval)
+                except TimeoutError:
+                    pass
         except asyncio.CancelledError:
             return state.stdout_lines
         return state.stdout_lines
@@ -1165,14 +1189,15 @@ class ProcessService(BaseService):
         state: _OutputStreamState,
         emit_partial: bool,
         event_class: type[ProcessStdoutEvent] | type[ProcessStderrEvent] = ProcessStdoutEvent,
-    ) -> None:
+    ) -> bool:
+        """Emit complete lines read since the last call; return whether any bytes arrived."""
         # Each stream has one retained reader; read() already advances it,
         # including after EOF when the child appends more data. Re-seeking on
         # every poll adds remote I/O without changing the read position.
         chunk = stdout_reader.read()
 
         if not chunk and not (emit_partial and state.pending_line):
-            return
+            return False
 
         state.pending_line += chunk
         lines = state.pending_line.splitlines(keepends=True)
@@ -1207,5 +1232,6 @@ class ProcessService(BaseService):
                     # The owning runner may already have detached the bus after
                     # a SIGINT/SIGTERM; do not turn that late cosmetic flush
                     # into an unhandled task exception while the process exits.
-                    return
+                    return True
                 raise
+        return True
