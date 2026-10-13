@@ -1016,6 +1016,52 @@ def test_papers_download_starts_after_dom_before_article_parsing(tmp_path: Path)
     assert lifecycle.index(("started", "papersdl")) < lifecycle.index(("started", "readability"))
 
 
+@pytest.mark.parametrize("parser", ["opendataloader", "liteparse"])
+def test_pdf_parsers_consume_completed_background_downloads(tmp_path: Path, parser: str) -> None:
+    output_dir = tmp_path / "capture"
+    bus = create_bus(total_timeout=180.0, name=f"papers_pdf_consumer_{tmp_path.name}")
+    lifecycle: list[tuple[str, str]] = []
+
+    async def on_ProcessStartedEvent(event: ProcessStartedEvent) -> None:
+        lifecycle.append(("started", event.plugin_name))
+
+    async def on_ProcessCompletedEvent(event: ProcessCompletedEvent) -> None:
+        lifecycle.append(("completed", event.plugin_name))
+
+    bus.on(ProcessStartedEvent, on_ProcessStartedEvent)
+    bus.on(ProcessCompletedEvent, on_ProcessCompletedEvent)
+    results = _run_download(
+        "https://huggingface.co/papers/1706.03762",
+        PluginCatalog.discover(),
+        output_dir,
+        selected_plugins=["dom", "papersdl", "parse_dom_outlinks", parser, "hashes"],
+        config_overrides={"TIMEOUT": 120, f"{parser.upper()}_ENABLED": True},
+        bus=bus,
+        emit_jsonl=False,
+        interactive_tty=False,
+    )
+    for plugin in ("dom", "papersdl", "parse_dom_outlinks", parser, "hashes"):
+        result = next(result for result in results if result.plugin == plugin)
+        assert result.status == "succeeded", result
+    # Live DOM extraction must finish before final-file consumers close the
+    # snapshot tab; the PDF consumer must see the completed background output.
+    assert lifecycle.index(("completed", "parse_dom_outlinks")) < lifecycle.index(("started", parser))
+    assert lifecycle.index(("completed", "papersdl")) < lifecycle.index(("started", parser))
+    pdfs = list((output_dir / "papersdl").glob("*.pdf"))
+    assert len(pdfs) == 1
+    assert pdfs[0].read_bytes().startswith(b"%PDF-")
+    texts = list((output_dir / parser).rglob("*.txt"))
+    assert texts
+    text = " ".join(" ".join(path.read_text() for path in texts).lower().split())
+    assert "attention is all you need" in text
+    assert "vaswani" in text
+    assert (output_dir / "parse_dom_outlinks/urls.jsonl").stat().st_size > 0
+    manifest = json.loads((output_dir / "hashes/hashes.json").read_text())
+    hashes = {item["path"]: item["hash"] for item in manifest["files"]}
+    for path in [*pdfs, *texts]:
+        assert hashes[str(path.relative_to(output_dir))] == hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def test_download_creates_default_persona_dir(tmp_path: Path) -> None:
     personas_dir = Path(os.environ["PERSONAS_DIR"])
 
