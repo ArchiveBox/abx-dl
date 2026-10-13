@@ -667,7 +667,7 @@ def test_noninteractive_live_ui_streams_process_lifecycle() -> None:
             stdout_file=Path("/tmp/noninteractive_process_lifecycle.stdout.log"),
             stderr_file=Path("/tmp/noninteractive_process_lifecycle.stderr.log"),
             pid_file=Path("/tmp/noninteractive_process_lifecycle.pid"),
-            files_before=set(),
+            files_before={},
             start_ts="2026-03-25T12:00:00",
         )
         completed_event = ProcessCompletedEvent(
@@ -852,7 +852,7 @@ def test_process_completed_preserves_output_files_when_inline_archive_result_has
             stdout_file=Path("/tmp/process_completed_preserve_output_files.stdout.log"),
             stderr_file=Path("/tmp/process_completed_preserve_output_files.stderr.log"),
             pid_file=Path("/tmp/process_completed_preserve_output_files.pid"),
-            files_before=set(),
+            files_before={},
             start_ts="2026-03-25T12:00:00",
         )
         archive_result_event = ArchiveResultEvent(
@@ -918,7 +918,7 @@ def test_process_stdout_updates_live_row_with_last_non_json_line() -> None:
             stdout_file=Path("/tmp/process_stdout_live_row.stdout.log"),
             stderr_file=Path("/tmp/process_stdout_live_row.stderr.log"),
             pid_file=Path("/tmp/process_stdout_live_row.pid"),
-            files_before=set(),
+            files_before={},
             start_ts="2026-03-25T12:00:00",
         )
         stdout_event = ProcessStdoutEvent(

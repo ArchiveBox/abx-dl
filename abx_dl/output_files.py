@@ -24,6 +24,36 @@ EXECUTABLE_BITS = 0o111
 BROKEN_SYMLINK_SUFFIX = ".broken-symlink.txt"
 
 
+# (inode, size, mtime_ns, ctime_ns) of one path, as lstat reports it.
+FileVersion = tuple[int, int, int, int]
+
+
+def output_file_versions(output_dir: Path) -> dict[Path, FileVersion]:
+    """Record every path's current version before a hook runs.
+
+    Hooks of one plugin share its output directory, and a re-run snapshot
+    overwrites its previous output in place. A path that merely exists after a
+    hook therefore says nothing about who wrote it; comparing versions taken
+    before and after tells which files this hook created or rewrote. ctime is
+    part of the version because downloaders (wget timestamping, yt-dlp) set
+    mtime to the remote file's date, and the kernel updates ctime on every
+    write, rename, and utime call.
+    """
+    versions: dict[Path, FileVersion] = {}
+    for path in output_dir.rglob("*"):
+        try:
+            stat_result = path.lstat()
+        except OSError:
+            continue
+        versions[path] = (stat_result.st_ino, stat_result.st_size, stat_result.st_mtime_ns, stat_result.st_ctime_ns)
+    return versions
+
+
+def changed_output_paths(output_dir: Path, versions_before: Mapping[Path, FileVersion]) -> list[Path]:
+    """Return paths created or rewritten since ``versions_before`` was recorded."""
+    return [path for path, version in output_file_versions(output_dir).items() if versions_before.get(path) != version]
+
+
 def remove_empty_output_dirs(output_dirs: Iterable[Path]) -> None:
     """Remove empty plugin directories after their hook lifecycle has finished.
 

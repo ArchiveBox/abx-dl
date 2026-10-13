@@ -37,7 +37,7 @@ from ..events import (
     SnapshotEvent,
 )
 from ..models import Process, now_iso, write_jsonl
-from ..output_files import scan_output_files
+from ..output_files import FileVersion, changed_output_paths, output_file_versions, scan_output_files
 from ..process_utils import (
     GRACEFUL_SHUTDOWN_TIMEOUT,
     graceful_kill_by_pid_file,
@@ -536,9 +536,10 @@ class ProcessService(BaseService):
         stdout_file = plugin_output_dir / f"{artifact_stem}.stdout.log"
         stderr_file = plugin_output_dir / f"{artifact_stem}.stderr.log"
         pid_file = plugin_output_dir / f"{artifact_stem}.pid"
-        # Track the directory contents before the hook runs so completion can
-        # report only newly created output files.
-        files_before = await asyncio.to_thread(lambda: set(plugin_output_dir.rglob("*")))
+        # Version every path before the hook runs so completion reports only
+        # the files this hook created or rewrote: sibling hooks' files and an
+        # earlier run's untouched leftovers share this directory.
+        files_before = await asyncio.to_thread(output_file_versions, plugin_output_dir)
 
         # Hooks are `#!/usr/bin/env -S abxpkg run --script ...` scripts. Run by
         # path, each one starts a fresh Python interpreter only to read abxpkg's
@@ -744,7 +745,7 @@ class ProcessService(BaseService):
         stdout_reader: TextIO,
         stderr_reader: TextIO,
         pid_file: Path,
-        files_before: set[Path],
+        files_before: dict[Path, FileVersion],
     ) -> Process | None:
         stdout_state = _OutputStreamState()
         # Independent offsets preserve both complete logs. Stderr is observed
@@ -848,11 +849,13 @@ class ProcessService(BaseService):
         stdout_reader.close()
         stderr_reader.close()
 
-        files_after = await asyncio.to_thread(lambda: set(plugin_output_dir.rglob("*")))
-        new_files = await asyncio.to_thread(
+        # A path-set difference missed files a re-run rewrites in place, so a
+        # re-run hook reported none of its own output.
+        changed_paths = await asyncio.to_thread(changed_output_paths, plugin_output_dir, files_before)
+        touched_files = await asyncio.to_thread(
             scan_output_files,
             plugin_output_dir,
-            file_paths=files_after - files_before,
+            file_paths=changed_paths,
             containment_root=plugin_output_dir.parent,
         )
         if returncode == 0 and not stdout.strip() and (signal_match := SHELL_SIGNAL_STDERR_RE.search(stderr)):
@@ -937,7 +940,7 @@ class ProcessService(BaseService):
                 status=status,
                 cancelled=cancelled,
                 output_dir=event.output_dir,
-                output_files=new_files,
+                output_files=touched_files,
                 is_background=event.is_background,
                 pid=process.pid,
                 url=event.url,

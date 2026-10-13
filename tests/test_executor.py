@@ -3057,3 +3057,65 @@ def test_inline_archive_result_collects_current_output_files(tmp_path: Path) -> 
     assert seen_archive_results[0].status == "succeeded"
     assert "example.com/index.html" in [output_file.path for output_file in seen_archive_results[0].output_files]
     assert (run_dir / "wget" / "example.com" / "index.html").is_file()
+
+
+def _write_hook(path: Path, script: str) -> None:
+    path.write_text(script, encoding="utf-8")
+    path.chmod(0o755)
+
+
+def test_hooks_sharing_a_plugin_dir_each_claim_only_their_own_files_across_reruns(tmp_path: Path) -> None:
+    """Every output file belongs to exactly one ArchiveResult, so summing output sizes never double counts.
+
+    Mirrors chrome/archivewebpage: a background daemon writes shared state, later
+    foreground hooks of the same plugin write into the same directory while it
+    runs, and the daemon reports last. The second run starts over in place and
+    rewrites identical bytes, which each hook must still own.
+    """
+    plugin_dir = tmp_path / "plugins" / "overlap"
+    plugin_dir.mkdir(parents=True)
+    _write_hook(
+        plugin_dir / "on_Snapshot__10_overlap_daemon.daemon.bg.sh",
+        "#!/bin/sh\n"
+        "printf 'daemon-shared-state' > daemon.txt\n"
+        "finish() {\n"
+        "  printf 'daemon-final-output-bytes' > daemon-final.txt\n"
+        '  echo \'{"type":"ArchiveResult","status":"succeeded","output_str":"daemon-final.txt"}\'\n'
+        "  exit 0\n"
+        "}\n"
+        "trap finish TERM\n"
+        "echo ready\n"
+        "while :; do sleep 0.1; done\n",
+    )
+    _write_hook(
+        plugin_dir / "on_Snapshot__20_overlap_first.sh",
+        '#!/bin/sh\nprintf \'first\' > first.txt\necho \'{"type":"ArchiveResult","status":"succeeded","output_str":"first.txt"}\'\n',
+    )
+    _write_hook(
+        plugin_dir / "on_Snapshot__30_overlap_second.sh",
+        "#!/bin/sh\nmkdir -p nested\nprintf 'second-output' > nested/second.bin\n"
+        'echo \'{"type":"ArchiveResult","status":"succeeded","output_str":"nested/second.bin"}\'\n',
+    )
+    catalog = PluginCatalog.discover(plugins_dir=tmp_path / "plugins")
+    output_dir = tmp_path / "run"
+    expected_owners = {
+        "on_Snapshot__10_overlap_daemon.daemon.bg": {"daemon.txt", "daemon-final.txt"},
+        "on_Snapshot__20_overlap_first": {"first.txt"},
+        "on_Snapshot__30_overlap_second": {"nested/second.bin"},
+    }
+
+    for _run in range(2):
+        results = _run_download("https://example.com", catalog, output_dir, selected_plugins=["overlap"], emit_jsonl=False)
+        latest = {result.hook_name: result for result in results if result.plugin == "overlap"}
+        assert {hook_name: result.status for hook_name, result in latest.items()} == dict.fromkeys(expected_owners, "succeeded")
+
+        claimed = {hook_name: {output_file.path for output_file in result.output_files} for hook_name, result in latest.items()}
+        assert claimed == expected_owners
+        disk_files = {
+            path.relative_to(output_dir / "overlap").as_posix(): path.stat().st_size
+            for path in (output_dir / "overlap").rglob("*")
+            if path.is_file() and not path.name.endswith((".log", ".pid", ".sh"))
+        }
+        assert set(disk_files) == set().union(*expected_owners.values())
+        result_sizes = [sum(output_file.size for output_file in result.output_files) for result in latest.values()]
+        assert sum(result_sizes) == sum(disk_files.values())
