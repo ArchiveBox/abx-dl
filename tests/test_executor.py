@@ -975,6 +975,45 @@ def test_binary_event_preserves_missing_user_binary_abspath_override(tmp_path: P
     assert process_events == []
 
 
+def test_papers_download_starts_after_dom_before_article_parsing(tmp_path: Path) -> None:
+    catalog = PluginCatalog.discover()
+    output_dir = tmp_path / "capture"
+    bus = create_bus(total_timeout=120.0, name=f"papers_article_overlap_{tmp_path.name}")
+    lifecycle: list[tuple[str, str]] = []
+
+    async def on_ProcessStartedEvent(event: ProcessStartedEvent) -> None:
+        lifecycle.append(("started", event.plugin_name))
+        if event.plugin_name == "papersdl":
+            assert "1706.03762" in (output_dir / "dom/output.html").read_text()
+
+    async def on_ProcessCompletedEvent(event: ProcessCompletedEvent) -> None:
+        lifecycle.append(("completed", event.plugin_name))
+
+    bus.on(ProcessStartedEvent, on_ProcessStartedEvent)
+    bus.on(ProcessCompletedEvent, on_ProcessCompletedEvent)
+    results = _run_download(
+        "https://huggingface.co/papers/1706.03762",
+        catalog,
+        output_dir,
+        selected_plugins=["dom", "papersdl", "readability"],
+        config_overrides={"TIMEOUT": 120},
+        bus=bus,
+        emit_jsonl=False,
+        interactive_tty=False,
+    )
+    for plugin in ("dom", "papersdl", "readability"):
+        result = next(result for result in results if result.plugin == plugin)
+        assert result.status == "succeeded", result
+    assert (output_dir / "readability/content.html").is_file()
+    pdfs = list((output_dir / "papersdl").glob("*.pdf"))
+    assert len(pdfs) == 1
+    assert pdfs[0].read_bytes().startswith(b"%PDF-")
+    assert pdfs[0].stat().st_size > 1_000_000
+    assert lifecycle.index(("completed", "dom")) < lifecycle.index(("started", "papersdl"))
+    assert lifecycle.index(("started", "papersdl")) < lifecycle.index(("started", "readability"))
+    assert lifecycle.index(("started", "readability")) < lifecycle.index(("completed", "papersdl"))
+
+
 def test_download_creates_default_persona_dir(tmp_path: Path) -> None:
     personas_dir = Path(os.environ["PERSONAS_DIR"])
 

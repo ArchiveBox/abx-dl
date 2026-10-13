@@ -19,7 +19,7 @@ def test_runtime_catalogs_include_disabled_plugins_and_separate_server_tools() -
 
 
 def test_parse_hook_filename_marks_bg_hooks() -> None:
-    assert parse_hook_filename("on_Snapshot__66_papersdl.finite.bg.py") == ("Snapshot", 66, True)
+    assert parse_hook_filename("on_Snapshot__54_papersdl.finite.bg.py") == ("Snapshot", 54, True)
     assert parse_hook_filename("on_Snapshot__9_chrome_wait.js") == ("Snapshot", 9, False)
     assert parse_hook_filename("on_Snapshot__chrome_wait.js") == ("Snapshot", 0, False)
 
@@ -28,7 +28,7 @@ def test_discover_plugins_marks_papersdl_as_background() -> None:
     plugins = PluginCatalog.discover()
     papersdl_hooks = plugins["papersdl"].hooks
 
-    papersdl_hook = next(hook for hook in papersdl_hooks if "Snapshot" in hook.name and hook.order == 66)
+    papersdl_hook = next(hook for hook in papersdl_hooks if "Snapshot" in hook.name and hook.order == 54)
 
     assert papersdl_hook.is_background is True
     assert papersdl_hook.path.parent == plugins["papersdl"].path
