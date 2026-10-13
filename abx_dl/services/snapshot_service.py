@@ -3,6 +3,7 @@
 import asyncio
 from datetime import UTC, datetime
 import json
+import os
 from inspect import isawaitable
 from pathlib import Path
 from typing import ClassVar
@@ -203,16 +204,17 @@ class SnapshotService(BaseService):
             where=lambda candidate: candidate.plugin_name in dependency_names,
         )
         for process_event in process_events:
-            timeout = float(self._hook_timeouts.get((process_event.plugin_name, process_event.hook_name), 60)) + 30.0
+            # Producers are background hooks that own their lifetime: they stop
+            # by their own TIMEOUT and always report completion, and snapshot
+            # cleanup bounds them. Wait for that instead of guessing a deadline;
+            # a producer outliving the guess raised here and crashed the runner.
             completed_process = await self.bus.find(
                 ProcessCompletedEvent,
                 child_of=process_event,
                 past=True,
-                future=timeout,
+                future=True,
             )
-            if completed_process is None:
-                raise RuntimeError(f"Plugin output dependency {process_event.plugin_name} did not complete")
-            await _wait_for_process_completed(completed_process, timeout)
+            await _wait_for_process_completed(completed_process, None)
 
     async def _runnable_hook_config(self, plugin: Plugin, hook: Hook) -> PluginEnv | None:
         """Return this snapshot's config for a hook, or None if config skips it."""
@@ -248,16 +250,30 @@ class SnapshotService(BaseService):
         mkdirs in one snapshot dir never overlap in the filesystem anyway, and
         a parallel batch would queue ahead of the running hook's own mkdir.
         Hook-order means the next hook's dir is always the next one created.
+
+        The first listing of a new directory is a remote round trip too: rclone
+        lists the object store before it serves a dir it has not listed yet
+        (B2: ~85ms), and every hook lists its dir right before it spawns to
+        version the files it will change. List each dir here as soon as it
+        exists, beside the next mkdir (a child dir's listing does not take the
+        snapshot dir's lock), so hooks find their listing already local.
         """
-        for plugin_output_dir in plugin_output_dirs:
-            if stop.is_set():
-                return
-            try:
-                await asyncio.to_thread(plugin_output_dir.mkdir, parents=True, exist_ok=True)
-            except OSError:
-                # Only an optimization: the hook's own mkdir reports the real
-                # error in that hook's result, as it would without this pass.
-                continue
+        listings: list[asyncio.Task[list[str]]] = []
+        try:
+            for plugin_output_dir in plugin_output_dirs:
+                if stop.is_set():
+                    return
+                try:
+                    await asyncio.to_thread(plugin_output_dir.mkdir, parents=True, exist_ok=True)
+                except OSError:
+                    # Only an optimization: the hook's own mkdir reports the real
+                    # error in that hook's result, as it would without this pass.
+                    continue
+                listings.append(asyncio.create_task(asyncio.to_thread(os.listdir, plugin_output_dir)))
+        finally:
+            # Like the mkdirs, listings are only an optimization; the hook's own
+            # listing reports any real error.
+            await asyncio.gather(*listings, return_exceptions=True)
 
     def on_SnapshotEvent__for_hook(self, plugin: Plugin, hook: Hook):
         """Create the concrete SnapshotEvent handler for one snapshot hook."""
