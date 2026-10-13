@@ -1600,6 +1600,25 @@ def test_dl_ignores_legacy_crawl_accounting(tmp_path: Path) -> None:
     assert not (state_dir / "limits.lock").exists()
 
 
+def test_dl_preserves_unicode_separators_in_hook_jsonl(tmp_path: Path, httpserver: HTTPServer) -> None:
+    title = "Article\u2028with\u2029Unicode\u0085separators"
+    httpserver.expect_request("/unicode-title").respond_with_data(
+        f"<!doctype html><meta charset=utf-8><title>{title}</title><p>Archived article</p>",
+        content_type="text/html; charset=utf-8",
+    )
+    output_dir = tmp_path / "unicode-output"
+    result = _run_cli(tmp_path, "dl", "--plugins=title", f"--dir={output_dir}", httpserver.url_for("/unicode-title"))
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (output_dir / "title/title.txt").read_text() == title
+    records = [json.loads(line) for line in (output_dir / "index.jsonl").read_text().split("\n") if line.startswith("{")]
+    title_result = next(record for record in records if record.get("type") == "ArchiveResult" and record.get("plugin") == "title")
+    assert title_result["status"] == "succeeded", title_result
+    assert title_result["output_str"] == title
+    process = next(record for record in records if record.get("type") == "Process" and record.get("plugin") == "title")
+    emitted = [json.loads(line) for line in process["stdout"].split("\n") if line.startswith("{")]
+    assert any(record.get("output_str") == title for record in emitted), emitted
+
+
 def test_dl_relative_dir_keeps_shared_hook_paths_in_run_dir(tmp_path: Path) -> None:
     result = _run_cli(
         tmp_path,

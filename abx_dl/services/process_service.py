@@ -1175,10 +1175,11 @@ class ProcessService(BaseService):
             return False
 
         state.pending_line += chunk
-        lines = state.pending_line.splitlines(keepends=True)
-        state.pending_line = ""
-        if lines and not lines[-1].endswith(("\n", "\r")):
-            state.pending_line = lines.pop()
+        # TextIO normalizes CR/CRLF progress output. JSONL is LF-framed:
+        # Unicode separators inside a JSON string are ordinary string data.
+        complete_lines = state.pending_line.split("\n")
+        state.pending_line = complete_lines.pop()
+        lines = [line + "\n" for line in complete_lines]
         if emit_partial and state.pending_line:
             lines.append(state.pending_line)
             state.pending_line = ""

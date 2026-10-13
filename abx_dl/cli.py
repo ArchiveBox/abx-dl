@@ -1297,7 +1297,7 @@ class LiveBusUI:
         row.exit_code = event.exit_code
         row.output_files = list(event.output_files)
         if event.status == "succeeded":
-            for raw_line in event.stdout.splitlines():
+            for raw_line in event.stdout.split("\n"):
                 line = raw_line.strip()
                 if not line.startswith("{"):
                     continue
@@ -1315,7 +1315,7 @@ class LiveBusUI:
                         row.final_output_is_archive_result = bool(record.get("output_str"))
         row.status = row.final_status or event.status
         last_non_json_stdout_line = ""
-        stdout_lines = event.stdout.splitlines()
+        stdout_lines = event.stdout.split("\n")
         # The first background stdout line releases the scheduler; it is not
         # a completed-result summary. Structured records retain their priority.
         if event.is_background:
