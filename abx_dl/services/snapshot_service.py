@@ -216,7 +216,9 @@ class SnapshotService(BaseService):
             # hook: a consumer must not wait past it, and the producer must not
             # outlive it. Wait out the rest of its budget, then SIGTERM it
             # (SIGKILL after the grace period) and continue once it has exited.
-            elapsed = (datetime.now(UTC) - datetime.fromisoformat(started_process.start_ts)).total_seconds() if started_process.start_ts else 0.0
+            elapsed = (
+                (datetime.now(UTC) - datetime.fromisoformat(started_process.start_ts)).total_seconds() if started_process.start_ts else 0.0
+            )
             completed_process = await self.bus.find(
                 ProcessCompletedEvent,
                 child_of=process_event,
@@ -286,7 +288,7 @@ class SnapshotService(BaseService):
         exists, beside the next mkdir (a child dir's listing does not take the
         snapshot dir's lock), so hooks find their listing already local.
         """
-        listings: list[asyncio.Task[list[str]]] = []
+        listings: list[asyncio.Task[list[str] | list[bytes]]] = []
         try:
             for plugin_output_dir in plugin_output_dirs:
                 if stop.is_set():
