@@ -30,7 +30,6 @@ from ..events import (
     slow_warning_timeout,
 )
 from ..limits import parse_filesize_to_bytes
-from ..process_utils import GRACEFUL_SHUTDOWN_TIMEOUT
 from ..models import Snapshot
 from ..models import Hook, Plugin, PluginEnv
 from ..output_files import remove_empty_output_dirs
@@ -192,60 +191,6 @@ class SnapshotService(BaseService):
             return True
         return False
 
-    async def wait_for_plugin_outputs(self, event: SnapshotEvent, plugin: Plugin) -> None:
-        """Wait for already-started optional producer plugins before consuming their files."""
-        dependency_names = set(plugin.config.wait_for_plugins)
-        if not dependency_names:
-            return
-        process_events = await self.bus.filter(
-            ProcessEvent,
-            child_of=event,
-            past=True,
-            future=False,
-            where=lambda candidate: candidate.plugin_name in dependency_names,
-        )
-        for process_event in process_events:
-            started_process = await self.bus.find(
-                ProcessStartedEvent,
-                event_parent_id=process_event.event_id,
-                past=True,
-                future=True,
-            )
-            assert isinstance(started_process, ProcessStartedEvent)
-            # The producer's TIMEOUT is a hard limit enforced here, not by the
-            # hook: a consumer must not wait past it, and the producer must not
-            # outlive it. Wait out the rest of its budget, then SIGTERM it
-            # (SIGKILL after the grace period) and continue once it has exited.
-            elapsed = (
-                (datetime.now(UTC) - datetime.fromisoformat(started_process.start_ts)).total_seconds() if started_process.start_ts else 0.0
-            )
-            completed_process = await self.bus.find(
-                ProcessCompletedEvent,
-                child_of=process_event,
-                pid=started_process.pid,
-                past=True,
-                future=max(float(started_process.timeout) - elapsed, 0.0),
-            )
-            if completed_process is None:
-                grace_period = min(float(started_process.timeout), GRACEFUL_SHUTDOWN_TIMEOUT)
-                await event.emit(
-                    ProcessKillEvent(
-                        plugin_name=started_process.plugin_name,
-                        hook_name=started_process.hook_name,
-                        pid=started_process.pid,
-                        grace_period=grace_period,
-                        event_timeout=grace_period + 10.0,
-                    ),
-                ).now()
-                completed_process = await self.bus.find(
-                    ProcessCompletedEvent,
-                    child_of=process_event,
-                    pid=started_process.pid,
-                    past=True,
-                    future=True,
-                )
-            await _wait_for_process_completed(completed_process, None)
-
     async def _runnable_hook_config(self, plugin: Plugin, hook: Hook) -> PluginEnv | None:
         """Return this snapshot's config for a hook, or None if config skips it."""
         plugin_config = await get_plugin_env(
@@ -313,7 +258,6 @@ class SnapshotService(BaseService):
                 return
             if await self.should_abort():
                 return
-            await self.wait_for_plugin_outputs(event, plugin)
             if plugin.config.wait_for_background_cleanup:
                 cleanup_event = SnapshotCleanupEvent(
                     url=event.url,

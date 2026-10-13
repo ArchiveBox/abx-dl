@@ -115,7 +115,6 @@ class PluginConfig(BaseModel):
     properties: dict[str, dict[str, Any]] = Field(default_factory=dict)  # JSONSchema format describing plugin config
     required_binaries: list[RequiredBinary] = Field(default_factory=list)  # e.g. [{'name': 'wget', 'binproviders': 'env,brew,apt'}]
     required_plugins: list[str] = Field(default_factory=list)  # e.g. ['chrome', 'pdf']
-    wait_for_plugins: list[str] = Field(default_factory=list)
     wait_for_background_cleanup: bool = False
     category: str = ""
     display_order: int = 1000
@@ -129,7 +128,7 @@ class Plugin(BaseModel):
     Plugins are discovered from the plugins directory (`ABX_PLUGINS_DIR` env var
     or the installed `abx_plugins` package). Each plugin directory may contain:
 
-    - `config.json`: schema with metadata, config properties, and plugin dependencies
+    - `config.json`: schema with metadata, config properties, and `required_plugins`
     - `on_*` scripts: hook executables matching the naming convention
     """
 
