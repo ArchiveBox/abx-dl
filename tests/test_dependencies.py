@@ -22,6 +22,13 @@ def test_resolve_binary_requests_preserves_active_python_runtime(tmp_path: Path)
                     "python3": {
                         "name": "python3",
                         "binproviders": "env",
+                        "min_version": ".".join(str(part) for part in sys.version_info[:3]),
+                        "max_version": ".".join(str(part) for part in sys.version_info[:3]),
+                    },
+                    "incompatible_python": {
+                        "name": sys.executable,
+                        "binproviders": "env",
+                        "max_version": "0.0.1",
                     },
                     "bash": {
                         "name": "bash",
@@ -34,6 +41,7 @@ def test_resolve_binary_requests_preserves_active_python_runtime(tmp_path: Path)
             await bus.destroy(clear=False)
 
     resolved = asyncio.run(run())
+    assert resolved["incompatible_python"] is None
     python_event = resolved["python3"]
     shell_event = resolved["bash"]
 

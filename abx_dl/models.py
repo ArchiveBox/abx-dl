@@ -100,6 +100,7 @@ class RequiredBinary(BaseModel):
     name: str
     binproviders: str | None = None
     min_version: str | None = None
+    max_version: str | None = None
     overrides: BinaryOverrides = Field(default_factory=dict)
 
 

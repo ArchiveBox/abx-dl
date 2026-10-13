@@ -249,6 +249,7 @@ def test_install_event_preserves_binary_overrides_and_plugin_context(tmp_path: P
     plugins = PluginCatalog.discover()
     plugin = plugins["chrome"]
     ytdlp_plugin = plugins["ytdlp"]
+    opendataloader_plugin = plugins["opendataloader"]
     snapshot = Snapshot(url="")
     run_dir = tmp_path / "run"
     managed_lib_dir = tmp_path / "lib"
@@ -260,9 +261,9 @@ def test_install_event_preserves_binary_overrides_and_plugin_context(tmp_path: P
         )
         PluginBinariesService(
             bus,
-            catalog=PluginCatalog({"chrome": plugin, "ytdlp": ytdlp_plugin}),
+            catalog=PluginCatalog({"chrome": plugin, "ytdlp": ytdlp_plugin, "opendataloader": opendataloader_plugin}),
             auto_install=False,
-            install_plugins=[plugin, ytdlp_plugin],
+            install_plugins=[plugin, ytdlp_plugin, opendataloader_plugin],
             output_dir=run_dir,
             snapshot=snapshot,
         )
@@ -275,6 +276,7 @@ def test_install_event_preserves_binary_overrides_and_plugin_context(tmp_path: P
         config = {
             **get_initial_env(),
             "ABXPKG_LIB_DIR": str(managed_lib_dir),
+            "OPENDATALOADER_ENABLED": "true",
         }
         if no_cache:
             config["ABXPKG_NO_CACHE"] = "1"
@@ -303,6 +305,9 @@ def test_install_event_preserves_binary_overrides_and_plugin_context(tmp_path: P
     request_events = asyncio.run(collect_requests(no_cache=False))
     abxbus_request = next(event for event in request_events if event.name == "abxbus")
     assert abxbus_request.no_cache is None
+    opendataloader_request = next(event for event in request_events if event.name == "opendataloader-pdf")
+    assert opendataloader_request.min_version == "2.5.8"
+    assert opendataloader_request.max_version == "2.5.8"
     assert abxbus_request.binproviders == "pnpm"
     abxbus_version = importlib.metadata.version("abxbus")
     assert abxbus_request.min_version == abxbus_version
