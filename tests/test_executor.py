@@ -40,6 +40,7 @@ from abx_dl.orchestrator import create_bus, download as execute_download, instal
 from abx_dl.process_utils import validate_pid_file
 from abx_dl.services.archive_result_service import ArchiveResultService
 from abx_dl.services.binary_service import PluginBinaryEnvService
+from abx_dl.services.base import wait_for_process_ready
 from abx_dl.services.crawl_service import CrawlService
 from abx_dl.services.process_service import ProcessService, _process_command
 from abx_dl.services.snapshot_service import SnapshotService
@@ -1839,6 +1840,39 @@ def test_snapshot_filesystem_failure_cleans_up_without_completion(tmp_path: Path
     assert later_dir_seen_during_failed_hook == [True]
     assert not (output_dir / later_plugin.name).exists()
     assert (output_dir / plugin.name).is_symlink()
+
+
+@pytest.mark.parametrize("iteration", range(5))
+def test_snapshot_isolation_crawl_setup_completes_with_removed_logs(tmp_path: Path, iteration: int) -> None:
+    """The real fast-exiting launch hook can finish during the readiness check."""
+    plugin = PluginCatalog.discover()["chrome"]
+    hook_name = "on_CrawlSetup__90_chrome_launch.daemon.bg"
+    bus = create_bus(total_timeout=300.0, name=f"crawl_snapshot_ready_{iteration}_{tmp_path.name}")
+
+    async def run() -> None:
+        try:
+            await _run_crawl_setup_hooks(
+                bus=bus,
+                catalog=PluginCatalog({plugin.name: plugin}),
+                url="https://example.com",
+                output_dir=tmp_path / "run",
+                config_overrides={"CHROME_ISOLATION": "snapshot"},
+            )
+            started = await bus.find(ProcessStartedEvent, past=True, future=False, hook_name=hook_name)
+            completed = await bus.find(ProcessCompletedEvent, past=True, future=60.0, hook_name=hook_name)
+            assert isinstance(started, ProcessStartedEvent)
+            assert isinstance(completed, ProcessCompletedEvent)
+            assert completed.exit_code == 0, completed.stderr
+            assert completed.status == "succeeded"
+            assert "skipping crawl-scoped browser launch" in completed.stderr
+            assert not started.stdout_file.exists()
+            assert not started.stderr_file.exists()
+            # Successful completion remains readiness even after log cleanup.
+            await wait_for_process_ready(started, timeout=1.0)
+        finally:
+            await bus.destroy(clear=False)
+
+    asyncio.run(run())
 
 
 def test_crawl_setup_background_daemon_survives_until_explicit_cleanup(tmp_path: Path) -> None:

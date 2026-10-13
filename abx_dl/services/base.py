@@ -91,8 +91,13 @@ async def wait_for_process_ready(
     while asyncio.get_running_loop().time() < deadline:
         if abort_requested is not None and await abort_requested():
             return
-        if started_event.stdout_file.exists() and started_event.stdout_file.stat().st_size > 0:
-            return
+        try:
+            if started_event.stdout_file.stat().st_size > 0:
+                return
+        except FileNotFoundError:
+            # Successful completion removes logs in a worker thread. Check
+            # the process below even if its log disappears during readiness.
+            pass
 
         if started_event.interruption_done is not None:
             # A deliberately stopped startup is a user decision, not a readiness
