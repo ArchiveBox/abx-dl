@@ -231,7 +231,7 @@ jobs:
             head="$(git ls-remote origin refs/heads/main | cut -f1)"
             if [[ "$head" != "$GITHUB_SHA" ]]; then
               echo "Source $GITHUB_SHA superseded by $head; not promoting main-unstable."
-              exit 0
+              continue
             fi
             docker buildx imagetools create --tag "$image:main-unstable" "$image:sha-${GITHUB_SHA::12}"
           done
