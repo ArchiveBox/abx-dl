@@ -231,7 +231,11 @@ def test_cli_interrupts_background_only_capture(tmp_path: Path, choice: str, pha
 
     def active_hook():
         for path in output_dir.rglob("on_Snapshot__33_forumdl.*.pid"):
-            value = path.read_text().strip()
+            try:
+                value = path.read_text().strip()
+            except FileNotFoundError:
+                # Cleanup can remove the previous attempt between glob and read.
+                continue
             if value and psutil.pid_exists(int(value)):
                 return int(value)
         return None
