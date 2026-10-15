@@ -128,7 +128,7 @@ def test_cli_interrupts_active_hook(tmp_path: Path, choice: str) -> None:
     # frames there, so this also protects the plain-text prompt fallback.
     env.update(CHROME_DELAY_AFTER_LOAD="60", CHROME_TIMEOUT="120", CHROME_HEADLESS="True", TERM="dumb")
     process = subprocess.Popen(
-        [sys.executable, "-m", "abx_dl", "dl", "--plugins=chrome", "--dir", str(output_dir), "https://example.com"],
+        [sys.executable, "-m", "abx_dl", "dl", "--plugins=chrome", "--dir", str(output_dir), "https://archivebox.io/tests/"],
         cwd=tmp_path,
         env=env,
         stdin=subprocess.DEVNULL if choice == "noninteractive" else slave,
@@ -1311,7 +1311,7 @@ def test_dl_refuses_to_write_crawl_output_into_source_checkout_root(tmp_path: Pa
             "abx_dl",
             "dl",
             "--plugins=wget",
-            "https://example.com",
+            "https://archivebox.io/tests/",
         ],
         cwd=REPO_ROOT,
         env=_cli_env(tmp_path),
@@ -1347,7 +1347,7 @@ def test_dl_refuses_to_write_crawl_output_into_source_checkout_root(tmp_path: Pa
             "dl",
             "--plugins=wget",
             f"--dir={output_dir}",
-            "https://example.com",
+            "https://archivebox.io/tests/",
         ],
         cwd=REPO_ROOT,
         env=_cli_env(tmp_path),
@@ -1358,7 +1358,7 @@ def test_dl_refuses_to_write_crawl_output_into_source_checkout_root(tmp_path: Pa
     )
     assert download_result.returncode == 0
     assert (output_dir / "index.jsonl").is_file()
-    assert "Example Domain" in (output_dir / "wget" / "example.com" / "index.html").read_text()
+    assert "ArchiveBox Test Page" in (output_dir / "wget" / "archivebox.io" / "tests" / "index.html").read_text()
 
 
 def test_help_aliases_match_top_level_help(tmp_path: Path) -> None:

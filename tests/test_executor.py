@@ -1721,7 +1721,14 @@ def test_snapshot_background_daemon_stays_alive_until_cleanup(tmp_path: Path) ->
 
     bus.on(ProcessStartedEvent, on_ProcessStartedEvent)
     bus.on(ProcessCompletedEvent, on_ProcessCompletedEvent)
-    results = _run_download("https://example.com", {plugin.name: plugin}, tmp_path / "run", auto_install=True, emit_jsonl=False, bus=bus)
+    results = _run_download(
+        "https://archivebox.io/tests/",
+        {plugin.name: plugin},
+        tmp_path / "run",
+        auto_install=True,
+        emit_jsonl=False,
+        bus=bus,
+    )
     assert [result.status for result in results if result.plugin == plugin.name] == ["succeeded"]
     assert len(started) == 1 and started[0].is_background is True
     assert len(completed) == 1 and completed[0].status == "succeeded" and completed[0].exit_code == 0
@@ -2595,7 +2602,7 @@ def test_download_cleanup_records_real_background_process_without_failure(tmp_pa
     plugin = PluginCatalog.discover()["wget"]
     output_dir = tmp_path / "run"
     _run_download(
-        "https://example.com",
+        "https://archivebox.io/tests/",
         catalog=PluginCatalog({plugin.name: plugin}),
         output_dir=output_dir,
         selected_plugins=[plugin.name],
