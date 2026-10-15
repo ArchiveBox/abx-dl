@@ -1213,9 +1213,14 @@ def test_real_js_snapshot_hook_replays_early_sigterm_to_late_cleanup_handler(tmp
     assert isinstance(completed, ProcessCompletedEvent)
     assert completed.status == "succeeded", (completed.exit_code, completed.stdout, completed.stderr)
     assert completed.exit_code == 0
-    assert '"type":"ArchiveResult"' in completed.stdout
-    assert '"status":"failed"' in completed.stdout
-    assert '"output_str":"No main response captured"' in completed.stdout
+    records = [json.loads(line) for line in completed.stdout.splitlines() if line.startswith("{")]
+    assert len(records) == 1, records
+    assert records[0]["type"] == "ArchiveResult"
+    assert records[0]["plugin"] == "staticfile"
+    # Cleanup before a main response is an empty optional result, not a
+    # static-file download failure. The cleanup handler must still emit it.
+    assert records[0]["status"] == "noresults"
+    assert records[0]["output_str"] == "No main response captured"
     assert "Received SIGTERM, emitting final results" in completed.stderr
     assert not list((tmp_path / "run" / plugin.name).glob(f"{hook.name}.*.pid"))
 
