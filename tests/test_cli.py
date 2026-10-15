@@ -83,8 +83,18 @@ def test_cli_preserves_browser_download(
     assert saved["status"] == "succeeded", f"{json.dumps(saved, indent=2)}\n{result.stdout}\n{result.stderr}"
     process = next(record for record in reversed(records) if record.get("type") == "Process" and record.get("plugin") == "staticfile")
     assert process["status"] == "succeeded" and process["exit_code"] == 0, process
+    receipt = (output_dir / "staticfile/result.json").read_bytes()
+    assert json.loads(receipt) == {
+        "type": "ArchiveResult",
+        "status": "succeeded",
+        "output_str": "staticfile/capture.zip",
+        "plugin": "staticfile",
+        "content_type": "application/zip",
+    }
+    assert saved["output_str"] == "staticfile/capture.zip"
     assert saved["output_files"] == [
         {"path": "capture.zip", "extension": "zip", "mimetype": "application/zip", "size": len(expected)},
+        {"path": "result.json", "extension": "json", "mimetype": "application/json", "size": len(receipt)},
     ]
     files = [path for path in (output_dir / "staticfile").iterdir() if path.suffix == ".zip"]
     assert len(files) == 1
