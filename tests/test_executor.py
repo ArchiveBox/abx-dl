@@ -1128,6 +1128,56 @@ def test_snapshot_background_only_hook_finishes_before_cleanup_without_filename_
     assert not list((tmp_path / "run" / "wget").glob("*.pid"))
 
 
+def test_timed_out_wget_preserves_original_stderr(tmp_path: Path, httpserver: HTTPServer) -> None:
+    release = threading.Event()
+
+    def response_body():
+        yield b"<!doctype html><title>Unfinished transfer</title>"
+        release.wait(15)
+
+    httpserver.expect_request("/unfinished").respond_with_handler(
+        lambda _request: Response(response_body(), content_type="text/html"),
+    )
+    output = tmp_path / "run"
+    wget = shutil.which("wget")
+    assert wget is not None
+
+    async def run() -> ProcessCompletedEvent:
+        bus = create_bus(total_timeout=30, name=f"wget_timeout_{tmp_path.name}")
+        ProcessService(bus, emit_jsonl=False, interactive_tty=False)
+        emitted = bus.emit(
+            ProcessEvent(
+                plugin_name="wget",
+                hook_name="wget",
+                hook_path=wget,
+                hook_args=["--tries=1", "--timeout=10", httpserver.url_for("/unfinished")],
+                is_background=False,
+                output_dir=str(output / "wget"),
+                env=dict(os.environ),
+                timeout=5,
+            ),
+        )
+        await emitted.now()
+        completed = await bus.find(ProcessCompletedEvent, child_of=emitted, past=True, future=True)
+        assert completed is not None
+        return completed
+
+    try:
+        completed = asyncio.run(run())
+    finally:
+        release.set()
+    records = [json.loads(line) for line in (output / "index.jsonl").read_text().splitlines()]
+    process = next(row for row in reversed(records) if row.get("type") == "Process" and row.get("exit_code") == -1)
+    stderr_files = list((output / "wget").glob("*.stderr.log"))
+    assert len(stderr_files) == 1
+    original = stderr_files[0].read_text()
+    assert "/unfinished" in original
+    assert completed.exit_code == -1
+    assert original in completed.stderr
+    assert original in process["stderr"]
+    assert "Hook timed out after 5 seconds" in process["stderr"]
+
+
 def test_real_js_snapshot_hook_replays_early_sigterm_to_late_cleanup_handler(tmp_path: Path, httpserver: HTTPServer) -> None:
     release_response = threading.Event()
 

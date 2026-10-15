@@ -844,7 +844,7 @@ class ProcessService(BaseService):
 
         if timed_out:
             returncode = -1
-            stderr = f"Hook timed out after {event.timeout} seconds"
+            stderr += ("\n" if stderr and not stderr.endswith("\n") else "") + f"Hook timed out after {event.timeout} seconds"
 
         if cancellation is not None:
             returncode = 130
