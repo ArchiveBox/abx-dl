@@ -1084,7 +1084,7 @@ def test_download_sets_plugin_specific_binary_env_from_binary_default(tmp_path: 
 
     bus.on(ProcessEvent, on_ProcessEvent)
     _run_download(
-        "https://example.com",
+        "https://archivebox.io/tests/",
         selected,
         tmp_path / "run",
         auto_install=True,
@@ -1107,7 +1107,7 @@ def test_snapshot_background_only_hook_finishes_before_cleanup_without_filename_
 
     bus.on(ProcessCompletedEvent, on_ProcessCompletedEvent)
     results = _run_download(
-        "https://example.com",
+        "https://archivebox.io/tests/",
         selected,
         tmp_path / "run",
         auto_install=True,
@@ -1118,13 +1118,13 @@ def test_snapshot_background_only_hook_finishes_before_cleanup_without_filename_
     result = next(r for r in results if r.plugin == "wget")
     assert result.hook_name == "on_Snapshot__35_wget.finite.bg"
     assert result.status == "succeeded"
-    assert result.output_str == "wget/example.com/index.html"
+    assert result.output_str == "wget/archivebox.io/tests/index.html"
     assert completed_processes
     assert completed_processes[-1].status == "succeeded"
     assert completed_processes[-1].exit_code == 0
     assert "ArchiveResult" in completed_processes[-1].stdout
     assert "ArchiveResult" not in completed_processes[-1].stderr
-    assert (tmp_path / "run" / "wget" / "example.com" / "index.html").exists()
+    assert (tmp_path / "run" / "wget" / "archivebox.io" / "tests" / "index.html").exists()
     assert not list((tmp_path / "run" / "wget").glob("*.pid"))
 
 
@@ -1237,7 +1237,7 @@ def test_snapshot_service_emits_background_process_without_extra_wait(tmp_path: 
     bus.on(ProcessEvent, on_ProcessEvent)
     bus.on(ProcessStartedEvent, on_ProcessStartedEvent)
     results = _run_download(
-        "https://example.com",
+        "https://archivebox.io/tests/",
         {plugin.name: plugin},
         tmp_path / "run",
         auto_install=True,
@@ -2458,10 +2458,10 @@ def test_crawl_runs_real_background_wget_through_cleanup(tmp_path: Path) -> None
 
     bus.on(ProcessStartedEvent, on_ProcessStartedEvent)
     bus.on(ProcessCompletedEvent, on_ProcessCompletedEvent)
-    _run_download("https://example.com", {plugin.name: plugin}, output_dir, auto_install=True, emit_jsonl=False, bus=bus)
+    _run_download("https://archivebox.io/tests/", {plugin.name: plugin}, output_dir, auto_install=True, emit_jsonl=False, bus=bus)
     assert len(started) == 1 and started[0].is_background is True
     assert len(completed) == 1 and completed[0].status == "succeeded"
-    assert (output_dir / "wget" / "example.com" / "index.html").is_file() and not _pid_is_alive(started[0].pid)
+    assert (output_dir / "wget" / "archivebox.io" / "tests" / "index.html").is_file() and not _pid_is_alive(started[0].pid)
 
 
 def test_process_kill_uses_live_subprocess_handle_when_pid_file_validation_fails(
@@ -2895,7 +2895,7 @@ def test_download_can_suppress_jsonl_stdout(tmp_path: Path, capsys) -> None:
     plugins = PluginCatalog.discover()
     selected = plugins.select(["wget"])
     results = _run_download(
-        "https://example.com",
+        "https://archivebox.io/tests/",
         selected,
         tmp_path / "run",
         auto_install=True,
@@ -3163,12 +3163,12 @@ def test_inline_archive_result_collects_current_output_files(tmp_path: Path) -> 
     }
 
     crawl_start_event = CrawlStartEvent(
-        url="https://example.com",
+        url="https://archivebox.io/tests/",
         snapshot_id="snap-inline-output-files",
         output_dir=str(tmp_path / "run"),
     )
     snapshot_event = SnapshotEvent(
-        url="https://example.com",
+        url="https://archivebox.io/tests/",
         snapshot_id="snap-inline-output-files",
         output_dir=str(tmp_path / "run"),
         event_parent_id=crawl_start_event.event_id,
@@ -3177,7 +3177,7 @@ def test_inline_archive_result_collects_current_output_files(tmp_path: Path) -> 
         plugin_name="wget",
         hook_name=wget_hook.name,
         hook_path=str(wget_hook.path),
-        hook_args=["--url=https://example.com"],
+        hook_args=["--url=https://archivebox.io/tests/"],
         is_background=False,
         output_dir=str(run_dir / "wget"),
         env=process_env,
@@ -3195,8 +3195,8 @@ def test_inline_archive_result_collects_current_output_files(tmp_path: Path) -> 
 
     assert len(seen_archive_results) == 1
     assert seen_archive_results[0].status == "succeeded"
-    assert "example.com/index.html" in [output_file.path for output_file in seen_archive_results[0].output_files]
-    assert (run_dir / "wget" / "example.com" / "index.html").is_file()
+    assert "archivebox.io/tests/index.html" in [output_file.path for output_file in seen_archive_results[0].output_files]
+    assert (run_dir / "wget" / "archivebox.io" / "tests" / "index.html").is_file()
 
 
 def test_git_recapture_keeps_unchanged_checkout_files_in_result(tmp_path: Path) -> None:

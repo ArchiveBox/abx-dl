@@ -1475,27 +1475,27 @@ def test_capture_isolates_missing_plugin_binary_but_install_remains_strict(tmp_p
     )
 
 
-def test_readme_dl_command_downloads_example_dot_com_with_real_output(tmp_path: Path) -> None:
+def test_dl_command_downloads_owned_page_with_real_output(tmp_path: Path) -> None:
     output_dir = tmp_path / "downloads"
     result = _run_cli(
         tmp_path,
         "dl",
         "--plugins=wget",
         f"--dir={output_dir}",
-        "https://example.com",
+        "https://archivebox.io/tests/",
     )
     assert result.returncode == 0
 
     stdout_records = [json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")]
-    assert any(record["type"] == "Snapshot" and record["url"] == "https://example.com" for record in stdout_records)
+    assert any(record["type"] == "Snapshot" and record["url"] == "https://archivebox.io/tests/" for record in stdout_records)
 
-    downloaded_html = (output_dir / "wget" / "example.com" / "index.html").read_text()
-    assert "Example Domain" in downloaded_html
-    assert "This domain is for use in documentation examples" in downloaded_html
+    downloaded_html = (output_dir / "wget" / "archivebox.io" / "tests" / "index.html").read_text()
+    assert "ArchiveBox Test Page" in downloaded_html
+    assert "ArchiveBox capture fixture v1" in downloaded_html
 
     index_records = [json.loads(line) for line in (output_dir / "index.jsonl").read_text().splitlines() if line.startswith("{")]
     wget_results = [record for record in index_records if record["type"] == "ArchiveResult" and record["plugin"] == "wget"]
-    assert any(record["output_str"] == "wget/example.com/index.html" for record in wget_results)
+    assert any(record["output_str"] == "wget/archivebox.io/tests/index.html" for record in wget_results)
 
     assert not (output_dir / ".abx-dl").exists()
 
@@ -1512,7 +1512,8 @@ def test_readme_dl_command_downloads_example_dot_com_with_real_output(tmp_path: 
         if line.startswith("{") and json.loads(line).get("type") == "ArchiveResult"
     ]
     assert any(
-        record.get("status") == "succeeded" and record.get("output_str") == "wget/example.com/index.html" for record in reported_results
+        record.get("status") == "succeeded" and record.get("output_str") == "wget/archivebox.io/tests/index.html"
+        for record in reported_results
     )
 
 
@@ -1556,14 +1557,14 @@ def test_dl_independent_output_directories_need_no_accounting(tmp_path: Path) ->
             "dl",
             "--plugins=wget",
             f"--dir={output_dir}",
-            "https://example.com",
+            "https://archivebox.io/tests/",
         )
 
         assert result.returncode == 0, result.stderr
         assert "denied by crawl limits" not in result.stderr
         assert "Traceback" not in result.stderr
         assert not (output_dir / ".abx-dl").exists()
-        assert "Example Domain" in (output_dir / "wget" / "example.com" / "index.html").read_text()
+        assert "ArchiveBox Test Page" in (output_dir / "wget" / "archivebox.io" / "tests" / "index.html").read_text()
 
 
 def test_dl_ignores_legacy_crawl_accounting(tmp_path: Path) -> None:
@@ -1591,11 +1592,11 @@ def test_dl_ignores_legacy_crawl_accounting(tmp_path: Path) -> None:
         "dl",
         "--plugins=wget",
         f"--dir={output_dir}",
-        "https://example.com",
+        "https://archivebox.io/tests/",
     )
 
     assert result.returncode == 0, result.stderr
-    assert "Example Domain" in (output_dir / "wget/example.com/index.html").read_text()
+    assert "ArchiveBox Test Page" in (output_dir / "wget/archivebox.io/tests/index.html").read_text()
     assert json.loads((state_dir / "limits.json").read_text())["admitted_snapshot_ids"] == ["already-admitted"]
     assert not (state_dir / "limits.lock").exists()
 
@@ -1625,7 +1626,7 @@ def test_dl_relative_dir_keeps_shared_hook_paths_in_run_dir(tmp_path: Path) -> N
         "dl",
         "--plugins=title,wget",
         "--dir=out",
-        "https://example.com/",
+        "https://archivebox.io/tests/",
     )
     assert result.returncode == 0, result.stderr
 
@@ -1638,11 +1639,11 @@ def test_dl_relative_dir_keeps_shared_hook_paths_in_run_dir(tmp_path: Path) -> N
     title_result = next(record for record in archive_results if record["plugin"] == "title")
     wget_result = next(record for record in archive_results if record["plugin"] == "wget")
     assert title_result["status"] == "succeeded"
-    assert title_result["output_str"] == "Example Domain"
+    assert title_result["output_str"] == "ArchiveBox Test Page"
     assert wget_result["status"] == "succeeded"
-    assert wget_result["output_str"] == "wget/example.com/index.html"
-    assert (output_dir / "title" / "title.txt").read_text() == "Example Domain"
-    assert "Example Domain" in (output_dir / "wget" / "example.com" / "index.html").read_text()
+    assert wget_result["output_str"] == "wget/archivebox.io/tests/index.html"
+    assert (output_dir / "title" / "title.txt").read_text() == "ArchiveBox Test Page"
+    assert "ArchiveBox Test Page" in (output_dir / "wget" / "archivebox.io" / "tests" / "index.html").read_text()
     assert not (output_dir / "chrome" / "out").exists()
     assert not (output_dir / "wget" / "out").exists()
 
@@ -1650,9 +1651,9 @@ def test_dl_relative_dir_keeps_shared_hook_paths_in_run_dir(tmp_path: Path) -> N
 def test_dl_reruns_same_directory_without_crawl_accounting(tmp_path: Path) -> None:
     output_dir = tmp_path / "downloads"
     for _attempt in range(2):
-        result = _run_cli(tmp_path, "dl", "--plugins=wget", f"--dir={output_dir}", "https://example.com")
+        result = _run_cli(tmp_path, "dl", "--plugins=wget", f"--dir={output_dir}", "https://archivebox.io/tests/")
         assert result.returncode == 0, result.stderr
-        assert "Example Domain" in (output_dir / "wget/example.com/index.html").read_text()
+        assert "ArchiveBox Test Page" in (output_dir / "wget/archivebox.io/tests/index.html").read_text()
     assert not (output_dir / ".abx-dl").exists()
 
 
