@@ -1,6 +1,7 @@
 """SnapshotService — orchestrates the snapshot extraction phase."""
 
 import asyncio
+from graphlib import TopologicalSorter
 from datetime import UTC, datetime
 import json
 import os
@@ -612,37 +613,51 @@ class SnapshotService(BaseService):
                 await _wait_for_process_completed(completed_process, event.event_timeout)
                 continue
             started_processes.append((process_event, started_process))
-        pending_kills = [
-            event.emit(
-                ProcessKillEvent(
-                    plugin_name=started_process.plugin_name,
-                    hook_name=started_process.hook_name,
-                    pid=started_process.pid,
-                    grace_period=grace_by_hook[(started_process.plugin_name, started_process.hook_name)],
-                    event_timeout=grace_by_hook[(started_process.plugin_name, started_process.hook_name)] + 10.0,
-                ),
-            )
-            for _, started_process in started_processes
-        ]
-        if pending_kills:
-            await asyncio.gather(
-                *(_run_event_now(pending_kill, pending_kill.event_timeout) for pending_kill in pending_kills),
-            )
-        if started_processes:
-            await asyncio.gather(
-                *[
-                    _wait_for_process_completed(
-                        await self.bus.find(
-                            ProcessCompletedEvent,
-                            child_of=process_event,
-                            past=True,
-                            future=grace_by_hook[(process_event.plugin_name, process_event.hook_name)] + 10.0,
-                        ),
-                        grace_by_hook[(process_event.plugin_name, process_event.hook_name)] + 10.0,
-                    )
-                    for process_event, _ in started_processes
-                ],
-            )
+        # Dependents must flush before the resources they use are stopped.
+        # For example, closing a snapshot-isolated browser cancels an active
+        # static-file download even though its hook is still handling SIGTERM.
+        # Include plugins without running hooks to preserve transitive edges.
+        shutdown_order: TopologicalSorter[str] = TopologicalSorter()
+        for plugin in self.catalog.values():
+            shutdown_order.add(plugin.name.lower())
+            for dependency in plugin.config.required_plugins:
+                shutdown_order.add(dependency.lower(), plugin.name.lower())
+        shutdown_order.prepare()
+        while shutdown_order.is_active():
+            ready = shutdown_order.get_ready()
+            stopping = [(process, started) for process, started in started_processes if process.plugin_name.lower() in ready]
+            pending_kills = [
+                event.emit(
+                    ProcessKillEvent(
+                        plugin_name=started_process.plugin_name,
+                        hook_name=started_process.hook_name,
+                        pid=started_process.pid,
+                        grace_period=grace_by_hook[(started_process.plugin_name, started_process.hook_name)],
+                        event_timeout=grace_by_hook[(started_process.plugin_name, started_process.hook_name)] + 10.0,
+                    ),
+                )
+                for _, started_process in stopping
+            ]
+            if pending_kills:
+                await asyncio.gather(
+                    *(_run_event_now(pending_kill, pending_kill.event_timeout) for pending_kill in pending_kills),
+                )
+            if stopping:
+                await asyncio.gather(
+                    *[
+                        _wait_for_process_completed(
+                            await self.bus.find(
+                                ProcessCompletedEvent,
+                                child_of=process_event,
+                                past=True,
+                                future=grace_by_hook[(process_event.plugin_name, process_event.hook_name)] + 10.0,
+                            ),
+                            grace_by_hook[(process_event.plugin_name, process_event.hook_name)] + 10.0,
+                        )
+                        for process_event, _ in stopping
+                    ],
+                )
+            shutdown_order.done(*ready)
         if not event.finalize_snapshot:
             return
         # Also after a failed snapshot: dirs are created ahead of their hooks,

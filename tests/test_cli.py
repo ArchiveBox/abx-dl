@@ -39,26 +39,40 @@ from abx_dl.output_files import OutputFile
 from rich.console import Console
 from rich.progress import Progress
 from pytest_httpserver import HTTPServer
+from werkzeug.wrappers import Response
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.mark.parametrize("isolation", ["crawl", "snapshot"])
 @pytest.mark.parametrize("attachment", [False, True])
+@pytest.mark.parametrize("chunk_delay", [0, 2])
 def test_cli_preserves_browser_download(
     tmp_path: Path,
     httpserver: HTTPServer,
     isolation: str,
     attachment: bool,
+    chunk_delay: int,
 ) -> None:
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as source:
         source.writestr("readme.txt", "ArchiveBox browser download acceptance\n")
     expected = archive.getvalue()
-    httpserver.expect_request("/capture.zip").respond_with_data(
-        expected,
-        content_type="application/zip",
-        headers={"Content-Disposition": 'attachment; filename="capture.zip"'} if attachment else {},
+
+    def stream():
+        yield expected[:64]
+        # Chrome reports an attachment navigation before the response body is
+        # complete. Cleanup must keep its browser alive until this transfer ends.
+        if chunk_delay:
+            time.sleep(chunk_delay)
+        yield expected[64:]
+
+    httpserver.expect_request("/capture.zip").respond_with_handler(
+        lambda request: Response(
+            stream(),
+            content_type="application/zip",
+            headers={"Content-Disposition": 'attachment; filename="capture.zip"'} if attachment else {},
+        ),
     )
     configured = _run_cli(tmp_path, "config", "--set", f"CHROME_ISOLATION={isolation}")
     assert configured.returncode == 0, configured.stdout + configured.stderr
@@ -66,7 +80,7 @@ def test_cli_preserves_browser_download(
     result = _run_cli(tmp_path, "dl", "--plugins=staticfile", "--dir", str(output_dir), httpserver.url_for("/capture.zip"))
     records = [json.loads(line) for line in (output_dir / "index.jsonl").read_text().splitlines()]
     saved = next(record for record in reversed(records) if record.get("type") == "ArchiveResult" and record.get("plugin") == "staticfile")
-    assert saved["status"] == "succeeded", (saved, result.stdout, result.stderr)
+    assert saved["status"] == "succeeded", f"{json.dumps(saved, indent=2)}\n{result.stdout}\n{result.stderr}"
     process = next(record for record in reversed(records) if record.get("type") == "Process" and record.get("plugin") == "staticfile")
     assert process["status"] == "succeeded" and process["exit_code"] == 0, process
     assert saved["output_files"] == [
