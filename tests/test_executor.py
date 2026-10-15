@@ -1016,6 +1016,76 @@ def test_papers_download_starts_after_dom_before_article_parsing(tmp_path: Path)
     assert lifecycle.index(("started", "papersdl")) < lifecycle.index(("started", "readability"))
 
 
+@pytest.mark.parametrize("enabled", [True, False])
+def test_readability_keeps_images_completed_after_live_dom_hooks(tmp_path: Path, enabled: bool) -> None:
+    """Article rendering consumes finished responses, without closing live DOM hooks early."""
+    release_image = threading.Event()
+    image = b'<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="red"/></svg>'
+
+    def image_body():
+        yield image[:30]
+        assert release_image.wait(30)
+        yield image[30:]
+
+    output_dir = tmp_path / "capture"
+    lifecycle: list[tuple[str, str]] = []
+    cleanup_events: list[SnapshotCleanupEvent] = []
+    bus = create_bus(total_timeout=120.0, name=f"article_image_consumer_{tmp_path.name}")
+
+    async def on_ProcessStartedEvent(event: ProcessStartedEvent) -> None:
+        lifecycle.append(("started", event.plugin_name))
+
+    async def on_ProcessCompletedEvent(event: ProcessCompletedEvent) -> None:
+        lifecycle.append(("completed", event.plugin_name))
+        if event.plugin_name == "parse_dom_outlinks":
+            release_image.set()
+
+    bus.on(ProcessStartedEvent, on_ProcessStartedEvent)
+    bus.on(ProcessCompletedEvent, on_ProcessCompletedEvent)
+    bus.on(SnapshotCleanupEvent, lambda event: cleanup_events.append(event))
+    with HTTPServer(threaded=True) as server:
+        server.expect_request("/image.svg").respond_with_response(Response(image_body(), content_type="image/svg+xml"))
+        paragraphs = (
+            "<p>Archived articles must retain their photographs after all captured responses finish saving. This paragraph supplies real article content for Mozilla Readability extraction.</p>"
+            * 12
+        )
+        server.expect_request("/").respond_with_data(
+            f'<!doctype html><title>Preserved article image</title><article><h1>Preserved article image</h1>{paragraphs}<img src="/image.svg" alt="Captured red square"><a href="/related">Related article</a></article>',
+            content_type="text/html",
+        )
+        try:
+            results = _run_download(
+                server.url_for("/"),
+                PluginCatalog.discover(),
+                output_dir,
+                selected_plugins=["dom", "responses", "readability", "parse_dom_outlinks"],
+                config_overrides={"TIMEOUT": 30, "CHROME_WAIT_FOR": "domcontentloaded", "READABILITY_ENABLED": enabled},
+                bus=bus,
+                emit_jsonl=False,
+                interactive_tty=False,
+            )
+        finally:
+            release_image.set()
+    for plugin in ("dom", "responses", "parse_dom_outlinks"):
+        assert next(result for result in results if result.plugin == plugin).status == "succeeded"
+    assert (output_dir / "parse_dom_outlinks/urls.jsonl").stat().st_size > 0
+    if not enabled:
+        assert ("started", "readability") not in lifecycle
+        assert not (output_dir / "readability/content.html").exists()
+        assert len(cleanup_events) == 1
+        assert cleanup_events[0].finalize_snapshot is True
+        return
+    assert next(result for result in results if result.plugin == "readability").status == "succeeded"
+    content = (output_dir / "readability/content.html").read_text()
+    assert 'alt="Captured red square"' in content
+    images = list((output_dir / "readability/images").rglob("*.svg"))
+    assert len(images) == 1
+    assert images[0].is_symlink()
+    assert images[0].read_bytes() == image
+    assert lifecycle.index(("completed", "parse_dom_outlinks")) < lifecycle.index(("started", "readability"))
+    assert lifecycle.index(("completed", "responses")) < lifecycle.index(("started", "readability"))
+
+
 @pytest.mark.parametrize("parser", ["opendataloader", "liteparse"])
 def test_pdf_parsers_consume_completed_background_downloads(tmp_path: Path, parser: str) -> None:
     output_dir = tmp_path / "capture"
