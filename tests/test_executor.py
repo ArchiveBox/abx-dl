@@ -1020,6 +1020,7 @@ def test_papers_download_starts_after_dom_before_article_parsing(tmp_path: Path)
 def test_readability_keeps_images_completed_after_live_dom_hooks(tmp_path: Path, enabled: bool) -> None:
     """Article rendering consumes finished responses, without closing live DOM hooks early."""
     release_image = threading.Event()
+    image_loaded = threading.Event()
     image = b'<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="red"/></svg>'
 
     def image_body():
@@ -1039,18 +1040,28 @@ def test_readability_keeps_images_completed_after_live_dom_hooks(tmp_path: Path,
         lifecycle.append(("completed", event.plugin_name))
         if event.plugin_name == "parse_dom_outlinks":
             release_image.set()
+            # Releasing the origin does not mean Chrome has received the body.
+            # Complete the real browser load before permitting cleanup; open
+            # response streams deliberately do not hold snapshot shutdown open.
+            assert await asyncio.to_thread(image_loaded.wait, 30)
 
     bus.on(ProcessStartedEvent, on_ProcessStartedEvent)
     bus.on(ProcessCompletedEvent, on_ProcessCompletedEvent)
     bus.on(SnapshotCleanupEvent, lambda event: cleanup_events.append(event))
     with HTTPServer(threaded=True) as server:
+
+        def acknowledge_image(request):
+            image_loaded.set()
+            return Response(status=204)
+
+        server.expect_request("/image-loaded").respond_with_handler(acknowledge_image)
         server.expect_request("/image.svg").respond_with_response(Response(image_body(), content_type="image/svg+xml"))
         paragraphs = (
             "<p>Archived articles must retain their photographs after all captured responses finish saving. This paragraph supplies real article content for Mozilla Readability extraction.</p>"
             * 12
         )
         server.expect_request("/").respond_with_data(
-            f'<!doctype html><title>Preserved article image</title><article><h1>Preserved article image</h1>{paragraphs}<img src="/image.svg" alt="Captured red square"><a href="/related">Related article</a></article>',
+            f"""<!doctype html><title>Preserved article image</title><article><h1>Preserved article image</h1>{paragraphs}<img src="/image.svg" alt="Captured red square" onload="fetch('/image-loaded')"><a href="/related">Related article</a></article>""",
             content_type="text/html",
         )
         try:
