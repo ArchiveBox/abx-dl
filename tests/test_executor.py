@@ -1153,6 +1153,35 @@ def test_download_creates_default_persona_dir(tmp_path: Path) -> None:
     assert (personas_dir / "Default").is_dir()
 
 
+def test_plugin_directory_failure_preserves_other_hooks_and_hashes(tmp_path: Path) -> None:
+    source = tmp_path / "source.html"
+    source.write_text('<a href="https://archivebox.io/tests/">ArchiveBox test</a>')
+    output_dir = tmp_path / "run"
+    output_dir.mkdir()
+    blocked = output_dir / "parse_html_urls"
+    blocked.write_bytes(b"existing output must survive")
+    selected = PluginCatalog.discover().select(["parse_html_urls", "parse_txt_urls", "hashes"])
+
+    results = _run_download(source.as_uri(), selected, output_dir, auto_install=True)
+
+    failed = next(result for result in results if result.plugin == "parse_html_urls")
+    assert failed.status == "failed"
+    assert "FileExistsError" in failed.error
+    assert blocked.read_bytes() == b"existing output must survive"
+    indexed = [json.loads(line) for line in (output_dir / "index.jsonl").read_text().splitlines()]
+    process = next(row for row in indexed if row.get("type") == "Process" and row.get("plugin") == "parse_html_urls")
+    assert "pid" not in process
+    assert process["exit_code"] == -1
+    assert process["status"] == "failed"
+    assert next(result for result in results if result.plugin == "parse_txt_urls").status == "succeeded"
+    records = [json.loads(line) for line in (output_dir / "parse_txt_urls/urls.jsonl").read_text().splitlines()]
+    assert [record["url"] for record in records] == ["https://archivebox.io/tests/"]
+    assert next(result for result in results if result.plugin == "hashes").status == "succeeded"
+    manifest = json.loads((output_dir / "hashes/hashes.json").read_text())
+    hashes = {item["path"]: item["hash"] for item in manifest["files"]}
+    assert hashes["parse_txt_urls/urls.jsonl"] == hashlib.sha256((output_dir / "parse_txt_urls/urls.jsonl").read_bytes()).hexdigest()
+
+
 def test_download_sets_plugin_specific_binary_env_from_binary_default(tmp_path: Path) -> None:
     plugins = PluginCatalog.discover()
     selected = plugins.select(["wget"])

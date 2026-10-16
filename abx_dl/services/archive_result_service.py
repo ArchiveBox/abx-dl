@@ -157,7 +157,9 @@ class ArchiveResultService(BaseService):
             past=True,
             future=False,
         )
-        assert isinstance(started_process, ProcessStartedEvent)
+        # Directory/file preparation can fail before an OS process exists.
+        # Successful completion still requires a real process-start event.
+        assert isinstance(started_process, ProcessStartedEvent) or event.exit_code != 0
         snapshot_event = await self.bus.find(
             SnapshotEvent,
             past=True,
@@ -165,11 +167,15 @@ class ArchiveResultService(BaseService):
             where=lambda candidate: self.bus.event_is_child_of(process_event, candidate),
         )
         assert isinstance(snapshot_event, SnapshotEvent)
-        existing = await self.bus.find(
-            ArchiveResultEvent,
-            child_of=started_process,
-            past=True,
-            future=False,
+        existing = (
+            await self.bus.find(
+                ArchiveResultEvent,
+                child_of=started_process,
+                past=True,
+                future=False,
+            )
+            if started_process is not None
+            else None
         )
         # A hook may report output while its process is still alive. Returning
         # merely because a record exists would leave the DB succeeded after a

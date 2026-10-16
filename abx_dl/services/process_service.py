@@ -517,8 +517,6 @@ class ProcessService(BaseService):
         # their hooks; check first, because even an EEXIST mkdir takes the
         # parent dir lock and would wait behind its in-flight mkdir of a later
         # hook's dir.
-        await asyncio.to_thread(lambda: plugin_output_dir.is_dir() or plugin_output_dir.mkdir(parents=True, exist_ok=True))
-
         cmd = _process_command(event)
         proc = Process(
             cmd=cmd,
@@ -537,10 +535,6 @@ class ProcessService(BaseService):
         stdout_file = plugin_output_dir / f"{artifact_stem}.stdout.log"
         stderr_file = plugin_output_dir / f"{artifact_stem}.stderr.log"
         pid_file = plugin_output_dir / f"{artifact_stem}.pid"
-        # Completion without a hook result reports newly created partial files.
-        # Successful hook records inventory the plugin directory separately.
-        files_before = await asyncio.to_thread(lambda: set(plugin_output_dir.rglob("*")))
-
         process: asyncio.subprocess.Process | None = None
         started_event: ProcessStartedEvent | None = None
         stdout_reader: TextIO | None = None
@@ -549,6 +543,11 @@ class ProcessService(BaseService):
         completion_owns_process = False
         try:
             try:
+                # Preparation failures belong to this hook just like spawn
+                # failures; they must not prevent later plugins from running.
+                await asyncio.to_thread(lambda: plugin_output_dir.is_dir() or plugin_output_dir.mkdir(parents=True, exist_ok=True))
+                # Completion without a hook result inventories only new files.
+                files_before = await asyncio.to_thread(lambda: set(plugin_output_dir.rglob("*")))
                 reader_stack = ExitStack()
                 # Creating files in a remote-mounted plugin dir is a metadata
                 # round trip; keep it off the event loop that every other
@@ -583,7 +582,7 @@ class ProcessService(BaseService):
                 # failure as a normal ProcessCompletedEvent.
                 if process is not None:
                     await graceful_kill_process(process)
-                pid_file.unlink(missing_ok=True)
+                    pid_file.unlink(missing_ok=True)
                 proc.exit_code = -1
                 proc.status = "failed"
                 proc.stderr = f"{type(e).__name__}: {e}"
