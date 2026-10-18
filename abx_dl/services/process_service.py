@@ -799,10 +799,23 @@ class ProcessService(BaseService):
                     ).now()
                     await wait_task
                     break
-            # Let an in-flight ProcessStdoutEvent finish before emitting
-            # ProcessCompletedEvent. Cancelling here could advance the file
-            # offset, cancel ArchiveResult consumers, and then lose the line
-            # before the final drain below.
+        except TimeoutError:
+            timed_out = True
+        except asyncio.CancelledError as error:
+            # Keep cancellation as the process outcome, but finalize its output
+            # and completion fact before letting owner cancellation propagate.
+            cancellation = error
+        except Exception:
+            await graceful_kill_process(process)
+            raise
+
+        async def finish_process() -> str:
+            nonlocal interrupted
+            if timed_out or cancellation is not None:
+                await graceful_kill_process(process)
+            # Streaming consumers and both final drains share reader ownership.
+            # Shield the whole finish operation: cancelling between its reads
+            # and emissions must not strand final stdout bytes or skip stderr.
             stdout_state.stop_requested.set()
             await self._finish_stream_output(stream_task)
             await self._emit_new_output_lines(
@@ -812,164 +825,153 @@ class ProcessService(BaseService):
                 state=stdout_state,
                 emit_partial=True,
             )
-        except TimeoutError:
-            timed_out = True
-            await graceful_kill_process(process)
-        except asyncio.CancelledError as error:
-            # Cancelling the runner still has to finalize this process/result.
-            # Re-raising here used to bypass ProcessCompletedEvent, leaving an
-            # earlier succeeded DB row intact after the hook was killed.
-            cancellation = error
-            await graceful_kill_process(process)
-            stdout_state.stop_requested.set()
-            await self._finish_stream_output(stream_task)
-        except Exception:
-            await graceful_kill_process(process)
-            raise
+            await self._emit_new_output_lines(
+                event=started_event,
+                proc=proc,
+                stdout_reader=stderr_reader,
+                state=stderr_state,
+                emit_partial=True,
+                event_class=ProcessStderrEvent,
+            )
 
-        await self._emit_new_output_lines(
-            event=started_event,
-            proc=proc,
-            stdout_reader=stderr_reader,
-            state=stderr_state,
-            emit_partial=True,
-            event_class=ProcessStderrEvent,
-        )
-        returncode = process.returncode if process.returncode is not None else 0
+            returncode = process.returncode if process.returncode is not None else 0
 
-        def read_completed_output() -> tuple[str, str]:
-            # These readers own their inodes even if the hook removed its logs.
-            # Remote reads and close can wait in the kernel after process exit.
-            stdout_reader.seek(0)
-            stdout = stdout_reader.read()
-            stderr_reader.seek(0)
-            stderr = stderr_reader.read()
-            stdout_reader.close()
-            stderr_reader.close()
-            return stdout, stderr
+            def read_completed_output() -> tuple[str, str]:
+                # These readers own their inodes even if the hook removed its logs.
+                # Remote reads and close can wait in the kernel after process exit.
+                stdout_reader.seek(0)
+                stdout = stdout_reader.read()
+                stderr_reader.seek(0)
+                stderr = stderr_reader.read()
+                stdout_reader.close()
+                stderr_reader.close()
+                return stdout, stderr
 
-        output_task = asyncio.create_task(asyncio.to_thread(read_completed_output))
-        while not output_task.done():
+            stdout, stderr = await asyncio.to_thread(read_completed_output)
+
+            files_after = await asyncio.to_thread(lambda: set(plugin_output_dir.rglob("*")))
+            new_files = await asyncio.to_thread(
+                scan_output_files,
+                plugin_output_dir,
+                file_paths=files_after - files_before,
+                containment_root=plugin_output_dir.parent,
+            )
+            if returncode == 0 and not stdout.strip() and (signal_match := SHELL_SIGNAL_STDERR_RE.search(stderr)):
+                returncode = 128 + int(signal_match.group(1))
+
+            if timed_out:
+                returncode = -1
+                stderr += ("\n" if stderr and not stderr.endswith("\n") else "") + f"Hook timed out after {event.timeout} seconds"
+
+            if cancellation is not None:
+                returncode = 130
+                stderr = "Hook execution cancelled"
+
+            # A user stopping work has not discovered an extractor/site failure.
+            # Carry that intent explicitly so consumers can discard the unfinished
+            # attempt, without classifying organic crashes by their signal number.
+            cancelled = interrupted or cancellation is not None or event.event_id in self._shutdown_hook_ids
+            if event.is_background and self.abort_requested:
+                cancelled = cancelled or await self._process_was_stopped_by_cleanup(event, process.pid)
+
+            if (
+                event.is_background
+                and not timed_out
+                and cancellation is None
+                and returncode in POLITE_CLEANUP_SIGNAL_EXIT_CODES
+                and await self._process_was_stopped_by_cleanup(event, process.pid)
+            ):
+                # Background hooks are long-lived resources owned by the snapshot or
+                # crawl cleanup phase. When abx-dl asks one to stop with SIGTERM and
+                # it exits from that signal, the crawl completed the intended
+                # lifecycle; recording that Process as failed makes successful
+                # archive results look broken in index.jsonl and Docker smoke tests.
+                # SIGKILL escalation and organic nonzero exits still surface as
+                # failures because they do not match this polite cleanup path.
+                # This normalizes Process lifecycle only. A zero exit without an
+                # explicit output record becomes noresult in ArchiveResultService;
+                # it must never manufacture a successful capture from readiness.
+                returncode = 0
+                stderr = SHELL_SIGNAL_STDERR_RE.sub("", stderr).strip()
+
+            action = "skip"
+            choice_future = self._interrupt_choices.get(event.event_id)
+            interrupted = interrupted or choice_future is not None
+            cancelled = cancelled or interrupted
+            status = _process_status(returncode)
+            if interrupted:
+                returncode = 130
+                status = "failed"
+                stderr = "Hook interrupted by user"
+                # Completion records the stopped attempt, but never reads stdin or
+                # chooses crawl control. Holding completion until the answer also
+                # keeps a background-only capture from entering cleanup mid-prompt.
+                action = await choice_future if choice_future is not None else "abort"
+
+            proc.exit_code = returncode
+            proc.status = status
+            proc.stdout = stdout
+            proc.stderr = stderr
+            proc.ended_at = now_iso()
+
+            index_path = plugin_output_dir.parent / "index.jsonl"
+            keep_logs = returncode != 0 or cancelled
+
+            def record_completion() -> None:
+                write_jsonl(index_path, proc, also_print=self.emit_jsonl)
+                pid_file.unlink(missing_ok=True)
+                if keep_logs:
+                    _preserve_process_logs(plugin_output_dir, stdout_file, stderr_file)
+                else:
+                    stdout_file.unlink(missing_ok=True)
+                    stderr_file.unlink(missing_ok=True)
+
+            # Remote-mount metadata round trips must not stall the event loop that
+            # every other hook's readiness, output, and completion share.
+            await asyncio.to_thread(record_completion)
+
+            await self.bus.emit(
+                ProcessCompletedEvent(
+                    event_parent_id=started_event.event_id,
+                    plugin_name=event.plugin_name,
+                    hook_name=event.hook_name,
+                    hook_path=event.hook_path,
+                    hook_args=event.hook_args,
+                    env=event.env,
+                    timeout=event.timeout,
+                    stdout=stdout,
+                    stderr=stderr,
+                    exit_code=returncode,
+                    status=status,
+                    cancelled=cancelled,
+                    output_dir=event.output_dir,
+                    output_files=new_files,
+                    is_background=event.is_background,
+                    pid=process.pid,
+                    url=event.url,
+                    process_type=event.process_type,
+                    worker_type=event.worker_type,
+                    start_ts=proc.started_at or "",
+                    end_ts=proc.ended_at or "",
+                    event_timeout=event.event_timeout,
+                    event_handler_timeout=event.event_handler_timeout,
+                    event_handler_slow_timeout=event.event_handler_slow_timeout,
+                ),
+            ).now()
+
+            return action
+
+        # One task owns all finalization, including blocking file persistence
+        # and terminal consumers. Its explicit event ancestry is independent of
+        # the cancelled handler context; the owner only defers cancellation.
+        finish_task = asyncio.create_task(finish_process(), context=contextvars.Context())
+        while not finish_task.done():
             try:
-                await asyncio.shield(output_task)
+                await asyncio.shield(finish_task)
             except asyncio.CancelledError as error:
-                # A thread cannot be cancelled: retain ownership until it
-                # finishes, including repeated owner cancellation requests.
                 cancellation = error
-        stdout, stderr = output_task.result()
-
-        files_after = await asyncio.to_thread(lambda: set(plugin_output_dir.rglob("*")))
-        new_files = await asyncio.to_thread(
-            scan_output_files,
-            plugin_output_dir,
-            file_paths=files_after - files_before,
-            containment_root=plugin_output_dir.parent,
-        )
-        if returncode == 0 and not stdout.strip() and (signal_match := SHELL_SIGNAL_STDERR_RE.search(stderr)):
-            returncode = 128 + int(signal_match.group(1))
-
-        if timed_out:
-            returncode = -1
-            stderr += ("\n" if stderr and not stderr.endswith("\n") else "") + f"Hook timed out after {event.timeout} seconds"
-
+        action = finish_task.result()
         if cancellation is not None:
-            returncode = 130
-            stderr = "Hook execution cancelled"
-
-        # A user stopping work has not discovered an extractor/site failure.
-        # Carry that intent explicitly so consumers can discard the unfinished
-        # attempt, without classifying organic crashes by their signal number.
-        cancelled = interrupted or cancellation is not None or event.event_id in self._shutdown_hook_ids
-        if event.is_background and self.abort_requested:
-            cancelled = cancelled or await self._process_was_stopped_by_cleanup(event, process.pid)
-
-        if (
-            event.is_background
-            and not timed_out
-            and cancellation is None
-            and returncode in POLITE_CLEANUP_SIGNAL_EXIT_CODES
-            and await self._process_was_stopped_by_cleanup(event, process.pid)
-        ):
-            # Background hooks are long-lived resources owned by the snapshot or
-            # crawl cleanup phase. When abx-dl asks one to stop with SIGTERM and
-            # it exits from that signal, the crawl completed the intended
-            # lifecycle; recording that Process as failed makes successful
-            # archive results look broken in index.jsonl and Docker smoke tests.
-            # SIGKILL escalation and organic nonzero exits still surface as
-            # failures because they do not match this polite cleanup path.
-            # This normalizes Process lifecycle only. A zero exit without an
-            # explicit output record becomes noresult in ArchiveResultService;
-            # it must never manufacture a successful capture from readiness.
-            returncode = 0
-            stderr = SHELL_SIGNAL_STDERR_RE.sub("", stderr).strip()
-
-        action = "skip"
-        choice_future = self._interrupt_choices.get(event.event_id)
-        interrupted = interrupted or choice_future is not None
-        cancelled = cancelled or interrupted
-        status = _process_status(returncode)
-        if interrupted:
-            returncode = 130
-            status = "failed"
-            stderr = "Hook interrupted by user"
-            # Completion records the stopped attempt, but never reads stdin or
-            # chooses crawl control. Holding completion until the answer also
-            # keeps a background-only capture from entering cleanup mid-prompt.
-            action = await choice_future if choice_future is not None else "abort"
-
-        proc.exit_code = returncode
-        proc.status = status
-        proc.stdout = stdout
-        proc.stderr = stderr
-        proc.ended_at = now_iso()
-
-        index_path = plugin_output_dir.parent / "index.jsonl"
-        keep_logs = returncode != 0 or cancelled
-
-        def record_completion() -> None:
-            write_jsonl(index_path, proc, also_print=self.emit_jsonl)
-            pid_file.unlink(missing_ok=True)
-            if keep_logs:
-                _preserve_process_logs(plugin_output_dir, stdout_file, stderr_file)
-            else:
-                stdout_file.unlink(missing_ok=True)
-                stderr_file.unlink(missing_ok=True)
-
-        # Remote-mount metadata round trips must not stall the event loop that
-        # every other hook's readiness, output, and completion share.
-        await asyncio.to_thread(record_completion)
-
-        await self.bus.emit(
-            ProcessCompletedEvent(
-                event_parent_id=started_event.event_id,
-                plugin_name=event.plugin_name,
-                hook_name=event.hook_name,
-                hook_path=event.hook_path,
-                hook_args=event.hook_args,
-                env=event.env,
-                timeout=event.timeout,
-                stdout=stdout,
-                stderr=stderr,
-                exit_code=returncode,
-                status=status,
-                cancelled=cancelled,
-                output_dir=event.output_dir,
-                output_files=new_files,
-                is_background=event.is_background,
-                pid=process.pid,
-                url=event.url,
-                process_type=event.process_type,
-                worker_type=event.worker_type,
-                start_ts=proc.started_at or "",
-                end_ts=proc.ended_at or "",
-                event_timeout=event.event_timeout,
-                event_handler_timeout=event.event_handler_timeout,
-                event_handler_slow_timeout=event.event_handler_slow_timeout,
-            ),
-        ).now()
-        if cancellation is not None:
-            # Preserve cancellation control flow, after consumers
-            # have corrected the durable result for this same hook.
             raise cancellation
         if action == "retry":
             retry_event = self.bus.emit(

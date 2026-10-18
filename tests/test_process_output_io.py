@@ -158,3 +158,176 @@ def test_native_hook_log_read_keeps_loop_live_and_drains_before_cancellation(
             os.close(held_fd)
     records = [json.loads(line) for line in (output / "urls.jsonl").read_text().splitlines()]
     assert [record["url"] for record in records] == ["https://example.com/discovered"]
+
+
+@pytest.mark.parametrize("cancel_phase", ["stream_finish", "final_stdout"])
+def test_real_hook_cancellation_finishes_output_consumers_and_completion(tmp_path: Path, cancel_phase: str):
+    """Cancellation during a real consumer must not drop later hook records."""
+    from abx_dl.events import ProcessCompletedEvent
+    from abx_dl.execution import execute_hook
+
+    hook = PluginCatalog.discover()["parse_txt_urls"].filter_hooks("Snapshot")[0]
+    source = tmp_path / "input.txt"
+    os.mkfifo(source)
+    output = tmp_path / "snapshot" / hook.plugin_name
+    output.mkdir(parents=True)
+
+    async def run():
+        bus = create_bus(total_timeout=20.0, name=f"cancel_log_completion_{tmp_path.name}")
+        service = ProcessService(bus, emit_jsonl=False, interactive_tty=False)
+        first_line = asyncio.Event()
+        release_first = asyncio.Event()
+        final_line = asyncio.Event()
+        release_final = asyncio.Event()
+        observed: list[str] = []
+        completions: list[ProcessCompletedEvent] = []
+
+        async def record_completion(event: ProcessCompletedEvent):
+            completions.append(event)
+
+        bus.on(ProcessCompletedEvent, record_completion)
+
+        async def consume(event: ProcessStdoutEvent):
+            if event.line.startswith("parsing "):
+                first_line.set()
+                await release_first.wait()
+            elif '"type": "Snapshot"' in event.line:
+                final_line.set()
+                await release_final.wait()
+            observed.append(event.line)
+
+        bus.on(ProcessStdoutEvent, consume)
+        hook_task = asyncio.create_task(
+            execute_hook(
+                hook,
+                output_dir=output,
+                env={**os.environ, "SNAP_DIR": str(output.parent), "TMP_DIR": str(tmp_path / "runtime"), "PYTHONUNBUFFERED": "1"},
+                arguments={"url": source.as_uri()},
+                bus=bus,
+                attach_process_service=False,
+            ),
+        )
+        try:
+            await asyncio.wait_for(first_line.wait(), 10)
+            started = await bus.find(ProcessStartedEvent, past=True, future=False)
+            assert isinstance(started, ProcessStartedEvent)
+            # Actual FIFO input lets the real parser exit only after the first
+            # stdout consumer is waiting. Completion then stops streaming and
+            # drains the remaining real Snapshot/ArchiveResult lines.
+            await asyncio.to_thread(source.write_text, "https://example.com/discovered\n")
+            assert await asyncio.wait_for(started.subprocess.wait(), 10) == 0
+            owner = next(iter(service._active_process_event_tasks.values()))
+            if cancel_phase == "final_stdout":
+                release_first.set()
+                await asyncio.wait_for(final_line.wait(), 10)
+            else:
+                # Let the process-exit waiter enter its stream completion wait.
+                await asyncio.sleep(0.05)
+            owner.cancel()
+            await asyncio.sleep(0.05)
+            owner.cancel()
+            await asyncio.sleep(0.05)
+            release_first.set()
+            release_final.set()
+            await asyncio.gather(hook_task, return_exceptions=True)
+            assert owner.cancelled(), "Finalization must preserve owner cancellation"
+            await bus.wait_until_idle()
+            assert len(completions) == 1, "Cancelled owner lost its final completion"
+            completed = completions[0]
+            assert completed.cancelled
+            records = [json.loads(line) for line in observed if line.startswith("{")]
+            assert [record["status"] for record in records if record.get("type") == "ArchiveResult"] == ["succeeded"]
+            assert observed == completed.stdout.splitlines()
+            assert [json.loads(line)["url"] for line in (output / "urls.jsonl").read_text().splitlines()] == [
+                "https://example.com/discovered",
+            ]
+        finally:
+            release_first.set()
+            release_final.set()
+            if not hook_task.done():
+                hook_task.cancel()
+                await asyncio.gather(hook_task, return_exceptions=True)
+            await bus.destroy(clear=False)
+
+    asyncio.run(run())
+
+
+def test_cancellation_during_real_index_write_preserves_finished_hook(tmp_path: Path):
+    """A completed hook's native persistence finishes even if its owner stops."""
+    from abx_dl.events import ProcessCompletedEvent
+    from abx_dl.execution import execute_hook
+
+    hook = PluginCatalog.discover()["parse_txt_urls"].filter_hooks("Snapshot")[0]
+    source = tmp_path / "input.txt"
+    source.write_text("https://example.com/discovered\n")
+    output = tmp_path / "snapshot" / hook.plugin_name
+    output.mkdir(parents=True)
+    index = output.parent / "index.jsonl"
+    os.mkfifo(index)
+    persisted: list[str] = []
+
+    def read_index():
+        persisted.extend(index.read_text().splitlines())
+
+    # The real index writer cannot open until this independent reader starts.
+    reader = threading.Timer(1.5, read_index)
+
+    async def run():
+        bus = create_bus(total_timeout=20.0, name=f"cancel_index_write_{tmp_path.name}")
+        service = ProcessService(bus, emit_jsonl=False, interactive_tty=False)
+        result_seen = asyncio.Event()
+        observed: list[str] = []
+        completions: list[ProcessCompletedEvent] = []
+
+        async def consume(event: ProcessStdoutEvent):
+            observed.append(event.line)
+            if '"type": "ArchiveResult"' in event.line:
+                result_seen.set()
+
+        async def completed(event: ProcessCompletedEvent):
+            completions.append(event)
+
+        bus.on(ProcessStdoutEvent, consume)
+        bus.on(ProcessCompletedEvent, completed)
+        task = asyncio.create_task(
+            execute_hook(
+                hook,
+                output_dir=output,
+                env={**os.environ, "SNAP_DIR": str(output.parent), "TMP_DIR": str(tmp_path / "runtime")},
+                arguments={"url": source.as_uri()},
+                bus=bus,
+                attach_process_service=False,
+            ),
+        )
+        await asyncio.wait_for(result_seen.wait(), 10)
+        started = await bus.find(ProcessStartedEvent, past=True, future=False)
+        assert isinstance(started, ProcessStartedEvent)
+        assert await started.subprocess.wait() == 0
+        reader.start()
+        await asyncio.sleep(0.1)
+        owner = next(iter(service._active_process_event_tasks.values()))
+        owner.cancel()
+        await asyncio.sleep(0.05)
+        owner.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        assert owner.cancelled(), "Persistence must finish before cancellation propagates"
+        await bus.wait_until_idle()
+        assert len(completions) == 1
+        result = completions[0]
+        assert result.exit_code == 0
+        assert result.status == "succeeded"
+        assert not result.cancelled
+        assert result.stdout.splitlines() == observed
+        assert not list((tmp_path / "runtime" / "process").iterdir())
+        await bus.destroy(clear=False)
+
+    try:
+        asyncio.run(run())
+    finally:
+        reader.cancel()
+        if reader.ident is not None:
+            reader.join()
+    assert len(persisted) == 1
+    record = json.loads(persisted[0])
+    assert record["exit_code"] == 0
+    assert record["status"] == "succeeded"
