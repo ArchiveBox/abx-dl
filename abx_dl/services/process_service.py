@@ -824,12 +824,27 @@ class ProcessService(BaseService):
             event_class=ProcessStderrEvent,
         )
         returncode = process.returncode if process.returncode is not None else 0
-        stdout_reader.seek(0)
-        stdout = stdout_reader.read()
-        stderr_reader.seek(0)
-        stderr = stderr_reader.read()
-        stdout_reader.close()
-        stderr_reader.close()
+
+        def read_completed_output() -> tuple[str, str]:
+            # These readers own their inodes even if the hook removed its logs.
+            # Remote reads and close can wait in the kernel after process exit.
+            stdout_reader.seek(0)
+            stdout = stdout_reader.read()
+            stderr_reader.seek(0)
+            stderr = stderr_reader.read()
+            stdout_reader.close()
+            stderr_reader.close()
+            return stdout, stderr
+
+        output_task = asyncio.create_task(asyncio.to_thread(read_completed_output))
+        while not output_task.done():
+            try:
+                await asyncio.shield(output_task)
+            except asyncio.CancelledError as error:
+                # A thread cannot be cancelled: retain ownership until it
+                # finishes, including repeated owner cancellation requests.
+                cancellation = error
+        stdout, stderr = output_task.result()
 
         files_after = await asyncio.to_thread(lambda: set(plugin_output_dir.rglob("*")))
         new_files = await asyncio.to_thread(
@@ -1006,12 +1021,19 @@ class ProcessService(BaseService):
 
     async def _finish_stream_output(self, stream_task: asyncio.Task[list[str]]) -> list[str]:
         """Finish reading hook stdout after the hook process exits."""
-        if stream_task.done():
-            return await stream_task
-        try:
-            return await stream_task
-        except asyncio.CancelledError:
-            return []
+        cancellation = None
+        while not stream_task.done():
+            try:
+                await asyncio.shield(stream_task)
+            except asyncio.CancelledError as error:
+                # Cancelling the owner must not abandon a thread reading this
+                # file or discard output before its consumers finish. Drain
+                # before cleanup can reread or close either retained reader.
+                cancellation = error
+        result = stream_task.result()
+        if cancellation is not None:
+            raise cancellation
+        return result
 
     async def on_ProcessKillEvent(self, event: ProcessKillEvent) -> None:
         """Gracefully shut down a running hook.
@@ -1168,12 +1190,24 @@ class ProcessService(BaseService):
         # Each stream has one retained reader; read() already advances it,
         # including after EOF when the child appends more data. Re-seeking on
         # every poll adds remote I/O without changing the read position.
-        chunk = stdout_reader.read()
+        read_task = asyncio.create_task(asyncio.to_thread(stdout_reader.read))
+        cancellation = None
+        while not read_task.done():
+            try:
+                await asyncio.shield(read_task)
+            except asyncio.CancelledError as error:
+                # Final drains run in the owning completion task too. Keep
+                # its reader alive until native I/O ends before propagating
+                # cancellation; retain consumed bytes for the next drain.
+                cancellation = error
+        chunk = read_task.result()
+        state.pending_line += chunk
+        if cancellation is not None:
+            raise cancellation
 
         if not chunk and not (emit_partial and state.pending_line):
             return False
 
-        state.pending_line += chunk
         # TextIO normalizes CR/CRLF progress output. JSONL is LF-framed:
         # Unicode separators inside a JSON string are ordinary string data.
         complete_lines = state.pending_line.split("\n")
