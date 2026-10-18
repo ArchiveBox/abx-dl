@@ -134,6 +134,7 @@ def test_cli_interrupts_active_hook(tmp_path: Path, choice: str) -> None:
     output = bytearray()
     output_dir = tmp_path / "capture"
     env = _cli_env(tmp_path)
+    runtime_dir = Path(env["TMP_DIR"]) / "process"
     # A real TTY with TERM=dumb still supports input. Rich suppresses live
     # frames there, so this also protects the plain-text prompt fallback.
     env.update(CHROME_DELAY_AFTER_LOAD="60", CHROME_TIMEOUT="120", CHROME_HEADLESS="True", TERM="dumb")
@@ -157,7 +158,9 @@ def test_cli_interrupts_active_hook(tmp_path: Path, choice: str) -> None:
         raise AssertionError(output.decode(errors="replace"))
 
     def active_hook():
-        for pid_file in output_dir.rglob("on_Snapshot__30_chrome_navigate.*.pid"):
+        # WHY: running hook controls live locally; only failed logs are archived
+        # at completion. Waiting in the archive never reaches the interrupt.
+        for pid_file in runtime_dir.glob("on_Snapshot__30_chrome_navigate.*.pid"):
             pid_text = pid_file.read_text().strip()
             if pid_text and psutil.pid_exists(int(pid_text)):
                 return int(pid_text)
@@ -210,10 +213,12 @@ def test_cli_interrupts_background_only_capture(tmp_path: Path, choice: str, pha
     termios.tcsetwinsize(slave, (40, 200))
     output = bytearray()
     output_dir = tmp_path / "capture"
+    env = _cli_env(tmp_path)
+    runtime_dir = Path(env["TMP_DIR"]) / "process"
     process = subprocess.Popen(
         [sys.executable, "-m", "abx_dl", "dl", "--plugins=forumdl", "--dir", str(output_dir), "https://news.ycombinator.com"],
         cwd=tmp_path,
-        env=_cli_env(tmp_path),
+        env=env,
         stdin=subprocess.DEVNULL if choice == "noninteractive" else slave,
         stdout=slave,
         stderr=slave,
@@ -230,7 +235,7 @@ def test_cli_interrupts_background_only_capture(tmp_path: Path, choice: str, pha
         raise AssertionError(output.decode(errors="replace"))
 
     def active_hook():
-        for path in output_dir.rglob("on_Snapshot__33_forumdl.*.pid"):
+        for path in runtime_dir.glob("on_Snapshot__33_forumdl.*.pid"):
             try:
                 value = path.read_text().strip()
             except FileNotFoundError:
@@ -246,7 +251,7 @@ def test_cli_interrupts_background_only_capture(tmp_path: Path, choice: str, pha
         assert pid is not None
         children = psutil.Process(process.pid).children(recursive=True)
         if phase == "running":
-            read_until(lambda: any("INFO:root:GET" in log.read_text() for log in output_dir.rglob("on_Snapshot__33_forumdl.*.stderr.log")))
+            read_until(lambda: any("INFO:root:GET" in log.read_text() for log in runtime_dir.glob("on_Snapshot__33_forumdl.*.stderr.log")))
         process.send_signal(signal.SIGINT)
         if choice == "noninteractive":
             read_until(lambda: process.poll() is not None, timeout=25)
@@ -288,6 +293,7 @@ def test_cli_abort_stops_long_running_background_hook(tmp_path: Path) -> None:
     output = bytearray()
     output_dir = tmp_path / "capture"
     env = _cli_env(tmp_path)
+    runtime_dir = Path(env["TMP_DIR"]) / "process"
     env.update(INFINISCROLL_SCROLL_DELAY="10000", CHROME_HEADLESS="True", TERM="xterm-256color", COLUMNS="200")
     process = subprocess.Popen(
         [sys.executable, "-m", "abx_dl", "dl", "--plugins=forumdl,infiniscroll", "--dir", str(output_dir), "https://news.ycombinator.com"],
@@ -309,7 +315,7 @@ def test_cli_abort_stops_long_running_background_hook(tmp_path: Path) -> None:
         raise AssertionError(output.decode(errors="replace"))
 
     def active_hook():
-        for pid_file in output_dir.rglob("on_Snapshot__45_infiniscroll.*.pid"):
+        for pid_file in runtime_dir.glob("on_Snapshot__45_infiniscroll.*.pid"):
             pid_text = pid_file.read_text().strip()
             if pid_text and psutil.pid_exists(int(pid_text)):
                 return int(pid_text)
@@ -358,6 +364,7 @@ def test_cli_third_interrupt_forces_aborted_crawl_to_exit(tmp_path: Path, choice
     output = bytearray()
     output_dir = tmp_path / "capture"
     env = _cli_env(tmp_path)
+    runtime_dir = Path(env["TMP_DIR"]) / "process"
     env.update(INFINISCROLL_SCROLL_DELAY="10000", CHROME_HEADLESS="True", TERM="dumb")
     process = subprocess.Popen(
         [sys.executable, "-m", "abx_dl", "dl", "--plugins=forumdl,infiniscroll", "--dir", str(output_dir), "https://news.ycombinator.com"],
@@ -379,7 +386,7 @@ def test_cli_third_interrupt_forces_aborted_crawl_to_exit(tmp_path: Path, choice
         raise AssertionError(output.decode(errors="replace"))
 
     try:
-        read_until(lambda: any(path.read_text().strip() for path in output_dir.rglob("on_Snapshot__45_infiniscroll.*.pid")))
+        read_until(lambda: any(path.read_text().strip() for path in runtime_dir.glob("on_Snapshot__45_infiniscroll.*.pid")))
         owned = psutil.Process(process.pid).children(recursive=True)
         process.send_signal(signal.SIGINT)
         read_until(lambda: b"Choice [skip]:" in output)
