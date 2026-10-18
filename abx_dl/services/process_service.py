@@ -5,7 +5,9 @@ import contextvars
 import os
 import re
 import signal
+import shutil
 import sys
+import tempfile
 import select
 import time
 from contextlib import ExitStack, contextmanager
@@ -130,6 +132,12 @@ def _process_status(exit_code: int) -> ProcessStatus:
     if exit_code == PROCESS_EXIT_SKIPPED:
         return "skipped"
     return "failed"
+
+
+def _preserve_process_logs(output_dir: Path, *log_files: Path) -> None:
+    for log_file in log_files:
+        if log_file.exists():
+            shutil.move(str(log_file), str(output_dir / log_file.name))
 
 
 def _process_command(event: ProcessEvent) -> list[str]:
@@ -532,9 +540,14 @@ class ProcessService(BaseService):
         # distinct so one completion path cannot rotate/delete another's logs.
         artifact_stem = f"{event.hook_name}.{proc.id}"
 
-        stdout_file = plugin_output_dir / f"{artifact_stem}.stdout.log"
-        stderr_file = plugin_output_dir / f"{artifact_stem}.stderr.log"
-        pid_file = plugin_output_dir / f"{artifact_stem}.pid"
+        # Control files must stay local: opening a tiny log/PID file on a
+        # remote archive can stall hook startup and every subsequent plugin.
+        # Failed logs are archived once at completion; capture outputs stay
+        # in plugin_output_dir throughout execution.
+        runtime_dir = Path(event.env.get("TMP_DIR") or tempfile.gettempdir()) / "process"
+        stdout_file = runtime_dir / f"{artifact_stem}.stdout.log"
+        stderr_file = runtime_dir / f"{artifact_stem}.stderr.log"
+        pid_file = runtime_dir / f"{artifact_stem}.pid"
         process: asyncio.subprocess.Process | None = None
         started_event: ProcessStartedEvent | None = None
         stdout_reader: TextIO | None = None
@@ -548,10 +561,8 @@ class ProcessService(BaseService):
                 await asyncio.to_thread(lambda: plugin_output_dir.is_dir() or plugin_output_dir.mkdir(parents=True, exist_ok=True))
                 # Completion without a hook result inventories only new files.
                 files_before = await asyncio.to_thread(lambda: set(plugin_output_dir.rglob("*")))
+                await asyncio.to_thread(runtime_dir.mkdir, parents=True, exist_ok=True)
                 reader_stack = ExitStack()
-                # Creating files in a remote-mounted plugin dir is a metadata
-                # round trip; keep it off the event loop that every other
-                # hook's readiness, output and completion share.
                 spawn_stack, out_fh, err_fh, stdout_reader, stderr_reader = await asyncio.to_thread(
                     _open_process_spawn_files,
                     stdout_file,
@@ -587,6 +598,7 @@ class ProcessService(BaseService):
                 proc.status = "failed"
                 proc.stderr = f"{type(e).__name__}: {e}"
                 proc.ended_at = now_iso()
+                await asyncio.to_thread(_preserve_process_logs, plugin_output_dir, stdout_file, stderr_file)
                 index_path = plugin_output_dir.parent / "index.jsonl"
                 await asyncio.to_thread(write_jsonl, index_path, proc, also_print=self.emit_jsonl)
                 await event.emit(
@@ -917,7 +929,9 @@ class ProcessService(BaseService):
         def record_completion() -> None:
             write_jsonl(index_path, proc, also_print=self.emit_jsonl)
             pid_file.unlink(missing_ok=True)
-            if not keep_logs:
+            if keep_logs:
+                _preserve_process_logs(plugin_output_dir, stdout_file, stderr_file)
+            else:
                 stdout_file.unlink(missing_ok=True)
                 stderr_file.unlink(missing_ok=True)
 

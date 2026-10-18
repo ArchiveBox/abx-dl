@@ -379,6 +379,12 @@ when they wrote nothing; `.DS_Store` is discarded, while captures and failure lo
 commands are recorded in `index.jsonl` and active process metadata, without
 generating per-hook shell scripts. Plugin-owned files remain unchanged.
 
+Active hook stdout, stderr, and process-control PID files live under
+`TMP_DIR/process` (the system temporary directory when `TMP_DIR` is unset).
+Keep `TMP_DIR` on local storage even when captured output uses a remote mount.
+Successful hooks remove these temporary files; failed or cancelled hooks retain
+their stdout and stderr logs in the plugin output directory.
+
 ```bash
 mkdir -p /tmp/abx-run && cd /tmp/abx-run
 uvx --from abx-dl abx-dl --plugins=title,wget 'https://example.com'
