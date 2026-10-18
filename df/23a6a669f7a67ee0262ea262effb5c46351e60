@@ -1,0 +1,21 @@
+abx_dl/services/process_service.py
+  s_10bc94d001be49::t_d9a92ea1f99017 827-847,1024-1036,1193-1206
+tests/test_process_output_io.py
+  s_10bc94d001be49::t_129af28681fc61 1-160
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "df23a6a669f7a67ee0262ea262effb5c46351e60",
+  "prompts": {},
+  "sessions": {
+    "s_10bc94d001be49": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11f62-2c55-7051-a677-585a21b42fb4",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
