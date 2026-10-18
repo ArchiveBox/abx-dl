@@ -62,7 +62,7 @@ class GlobalConfig(BaseSettings):
     DRY_RUN: bool = False
     ABXPKG_NO_CACHE: bool = False
     TIMEOUT: int = 60
-    USER_AGENT: str = "Mozilla/5.0 (compatible; abx-dl/1.0; +https://github.com/ArchiveBox/abx-dl)"
+    USER_AGENT: str = Field(default="", description="Empty uses the identity detected from Chrome during browser setup.")
     CHECK_SSL_VALIDITY: bool = True
     COOKIES_FILE: str = ""
     ABXPKG_LIB_DIR: Path | None = None

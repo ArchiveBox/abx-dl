@@ -24,6 +24,15 @@ def assemble_env(*, overrides: dict[str, Any] | None = None, run_output_dir: Pat
     return PluginEnv.from_config(config, run_output_dir=run_output_dir).to_env()
 
 
+def test_user_agent_defaults_to_runtime_browser_identity(tmp_path: Path) -> None:
+    assert GlobalConfig().USER_AGENT == ""
+    assert assemble_env(run_output_dir=tmp_path)["USER_AGENT"] == ""
+    assert (
+        assemble_env(overrides={"USER_AGENT": "Explicit capture identity"}, run_output_dir=tmp_path)["USER_AGENT"]
+        == "Explicit capture identity"
+    )
+
+
 def test_chrome_hook_receives_other_plugins_enabled_flags(tmp_path: Path) -> None:
     catalog = PluginCatalog.discover()
     runtime = asyncio.run(

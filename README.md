@@ -154,7 +154,7 @@ CHROME_BINARY="chromium"
 
 Common options:
 - `TIMEOUT=60` - default timeout for hooks
-- `USER_AGENT` - default user agent string
+- `USER_AGENT` - optional HTTP user agent override; empty uses Chrome's detected identity after browser setup
 - `{PLUGIN}_BINARY` - path or name of the binary to use (e.g. `WGET_BINARY=wget` or `CHROME_BINARY=/usr/bin/chromium`)
 - `{PLUGIN}_ENABLED=True/False` - enable/disable specific plugins
 - `{PLUGIN}_TIMEOUT=120` - per-plugin timeout overrides
