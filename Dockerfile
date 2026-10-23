@@ -38,8 +38,8 @@
 #       --build-context abx-plugins=./abx-plugins \
 #       -t archivebox/abx-dl:dev
 
-ARG NODE_VERSION=24.18.0
-ARG UV_VERSION=0.10.6
+ARG NODE_VERSION=24.22.1
+ARG UV_VERSION=0.13.5
 
 FROM --platform=$TARGETPLATFORM node:${NODE_VERSION}-trixie-slim AS node-runtime
 FROM --platform=$TARGETPLATFORM debian:trixie-slim AS abx-dl-runtime-base
@@ -75,8 +75,8 @@ ENV TZ=UTC \
     PIP_ONLY_BINARY=aiohttp \
     npm_config_loglevel=error
 
-ENV PYTHON_VERSION=3.13.12 \
-    NODE_VERSION=24.18.0
+ENV PYTHON_VERSION=3.13.17 \
+    NODE_VERSION=24.22.1
 
 ENV ARCHIVEBOX_USER=archivebox \
     DEFAULT_ARCHIVEBOX_UID=911 \
