@@ -56,9 +56,10 @@ Use targeted live user-facing commands:
 
 ```bash
 set -Eeuo pipefail
+project_dir="$PWD"
 tmpdir="$(mktemp -d)"
 cd "$tmpdir"
-uv run --project /path/to/abx-dl abx-dl dl --plugins=chrome,consolelog,headers,wget 'https://example.com'
+uv run --project "$project_dir" abx-dl dl --plugins=chrome,consolelog,headers,wget 'https://example.com'
 test -s index.jsonl
 ```
 
