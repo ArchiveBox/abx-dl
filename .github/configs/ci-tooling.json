@@ -30,6 +30,7 @@
       "name": "{UV_BINARY}",
       "binproviders": "env,pip",
       "min_version": "0.13.5",
+      "min_release_age": 0,
       "overrides": {
         "pip": {
           "install_args": [
