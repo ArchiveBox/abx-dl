@@ -1,0 +1,14 @@
+tests/test_permissions.py
+  h_923c208e183a7b 4-5,9-10,19-23,43,60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "ecf46668da213760e08ab5704807413ac8b1b177",
+  "prompts": {},
+  "humans": {
+    "h_923c208e183a7b": {
+      "author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
