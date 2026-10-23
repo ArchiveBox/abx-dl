@@ -120,7 +120,9 @@ timeout_method = "thread"
 [tool.uv]
 required-version = ">=0.10.0"
 exclude-newer = "5 days"
-exclude-newer-package = { abx-dl = "2100-01-01T00:00:00Z", abxpkg = "2100-01-01T00:00:00Z", abxbus = "1 second", abx-plugins = "2100-01-01T00:00:00Z" }
+# Security fixes for GHSA-6q48-6c7w-9gw2 and GHSA-hq85-5cpj-mr62
+# are newer than the default age window; allow only the published fixes.
+exclude-newer-package = { certifi = "2026-10-23T00:00:00Z", uv = "2026-10-23T00:00:00Z", abx-dl = "2100-01-01T00:00:00Z", abxpkg = "2100-01-01T00:00:00Z", abxbus = "1 second", abx-plugins = "2100-01-01T00:00:00Z" }
 
 [tool.mypy]
 mypy_path = "abx_dl,tests,server,abx_dl/typings"
