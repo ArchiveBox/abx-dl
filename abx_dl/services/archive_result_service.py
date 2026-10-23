@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from abxbus import BaseEvent, EventBus
+from abxbus.event_handler import EventHandlerAbortedError, EventHandlerCancelledError
 from pydantic import ValidationError
 
 from ..events import (
@@ -182,6 +183,12 @@ class ArchiveResultService(BaseService):
         # later crash, or after the user withdrew the attempt. Only a clean,
         # uncancelled exit preserves that report.
         if existing is not None and event.exit_code == 0 and not event.cancelled:
+            # Emission alone does not prove that persistence consumers completed.
+            # A stored handler timeout is an error, not a user's cancellation.
+            try:
+                await existing.event_results_list()
+            except (EventHandlerAbortedError, EventHandlerCancelledError) as error:
+                raise RuntimeError(f"ArchiveResult consumers did not complete for {event.plugin_name}:{event.hook_name}") from error
             return
 
         if event.cancelled:
@@ -236,7 +243,7 @@ class ArchiveResultService(BaseService):
 
         index_path = Path(event.output_dir).parent / "index.jsonl"
         await asyncio.to_thread(write_jsonl, index_path, ar, also_print=self.emit_jsonl)
-        await event.emit(
+        completed_result = await event.emit(
             ArchiveResultEvent(
                 snapshot_id=ar.snapshot_id,
                 plugin=ar.plugin,
@@ -251,3 +258,7 @@ class ArchiveResultService(BaseService):
                 error=ar.error or "",
             ),
         ).now()
+        try:
+            await completed_result.event_results_list()
+        except (EventHandlerAbortedError, EventHandlerCancelledError) as error:
+            raise RuntimeError(f"ArchiveResult consumers did not complete for {event.plugin_name}:{event.hook_name}") from error

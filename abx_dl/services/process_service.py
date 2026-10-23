@@ -930,7 +930,7 @@ class ProcessService(BaseService):
             # every other hook's readiness, output, and completion share.
             await asyncio.to_thread(record_completion)
 
-            await self.bus.emit(
+            completed_event = await self.bus.emit(
                 ProcessCompletedEvent(
                     event_parent_id=started_event.event_id,
                     plugin_name=event.plugin_name,
@@ -958,6 +958,7 @@ class ProcessService(BaseService):
                     event_handler_slow_timeout=event.event_handler_slow_timeout,
                 ),
             ).now()
+            await completed_event.event_results_list()
 
             return action
 
