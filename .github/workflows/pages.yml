@@ -19,6 +19,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.5"
       - name: Build website from README
         run: uv run bin/build_site.py
       - uses: actions/upload-pages-artifact@v3

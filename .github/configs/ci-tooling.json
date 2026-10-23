@@ -29,11 +29,11 @@
     {
       "name": "{UV_BINARY}",
       "binproviders": "env,pip",
-      "min_version": "0.10.6",
+      "min_version": "0.13.5",
       "overrides": {
         "pip": {
           "install_args": [
-            "uv==0.10.6"
+            "uv==0.13.5"
           ]
         }
       }
