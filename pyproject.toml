@@ -63,7 +63,7 @@ dependencies = [
 dev = [
     # TESTING
     "flask>=3.0",
-    "pytest>=8.3.3,<10",
+    "pytest>=9.0.3,<9.1",  # pytest-codeblocks still uses the collect hook removed in 9.1.
     "pytest-codeblocks>=0.17.0",
     "pytest-github-actions-annotate-failures>=0.4.0",
     "pytest-httpserver>=1.1.0",
