@@ -1,8 +1,12 @@
 import json
 import os
 import pwd
+import shlex
+import shutil
 import subprocess
 import sys
+
+import pytest
 
 from abx_dl.services.process_service import _hook_child_identity
 
@@ -12,7 +16,11 @@ def test_mixed_root_hook_identity_targets_effective_user():
     assert _hook_child_identity(real_uid=501, effective_uid=501, effective_gid=20) is None
 
 
-def test_hook_child_process_uses_expected_real_and_effective_ids():
+@pytest.mark.parametrize("child_path", [None, ""])
+def test_hook_child_process_uses_expected_real_and_effective_ids(child_path):
+    id_binary = shutil.which("id", path=os.defpath)
+    assert id_binary is not None
+    id_command = shlex.quote(id_binary)
     nobody = pwd.getpwnam("nobody")
     running_as_root = os.geteuid() == 0
     identity_setup = f"os.setegid({nobody.pw_gid})\nos.seteuid({nobody.pw_uid})" if running_as_root else ""
@@ -32,7 +40,7 @@ async def main():
     child = await asyncio.create_subprocess_exec(
         "/bin/sh",
         "-c",
-        "id -ru; id -u; id -rg; id -g; id -G",
+        {f"{id_command} -ru; {id_command} -u; {id_command} -rg; {id_command} -g; {id_command} -G"!r},
         stdout=asyncio.subprocess.PIPE,
         preexec_fn=_permanently_drop_child_privileges(*identity) if identity else None,
     )
@@ -49,6 +57,7 @@ asyncio.run(main())
         capture_output=True,
         text=True,
         timeout=30,
+        env={**os.environ, "PATH": child_path} if child_path is not None else None,
     )
 
     assert result.returncode == 0, result.stderr or result.stdout
