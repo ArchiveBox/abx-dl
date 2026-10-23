@@ -116,6 +116,8 @@ jobs:
           uv run --no-cache --no-project --with "$ABXPKG_SPEC" abxpkg env --install \
             --lib="$ABXPKG_LIB_DIR" \
             --deps-from="$GITHUB_WORKSPACE/.github/configs/ci-tooling.json:orchestration_binaries" >> "$GITHUB_ENV"
+          # env emits a PATH delta; GitHub assignments do not merge it.
+          echo "PATH=$PATH" >> "$GITHUB_ENV"
           echo "$ABXPKG_LIB_DIR/env/bin" >> "$GITHUB_PATH"
 
       - name: Install Python dependencies
