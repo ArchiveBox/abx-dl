@@ -306,8 +306,8 @@ def test_install_event_preserves_binary_overrides_and_plugin_context(tmp_path: P
     abxbus_request = next(event for event in request_events if event.name == "abxbus")
     assert abxbus_request.no_cache is None
     opendataloader_request = next(event for event in request_events if event.name == "opendataloader-pdf")
-    assert opendataloader_request.min_version == "2.5.8"
-    assert opendataloader_request.max_version == "2.5.8"
+    assert opendataloader_request.min_version == "2.5.15"
+    assert opendataloader_request.max_version == "2.5.15"
     assert abxbus_request.binproviders == "pnpm"
     abxbus_version = importlib.metadata.version("abxbus")
     assert abxbus_request.min_version == abxbus_version
@@ -501,7 +501,7 @@ def test_install_event_resolves_real_plugin_override_paths(tmp_path: Path) -> No
     request = next(event for event in request_events if event.name == "feedparser")
     required_binary = next(binary for binary in plugin.config.required_binaries if binary.name == "feedparser")
     expected_uv_overrides = dict(required_binary.overrides["uv"])
-    expected_uv_overrides["install_root"] = str(managed_lib_dir / "uv" / "packages" / "parse_rss_urls-6.0.12")
+    expected_uv_overrides["install_root"] = str(managed_lib_dir / "uv" / "packages" / "parse_rss_urls-6.0.14")
     assert request.overrides == {
         "uv": expected_uv_overrides,
     }
