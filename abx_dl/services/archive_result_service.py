@@ -34,8 +34,9 @@ class ArchiveResultService(BaseService):
 
     2. **ProcessCompletedEvent**: only for ``on_Snapshot`` hooks, reconciles
        the reported result with the actual exit:
-       - Cancellation withdraws the attempt with a ``cancelled`` event. DB
-         consumers remove its row; stopping work is not evidence of failure.
+       - Cancellation records an interrupted attempt with a ``cancelled`` event.
+         Consumers may preserve saved bytes and already-final results while
+         ending any still-running projection; stopping is not capture failure.
        - Nonzero exit overrides an earlier result with ``failed`` (or
          ``skipped`` for the explicit skipped sentinel).
        - Zero exit preserves a reported result; without one it produces
@@ -179,9 +180,8 @@ class ArchiveResultService(BaseService):
             else None
         )
         # A hook may report output while its process is still alive. Returning
-        # merely because a record exists would leave the DB succeeded after a
-        # later crash, or after the user withdrew the attempt. Only a clean,
-        # uncancelled exit preserves that report.
+        # merely because a record exists would hide a later crash or user stop.
+        # Only a clean, uncancelled exit needs no further completion fact.
         if existing is not None and event.exit_code == 0 and not event.cancelled:
             # Emission alone does not prove that persistence consumers completed.
             # A stored handler timeout is an error, not a user's cancellation.
@@ -193,8 +193,9 @@ class ArchiveResultService(BaseService):
 
         if event.cancelled:
             # Failure cards and "retry failed" should describe broken captures,
-            # not a user's choice to stop waiting. This final event withdraws
-            # even an earlier success report from an unfinished attempt.
+            # not a user's choice to stop waiting. Report the interruption so
+            # consumers can end the running attempt without discarding bytes
+            # or already-final results that remain useful.
             ar = ArchiveResult(
                 snapshot_id=snapshot_event.snapshot_id,
                 plugin=event.plugin_name,

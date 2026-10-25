@@ -454,8 +454,9 @@ class ArchiveResultEvent(BaseEvent):
        result to failed (or skipped for the explicit skipped sentinel). Without
        a reported result, a clean exit produces noresult, never inferred success
        from files that may be metadata or leftovers from another hook/attempt.
-       A cancelled event withdraws the attempt from the DB rather than storing
-       a failure: the user stopped execution before its outcome was known.
+       A cancelled event records an interrupted attempt, not an extraction
+       failure. Consumers may preserve saved bytes and already-final results;
+       any still-running projection must no longer imply active execution.
 
     Both cases carry output_files, start_ts, end_ts copied from the process context.
     """
