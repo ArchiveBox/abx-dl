@@ -1,0 +1,34 @@
+abx_dl/services/crawl_service.py
+  s_10bc94d001be49::t_782bd8c64f8b12 331-333,345-347
+  s_10bc94d001be49::t_753bb202e9b702 249,267-272,275,284,286-289,307-315,319-330,336-343,348-352
+  s_10bc94d001be49::t_fe76061afc3822 276,281-283,285
+  s_10bc94d001be49::t_6598c70c0c6249 353
+tests/test_cleanup_failures.py
+  s_10bc94d001be49::t_934accd1736644 39-46,50,57,75-87,90,97-98,100-103,105-109,113-118
+  s_10bc94d001be49::t_ef6cf3615fa50c 1-10,12-15,18-27,29-30,32-38,47-48,51-56,58-67,70-74,119-122
+  s_10bc94d001be49::t_fe76061afc3822 11,16-17,28,31,68-69,104
+  s_10bc94d001be49::t_4428f2bc258aad 49
+  s_10bc94d001be49::t_97df6399b3cff3 88-89,91-96,99,110-112
+abx_dl/services/snapshot_service.py
+  s_10bc94d001be49::t_e2ea0496ad4e4e 501-503,519-521
+  s_10bc94d001be49::t_782bd8c64f8b12 689-691,703-707
+  s_10bc94d001be49::t_541572a45d3ba4 677,680-688,694-700,708-715
+  s_10bc94d001be49::t_fe94cf398579e6 462,489-490,496-500,504-507,518,522-523,526-527,614,633-638,667,669,671-675,678-679
+  s_10bc94d001be49::t_9daf9ae9169e4c 701,716
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "1a00c408ec27f777f3349e836c4c0c31eefcb243",
+  "prompts": {},
+  "sessions": {
+    "s_10bc94d001be49": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11f62-2c55-7051-a677-585a21b42fb4",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
