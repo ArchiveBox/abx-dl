@@ -2042,7 +2042,7 @@ def test_snapshot_completed_waits_for_cleanup_process_listeners(tmp_path: Path) 
     assert completed_saw_side_effect == [True]
 
 
-def test_snapshot_filesystem_failure_cleans_up_without_completion(tmp_path: Path) -> None:
+def test_snapshot_missing_process_completion_finishes_with_error(tmp_path: Path) -> None:
     plugin = PluginCatalog.discover()["title"]
     later_plugin = PluginCatalog.discover()["hashes"]
     output_dir = tmp_path / "run"
@@ -2095,6 +2095,14 @@ def test_snapshot_filesystem_failure_cleans_up_without_completion(tmp_path: Path
         cleanup = await bus.find(SnapshotCleanupEvent, child_of=root_event, past=True, future=False)
         completed = await bus.find(SnapshotCompletedEvent, child_of=root_event, past=True, future=False)
         await bus.wait_until_idle()
+        # This isolated owner has no ProcessService: it exercises missing
+        # foreground completion, not subprocess termination. A handled error
+        # still finishes the attempt; real recorder shutdown is tested separately.
+        assert not await bus.filter(ProcessStartedEvent, child_of=root_event, past=True, future=False)
+        assert len(await bus.filter(SnapshotCompletedEvent, child_of=root_event, past=True, future=False)) == 1
+        if completed is not None:
+            await completed.wait()
+            await completed.event_results_list()
         return (
             cleanup if isinstance(cleanup, SnapshotCleanupEvent) else None,
             completed if isinstance(completed, SnapshotCompletedEvent) else None,
@@ -2103,7 +2111,9 @@ def test_snapshot_filesystem_failure_cleans_up_without_completion(tmp_path: Path
     cleanup, completed = asyncio.run(run())
 
     assert cleanup is not None
-    assert completed is None
+    assert completed is not None
+    assert "RuntimeError: Foreground hook on_Snapshot__54_title did not complete" in completed.error
+    assert cleanup.error == completed.error
     # One unusable dir does not stop later dirs being created ahead of time,
     # and the hooks the failure skipped do not leave theirs behind.
     assert later_dir_seen_during_failed_hook == [True]
