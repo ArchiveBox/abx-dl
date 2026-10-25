@@ -130,6 +130,11 @@ owner on the serial `SnapshotEvent`; a recorded preparation exception prevents
 hooks from starting. Final-metadata consumers register after runtime cleanup
 on serial `SnapshotCleanupEvent`, and act only when `finalize_snapshot=True`.
 
+`CrawlCompletedEvent.error` likewise records a handled failure after the crawl's
+processes stop. The original exception still reaches the caller after completion
+consumers finish. This fact ends one execution; an embedder may still have queued
+snapshots to run. Cancellation, takeover, or live writers prevent completion.
+
 Interactive Ctrl+C remains a live-session control: it can interrupt a hook,
 wait for the user's choice, then retry that hook, skip it, or abort the capture.
 That in-memory prompt does not persist a paused snapshot. A dead or replaced

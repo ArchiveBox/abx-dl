@@ -4,6 +4,7 @@ from collections.abc import Awaitable, Callable
 from inspect import isawaitable
 from pathlib import Path
 from typing import ClassVar
+import traceback
 
 from abxbus import BaseEvent, EventBus
 
@@ -15,6 +16,7 @@ from ..events import (
     CrawlStartEvent,
     CrawlSetupEvent,
     ProcessCompletedEvent,
+    ProcessStartedEvent,
     SnapshotCompletedEvent,
     SnapshotEvent,
     slow_warning_timeout,
@@ -116,6 +118,7 @@ class CrawlLifecycleService(BaseService):
             self._failed_setup_hooks.pop(event.event_id, None)
 
     async def _run_root_crawl_event(self, event: CrawlEvent) -> None:
+        failure: BaseException | None = None
         try:
             if not await self.should_abort():
                 await _run_event_now(
@@ -144,35 +147,41 @@ class CrawlLifecycleService(BaseService):
                     self.snapshot_phase_timeout,
                 )
         except BaseException as phase_error:
-            try:
-                await self._run_cleanup(event)
-            except BaseException as cleanup_error:
-                phase_error.add_note(f"Crawl cleanup also failed: {cleanup_error}")
-            raise
-        await self._run_cleanup(event)
+            failure = phase_error
+        try:
+            await self._run_cleanup(event)
+        except BaseException as cleanup_error:
+            if failure is None or not isinstance(cleanup_error, Exception):
+                if failure is not None:
+                    cleanup_error.add_note(f"Crawl execution also failed: {failure}")
+                failure = cleanup_error
+            else:
+                failure.add_note(f"Crawl cleanup also failed: {cleanup_error}")
+        if failure is not None and not isinstance(failure, Exception):
+            raise failure
         # A takeover relinquishes execution to another owner. Explicit user
         # abort still finishes this crawl's lifecycle after resources stop.
         if self._execution_interrupted:
             return
-        await _run_event_now(
-            event.emit(
-                CrawlCompletedEvent(
-                    url=self.url,
-                    snapshot_id=self.snapshot.id,
-                    output_dir=str(self.output_dir),
-                ),
-            ),
-            CrawlCompletedEvent.model_fields["event_timeout"].default,
-        )
+        started = await self.bus.filter(ProcessStartedEvent, child_of=event, past=True, future=False)
+        if any(process.subprocess.returncode is None for process in started):
+            # A consumer failure can end an execution; live output writers
+            # cannot. Never publish finality merely because cleanup returned.
+            if failure is not None:
+                raise failure
+            raise RuntimeError(f"Crawl {self.snapshot.id} still has running hook processes")
         failed_snapshots = self._failed_snapshots[event.event_id]
-        failure: RuntimeError | None = None
         if failed_snapshots:
-            failure = SnapshotAttemptError(
+            snapshot_failure = SnapshotAttemptError(
                 f"{len(failed_snapshots)} snapshot attempt(s) failed: {', '.join(sorted(failed_snapshots))}. "
                 "See hook completion records for the original errors.",
             )
             for snapshot_id, error in failed_snapshots.items():
-                failure.add_note(f"Snapshot {snapshot_id}: {error}")
+                snapshot_failure.add_note(f"Snapshot {snapshot_id}: {error}")
+            if failure is None:
+                failure = snapshot_failure
+            else:
+                failure.add_note("".join(traceback.format_exception(snapshot_failure)))
         failed_setup_hooks = self._failed_setup_hooks[event.event_id]
         if failed_setup_hooks:
             setup_error = "; ".join(f"Crawl setup hook {hook} failed" for hook in sorted(failed_setup_hooks))
@@ -180,6 +189,26 @@ class CrawlLifecycleService(BaseService):
                 failure = RuntimeError(setup_error)
             else:
                 failure.add_note(setup_error)
+        # Completion means this execution settled, not that all captures
+        # succeeded or that an embedder's queue is empty. Persist its failure
+        # before surfacing the original exception to the CLI caller.
+        try:
+            await _run_event_now(
+                event.emit(
+                    CrawlCompletedEvent(
+                        url=self.url,
+                        snapshot_id=self.snapshot.id,
+                        output_dir=str(self.output_dir),
+                        error="".join(traceback.format_exception(failure)) if failure is not None else "",
+                    ),
+                ),
+                CrawlCompletedEvent.model_fields["event_timeout"].default,
+            )
+        except Exception as completion_error:
+            if failure is not None:
+                failure.add_note(f"Crawl completion also failed: {completion_error}")
+                raise failure from completion_error
+            raise
         if failure is not None:
             raise failure
 

@@ -84,7 +84,9 @@ def test_cleanup_listener_failure_still_stops_browser(tmp_path: Path, httpserver
                 assert "IsADirectoryError" in cleanup.error and str(completed_output) in cleanup.error
             else:
                 assert terminal_events[0].error == ""
-            assert len(crawl_completed) == (1 if phase == "Snapshot" else 0)
+            assert len(crawl_completed) == 1
+            assert "IsADirectoryError" in crawl_completed[0].error
+            assert str(completed_output) in crawl_completed[0].error
             assert "saved console evidence" in (output_dir / "consolelog/console.jsonl").read_text()
         finally:
             # Test hygiene is deliberately after the assertions: the fallback

@@ -136,11 +136,12 @@ class CrawlCleanupEvent(BaseEvent):
 
 
 class CrawlCompletedEvent(BaseEvent):
-    """Informational: the full crawl lifecycle has finished."""
+    """Fact: this crawl execution has settled, including handled failures."""
 
     url: str
     snapshot_id: str
     output_dir: str
+    error: str = ""
     event_timeout: float | None = 10.0
 
 

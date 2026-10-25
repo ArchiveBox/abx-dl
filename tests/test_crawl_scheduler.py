@@ -42,6 +42,7 @@ from abx_dl.services.snapshot_service import SnapshotService
     [
         "two_snapshots",
         "filesystem_error",
+        "cleanup_failure",
         "user_abort",
         "takeover",
         "pre_abort",
@@ -80,6 +81,14 @@ def test_external_scheduler_uses_shared_crawl_lifecycle(tmp_path: Path, httpserv
 
     bus.on(ProcessCompletedEvent, persist_completed_process)
 
+    async def persist_crawl_cleanup(event: CrawlCleanupEvent) -> None:
+        if mode == "cleanup_failure":
+            # A real final metadata writer can fail after every capture settled.
+            # The owner must report that failure without leaving execution live.
+            completed_output.write_text(event.model_dump_json())
+
+    bus.on(CrawlCleanupEvent, persist_crawl_cleanup)
+
     async def write_snapshot_manifest(event: SnapshotEvent) -> None:
         if mode == "preparation_consumer_failure":
             snapshot_dir = Path(event.output_dir)
@@ -102,7 +111,7 @@ def test_external_scheduler_uses_shared_crawl_lifecycle(tmp_path: Path, httpserv
         callback_events.append(event)
         if mode == "filesystem_error":
             # A real queue persistence failure must still shut down the browser
-            # already started by CrawlSetup, without publishing CrawlCompleted.
+            # already started by CrawlSetup, then publish its terminal failure.
             output_dir.write_text("queue checkpoint")
         elif mode in {"user_abort", "takeover"}:
             await event.emit(CrawlAbortEvent(user_initiated=mode == "user_abort")).now()
@@ -186,7 +195,7 @@ def test_external_scheduler_uses_shared_crawl_lifecycle(tmp_path: Path, httpserv
                 await bus.emit(CrawlAbortEvent(event_parent_id=root.event_id)).now()
             await bus.emit(root).now()
             await root.wait()
-            if mode == "filesystem_error":
+            if mode in {"filesystem_error", "cleanup_failure"}:
                 with pytest.raises(IsADirectoryError):
                     await root.event_results_list()
             elif mode == "cancelled":
@@ -207,13 +216,24 @@ def test_external_scheduler_uses_shared_crawl_lifecycle(tmp_path: Path, httpserv
             assert len(callback_events) == (0 if mode == "pre_abort" else 1)
             assert len(await bus.filter(CrawlSetupEvent, child_of=root, past=True, future=False)) == (0 if mode == "pre_abort" else 1)
             assert len(await bus.filter(CrawlCleanupEvent, child_of=root, past=True, future=False)) == 1
-            assert len(await bus.filter(CrawlCompletedEvent, child_of=root, past=True, future=False)) == (
-                0 if mode in {"filesystem_error", "takeover", "cancelled"} else 1
-            )
+            crawl_completed = await bus.filter(CrawlCompletedEvent, child_of=root, past=True, future=False)
+            assert len(crawl_completed) == (0 if mode in {"takeover", "cancelled"} else 1)
+            if mode in {"filesystem_error", "cleanup_failure"}:
+                assert "IsADirectoryError" in crawl_completed[0].error
+                assert str(completed_output if mode == "cleanup_failure" else output_dir) in crawl_completed[0].error
+                assert completed_output.is_dir()
             completed = await bus.filter(SnapshotCompletedEvent, child_of=root, past=True, future=False)
             assert len(completed) == (
                 2
-                if mode in {"two_snapshots", "setup_failure", "disabled_setup", "consumer_failure", "preparation_consumer_failure"}
+                if mode
+                in {
+                    "two_snapshots",
+                    "cleanup_failure",
+                    "setup_failure",
+                    "disabled_setup",
+                    "consumer_failure",
+                    "preparation_consumer_failure",
+                }
                 else 1
                 if mode == "preparation_failure"
                 else 0
@@ -231,7 +251,7 @@ def test_external_scheduler_uses_shared_crawl_lifecycle(tmp_path: Path, httpserv
                 assert len(failed) == 1
                 assert "IsADirectoryError" in failed[0].error and str(completed_output) in failed[0].error
                 assert all(event.error == "" for event in completed if event is not failed[0])
-            if mode in {"two_snapshots", "consumer_failure"}:
+            if mode in {"two_snapshots", "cleanup_failure", "consumer_failure"}:
                 for index in range(2):
                     assert (output_dir / str(index) / "title/title.txt").read_text().strip() == f"Queued article {index}"
             elif mode == "setup_failure":
