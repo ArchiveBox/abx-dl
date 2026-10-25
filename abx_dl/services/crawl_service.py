@@ -246,6 +246,7 @@ class CrawlService(BaseService):
             ),
         )
         started_processes: list[tuple[ProcessEvent, ProcessStartedEvent]] = []
+        cleanup_errors: list[Exception] = []
         for process_event in setup_process_events:
             started_process = await self.bus.find(
                 ProcessStartedEvent,
@@ -263,18 +264,29 @@ class CrawlService(BaseService):
                 future=False,
             )
             if completed_process is not None:
-                await _wait_for_process_completed(completed_process, event.event_timeout)
+                try:
+                    await _wait_for_process_completed(completed_process, event.event_timeout)
+                except Exception as error:
+                    # An exited hook's consumer failure must not prevent the
+                    # remaining crawl resources from receiving their stop.
+                    cleanup_errors.append(error)
                 continue
             if not aborting and not process_event.is_background:
-                await _wait_for_process_completed(
-                    await self.bus.find(
+                try:
+                    completed = await self.bus.find(
                         ProcessCompletedEvent,
                         child_of=process_event,
                         past=True,
                         future=event.event_timeout,
-                    ),
-                    event.event_timeout,
-                )
+                    )
+                    if completed is None:
+                        raise RuntimeError(f"Foreground hook {process_event.hook_name} did not complete")
+                    await _wait_for_process_completed(
+                        completed,
+                        event.event_timeout,
+                    )
+                except Exception as error:
+                    cleanup_errors.append(error)
                 continue
             started_processes.append((process_event, started_process))
         pending_kills = [
@@ -292,26 +304,53 @@ class CrawlService(BaseService):
 
         # await the killing of any setup hooks that should still be running
         if pending_kills:
-            await asyncio.gather(*(_run_event_now(pending_kill, pending_kill.event_timeout) for pending_kill in pending_kills))
+            kill_results = await asyncio.gather(
+                *(_run_event_now(pending_kill, pending_kill.event_timeout) for pending_kill in pending_kills),
+                return_exceptions=True,
+            )
+            for result in kill_results:
+                if isinstance(result, Exception):
+                    cleanup_errors.append(result)
+                elif isinstance(result, BaseException):
+                    raise result
 
         # await the final handling of any ProcessCompletedEvent listeners
         if started_processes:
-            await asyncio.gather(
-                *[
-                    _wait_for_process_completed(
-                        await self.bus.find(
-                            ProcessCompletedEvent,
-                            child_of=process_event,
-                            past=True,
-                            future=float(process_event.timeout) + 10.0,
-                        ),
-                        float(process_event.timeout) + 10.0,
+            completion_waiters = []
+            for process_event, _ in started_processes:
+                try:
+                    completed = await self.bus.find(
+                        ProcessCompletedEvent,
+                        child_of=process_event,
+                        past=True,
+                        future=float(process_event.timeout) + 10.0,
                     )
-                    for process_event, _ in started_processes
-                ],
-            )
+                    if completed is None:
+                        raise RuntimeError(f"Background hook {process_event.hook_name} did not complete")
+                    completion_waiters.append(
+                        _wait_for_process_completed(
+                            completed,
+                            float(process_event.timeout) + 10.0,
+                        ),
+                    )
+                except Exception as error:
+                    cleanup_errors.append(error)
+            completion_results = await asyncio.gather(*completion_waiters, return_exceptions=True)
+            for result in completion_results:
+                if isinstance(result, Exception):
+                    cleanup_errors.append(result)
+                elif isinstance(result, BaseException):
+                    raise result
 
-        await asyncio.to_thread(remove_empty_output_dirs, [self.output_dir / plugin.name for plugin, _hook in self.crawl_setup_hooks])
+        try:
+            await asyncio.to_thread(remove_empty_output_dirs, [self.output_dir / plugin.name for plugin, _hook in self.crawl_setup_hooks])
+        except Exception as error:
+            cleanup_errors.append(error)
+        if cleanup_errors:
+            error = cleanup_errors[0]
+            for later_error in cleanup_errors[1:]:
+                error.add_note(f"Crawl cleanup also failed: {later_error}")
+            raise error
 
     async def on_CrawlAbortEvent(self, event: CrawlAbortEvent) -> None:
         """Stop scheduling any further crawl work after a user abort."""

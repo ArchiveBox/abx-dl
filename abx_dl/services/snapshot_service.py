@@ -459,7 +459,7 @@ class SnapshotService(BaseService):
         url = self.url
         snapshot_id = self.snapshot.id
         output_dir = str(self.output_dir)
-        snapshot_failed = True
+        snapshot_error: BaseException | None = None
         stop_creating_output_dirs = asyncio.Event()
         creating_output_dirs: asyncio.Task[None] | None = None
         try:
@@ -486,14 +486,25 @@ class SnapshotService(BaseService):
                 # must still run so background recorders can preserve output.
                 if self.snapshot_max_size and sum(self._output_sizes.values()) >= self.snapshot_max_size:
                     break
-            snapshot_failed = False
+        except BaseException as error:
+            snapshot_error = error
         finally:
             # Settle before cleanup removes empty dirs, so no late mkdir can
             # recreate one. Stopping waits for at most one in-flight mkdir.
             stop_creating_output_dirs.set()
             if creating_output_dirs is not None:
-                await creating_output_dirs
-            if snapshot_failed:
+                try:
+                    await creating_output_dirs
+                except BaseException as error:
+                    # Directory preparation is not allowed to bypass recorder
+                    # shutdown, including when the owning task was cancelled.
+                    if snapshot_error is None or not isinstance(error, Exception):
+                        if snapshot_error is not None:
+                            error.add_note(f"Snapshot execution also failed: {snapshot_error}")
+                        snapshot_error = error
+                    else:
+                        snapshot_error.add_note(f"Output directory preparation also failed: {error}")
+            if snapshot_error is not None:
                 self._failed_snapshot_event_ids.add(event.event_id)
             cleanup_event = SnapshotCleanupEvent(
                 url=url,
@@ -504,8 +515,16 @@ class SnapshotService(BaseService):
             )
             try:
                 await _run_event_now(event.emit(cleanup_event), self.snapshot_cleanup_phase_timeout)
+            except BaseException as error:
+                if snapshot_error is None or not isinstance(error, Exception):
+                    if snapshot_error is not None:
+                        error.add_note(f"Snapshot execution also failed: {snapshot_error}")
+                    raise
+                snapshot_error.add_note(f"Snapshot cleanup also failed: {error}")
             finally:
                 self._failed_snapshot_event_ids.discard(event.event_id)
+        if snapshot_error is not None:
+            raise snapshot_error
 
     async def on_SnapshotCleanupEvent(self, event: SnapshotCleanupEvent) -> None:
         """SIGTERM all background snapshot hooks so they can flush and exit.
@@ -592,6 +611,7 @@ class SnapshotService(BaseService):
             where=lambda candidate: candidate.is_background and (candidate.plugin_name, candidate.hook_name) in background_hook_keys,
         )
         started_processes: list[tuple[ProcessEvent, ProcessStartedEvent]] = []
+        cleanup_errors: list[Exception] = []
         for process_event in background_process_events:
             started_process = await self.bus.find(
                 ProcessStartedEvent,
@@ -610,7 +630,12 @@ class SnapshotService(BaseService):
                 future=False,
             )
             if completed_process is not None:
-                await _wait_for_process_completed(completed_process, event.event_timeout)
+                try:
+                    await _wait_for_process_completed(completed_process, event.event_timeout)
+                except Exception as error:
+                    # The process is already gone; a failed result consumer
+                    # must not leave unrelated recorders or their browser alive.
+                    cleanup_errors.append(error)
                 continue
             started_processes.append((process_event, started_process))
         # Dependents must flush before the resources they use are stopped.
@@ -639,30 +664,58 @@ class SnapshotService(BaseService):
                 for _, started_process in stopping
             ]
             if pending_kills:
-                await asyncio.gather(
+                kill_results = await asyncio.gather(
                     *(_run_event_now(pending_kill, pending_kill.event_timeout) for pending_kill in pending_kills),
+                    return_exceptions=True,
                 )
+                for result in kill_results:
+                    if isinstance(result, Exception):
+                        cleanup_errors.append(result)
+                    elif isinstance(result, BaseException):
+                        raise result
             if stopping:
-                await asyncio.gather(
-                    *[
-                        _wait_for_process_completed(
-                            await self.bus.find(
-                                ProcessCompletedEvent,
-                                child_of=process_event,
-                                past=True,
-                                future=grace_by_hook[(process_event.plugin_name, process_event.hook_name)] + 10.0,
-                            ),
-                            grace_by_hook[(process_event.plugin_name, process_event.hook_name)] + 10.0,
+                completion_waiters = []
+                for process_event, _ in stopping:
+                    try:
+                        completed = await self.bus.find(
+                            ProcessCompletedEvent,
+                            child_of=process_event,
+                            past=True,
+                            future=grace_by_hook[(process_event.plugin_name, process_event.hook_name)] + 10.0,
                         )
-                        for process_event, _ in stopping
-                    ],
-                )
+                        if completed is None:
+                            raise RuntimeError(f"Background hook {process_event.hook_name} did not complete")
+                        completion_waiters.append(
+                            _wait_for_process_completed(
+                                completed,
+                                grace_by_hook[(process_event.plugin_name, process_event.hook_name)] + 10.0,
+                            ),
+                        )
+                    except Exception as error:
+                        cleanup_errors.append(error)
+                completion_results = await asyncio.gather(*completion_waiters, return_exceptions=True)
+                for result in completion_results:
+                    if isinstance(result, Exception):
+                        cleanup_errors.append(result)
+                    elif isinstance(result, BaseException):
+                        raise result
             shutdown_order.done(*ready)
+        if event.finalize_snapshot:
+            # Even a failed result consumer must not leave unused plugin dirs.
+            try:
+                await asyncio.to_thread(remove_empty_output_dirs, [self.output_dir / plugin.name for plugin, _hook in self.hooks])
+            except Exception as error:
+                cleanup_errors.append(error)
+        if cleanup_errors:
+            # Preserve failure visibility, but only after every dependency wave
+            # has had its chance to flush and stop. No completion means success
+            # cannot be inferred from a partly persisted capture.
+            error = cleanup_errors[0]
+            for later_error in cleanup_errors[1:]:
+                error.add_note(f"Snapshot cleanup also failed: {later_error}")
+            raise error
         if not event.finalize_snapshot:
             return
-        # Also after a failed snapshot: dirs are created ahead of their hooks,
-        # so the hooks a failure skipped would otherwise leave empty dirs.
-        await asyncio.to_thread(remove_empty_output_dirs, [self.output_dir / plugin.name for plugin, _hook in self.hooks])
         if root_snapshot_event.event_id in self._failed_snapshot_event_ids:
             return
         completed_event = SnapshotCompletedEvent(
