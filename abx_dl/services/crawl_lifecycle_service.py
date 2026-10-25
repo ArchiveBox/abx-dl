@@ -1,4 +1,4 @@
-"""Standalone crawl lifecycle event sequencing."""
+"""Shared crawl lifecycle event sequencing."""
 
 from collections.abc import Awaitable, Callable
 from inspect import isawaitable
@@ -14,6 +14,7 @@ from ..events import (
     CrawlEvent,
     CrawlStartEvent,
     CrawlSetupEvent,
+    ProcessCompletedEvent,
     SnapshotCompletedEvent,
     SnapshotEvent,
     slow_warning_timeout,
@@ -29,10 +30,14 @@ async def _run_event_now(event: BaseEvent, timeout: float | None = None) -> Base
     return event
 
 
-class CrawlLifecycleService(BaseService):
-    """Expand a root ``CrawlEvent`` into the standalone lifecycle phases."""
+class SnapshotAttemptError(RuntimeError):
+    """Capture attempts failed after independent work and cleanup finished."""
 
-    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [CrawlEvent, CrawlAbortEvent, CrawlStartEvent]
+
+class CrawlLifecycleService(BaseService):
+    """Own crawl phases; embedders may supply only the snapshot work scheduler."""
+
+    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [CrawlEvent, CrawlAbortEvent, CrawlStartEvent, ProcessCompletedEvent]
     EMITS: ClassVar[list[type[BaseEvent]]] = [
         CrawlSetupEvent,
         CrawlStartEvent,
@@ -52,6 +57,7 @@ class CrawlLifecycleService(BaseService):
         snapshot_phase_timeout: float = 300.0,
         crawl_cleanup_phase_timeout: float = 300.0,
         abort_requested: Callable[[], bool | Awaitable[bool]] | None = None,
+        run_snapshots: Callable[[CrawlStartEvent], Awaitable[None]] | None = None,
     ) -> None:
         self.url = url
         self.snapshot = snapshot
@@ -61,12 +67,17 @@ class CrawlLifecycleService(BaseService):
         self.crawl_cleanup_phase_timeout = crawl_cleanup_phase_timeout
         self.abort_requested = False
         self.abort_requested_callback = abort_requested
+        self.run_snapshots = run_snapshots
+        self._execution_interrupted = False
         self._active_crawl_event_ids: set[str] = set()
         self._completed_crawl_event_ids: set[str] = set()
+        self._failed_snapshot_ids: dict[str, set[str]] = {}
+        self._failed_setup_hooks: dict[str, set[str]] = {}
         super().__init__(bus)
         self.bus.on(CrawlEvent, self.on_CrawlEvent)
         self.bus.on(CrawlAbortEvent, self.on_CrawlAbortEvent)
         self.bus.on(CrawlStartEvent, self.on_CrawlStartEvent)
+        self.bus.on(ProcessCompletedEvent, self.on_ProcessCompletedEvent)
 
     async def should_abort(self) -> bool:
         if self.abort_requested:
@@ -87,26 +98,31 @@ class CrawlLifecycleService(BaseService):
         if event.event_id in self._active_crawl_event_ids or event.event_id in self._completed_crawl_event_ids:
             return
         self._active_crawl_event_ids.add(event.event_id)
+        self._failed_snapshot_ids[event.event_id] = set()
+        self._failed_setup_hooks[event.event_id] = set()
         try:
             await self._run_root_crawl_event(event)
         finally:
             self._active_crawl_event_ids.discard(event.event_id)
             self._completed_crawl_event_ids.add(event.event_id)
+            self._failed_snapshot_ids.pop(event.event_id, None)
+            self._failed_setup_hooks.pop(event.event_id, None)
 
     async def _run_root_crawl_event(self, event: CrawlEvent) -> None:
         try:
-            await _run_event_now(
-                event.emit(
-                    CrawlSetupEvent(
-                        url=self.url,
-                        snapshot_id=self.snapshot.id,
-                        output_dir=str(self.output_dir),
-                        event_timeout=self.crawl_setup_phase_timeout,
-                        event_handler_slow_timeout=slow_warning_timeout(self.crawl_setup_phase_timeout),
+            if not await self.should_abort():
+                await _run_event_now(
+                    event.emit(
+                        CrawlSetupEvent(
+                            url=self.url,
+                            snapshot_id=self.snapshot.id,
+                            output_dir=str(self.output_dir),
+                            event_timeout=self.crawl_setup_phase_timeout,
+                            event_handler_slow_timeout=slow_warning_timeout(self.crawl_setup_phase_timeout),
+                        ),
                     ),
-                ),
-                self.crawl_setup_phase_timeout,
-            )
+                    self.crawl_setup_phase_timeout,
+                )
             if not await self.should_abort():
                 await _run_event_now(
                     event.emit(
@@ -127,6 +143,10 @@ class CrawlLifecycleService(BaseService):
                 phase_error.add_note(f"Crawl cleanup also failed: {cleanup_error}")
             raise
         await self._run_cleanup(event)
+        # A takeover relinquishes execution to another owner. Explicit user
+        # abort still finishes this crawl's lifecycle after resources stop.
+        if self._execution_interrupted:
+            return
         await _run_event_now(
             event.emit(
                 CrawlCompletedEvent(
@@ -137,6 +157,22 @@ class CrawlLifecycleService(BaseService):
             ),
             CrawlCompletedEvent.model_fields["event_timeout"].default,
         )
+        failed_snapshot_ids = self._failed_snapshot_ids[event.event_id]
+        failure: RuntimeError | None = None
+        if failed_snapshot_ids:
+            failure = SnapshotAttemptError(
+                f"{len(failed_snapshot_ids)} snapshot attempt(s) failed: {', '.join(sorted(failed_snapshot_ids))}. "
+                "See hook completion records for the original errors.",
+            )
+        failed_setup_hooks = self._failed_setup_hooks[event.event_id]
+        if failed_setup_hooks:
+            setup_error = "; ".join(f"Crawl setup hook {hook} failed" for hook in sorted(failed_setup_hooks))
+            if failure is None:
+                failure = RuntimeError(setup_error)
+            else:
+                failure.add_note(setup_error)
+        if failure is not None:
+            raise failure
 
     async def _run_cleanup(self, event: CrawlEvent) -> None:
         await _run_event_now(
@@ -154,6 +190,12 @@ class CrawlLifecycleService(BaseService):
 
     async def on_CrawlStartEvent(self, event: CrawlStartEvent) -> None:
         if event.output_dir != str(self.output_dir) or event.snapshot_id != self.snapshot.id or await self.should_abort():
+            return
+        if self.run_snapshots is not None:
+            # Database-backed callers may admit many snapshots, but must await
+            # and drain their admitted work (also on failure) before returning.
+            # Setup, cleanup and terminal events remain owned by this service.
+            await self.run_snapshots(event)
             return
         snapshot_event = event.emit(
             SnapshotEvent(
@@ -177,3 +219,43 @@ class CrawlLifecycleService(BaseService):
 
     async def on_CrawlAbortEvent(self, event: CrawlAbortEvent) -> None:
         self.abort_requested = True
+        self._execution_interrupted = self._execution_interrupted or not event.user_initiated
+
+    async def on_ProcessCompletedEvent(self, event: ProcessCompletedEvent) -> None:
+        if event.status != "failed" or event.cancelled:
+            return
+        crawl = await self.bus.find(
+            CrawlEvent,
+            past=True,
+            future=False,
+            where=lambda candidate: candidate.event_id in self._active_crawl_event_ids and self.bus.event_is_child_of(event, candidate),
+        )
+        if crawl is None:
+            return
+        setup = await self.bus.find(
+            CrawlSetupEvent,
+            past=True,
+            future=False,
+            where=lambda candidate: self.bus.event_is_child_of(event, candidate),
+        )
+        if setup is not None:
+            # Only hooks that actually ran can fail setup. A catalog scan would
+            # wait for deliberately disabled hooks and cannot distinguish them
+            # from missing work. Optional behavior belongs in the hook's exit.
+            if not event.is_background:
+                self._failed_setup_hooks[crawl.event_id].add(f"{event.plugin_name}:{event.hook_name}")
+            return
+        if event.pid:
+            return
+        snapshot = await self.bus.find(
+            SnapshotEvent,
+            past=True,
+            future=False,
+            where=lambda candidate: self.bus.event_is_child_of(event, candidate),
+        )
+        if snapshot is not None:
+            # Keep only failure IDs while their real completion facts are live:
+            # database embedders may expire projected snapshot history. Report
+            # preparation errors after all independent work, never ordinary
+            # provider exits or user cancellations as orchestration failures.
+            self._failed_snapshot_ids[crawl.event_id].add(snapshot.snapshot_id)

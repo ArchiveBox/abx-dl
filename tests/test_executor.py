@@ -42,6 +42,7 @@ from abx_dl.services.archive_result_service import ArchiveResultService
 from abx_dl.services.binary_service import PluginBinaryEnvService
 from abx_dl.services.base import wait_for_process_ready
 from abx_dl.services.crawl_service import CrawlService
+from abx_dl.services.crawl_lifecycle_service import SnapshotAttemptError
 from abx_dl.services.process_service import ProcessService, _process_command
 from abx_dl.services.snapshot_service import SnapshotService
 from abxpkg.binary_service import BinaryEvent, BinaryRequestEvent, BinaryService
@@ -1162,7 +1163,11 @@ def test_plugin_directory_failure_preserves_other_hooks_and_hashes(tmp_path: Pat
     blocked.write_bytes(b"existing output must survive")
     selected = PluginCatalog.discover().select(["parse_html_urls", "parse_txt_urls", "hashes"])
 
-    results = _run_download(source.as_uri(), selected, output_dir, auto_install=True)
+    bus = create_bus(total_timeout=120.0, name=f"preparation_failure_{tmp_path.name}")
+    results: list[ArchiveResultEvent] = []
+    bus.on(ArchiveResultEvent, lambda event: results.append(event))
+    with pytest.raises(SnapshotAttemptError, match="1 snapshot attempt\\(s\\) failed"):
+        _run_download(source.as_uri(), selected, output_dir, auto_install=True, bus=bus)
 
     failed = next(result for result in results if result.plugin == "parse_html_urls")
     assert failed.status == "failed"

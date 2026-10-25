@@ -109,6 +109,23 @@ Standalone `download()` attaches both `CrawlService` (plugin crawl hooks) and
 listener suites whose behavior they want and dispatch the corresponding typed
 events directly.
 
+For database-backed queues, pass an async `run_snapshots(CrawlStartEvent)`
+callback to `CrawlLifecycleService`. The callback admits and awaits snapshot
+work, draining already-admitted tasks in its `finally` block if scheduling
+fails. The service still owns setup, cleanup, and completion; embedders must
+not duplicate those phases. Omitting the callback runs the usual single
+snapshot. An explicit user abort completes after cleanup; an execution
+takeover (`CrawlAbortEvent(user_initiated=False)`) leaves completion to its new
+owner.
+
+Hook preparation failures (before a process starts) retain their failed result
+and allow independent hooks to finish. After cleanup and completion consumers
+finish, the crawl raises `SnapshotAttemptError` so CLI callers do not report a
+false success. Ordinary extractor exits remain per-hook outcomes.
+Failed foreground crawl-setup hooks are likewise reported after independent
+work finishes; optional setup hooks express best-effort behavior in their own
+exit status.
+
 `parse_input(source_text, catalog, output_dir)` is the framework-free import
 path for pasted text and bookmark/feed exports. It writes
 `staticfile/stdin.txt`, runs only plugins declaring
