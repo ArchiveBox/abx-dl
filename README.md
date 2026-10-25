@@ -118,6 +118,23 @@ snapshot. An explicit user abort completes after cleanup; an execution
 takeover (`CrawlAbortEvent(user_initiated=False)`) leaves completion to its new
 owner.
 
+`SnapshotCompletedEvent` means an attempt has settled, not that every plugin
+succeeded. Its `error` contains a handled execution or persistence failure;
+existing hook failures retain their own ArchiveResults. Completion is emitted
+only after actual hook processes stop, and never for task cancellation or
+ownership takeover. A handled snapshot failure allows independent snapshots
+to finish and produces a nonzero final crawl outcome. `SnapshotCleanupEvent.error`
+carries the owner's failure context to later final-metadata consumers before
+the terminal event is emitted. Preparation consumers run before the runtime
+owner on the serial `SnapshotEvent`; a recorded preparation exception prevents
+hooks from starting. Final-metadata consumers register after runtime cleanup
+on serial `SnapshotCleanupEvent`, and act only when `finalize_snapshot=True`.
+
+Interactive Ctrl+C remains a live-session control: it can interrupt a hook,
+wait for the user's choice, then retry that hook, skip it, or abort the capture.
+That in-memory prompt does not persist a paused snapshot. A dead or replaced
+owner cannot continue a half-finished snapshot; a later attempt starts fresh.
+
 Hook preparation failures (before a process starts) retain their failed result
 and allow independent hooks to finish. After cleanup and completion consumers
 finish, the crawl raises `SnapshotAttemptError` so CLI callers do not report a

@@ -37,7 +37,13 @@ class SnapshotAttemptError(RuntimeError):
 class CrawlLifecycleService(BaseService):
     """Own crawl phases; embedders may supply only the snapshot work scheduler."""
 
-    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [CrawlEvent, CrawlAbortEvent, CrawlStartEvent, ProcessCompletedEvent]
+    LISTENS_TO: ClassVar[list[type[BaseEvent]]] = [
+        CrawlEvent,
+        CrawlAbortEvent,
+        CrawlStartEvent,
+        ProcessCompletedEvent,
+        SnapshotCompletedEvent,
+    ]
     EMITS: ClassVar[list[type[BaseEvent]]] = [
         CrawlSetupEvent,
         CrawlStartEvent,
@@ -71,13 +77,14 @@ class CrawlLifecycleService(BaseService):
         self._execution_interrupted = False
         self._active_crawl_event_ids: set[str] = set()
         self._completed_crawl_event_ids: set[str] = set()
-        self._failed_snapshot_ids: dict[str, set[str]] = {}
+        self._failed_snapshots: dict[str, dict[str, str]] = {}
         self._failed_setup_hooks: dict[str, set[str]] = {}
         super().__init__(bus)
         self.bus.on(CrawlEvent, self.on_CrawlEvent)
         self.bus.on(CrawlAbortEvent, self.on_CrawlAbortEvent)
         self.bus.on(CrawlStartEvent, self.on_CrawlStartEvent)
         self.bus.on(ProcessCompletedEvent, self.on_ProcessCompletedEvent)
+        self.bus.on(SnapshotCompletedEvent, self.on_SnapshotCompletedEvent)
 
     async def should_abort(self) -> bool:
         if self.abort_requested:
@@ -98,14 +105,14 @@ class CrawlLifecycleService(BaseService):
         if event.event_id in self._active_crawl_event_ids or event.event_id in self._completed_crawl_event_ids:
             return
         self._active_crawl_event_ids.add(event.event_id)
-        self._failed_snapshot_ids[event.event_id] = set()
+        self._failed_snapshots[event.event_id] = {}
         self._failed_setup_hooks[event.event_id] = set()
         try:
             await self._run_root_crawl_event(event)
         finally:
             self._active_crawl_event_ids.discard(event.event_id)
             self._completed_crawl_event_ids.add(event.event_id)
-            self._failed_snapshot_ids.pop(event.event_id, None)
+            self._failed_snapshots.pop(event.event_id, None)
             self._failed_setup_hooks.pop(event.event_id, None)
 
     async def _run_root_crawl_event(self, event: CrawlEvent) -> None:
@@ -157,13 +164,15 @@ class CrawlLifecycleService(BaseService):
             ),
             CrawlCompletedEvent.model_fields["event_timeout"].default,
         )
-        failed_snapshot_ids = self._failed_snapshot_ids[event.event_id]
+        failed_snapshots = self._failed_snapshots[event.event_id]
         failure: RuntimeError | None = None
-        if failed_snapshot_ids:
+        if failed_snapshots:
             failure = SnapshotAttemptError(
-                f"{len(failed_snapshot_ids)} snapshot attempt(s) failed: {', '.join(sorted(failed_snapshot_ids))}. "
+                f"{len(failed_snapshots)} snapshot attempt(s) failed: {', '.join(sorted(failed_snapshots))}. "
                 "See hook completion records for the original errors.",
             )
+            for snapshot_id, error in failed_snapshots.items():
+                failure.add_note(f"Snapshot {snapshot_id}: {error}")
         failed_setup_hooks = self._failed_setup_hooks[event.event_id]
         if failed_setup_hooks:
             setup_error = "; ".join(f"Crawl setup hook {hook} failed" for hook in sorted(failed_setup_hooks))
@@ -207,15 +216,25 @@ class CrawlLifecycleService(BaseService):
                 event_handler_slow_timeout=slow_warning_timeout(event.event_timeout),
             ),
         )
-        await _run_event_now(snapshot_event, event.event_timeout)
+        await snapshot_event.now(timeout=event.event_timeout)
+        await snapshot_event.wait(timeout=event.event_timeout)
+        if self._execution_interrupted:
+            return
         completed_snapshot = await self.bus.find(
             SnapshotCompletedEvent,
             child_of=snapshot_event,
             past=True,
-            future=event.event_timeout,
+            future=False,
         )
         if completed_snapshot is None:
+            await snapshot_event.event_results_list()
             raise RuntimeError(f"Snapshot {self.snapshot.id} did not complete")
+        await completed_snapshot.wait(timeout=event.event_timeout)
+        await completed_snapshot.event_results_list()
+        # Earlier preparation-handler exceptions are already represented by a
+        # delivered terminal failure. Unhandled delivery errors still propagate.
+        if not completed_snapshot.error:
+            await snapshot_event.event_results_list()
 
     async def on_CrawlAbortEvent(self, event: CrawlAbortEvent) -> None:
         self.abort_requested = True
@@ -254,8 +273,23 @@ class CrawlLifecycleService(BaseService):
             where=lambda candidate: self.bus.event_is_child_of(event, candidate),
         )
         if snapshot is not None:
-            # Keep only failure IDs while their real completion facts are live:
+            # Keep failure IDs and diagnostics while their completion facts are live:
             # database embedders may expire projected snapshot history. Report
             # preparation errors after all independent work, never ordinary
             # provider exits or user cancellations as orchestration failures.
-            self._failed_snapshot_ids[crawl.event_id].add(snapshot.snapshot_id)
+            self._failed_snapshots[crawl.event_id].setdefault(snapshot.snapshot_id, event.stderr)
+
+    async def on_SnapshotCompletedEvent(self, event: SnapshotCompletedEvent) -> None:
+        if not event.error:
+            return
+        crawl = await self.bus.find(
+            CrawlEvent,
+            past=True,
+            future=False,
+            where=lambda candidate: candidate.event_id in self._active_crawl_event_ids and self.bus.event_is_child_of(event, candidate),
+        )
+        if crawl is not None:
+            # Keep the terminal failure while its fact is live: embedders may
+            # expire projected history before the queue finishes. Ordinary
+            # failed hook results already have their own per-plugin semantics.
+            self._failed_snapshots[crawl.event_id][event.snapshot_id] = event.error

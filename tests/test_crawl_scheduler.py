@@ -27,7 +27,7 @@ from abx_dl.events import (
     SnapshotCompletedEvent,
     SnapshotEvent,
 )
-from abx_dl.models import Snapshot
+from abx_dl.models import Snapshot, write_jsonl
 from abx_dl.orchestrator import create_bus, download, install_plugins
 from abx_dl.services.archive_result_service import ArchiveResultService
 from abx_dl.services.binary_service import PluginBinaryEnvService
@@ -49,6 +49,8 @@ from abx_dl.services.snapshot_service import SnapshotService
         "setup_failure",
         "preparation_failure",
         "disabled_setup",
+        "consumer_failure",
+        "preparation_consumer_failure",
     ],
 )
 def test_external_scheduler_uses_shared_crawl_lifecycle(tmp_path: Path, httpserver: HTTPServer, mode: str) -> None:
@@ -67,6 +69,26 @@ def test_external_scheduler_uses_shared_crawl_lifecycle(tmp_path: Path, httpserv
         config["CHROME_ENABLED"] = False
     bus = create_bus(total_timeout=120.0, name=f"external_scheduler_{mode}_{tmp_path.name}")
     callback_events: list[CrawlStartEvent] = []
+    completed_output = tmp_path / "process-completed.json"
+    completed_output.mkdir()
+
+    async def persist_completed_process(event: ProcessCompletedEvent) -> None:
+        if mode == "consumer_failure" and event.output_dir == str(output_dir / "0/title"):
+            # Actual first-attempt persistence failure must remain visible while
+            # the next independent snapshot still saves its own valid article.
+            completed_output.write_text(event.model_dump_json())
+
+    bus.on(ProcessCompletedEvent, persist_completed_process)
+
+    async def write_snapshot_manifest(event: SnapshotEvent) -> None:
+        if mode == "preparation_consumer_failure":
+            snapshot_dir = Path(event.output_dir)
+            snapshot_dir.mkdir(parents=True, exist_ok=True)
+            if snapshot_dir.name == "0":
+                (snapshot_dir / "index.jsonl").mkdir()
+            write_jsonl(snapshot_dir / "index.jsonl", Snapshot(id=event.snapshot_id, url=event.url), also_print=False)
+
+    bus.on(SnapshotEvent, write_snapshot_manifest)
 
     async def lose_browser_control_file(event: ProcessEvent) -> None:
         if mode == "setup_failure" and event.hook_name == "on_CrawlSetup__91_chrome_wait":
@@ -121,7 +143,12 @@ def test_external_scheduler_uses_shared_crawl_lifecycle(tmp_path: Path, httpserv
                     )
                     await snapshot_event.now()
                     await snapshot_event.wait()
-                    await snapshot_event.event_results_list()
+                    terminal = await bus.find(SnapshotCompletedEvent, child_of=snapshot_event, past=True, future=False)
+                    assert terminal is not None
+                    await terminal.wait()
+                    await terminal.event_results_list()
+                    if not terminal.error:
+                        await snapshot_event.event_results_list()
                     if mode == "preparation_failure" and index == 0:
                         # Match a database embedder releasing already-projected
                         # history; final CLI failure must survive that release.
@@ -168,7 +195,7 @@ def test_external_scheduler_uses_shared_crawl_lifecycle(tmp_path: Path, httpserv
             elif mode == "setup_failure":
                 with pytest.raises(RuntimeError, match="Crawl setup hook chrome:on_CrawlSetup__91_chrome_wait failed"):
                     await root.event_results_list()
-            elif mode == "preparation_failure":
+            elif mode in {"preparation_failure", "consumer_failure", "preparation_consumer_failure"}:
                 with pytest.raises(SnapshotAttemptError, match="1 snapshot attempt\\(s\\) failed"):
                     await root.event_results_list()
             else:
@@ -185,9 +212,26 @@ def test_external_scheduler_uses_shared_crawl_lifecycle(tmp_path: Path, httpserv
             )
             completed = await bus.filter(SnapshotCompletedEvent, child_of=root, past=True, future=False)
             assert len(completed) == (
-                2 if mode in {"two_snapshots", "setup_failure", "disabled_setup"} else 1 if mode == "preparation_failure" else 0
+                2
+                if mode in {"two_snapshots", "setup_failure", "disabled_setup", "consumer_failure", "preparation_consumer_failure"}
+                else 1
+                if mode == "preparation_failure"
+                else 0
             )
-            if mode == "two_snapshots":
+            if mode == "preparation_consumer_failure":
+                failed = [event for event in completed if event.error]
+                assert len(failed) == 1
+                assert "IsADirectoryError" in failed[0].error and "index.jsonl" in failed[0].error
+                assert (output_dir / "0/index.jsonl").is_dir()
+                assert not (output_dir / "0/title").exists()
+                assert all(not event.output_dir.startswith(str(output_dir / "0") + "/") for event in started)
+                assert (output_dir / "1/title/title.txt").read_text().strip() == "Queued article 1"
+            if mode == "consumer_failure":
+                failed = [event for event in completed if event.error]
+                assert len(failed) == 1
+                assert "IsADirectoryError" in failed[0].error and str(completed_output) in failed[0].error
+                assert all(event.error == "" for event in completed if event is not failed[0])
+            if mode in {"two_snapshots", "consumer_failure"}:
                 for index in range(2):
                     assert (output_dir / str(index) / "title/title.txt").read_text().strip() == f"Queued article {index}"
             elif mode == "setup_failure":

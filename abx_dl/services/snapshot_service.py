@@ -5,6 +5,7 @@ from graphlib import TopologicalSorter
 from datetime import UTC, datetime
 import json
 import os
+import traceback
 from inspect import isawaitable
 from pathlib import Path
 from typing import ClassVar
@@ -162,7 +163,7 @@ class SnapshotService(BaseService):
         self._snapshot_by_process: dict[str, SnapshotEvent] = {}
         self._active_snapshot_event_ids: set[str] = set()
         self._completed_snapshot_event_ids: set[str] = set()
-        self._failed_snapshot_event_ids: set[str] = set()
+        self._execution_interrupted = False
         super().__init__(bus)
         self._handler_registrations = [
             (ArchiveResultEvent, self.bus.on(ArchiveResultEvent, self.on_ArchiveResultEvent)),
@@ -463,6 +464,12 @@ class SnapshotService(BaseService):
         stop_creating_output_dirs = asyncio.Event()
         creating_output_dirs: asyncio.Task[None] | None = None
         try:
+            # SnapshotEvent handlers are serial. An earlier real preparation
+            # consumer may have failed; the owner must terminalize that failure
+            # without launching hooks against incomplete inputs.
+            for result in event.event_results.values():
+                if result.error is not None:
+                    raise result.error
             # Only hooks that config lets run get a dir, matching the per-hook
             # check, so disabled plugins never cost a remote mkdir. Dirs left
             # unused by an abort or size limit are removed by final cleanup.
@@ -504,12 +511,11 @@ class SnapshotService(BaseService):
                         snapshot_error = error
                     else:
                         snapshot_error.add_note(f"Output directory preparation also failed: {error}")
-            if snapshot_error is not None:
-                self._failed_snapshot_event_ids.add(event.event_id)
             cleanup_event = SnapshotCleanupEvent(
                 url=url,
                 snapshot_id=snapshot_id,
                 output_dir=output_dir,
+                error="".join(traceback.format_exception(snapshot_error)) if isinstance(snapshot_error, Exception) else "",
                 event_timeout=self.snapshot_cleanup_phase_timeout,
                 event_handler_slow_timeout=slow_warning_timeout(self.snapshot_cleanup_phase_timeout),
             )
@@ -519,12 +525,43 @@ class SnapshotService(BaseService):
                 if snapshot_error is None or not isinstance(error, Exception):
                     if snapshot_error is not None:
                         error.add_note(f"Snapshot execution also failed: {snapshot_error}")
-                    raise
-                snapshot_error.add_note(f"Snapshot cleanup also failed: {error}")
-            finally:
-                self._failed_snapshot_event_ids.discard(event.event_id)
-        if snapshot_error is not None:
+                    snapshot_error = error
+                else:
+                    snapshot_error.add_note(f"Snapshot cleanup also failed: {error}")
+        if snapshot_error is not None and not isinstance(snapshot_error, Exception):
             raise snapshot_error
+        if self._execution_interrupted:
+            return
+        started_processes = await self.bus.filter(ProcessStartedEvent, child_of=event, past=True, future=False)
+        if any(started.subprocess.returncode is None for started in started_processes):
+            # A handled consumer error may finish an attempt, but a still-live
+            # writer cannot: its output is not final and shutdown is incomplete.
+            if snapshot_error is not None:
+                raise snapshot_error
+            raise RuntimeError(f"Snapshot {snapshot_id} still has running hook processes")
+        error = ""
+        if snapshot_error is not None:
+            # Cleanup can fail in several real consumers. Standard traceback
+            # formatting retains every ExceptionGroup member and original note;
+            # str(group) alone would hide the actual storage failures.
+            error = "".join(traceback.format_exception(snapshot_error))
+        # Completion describes a settled attempt, not successful extraction.
+        # Publish its actual failure after all recorders stop, so consumers can
+        # terminalize that attempt while independent queued work continues.
+        await _run_event_now(
+            event.emit(
+                SnapshotCompletedEvent(
+                    url=url,
+                    snapshot_id=snapshot_id,
+                    output_dir=output_dir,
+                    error=error,
+                    event_timeout=self.snapshot_cleanup_phase_timeout,
+                    event_handler_timeout=self.snapshot_cleanup_phase_timeout,
+                    event_handler_slow_timeout=slow_warning_timeout(self.snapshot_cleanup_phase_timeout),
+                ),
+            ),
+            self.snapshot_cleanup_phase_timeout,
+        )
 
     async def on_SnapshotCleanupEvent(self, event: SnapshotCleanupEvent) -> None:
         """SIGTERM all background snapshot hooks so they can flush and exit.
@@ -707,27 +744,19 @@ class SnapshotService(BaseService):
             except Exception as error:
                 cleanup_errors.append(error)
         if cleanup_errors:
-            # Preserve failure visibility, but only after every dependency wave
-            # has had its chance to flush and stop. No completion means success
-            # cannot be inferred from a partly persisted capture.
+            # Report failure only after every dependency wave has had its
+            # chance to flush and stop. The snapshot owner then distinguishes
+            # a settled failed attempt from an interrupted, still-live writer.
             error = cleanup_errors[0]
             for later_error in cleanup_errors[1:]:
                 error.add_note(f"Snapshot cleanup also failed: {later_error}")
+            # Later serial cleanup consumers prepare final metadata. They need
+            # the owner's failure context before writing that metadata; the
+            # terminal fact itself is emitted only after all consumers settle.
+            event.error = "\n".join(filter(None, [event.error, "".join(traceback.format_exception(error))]))
             raise error
-        if not event.finalize_snapshot:
-            return
-        if root_snapshot_event.event_id in self._failed_snapshot_event_ids:
-            return
-        completed_event = SnapshotCompletedEvent(
-            url=event.url,
-            snapshot_id=event.snapshot_id,
-            output_dir=event.output_dir,
-            event_timeout=event.event_timeout,
-            event_handler_timeout=event.event_timeout,
-            event_handler_slow_timeout=slow_warning_timeout(event.event_timeout),
-        )
-        root_snapshot_event.emit(completed_event)
 
     async def on_CrawlAbortEvent(self, event: CrawlAbortEvent) -> None:
         """Stop scheduling any further snapshot work after a user abort."""
         self.abort_requested = True
+        self._execution_interrupted = self._execution_interrupted or not event.user_initiated

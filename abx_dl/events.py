@@ -218,19 +218,25 @@ class SnapshotCleanupEvent(BaseEvent):
     finalize_snapshot=False to flush producers without marking the snapshot done.
     """
 
+    # The owner stops recorders before later consumers publish final metadata;
+    # this phase ordering must not depend on an embedder's bus-wide default.
+    event_handler_concurrency: EventHandlerConcurrencyMode | None = EventHandlerConcurrencyMode.SERIAL
+
     url: str
     snapshot_id: str
     output_dir: str
+    error: str = ""
     finalize_snapshot: bool = True
     event_timeout: float | None = 30.0
 
 
 class SnapshotCompletedEvent(BaseEvent):
-    """Informational: the snapshot phase has finished."""
+    """Fact: the attempt has finished, including a handled execution failure."""
 
     url: str
     snapshot_id: str
     output_dir: str
+    error: str = ""
     event_timeout: float | None = 10.0
 
 
