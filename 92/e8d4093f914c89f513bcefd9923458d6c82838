@@ -1,0 +1,28 @@
+tests/test_crawl_scheduler.py
+  s_10bc94d001be49::t_eaf1521cdb1f93 45,84-91,114,198,219-224,228
+  s_10bc94d001be49::t_737be09fa56d4b 229-236,254
+abx_dl/services/crawl_lifecycle_service.py
+  s_10bc94d001be49::t_64599afff54d8c 7,19,121,150-161,166-172,175,180-184,192-211
+abx_dl/events.py
+  s_10bc94d001be49::t_64599afff54d8c 139,144
+README.md
+  s_10bc94d001be49::t_64599afff54d8c 133-137
+tests/test_cleanup_failures.py
+  s_10bc94d001be49::t_eaf1521cdb1f93 87-89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "92e8d4093f914c89f513bcefd9923458d6c82838",
+  "prompts": {},
+  "sessions": {
+    "s_10bc94d001be49": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11f62-2c55-7051-a677-585a21b42fb4",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
