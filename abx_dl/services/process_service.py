@@ -106,6 +106,43 @@ class _OutputStreamState:
     stdout_lines: list[str] = field(default_factory=list)
     pending_line: str = ""
     stop_requested: asyncio.Event = field(default_factory=asyncio.Event)
+    memory_error: str = ""
+
+
+def _enforce_memory_limit(event: ProcessStartedEvent, limit: int) -> str:
+    """Best-effort bound for an owned hook tree, not an OS allocation limit."""
+    if not event.pid or event.subprocess.returncode is not None:
+        return ""
+    # The live subprocess handle and start-time PID file establish ownership.
+    # Its argv legitimately changes while abxpkg execs the hook interpreter.
+    if not validate_pid_file(event.pid_file, []):
+        return ""
+    try:
+        process = psutil.Process(event.pid)
+        children = process.children(recursive=True)
+        used = process.memory_info().rss
+        for child in children:
+            try:
+                used += child.memory_info().rss
+            except psutil.Error:
+                continue
+        if used <= limit:
+            return ""
+        # Recheck identity after enumeration. Kill the owned group immediately;
+        # the normal 15-second browser flush grace cannot contain memory growth.
+        if event.subprocess.returncode is not None or not process.is_running() or not validate_pid_file(event.pid_file, []):
+            return ""
+        _send_signal(event.pid, signal.SIGKILL)
+        # Some tools start their own session. psutil's retained child identities
+        # prevent PID reuse from redirecting these kills to unrelated processes.
+        for child in reversed(children):
+            try:
+                child.kill()
+            except psutil.Error:
+                continue
+        return f"Hook memory limit exceeded: {event.hook_name} used {used} RSS bytes (limit {limit})"
+    except (psutil.Error, OSError):
+        return ""
 
 
 def _open_process_spawn_files(
@@ -848,6 +885,8 @@ class ProcessService(BaseService):
                 return stdout, stderr
 
             stdout, stderr = await asyncio.to_thread(read_completed_output)
+            if stdout_state.memory_error:
+                stderr += "\n" + stdout_state.memory_error + "\n"
 
             files_after = await asyncio.to_thread(lambda: set(plugin_output_dir.rglob("*")))
             new_files = await asyncio.to_thread(
@@ -920,6 +959,9 @@ class ProcessService(BaseService):
             def record_completion() -> None:
                 write_jsonl(index_path, proc, also_print=self.emit_jsonl)
                 pid_file.unlink(missing_ok=True)
+                if stdout_state.memory_error:
+                    with stderr_file.open("a") as log:
+                        log.write("\n" + stdout_state.memory_error + "\n")
                 if keep_logs:
                     _preserve_process_logs(plugin_output_dir, stdout_file, stderr_file)
                 else:
@@ -1157,8 +1199,13 @@ class ProcessService(BaseService):
         completion from inherited descriptors.
         """
         poll_interval = STDOUT_POLL_INTERVAL
+        memory_limit = int(event.env.get(f"{event.plugin_name.upper()}_MEMORY_LIMIT", event.env.get("MEMORY_LIMIT", str(2 * 1024**3))))
+        next_memory_check = 0.0
         try:
             while not state.stop_requested.is_set():
+                if memory_limit > 0 and not state.memory_error and time.monotonic() >= next_memory_check:
+                    state.memory_error = await asyncio.to_thread(_enforce_memory_limit, event, memory_limit)
+                    next_memory_check = time.monotonic() + 1.0
                 read_stdout = await self._emit_new_output_lines(
                     event=event,
                     proc=proc,
