@@ -1,0 +1,29 @@
+abx_dl/config.py
+  s_10bc94d001be49::t_8d323bd4ed013a 65,470
+tests/test_process_memory.py
+  s_10bc94d001be49::t_2df1b0e5628d56 6,9-11,13-14,16-17,47-51,53-55,68-98,118-129
+  s_10bc94d001be49::t_6f64fc37432c34 23,42-46,99-117
+  s_10bc94d001be49::t_57e253312a83a8 1-5,7-8,12,15,18-22,24-26,28-33,35-41,56-58,60-67
+  s_10bc94d001be49::t_1d2125e1a7c9c0 27,34,52,59
+abx_dl/services/process_service.py
+  s_10bc94d001be49::t_8d323bd4ed013a 109-115,119-132,134-145,888-889,962-964,1202-1203,1206-1208
+  s_10bc94d001be49::t_6f64fc37432c34 116-118,133
+README.md
+  s_10bc94d001be49::t_8d323bd4ed013a 157
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "64549e70a667cb25e260a84e8a24011f400d5349",
+  "prompts": {},
+  "sessions": {
+    "s_10bc94d001be49": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11f62-2c55-7051-a677-585a21b42fb4",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
