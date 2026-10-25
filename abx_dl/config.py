@@ -62,7 +62,6 @@ class GlobalConfig(BaseSettings):
     DRY_RUN: bool = False
     ABXPKG_NO_CACHE: bool = False
     TIMEOUT: int = 60
-    MEMORY_LIMIT: int = Field(default=2 * 1024**3, ge=0)
     USER_AGENT: str = Field(default="", description="Empty uses the identity detected from Chrome during browser setup.")
     CHECK_SSL_VALIDITY: bool = True
     COOKIES_FILE: str = ""
@@ -467,7 +466,6 @@ GLOBAL_DEFAULT_KEYS = (
     "DRY_RUN",
     "ABXPKG_NO_CACHE",
     "TIMEOUT",
-    "MEMORY_LIMIT",
     "USER_AGENT",
     "CHECK_SSL_VALIDITY",
     "COOKIES_FILE",

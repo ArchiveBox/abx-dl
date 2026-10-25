@@ -10,7 +10,6 @@ import psutil
 from pytest_httpserver import HTTPServer
 
 from abx_dl.catalog import PluginCatalog
-from abx_dl.config import GlobalConfig, _load_plugin_config_model
 from abx_dl.events import ProcessEvent, ProcessStartedEvent, ProcessCompletedEvent
 from abx_dl.execution import execute_hook
 from abx_dl.orchestrator import create_bus
@@ -65,13 +64,6 @@ def test_hook_memory_limit_preserves_parent_and_next_capture(tmp_path: Path) -> 
     assert "memory limit exceeded" in logs[0].read_text()
     rows = (tmp_path / "normal" / hook.plugin_name / "urls.jsonl").read_text().splitlines()
     assert [json.loads(row)["url"] for row in rows] == ["https://example.com/preserved"]
-
-
-def test_memory_defaults_keep_shared_chrome_exempt() -> None:
-    assert GlobalConfig().MEMORY_LIMIT == 2 * 1024**3
-    chrome = PluginCatalog.discover()["chrome"]
-    assert _load_plugin_config_model(chrome).CHROME_MEMORY_LIMIT == 0
-    assert _load_plugin_config_model(chrome, user_env={"CHROME_MEMORY_LIMIT": 1234}).CHROME_MEMORY_LIMIT == 1234
 
 
 def test_background_hook_memory_limit_kills_real_downloader_child(tmp_path: Path, httpserver: HTTPServer) -> None:

@@ -1199,7 +1199,7 @@ class ProcessService(BaseService):
         completion from inherited descriptors.
         """
         poll_interval = STDOUT_POLL_INTERVAL
-        memory_limit = int(event.env.get(f"{event.plugin_name.upper()}_MEMORY_LIMIT", event.env.get("MEMORY_LIMIT", str(2 * 1024**3))))
+        memory_limit = int(event.env.get(f"{event.plugin_name.upper()}_MEMORY_LIMIT", event.env.get("MEMORY_LIMIT", "0")))
         next_memory_check = 0.0
         try:
             while not state.stop_requested.is_set():
