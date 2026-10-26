@@ -1262,8 +1262,12 @@ class LiveBusUI:
         row_key = self._match_row_key(event)
         if row_key is None:
             return
-        line = event.line.strip()
-        if not line or line.startswith("{"):
+        # Stderr arrives in complete-line chunks so a buffered progress burst
+        # costs one bus dispatch. Keep the same newest-diagnostic summary while
+        # the process record retains the complete text, including earlier lines.
+        lines = event.line.split("\n") if isinstance(event, ProcessStderrEvent) else [event.line]
+        line = next((value.strip() for value in reversed(lines) if value.strip() and not value.lstrip().startswith("{")), "")
+        if not line:
             return
         existing = self.live_results.get(row_key)
         if isinstance(existing, _LiveProcessRecord):

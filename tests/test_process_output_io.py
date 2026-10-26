@@ -141,7 +141,7 @@ def test_native_hook_log_read_keeps_loop_live_and_drains_before_cancellation(
                     event_class=ProcessStderrEvent,
                 )
                 assert observed_stdout == [line.strip() for line in stdout_state.stdout_lines]
-                assert observed_stderr == [line.strip() for line in stderr_state.stdout_lines]
+                assert "".join(observed_stderr) == "".join(stderr_state.stdout_lines)
                 records = [json.loads(line) for line in stdout_state.stdout_lines if line.startswith("{")]
                 assert any(record.get("type") == "ArchiveResult" and record.get("status") == "succeeded" for record in records)
                 assert longest_tick < 0.5, longest_tick

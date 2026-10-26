@@ -388,13 +388,15 @@ class ProcessStdoutEvent(BaseEvent):
 
 
 class ProcessStderrEvent(BaseEvent):
-    """A diagnostic line for live progress, NOT a hook protocol record.
+    """A diagnostic chunk for live progress, NOT a hook protocol record.
 
     Background hooks deliberately stay silent on stdout until they are ready.
     Stderr can report dependency waits, PID/CDP details or errors before/after
     that boundary. Giving stderr its own event lets users see those diagnostics
     without releasing the scheduler early or interpreting JSON logs as results.
     Never merge this channel into ProcessStdoutEvent for display convenience.
+    ``line`` preserves complete diagnostic lines from one read; consumers that
+    display a single summary should select its latest nonempty diagnostic.
     """
 
     line: str

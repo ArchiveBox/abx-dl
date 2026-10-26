@@ -1325,9 +1325,15 @@ class ProcessService(BaseService):
             lines.append(state.pending_line)
             state.pending_line = ""
 
+        # Diagnostics are not JSONL protocol records. A buffered downloader can
+        # flush thousands of progress lines after it exits; dispatching each one
+        # serially delays completion and unrelated hooks. Preserve every byte in
+        # one diagnostic chunk per read, while stdout keeps its record boundary.
+        if event_class is ProcessStderrEvent and lines:
+            lines = ["".join(lines)]
         for line in lines:
             state.stdout_lines.append(line)
-            stripped = line.strip()
+            stripped = line if event_class is ProcessStderrEvent else line.strip()
             try:
                 # Background readers can outlive the handler that spawned them.
                 # Emit on the owning bus with explicit ancestry rather than using
