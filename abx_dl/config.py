@@ -4,6 +4,7 @@
 kept in the event bus for the active run.
 """
 
+import asyncio
 import json
 import os
 import re
@@ -337,7 +338,11 @@ async def get_plugin_env(
     recoverable runtime cache such as resolved ``*_BINARY`` paths.
     """
     runtime_config = config or await get_config(bus, include_derived=include_derived)
-    plugin_config = _load_plugin_config_model(
+    # Browser identity hydration reads saved metadata, which may live on a
+    # remote archive. Keep that filesystem wait off the shared event loop so
+    # unrelated hook stdout, result projection, and cleanup keep progressing.
+    plugin_config = await asyncio.to_thread(
+        _load_plugin_config_model,
         plugin,
         user_env=runtime_config.user,
         derived_env=runtime_config.derived if include_derived else None,
