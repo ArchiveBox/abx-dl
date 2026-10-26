@@ -118,6 +118,14 @@ snapshot. An explicit user abort completes after cleanup; an execution
 takeover (`CrawlAbortEvent(user_initiated=False)`) leaves completion to its new
 owner.
 
+Before destroying an embedded event bus, await `ProcessService.stop()` to stop
+its remaining hooks and deliver their process-completion facts. Keep per-snapshot
+services registered until this finishes, before calling their `close()` methods:
+their takeover and cleanup consumers are still needed during the drain. This
+uses the same takeover control path and does not complete interrupted snapshots
+or crawls. Abrupt process death can still interrupt shutdown; the next owner
+starts a fresh snapshot attempt rather than depending on this drain for recovery.
+
 `SnapshotCompletedEvent` means an attempt has settled, not that every plugin
 succeeded. Its `error` contains a handled execution or persistence failure;
 existing hook failures retain their own ArchiveResults. Completion is emitted

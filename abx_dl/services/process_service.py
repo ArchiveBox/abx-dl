@@ -282,6 +282,39 @@ class ProcessService(BaseService):
                 if isinstance(result, BaseException):
                     raise result
 
+    async def stop(self) -> None:
+        """Stop owned hooks and finish their facts before the host destroys the bus."""
+
+        # Cancelling an outer event waiter does not await its shielded process
+        # owner. Keep the bus alive until those owners have delivered completion;
+        # an idle timeout followed by destroy loses real exit facts. The existing
+        # takeover event also releases paused schedulers without sealing a crawl.
+        # Capture before control delivery: callbacks discard finished owners,
+        # including failed ones whose errors the host must still receive.
+        owners = set(self._active_process_event_tasks.values())
+        background = set(self._background_completion_tasks)
+        abort = self.bus.emit(CrawlAbortEvent(user_initiated=False))
+        results: list[object] = []
+        try:
+            await abort.now()
+        except Exception as error:
+            results.append(error)
+        owners.update(self._active_process_event_tasks.values())
+        results.extend(await asyncio.gather(*owners, return_exceptions=True))
+        background.update(self._background_completion_tasks)
+        # Even a foreground consumer failure must not skip recorder shutdown.
+        # Retain the background tasks here because their callbacks remove them
+        # from the service once finished, including when a consumer failed.
+        results.extend(await asyncio.gather(self.stop_background_hooks(), *background, return_exceptions=True))
+        errors = [result.error for result in abort.event_results.values() if result.error is not None]
+        errors.extend(result for result in results if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError))
+        if errors:
+            error = errors[0]
+            for other in errors[1:]:
+                if other is not error:
+                    error.add_note(f"Process shutdown also failed: {other}")
+            raise error
+
     async def stop_background_hooks(self) -> None:
         """Stop remaining owned background hooks and record their completions."""
 

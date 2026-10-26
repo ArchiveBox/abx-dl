@@ -22,6 +22,82 @@ from abx_dl.services.process_service import ProcessService
 from abx_dl.services.crawl_lifecycle_service import SnapshotAttemptError
 
 
+@pytest.mark.parametrize("completion_write_fails", [False, True])
+def test_process_stop_drains_foreground_and_recorders_before_bus_destroy(
+    tmp_path: Path,
+    httpserver: HTTPServer,
+    completion_write_fails: bool,
+) -> None:
+    httpserver.expect_request("/").respond_with_data("<!doctype html><title>Stop active navigation</title>", content_type="text/html")
+    bus = create_bus(total_timeout=120.0, name=f"stop_process_owners_{tmp_path.name}")
+    services: list[ProcessService] = []
+    completed: list[ProcessCompletedEvent] = []
+    output_dir = tmp_path / "capture"
+    records = tmp_path / "completed"
+    records.mkdir()
+    blocked = records / "on_Snapshot__30_chrome_navigate.json"
+    if completion_write_fails:
+        blocked.mkdir()
+
+    async def persist_completed_process(event: ProcessCompletedEvent) -> None:
+        completed.append(event)
+        # Exercise an actual failed persistence consumer, not an invented
+        # throwing handler. Other processes must still finish their own files.
+        (records / f"{event.hook_name}.json").write_text(event.model_dump_json())
+
+    bus.on(ProcessCompletedEvent, persist_completed_process)
+
+    async def run() -> None:
+        task = asyncio.create_task(
+            download(
+                httpserver.url_for("/"),
+                PluginCatalog.discover().select(["chrome"]),
+                output_dir,
+                config={**get_explicit_user_env(), "CHROME_DELAY_AFTER_LOAD": 60, "CHROME_TIMEOUT": 120, "CHROME_HEADLESS": True},
+                bus=bus,
+                emit_jsonl=False,
+                interactive_tty=False,
+                on_process_service_created=services.append,
+            ),
+        )
+        try:
+            navigate = await bus.find(ProcessStartedEvent, hook_name="on_Snapshot__30_chrome_navigate", past=True, future=30.0)
+            assert navigate is not None
+            await navigate.wait()
+            assert navigate.subprocess.returncode is None
+            service = services[0]
+            if completion_write_fails:
+                with pytest.raises(IsADirectoryError):
+                    await service.stop()
+            else:
+                await service.stop()
+            started = await bus.filter(ProcessStartedEvent, past=True, future=False)
+            assert any(event.is_background for event in started)
+            assert all(event.subprocess.returncode is not None for event in started)
+            for event in started:
+                matching = [record for record in completed if record.pid == event.pid and record.start_ts == event.start_ts]
+                assert len(matching) == 1
+                await matching[0].wait()
+                if event.hook_name != navigate.hook_name or not completion_write_fails:
+                    assert (records / f"{event.hook_name}.json").is_file()
+            assert not service._active_process_event_tasks
+            assert not service._background_completion_tasks
+            # Takeover stops runtime ownership, without claiming a finished
+            # capture. Later startup must rerun the entire interrupted snapshot.
+            await asyncio.gather(task, return_exceptions=True)
+            assert await bus.find(SnapshotCompletedEvent, past=True, future=False) is None
+            assert await bus.find(CrawlCompletedEvent, past=True, future=False) is None
+        finally:
+            if not task.done():
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            for service in services:
+                await service.stop_background_hooks()
+            await bus.destroy(clear=False)
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("failing_plugin,phase", [("consolelog", "Snapshot"), ("wget", "Snapshot"), ("chrome_screencast", "CrawlSetup")])
 def test_cleanup_listener_failure_still_stops_browser(tmp_path: Path, httpserver: HTTPServer, failing_plugin: str, phase: str) -> None:
     httpserver.expect_request("/").respond_with_data(
