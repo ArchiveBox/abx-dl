@@ -1623,7 +1623,8 @@ def test_snapshot_service_repins_snapshot_persona_after_global_config_merge(tmp_
 
     assert emitted is not None
     assert emitted.env["SNAP_DIR"] == str(output_dir)
-    assert emitted.env["PERSONAS_DIR"] == str(output_dir / ".persona")
+    assert Path(emitted.env["PERSONAS_DIR"]).is_relative_to(Path(emitted.env["TMP_DIR"]))
+    assert not Path(emitted.env["PERSONAS_DIR"]).is_relative_to(output_dir)
     assert emitted.env["ACTIVE_PERSONA"] == "Default"
     assert "CHROME_USER_DATA_DIR" not in emitted.env
     assert "CHROME_DOWNLOADS_DIR" not in emitted.env

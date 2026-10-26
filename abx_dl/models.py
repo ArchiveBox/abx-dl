@@ -6,6 +6,7 @@ here as Pydantic BaseModels. Hook filename parsing and selection live in
 ``abx_dl.catalog``.
 """
 
+import hashlib
 import importlib.metadata
 import json
 import os
@@ -30,6 +31,15 @@ except importlib.metadata.PackageNotFoundError:
 
 
 # ── Utility functions ──────────────────────────────────────────────────────
+
+
+def runtime_personas_dir(output_dir: Path, tmp_dir: Path) -> Path:
+    # Hosts may already provide a prepared persona through a local-runtime link.
+    existing = output_dir / ".persona"
+    if existing.is_symlink():
+        return existing
+    key = hashlib.sha256(str(output_dir.resolve()).encode()).hexdigest()
+    return tmp_dir / "personas" / key / ".persona"
 
 
 def uuid7() -> str:
@@ -224,7 +234,7 @@ class PluginEnv(BaseModel):
         if snap_dir == data_dir:
             payload["SNAP_DIR"] = run_dir
         if personas_dir == default_personas_dir:
-            payload["PERSONAS_DIR"] = str(Path(run_dir) / ".persona")
+            payload["PERSONAS_DIR"] = str(runtime_personas_dir(Path(run_dir), Path(payload["TMP_DIR"])))
 
         return cls(**payload)
 

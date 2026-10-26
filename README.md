@@ -427,6 +427,11 @@ when they wrote nothing; `.DS_Store` is discarded, while captures and failure lo
 commands are recorded in `index.jsonl` and active process metadata, without
 generating per-hook shell scripts. Plugin-owned files remain unchanged.
 
+Default runtime personas (including Chrome profiles and writable extension
+copies) live under `TMP_DIR/personas`, isolated by output directory. An existing
+host-prepared `.persona` symlink is preserved. Explicit `PERSONAS_DIR` settings
+remain supported; keep runtime storage local, outside archive output mounts.
+
 Active hook stdout, stderr, and process-control PID files live under
 `TMP_DIR/process` (the system temporary directory when `TMP_DIR` is unset).
 Keep `TMP_DIR` on local storage even when captured output uses a remote mount.

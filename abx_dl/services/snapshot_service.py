@@ -33,7 +33,7 @@ from ..events import (
 )
 from ..limits import parse_filesize_to_bytes
 from ..models import Snapshot
-from ..models import Hook, Plugin, PluginEnv
+from ..models import Hook, Plugin, PluginEnv, runtime_personas_dir
 from ..output_files import remove_empty_output_dirs
 from .base import BaseService, ProcessExitedBeforeReadyError, wait_for_process_ready, wait_for_crawl_resume
 from .binary_service import build_plugin_process_env
@@ -286,7 +286,7 @@ class SnapshotService(BaseService):
             env["SNAP_DIR"] = str(self.output_dir)
             if str(env.get("CHROME_ISOLATION") or "").lower() == "snapshot":
                 active_persona = str(env.get("ACTIVE_PERSONA") or "Default")
-                env["PERSONAS_DIR"] = str(self.output_dir / ".persona")
+                env["PERSONAS_DIR"] = str(runtime_personas_dir(self.output_dir, Path(env["TMP_DIR"])))
                 env["ACTIVE_PERSONA"] = active_persona
             timeout_key = f"{plugin.name.upper()}_TIMEOUT"
             timeout = plugin_config[timeout_key] if timeout_key in plugin.config.properties else plugin_config.TIMEOUT

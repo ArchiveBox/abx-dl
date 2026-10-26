@@ -387,7 +387,8 @@ def test_plugin_env_ignores_direct_chrome_profile_env(
         asyncio.run(bus.wait_until_idle())
 
     assert "CHROME_USER_DATA_DIR" not in env
-    assert env["PERSONAS_DIR"] == str(tmp_path / "crawl" / ".persona")
+    assert Path(env["PERSONAS_DIR"]).is_relative_to(Path(env["TMP_DIR"]))
+    assert not Path(env["PERSONAS_DIR"]).is_relative_to(tmp_path / "crawl")
     assert env["ACTIVE_PERSONA"] == "Default"
 
 
