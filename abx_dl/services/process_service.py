@@ -10,6 +10,7 @@ import sys
 import tempfile
 import select
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -65,6 +66,11 @@ def interrupted_hook_prompt_text(hook_name: str) -> str:
 STDOUT_POLL_INTERVAL = 0.05
 # Upper bound for polling a hook that has gone quiet; see _stream_output.
 STDOUT_IDLE_POLL_INTERVAL = 0.5
+# Local process logs and RSS guards must not queue behind archive filesystem
+# work: enough blocked rclone index appends can occupy every default worker,
+# hiding completed hook output and delaying memory enforcement. Share one
+# control worker per process, rather than creating threads for every hook.
+_PROCESS_CONTROL_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="abx-process-control")
 SHELL_SIGNAL_STDERR_RE = re.compile(r"(?:Terminated|Killed):\s*(\d+)")
 POLITE_CLEANUP_SIGNAL_EXIT_CODES = {
     -signal.SIGINT,
@@ -1237,7 +1243,12 @@ class ProcessService(BaseService):
         try:
             while not state.stop_requested.is_set():
                 if memory_limit > 0 and not state.memory_error and time.monotonic() >= next_memory_check:
-                    state.memory_error = await asyncio.to_thread(_enforce_memory_limit, event, memory_limit)
+                    state.memory_error = await asyncio.get_running_loop().run_in_executor(
+                        _PROCESS_CONTROL_EXECUTOR,
+                        _enforce_memory_limit,
+                        event,
+                        memory_limit,
+                    )
                     next_memory_check = time.monotonic() + 1.0
                 read_stdout = await self._emit_new_output_lines(
                     event=event,
@@ -1287,7 +1298,7 @@ class ProcessService(BaseService):
         # Each stream has one retained reader; read() already advances it,
         # including after EOF when the child appends more data. Re-seeking on
         # every poll adds remote I/O without changing the read position.
-        read_task = asyncio.create_task(asyncio.to_thread(stdout_reader.read))
+        read_task = asyncio.get_running_loop().run_in_executor(_PROCESS_CONTROL_EXECUTOR, stdout_reader.read)
         cancellation = None
         while not read_task.done():
             try:
