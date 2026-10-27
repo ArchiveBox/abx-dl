@@ -74,6 +74,7 @@ class CrawlLifecycleService(BaseService):
         self.snapshot_phase_timeout = snapshot_phase_timeout
         self.crawl_cleanup_phase_timeout = crawl_cleanup_phase_timeout
         self.abort_requested = False
+        self.abort_error = ""
         self.abort_requested_callback = abort_requested
         self.run_snapshots = run_snapshots
         self._execution_interrupted = False
@@ -148,6 +149,11 @@ class CrawlLifecycleService(BaseService):
                 )
         except BaseException as phase_error:
             failure = phase_error
+        if self.abort_error:
+            if failure is None:
+                failure = RuntimeError(self.abort_error)
+            else:
+                failure.add_note(self.abort_error)
         try:
             await self._run_cleanup(event)
         except BaseException as cleanup_error:
@@ -267,7 +273,8 @@ class CrawlLifecycleService(BaseService):
 
     async def on_CrawlAbortEvent(self, event: CrawlAbortEvent) -> None:
         self.abort_requested = True
-        self._execution_interrupted = self._execution_interrupted or not event.user_initiated
+        self.abort_error = self.abort_error or event.error
+        self._execution_interrupted = self._execution_interrupted or (not event.user_initiated and not event.error)
 
     async def on_ProcessCompletedEvent(self, event: ProcessCompletedEvent) -> None:
         if event.status != "failed" or event.cancelled:

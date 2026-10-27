@@ -118,6 +118,14 @@ snapshot. An explicit user abort completes after cleanup; an execution
 takeover (`CrawlAbortEvent(user_initiated=False)`) leaves completion to its new
 owner.
 
+If a background crawl-setup resource required by another selected plugin fails
+after readiness, the owner stops new snapshot admissions through `CrawlAbortEvent`
+with `user_initiated=False` and its `error`. Already-started captures clean up and
+complete with that failure; queued URLs are not attempted against the dead resource.
+An empty error with `user_initiated=False` remains ownership takeover and emits no
+terminal completion. Optional monitors and snapshot-level background downloads keep
+their independent failure behavior; this does not restart or recover a browser.
+
 Before destroying an embedded event bus, await `ProcessService.stop()` to stop
 its remaining hooks and deliver their process-completion facts. Keep per-snapshot
 services registered until this finishes, before calling their `close()` methods:

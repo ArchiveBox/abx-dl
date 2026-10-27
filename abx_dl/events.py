@@ -157,6 +157,9 @@ class CrawlAbortEvent(BaseEvent):
     """Abort the whole crawl and release all paused schedulers into cleanup."""
 
     user_initiated: bool = True
+    # Resource loss is a handled failure, not user intent or ownership takeover.
+    # Reuse the same stop/cleanup path while retaining that terminal failure.
+    error: str = ""
     event_concurrency: EventConcurrencyMode | None = EventConcurrencyMode.PARALLEL
     event_handler_concurrency: EventHandlerConcurrencyMode | None = EventHandlerConcurrencyMode.PARALLEL
     event_timeout: float | None = 60.0

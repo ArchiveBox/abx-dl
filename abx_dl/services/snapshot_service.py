@@ -152,6 +152,7 @@ class SnapshotService(BaseService):
         self.snapshot_phase_timeout = snapshot_phase_timeout
         self.snapshot_cleanup_phase_timeout = snapshot_cleanup_phase_timeout
         self.abort_requested = False
+        self.abort_error = ""
         self.abort_requested_callback = abort_requested
         self.snapshot_max_size = max(0, parse_filesize_to_bytes(config.user.model_dump(mode="json").get("SNAPSHOT_MAX_SIZE") or 0))
         # A retry must get a fresh budget, without a hidden ledger in the output
@@ -511,6 +512,11 @@ class SnapshotService(BaseService):
                         snapshot_error = error
                     else:
                         snapshot_error.add_note(f"Output directory preparation also failed: {error}")
+            if self.abort_error:
+                if snapshot_error is None:
+                    snapshot_error = RuntimeError(self.abort_error)
+                else:
+                    snapshot_error.add_note(self.abort_error)
             cleanup_event = SnapshotCleanupEvent(
                 url=url,
                 snapshot_id=snapshot_id,
@@ -528,6 +534,10 @@ class SnapshotService(BaseService):
                     snapshot_error = error
                 else:
                     snapshot_error.add_note(f"Snapshot cleanup also failed: {error}")
+        # Resource loss may arrive while cleanup awaits real filesystem I/O.
+        # It must remain a failed terminal attempt, never a successful seal.
+        if snapshot_error is None and self.abort_error:
+            snapshot_error = RuntimeError(self.abort_error)
         if snapshot_error is not None and not isinstance(snapshot_error, Exception):
             raise snapshot_error
         if self._execution_interrupted:
@@ -757,6 +767,7 @@ class SnapshotService(BaseService):
             raise error
 
     async def on_CrawlAbortEvent(self, event: CrawlAbortEvent) -> None:
-        """Stop scheduling any further snapshot work after a user abort."""
+        """Stop snapshot work, retaining handled failure versus owner loss."""
         self.abort_requested = True
-        self._execution_interrupted = self._execution_interrupted or not event.user_initiated
+        self.abort_error = self.abort_error or event.error
+        self._execution_interrupted = self._execution_interrupted or (not event.user_initiated and not event.error)

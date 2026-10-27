@@ -55,10 +55,12 @@ class CrawlService(BaseService):
         CrawlAbortEvent,
         CrawlSetupEvent,
         CrawlCleanupEvent,
+        ProcessCompletedEvent,
     ]
     EMITS: ClassVar[list[type[BaseEvent]]] = [
         ProcessEvent,
         ProcessKillEvent,
+        CrawlAbortEvent,
     ]
 
     def __init__(
@@ -86,6 +88,37 @@ class CrawlService(BaseService):
         self.bus.on(CrawlSetupEvent, self.on_CrawlSetupEvent)
         self.bus.on(CrawlAbortEvent, self.on_CrawlAbortEvent)
         self.bus.on(CrawlCleanupEvent, self.on_CrawlCleanupEvent)
+        self.bus.on(ProcessCompletedEvent, self.on_ProcessCompletedEvent)
+
+    async def on_ProcessCompletedEvent(self, event: ProcessCompletedEvent) -> None:
+        if self.abort_requested or not event.is_background or event.status != "failed" or event.cancelled or not event.stdout:
+            return
+        # Snapshot background downloads may fail independently. Here only a
+        # required crawl-scoped resource, already handed to capture work, can
+        # invalidate future admissions; optional monitors must not abort it.
+        if not any(event.plugin_name in plugin.config.required_plugins for plugin in self.catalog.values()):
+            return
+        setup = await self.bus.find(
+            CrawlSetupEvent,
+            output_dir=str(self.output_dir),
+            past=True,
+            future=False,
+            where=lambda candidate: self.bus.event_is_child_of(event, candidate),
+        )
+        if setup is None:
+            return
+        # Any stdout is the existing readiness contract. It also covers loss
+        # between publishing readiness and the first CrawlStart admission.
+        cleanup = await self.bus.find(CrawlCleanupEvent, event_parent_id=setup.event_parent_id, past=True, future=False)
+        if cleanup is not None:
+            return
+        await self.bus.emit(
+            CrawlAbortEvent(
+                event_parent_id=setup.event_parent_id,
+                user_initiated=False,
+                error=f"Required crawl resource {event.plugin_name}:{event.hook_name} failed (exit {event.exit_code})",
+            ),
+        ).now()
 
     async def should_abort(self) -> bool:
         if self.abort_requested or await wait_for_crawl_resume(self.bus):
@@ -353,5 +386,5 @@ class CrawlService(BaseService):
             raise error
 
     async def on_CrawlAbortEvent(self, event: CrawlAbortEvent) -> None:
-        """Stop scheduling any further crawl work after a user abort."""
+        """Stop scheduling crawl work on user abort, failure, or owner loss."""
         self.abort_requested = True
