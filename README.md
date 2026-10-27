@@ -210,6 +210,7 @@ CHROME_BINARY="chromium"
 Common options:
 - `TIMEOUT=60` - default timeout for hooks
 - `MEMORY_LIMIT` - best-effort per-hook process-tree RSS limit in bytes, checked once per second; `0` or absent disables it. The base plugin config supplies a 2GiB default and `CHROME_MEMORY_LIMIT=0` exempts shared Chrome. `{PLUGIN}_MEMORY_LIMIT` overrides it. Exceeding the limit kills that hook tree and records a failure while preserving saved files. This is not a hard allocation limit: sudden growth between checks can still exhaust memory, and RSS counts shared pages more than once.
+- `MEMORY_MIN_FREE` - best-effort host RAM reserve, checked by the same process monitor. The base plugin supplies a 512MiB default; `0` disables this reserve. Below it, owned hook trees using at least 256MiB RSS are stopped through the same failure path, including Chrome with its fixed cap disabled. This protects against other host services consuming memory after admission; it cannot guarantee protection against sudden allocations between checks.
 - `USER_AGENT` - optional HTTP user agent override; empty uses Chrome's detected identity after browser setup. yt-dlp keeps its native identity and its own argument overrides.
 - `{PLUGIN}_BINARY` - path or name of the binary to use (e.g. `WGET_BINARY=wget` or `CHROME_BINARY=/usr/bin/chromium`)
 - `{PLUGIN}_ENABLED=True/False` - enable/disable specific plugins

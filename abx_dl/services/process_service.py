@@ -115,7 +115,7 @@ class _OutputStreamState:
     memory_error: str = ""
 
 
-def _enforce_memory_limit(event: ProcessStartedEvent, limit: int) -> str:
+def _enforce_memory_limit(event: ProcessStartedEvent, limit: int, minimum_free: int = 0) -> str:
     """Best-effort bound for an owned hook tree, not an OS allocation limit."""
     if not event.pid or event.subprocess.returncode is not None:
         return ""
@@ -132,7 +132,19 @@ def _enforce_memory_limit(event: ProcessStartedEvent, limit: int) -> str:
                 used += child.memory_info().rss
             except psutil.Error:
                 continue
-        if used <= limit:
+        reason = ""
+        if limit > 0 and used > limit:
+            reason = f"Hook memory limit exceeded: {event.hook_name} used {used} RSS bytes (limit {limit})"
+        elif minimum_free > 0 and used >= 256 * 1024**2:
+            # Shared Chrome legitimately needs multiple GB, so its fixed cap is
+            # optional. It must still yield before exhausting the host alongside
+            # services outside our container (e.g. rclone). Only stop substantial
+            # owned trees: killing tiny monitors would recover little memory and
+            # needlessly lose independent outputs. Reuse normal failure cleanup.
+            available = psutil.virtual_memory().available
+            if available < minimum_free:
+                reason = f"Host memory headroom {available} bytes below reserve {minimum_free}: {event.hook_name} used {used} RSS bytes"
+        if not reason:
             return ""
         # Recheck identity after enumeration. Kill the owned group immediately;
         # the normal 15-second browser flush grace cannot contain memory growth.
@@ -146,7 +158,7 @@ def _enforce_memory_limit(event: ProcessStartedEvent, limit: int) -> str:
                 child.kill()
             except psutil.Error:
                 continue
-        return f"Hook memory limit exceeded: {event.hook_name} used {used} RSS bytes (limit {limit})"
+        return reason
     except (psutil.Error, OSError):
         return ""
 
@@ -1239,15 +1251,17 @@ class ProcessService(BaseService):
         """
         poll_interval = STDOUT_POLL_INTERVAL
         memory_limit = int(event.env.get(f"{event.plugin_name.upper()}_MEMORY_LIMIT", event.env.get("MEMORY_LIMIT", "0")))
+        minimum_free = int(event.env.get("MEMORY_MIN_FREE", "0"))
         next_memory_check = 0.0
         try:
             while not state.stop_requested.is_set():
-                if memory_limit > 0 and not state.memory_error and time.monotonic() >= next_memory_check:
+                if (memory_limit > 0 or minimum_free > 0) and not state.memory_error and time.monotonic() >= next_memory_check:
                     state.memory_error = await asyncio.get_running_loop().run_in_executor(
                         _PROCESS_CONTROL_EXECUTOR,
                         _enforce_memory_limit,
                         event,
                         memory_limit,
+                        minimum_free,
                     )
                     next_memory_check = time.monotonic() + 1.0
                 read_stdout = await self._emit_new_output_lines(

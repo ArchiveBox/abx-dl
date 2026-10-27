@@ -4,6 +4,8 @@ import asyncio
 import json
 import os
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 import psutil
@@ -14,6 +16,61 @@ from abx_dl.events import ProcessEvent, ProcessStartedEvent, ProcessCompletedEve
 from abx_dl.execution import execute_hook
 from abx_dl.orchestrator import create_bus
 from abx_dl.services.process_service import ProcessService
+
+
+def test_host_memory_guard_includes_uncapped_chrome(tmp_path: Path, httpserver: HTTPServer) -> None:
+    httpserver.expect_request("/favicon.ico").respond_with_data("", status=204)
+    httpserver.expect_request("/article").respond_with_data(
+        "<!doctype html><title>Memory guard article</title><p>Preserved article</p>",
+        content_type="text/html",
+    )
+    # Exercise the real monitor against real Chrome without exhausting the test
+    # host: an intentionally oversized reserve makes real available RAM fail
+    # the configured threshold. No memory readings or processes are replaced.
+    environment = {
+        **os.environ,
+        "CHROME_HEADLESS": "true",
+        "CHROME_ISOLATION": "crawl",
+        "CHROME_DELAY_AFTER_LOAD": "5",
+        "CHROME_MEMORY_LIMIT": "0",
+        "MEMORY_MIN_FREE": str(psutil.virtual_memory().total * 2),
+    }
+    sibling = subprocess.Popen(["sleep", "120"])
+    try:
+        limited_dir = tmp_path / "limited-chrome"
+        limited_dir.mkdir()
+        limited = subprocess.run(
+            [sys.executable, "-m", "abx_dl", "dl", "--plugins=title", httpserver.url_for("/article")],
+            cwd=limited_dir,
+            env=environment,
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+        assert limited.returncode != 0, limited.stdout + limited.stderr
+        diagnostics = "\n".join(path.read_text() for path in limited_dir.rglob("*.stderr.log"))
+        assert "Host memory headroom" in diagnostics, limited.stdout + limited.stderr + diagnostics
+        assert "chrome_launch" in diagnostics
+        assert sibling.poll() is None
+
+        normal_dir = tmp_path / "normal-chrome"
+        normal_dir.mkdir()
+        normal = subprocess.run(
+            [sys.executable, "-m", "abx_dl", "dl", "--plugins=title", httpserver.url_for("/article")],
+            cwd=normal_dir,
+            env={**environment, "MEMORY_MIN_FREE": "0"},
+            capture_output=True,
+            text=True,
+            timeout=90,
+        )
+        assert normal.returncode == 0, normal.stdout + normal.stderr
+        titles = list(normal_dir.rglob("title.txt"))
+        assert len(titles) == 1
+        assert titles[0].read_text().strip() == "Memory guard article"
+        assert sibling.poll() is None
+    finally:
+        sibling.terminate()
+        sibling.wait()
 
 
 def test_hook_memory_limit_preserves_parent_and_next_capture(tmp_path: Path) -> None:
@@ -42,6 +99,7 @@ def test_hook_memory_limit_preserves_parent_and_next_capture(tmp_path: Path) -> 
                 {},
                 {"MEMORY_LIMIT": "1", "PARSE_TXT_URLS_MEMORY_LIMIT": "0"},
                 {"MEMORY_LIMIT": "1", "PARSE_TXT_URLS_MEMORY_LIMIT": str(2 * 1024**3)},
+                {"MEMORY_LIMIT": "0", "MEMORY_MIN_FREE": str(psutil.virtual_memory().total * 2)},
             ):
                 succeeded = await execute_hook(
                     hook,
