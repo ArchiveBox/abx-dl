@@ -1,0 +1,36 @@
+abx_dl/services/snapshot_service.py
+  s_10bc94d001be49::t_4622f4f642bee0 770
+  s_10bc94d001be49::t_babb52b76b82c3 515-519,537-540
+  s_10bc94d001be49::t_dc858f48495514 155,772-773
+README.md
+  s_10bc94d001be49::t_31985b0d93204f 121-128
+abx_dl/events.py
+  s_10bc94d001be49::t_dc858f48495514 160-162
+tests/test_crawl_resource_loss.py
+  s_10bc94d001be49::t_ae5bce9209cf8c 1-7,9-16,18-34,39-43,45,50-112,117-120,122-129,139-149,153-157,160-167,169-178,190,196-199,201-206
+  s_10bc94d001be49::t_0a026051ee208c 35-38,44,46-49,116,121,134,168,179,181-189
+  s_10bc94d001be49::t_8c667b2c9d5d46 8,17,113-115,130-133,135-138,150-152,158-159,180,191-195,200
+  s_10bc94d001be49::t_2f7ff4e75a60c2 207-224
+abx_dl/services/crawl_service.py
+  s_10bc94d001be49::t_dc858f48495514 58,63,91-93,95-109,112,114-121
+  s_10bc94d001be49::t_8c667b2c9d5d46 94,110-111,113
+  s_10bc94d001be49::t_4622f4f642bee0 389
+abx_dl/services/crawl_lifecycle_service.py
+  s_10bc94d001be49::t_dc858f48495514 77,152-156,276-277
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "774066182297afdb69cd3da6a0a53d521a1d4c6e",
+  "prompts": {},
+  "sessions": {
+    "s_10bc94d001be49": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11f62-2c55-7051-a677-585a21b42fb4",
+        "model": "gpt-6-astra"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
