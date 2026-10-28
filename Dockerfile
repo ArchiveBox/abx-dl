@@ -207,6 +207,12 @@ RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_ARCHIVEBOX_UID}..."
 RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=abxpkg-tmp-$TARGETARCH$TARGETVARIANT \
     echo "[+] Installing Chrome, then the complete downloader plugin catalog..." \
     && export HOME=/var/tmp/abxpkg-cache XDG_CACHE_HOME=/var/tmp/abxpkg-cache ABXPKG_TMP_CACHE_DIR=/var/tmp/abxpkg-cache \
+    # Let uv compile each tool with its own interpreter during installation.
+    # Wheels can include source for other Python versions that is never imported;
+    # compileall's all-files success requirement rejects otherwise valid tools.
+    # SOURCE_DATE_EPOCH selects checked-hash caches, preserving their validity
+    # when installed file mtimes are normalized below. Runtime writes stay off.
+    && export UV_COMPILE_BYTECODE=true SOURCE_DATE_EPOCH=946684800 \
     && export ABX_DOCKER_PLUGINS="$(/venv/bin/python3 -c 'from abx_dl.catalog import PluginCatalog; print(" ".join(PluginCatalog.discover(runtime="abx-dl")))')" \
     && abx-dl install chrome \
     # Explicit names install every downloader plugin, including disabled opt-ins.
@@ -223,13 +229,6 @@ RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=
     && STDLIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("stdlib"))')" \
     && PURELIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
     && /venv/bin/python -m compileall --invalidation-mode checked-hash -q "$STDLIB_DIR" "$PURELIB_DIR" \
-    # UvProvider exposes its installed package environments to hook scripts via
-    # PYTHONPATH. Compiling only /venv leaves those imports recompiling source on
-    # every hook because runtime PYTHONDONTWRITEBYTECODE=1 forbids cache writes.
-    # Compile matching-interpreter environments before normalizing mtimes;
-    # checked hashes keep this bytecode valid after that reproducibility step.
-    && PYTHON_LIB="$(/venv/bin/python -c 'import sys; print(f"python{sys.version_info.major}.{sys.version_info.minor}")')" \
-    && find "$ABXPKG_LIB_DIR/uv" -type d -path "*/lib/$PYTHON_LIB/site-packages" -prune -exec /venv/bin/python -m compileall --invalidation-mode checked-hash -q {} + \
     # Include newly compiled bytecode before runtime installs fingerprint it;
     # otherwise child images copy it into another layer just to fix ownership.
     && find "$ABXPKG_LIB_DIR" \( ! -user "$DEFAULT_ARCHIVEBOX_UID" -o ! -group "$DEFAULT_ARCHIVEBOX_GID" \) -exec chown -h "$DEFAULT_ARCHIVEBOX_UID:$DEFAULT_ARCHIVEBOX_GID" {} + \
