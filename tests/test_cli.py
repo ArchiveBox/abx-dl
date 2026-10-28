@@ -196,7 +196,7 @@ def test_cli_interrupts_active_hook(tmp_path: Path, choice: str) -> None:
         if choice != "noninteractive":
             read_until(lambda: b"Choice [skip]:" in output)
             read_until(lambda: not termios.tcgetattr(slave)[3] & termios.ICANON)
-            assert not psutil.pid_exists(pid)
+            assert not psutil.pid_exists(pid), output.decode(errors="replace")
             if choice == "retry":
                 os.write(master, b"r")
                 read_until(lambda: (next_pid := active_hook()) is not None and next_pid != pid)
