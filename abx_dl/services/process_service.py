@@ -675,45 +675,14 @@ class ProcessService(BaseService):
                         start_new_session=True,
                         preexec_fn=(_permanently_drop_child_privileges(*child_identity) if child_identity is not None else None),
                     )
-                started_event = ProcessStartedEvent(
-                    plugin_name=event.plugin_name,
-                    hook_name=event.hook_name,
-                    hook_path=event.hook_path,
-                    hook_args=event.hook_args,
-                    output_dir=event.output_dir,
-                    env=event.env,
-                    timeout=event.timeout,
-                    pid=process.pid,
-                    is_background=event.is_background,
-                    url=event.url,
-                    process_type=event.process_type,
-                    worker_type=event.worker_type,
-                    start_ts=proc.started_at or "",
-                    # These runtime-only fields carry the rest of the subprocess
-                    # lifetime through bus history.
-                    subprocess=process,
-                    stdout_file=stdout_file,
-                    stderr_file=stderr_file,
-                    pid_file=pid_file,
-                    files_before=files_before,
-                    event_timeout=event.timeout + 30.0,
-                    event_handler_timeout=event.timeout + 30.0,
-                    event_handler_slow_timeout=10000.0,
-                )
-                # Register the subprocess before ANY post-spawn await, including
-                # PID-file I/O: a thread can publish that file before its await
-                # returns, letting Ctrl+C miss a live hook. Emitting synchronously
-                # also makes its identity available to the existing kill handler.
-                self._active_hooks[event.event_id] = (event, started_event)
-                # The started fact completes before a background subprocess does.
-                # Keep its ancestry available to cleanup/result consumers until the
-                # existing reader scope closes after ProcessCompletedEvent handling.
-                assert reader_stack is not None
-                reader_stack.enter_context(self.bus.event_history.retain(started_event))
-                # Finish projecting the start before PID-file failure can emit
-                # completion; observers must never persist these in reverse.
-                await event.emit(started_event).now()
-                await asyncio.to_thread(write_pid_file_with_mtime, pid_file, process.pid, time.time())
+                # Control files now live in local TMP_DIR, not the archive mount.
+                # Keep this tiny PID write and the ownership registration below
+                # in one event-loop turn: a worker thread could publish the PID
+                # before returning, letting Ctrl+C miss the still-unregistered
+                # child. Started observers also require this file to exist.
+                # Archive/log I/O remains off-loop; only this local control write
+                # must complete before signals and observers can see the hook.
+                write_pid_file_with_mtime(pid_file, process.pid, time.time())
             except (OSError, ValueError) as e:
                 # If spawn partially succeeded, shut it down before surfacing the
                 # failure as a normal ProcessCompletedEvent.
@@ -754,6 +723,41 @@ class ProcessService(BaseService):
                     ),
                 ).now()
                 return proc
+            started_event = ProcessStartedEvent(
+                plugin_name=event.plugin_name,
+                hook_name=event.hook_name,
+                hook_path=event.hook_path,
+                hook_args=event.hook_args,
+                output_dir=event.output_dir,
+                env=event.env,
+                timeout=event.timeout,
+                pid=process.pid,
+                is_background=event.is_background,
+                url=event.url,
+                process_type=event.process_type,
+                worker_type=event.worker_type,
+                start_ts=proc.started_at or "",
+                # These runtime-only fields carry the rest of the subprocess
+                # lifetime through bus history.
+                subprocess=process,
+                stdout_file=stdout_file,
+                stderr_file=stderr_file,
+                pid_file=pid_file,
+                files_before=files_before,
+                event_timeout=event.timeout + 30.0,
+                event_handler_timeout=event.timeout + 30.0,
+                event_handler_slow_timeout=10000.0,
+            )
+            # Publish control ownership before awaiting persistence/UI observers.
+            # Otherwise Ctrl+C in that await sees no active hook despite its PID
+            # file already existing and lets a real subprocess escape the pause.
+            self._active_hooks[event.event_id] = (event, started_event)
+            # The started fact completes before a background subprocess does.
+            # Keep its ancestry available to cleanup/result consumers until the
+            # existing reader scope closes after ProcessCompletedEvent handling.
+            assert reader_stack is not None
+            reader_stack.enter_context(self.bus.event_history.retain(started_event))
+            await event.emit(started_event).now()
             proc = Process(
                 cmd=cmd,
                 pwd=event.output_dir,
@@ -814,15 +818,8 @@ class ProcessService(BaseService):
                 await graceful_kill_process(process)
             raise
         finally:
-            if not completion_owns_process:
-                # Startup failures/cancellation use the same ownership lifetime
-                # as normal completion; a dead attempt must not stay selectable.
-                self._active_hooks.pop(event.event_id, None)
-                self._interrupt_choices.pop(event.event_id, None)
-                if started_event is not None and started_event.interruption_done is not None:
-                    started_event.interruption_done.set()
-                if reader_stack is not None:
-                    reader_stack.close()
+            if not completion_owns_process and reader_stack is not None:
+                reader_stack.close()
 
     async def _complete_process_event(
         self,
