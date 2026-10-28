@@ -17,7 +17,7 @@ from abx_dl.events import (
     SnapshotCleanupEvent,
     SnapshotCompletedEvent,
 )
-from abx_dl.orchestrator import create_bus, download
+from abx_dl.orchestrator import create_bus, download, install_plugins
 from abx_dl.services.process_service import ProcessService
 from abx_dl.services.crawl_lifecycle_service import SnapshotAttemptError
 
@@ -48,12 +48,22 @@ def test_process_stop_drains_foreground_and_recorders_before_bus_destroy(
     bus.on(ProcessCompletedEvent, persist_completed_process)
 
     async def run() -> None:
+        catalog = PluginCatalog.discover().select(["chrome"])
+        config = {**get_explicit_user_env(), "CHROME_DELAY_AFTER_LOAD": 60, "CHROME_TIMEOUT": 120, "CHROME_HEADLESS": True}
+        # This deadline tests stopping live hooks, not downloading Chrome/Node
+        # on a cold worker. Provision the same catalog/config and managed binary
+        # root first; download's normal preflight then loads those installed tools.
+        install_bus = create_bus(total_timeout=120.0, name=f"stop_process_install_{tmp_path.name}")
+        try:
+            await install_plugins(catalog, config=config, output_dir=output_dir, bus=install_bus)
+        finally:
+            await install_bus.destroy(clear=False)
         task = asyncio.create_task(
             download(
                 httpserver.url_for("/"),
-                PluginCatalog.discover().select(["chrome"]),
+                catalog,
                 output_dir,
-                config={**get_explicit_user_env(), "CHROME_DELAY_AFTER_LOAD": 60, "CHROME_TIMEOUT": 120, "CHROME_HEADLESS": True},
+                config=config,
                 bus=bus,
                 emit_jsonl=False,
                 interactive_tty=False,
