@@ -157,8 +157,9 @@ class SnapshotService(BaseService):
         self.snapshot_max_size = max(0, parse_filesize_to_bytes(config.user.model_dump(mode="json").get("SNAPSHOT_MAX_SIZE") or 0))
         # A retry must get a fresh budget, without a hidden ledger in the output
         # directory blocking it. Hook metadata already supplies file sizes;
-        # count each plugin/path once even when several hooks report it.
-        self._output_sizes: dict[tuple[str, str], int] = {}
+        # count each snapshot-relative path once: another plugin may publish
+        # the same saved file as its primary output without copying its bytes.
+        self._output_sizes: dict[str, int] = {}
         self.config: RuntimeConfig = config
         self._hook_timeouts: dict[tuple[str, str], int] = {}
         self._snapshot_by_process: dict[str, SnapshotEvent] = {}
@@ -368,14 +369,18 @@ class SnapshotService(BaseService):
     async def on_ArchiveResultEvent(self, event: ArchiveResultEvent) -> None:
         if self.snapshot_max_size and event.snapshot_id == self.snapshot.id:
             for output_file in event.output_files:
-                self._output_sizes[event.plugin, output_file.path] = output_file.size
+                path = Path(output_file.path) if getattr(output_file, "root_relative", False) else Path(event.plugin) / output_file.path
+                self._output_sizes[path.as_posix()] = output_file.size
 
     async def on_ProcessCompletedEvent(self, event: ProcessCompletedEvent) -> None:
         # Some hooks emit no result, or write more after their last stdout line.
         # Their bytes still count, regardless of the eventual result status.
         if self.snapshot_max_size and event.hook_name.startswith("on_Snapshot") and Path(event.output_dir).parent == self.output_dir:
             for output_file in event.output_files:
-                self._output_sizes[event.plugin_name, output_file.path] = output_file.size
+                path = (
+                    Path(output_file.path) if getattr(output_file, "root_relative", False) else Path(event.plugin_name) / output_file.path
+                )
+                self._output_sizes[path.as_posix()] = output_file.size
 
     async def on_ProcessStdoutEvent(self, event: ProcessStdoutEvent) -> None:
         """Route type=Snapshot records to SnapshotDiscoveredEvent facts.

@@ -113,6 +113,7 @@ class ArchiveResultService(BaseService):
             scan_output_files,
             output_dir,
             containment_root=output_dir.parent,
+            primary_output=str(archive_result_payload.get("output_str") or ""),
         )
         archive_result_payload["snapshot_id"] = snapshot_event.snapshot_id
         archive_result_payload["plugin"] = event.plugin_name

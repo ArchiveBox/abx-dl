@@ -174,6 +174,7 @@ def scan_output_files(
     file_paths: Iterable[Path] | None = None,
     *,
     containment_root: Path | None = None,
+    primary_output: str = "",
 ) -> list[OutputFile]:
     """Collect metadata for real hook output files, excluding process artifacts.
 
@@ -219,6 +220,27 @@ def scan_output_files(
         # Reuse this walk's lstat: on remote archive mounts every stat is a
         # round trip, and scans run for each result event.
         output_files.append(output_file_from_path(file_path, relative_to=output_dir, size=stat_result.st_size))
+
+    # WHY: a hook can reuse another plugin's captured bytes as its primary
+    # output. Inventory that explicit reference at publication time, otherwise
+    # DB-only cards see only the hook's receipt and cannot validate its preview.
+    # Never walk sibling directories or follow a reference outside the snapshot.
+    primary = Path(primary_output)
+    if primary_output and not primary.is_absolute() and ".." not in primary.parts and len(primary.parts) > 1:
+        try:
+            target = (containment_root / primary).resolve(strict=True)
+            if target.is_relative_to(containment_root) and not target.is_relative_to(output_dir.resolve()):
+                metadata = target.stat()
+                if stat.S_ISREG(metadata.st_mode):
+                    output_files.append(
+                        output_file_from_path(target, relative_to=containment_root, size=metadata.st_size).model_copy(
+                            update={"path": primary.as_posix(), "root_relative": True},
+                        ),
+                    )
+        except (OSError, RuntimeError, ValueError):
+            # Missing/invalid primary output is not a captured artifact. Keep
+            # the hook's actual files and reported outcome, without inventing one.
+            pass
 
     output_files.sort(key=lambda output_file: output_file.path)
     return output_files

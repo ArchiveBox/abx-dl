@@ -44,6 +44,28 @@ from werkzeug.wrappers import Response
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_cli_staticfile_manifest_includes_reused_response(tmp_path: Path, httpserver: HTTPServer) -> None:
+    expected = b'<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="blue"/></svg>'
+    httpserver.expect_request("/image.svg").respond_with_data(expected, content_type="image/svg+xml")
+    output_dir = tmp_path / "capture"
+    result = _run_cli(tmp_path, "dl", "--plugins=responses,staticfile", "--dir", str(output_dir), httpserver.url_for("/image.svg"))
+    records = [json.loads(line) for line in (output_dir / "index.jsonl").read_text().splitlines()]
+    saved = next(record for record in reversed(records) if record.get("type") == "ArchiveResult" and record.get("plugin") == "staticfile")
+    assert saved["status"] == "succeeded", result.stdout + result.stderr
+    assert (output_dir / saved["output_str"]).read_bytes() == expected
+    assert saved["output_str"].startswith("responses/")
+    assert saved["output_str"].endswith(".svg")
+    files = {item["path"]: item for item in saved["output_files"]}
+    assert files[saved["output_str"]] == {
+        "path": saved["output_str"],
+        "extension": "svg",
+        "mimetype": "image/svg+xml",
+        "size": len(expected),
+        "root_relative": True,
+    }
+    assert list((output_dir / "staticfile").glob("*.svg")) == [], "Reuse must not duplicate captured bytes"
+
+
 @pytest.mark.parametrize("isolation", ["crawl", "snapshot"])
 @pytest.mark.parametrize("attachment", [False, True])
 @pytest.mark.parametrize("chunk_delay", [0, 2])

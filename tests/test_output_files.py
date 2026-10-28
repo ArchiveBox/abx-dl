@@ -10,6 +10,45 @@ from abx_dl.catalog import PluginCatalog
 from abx_dl.output_files import OutputManifest, remove_empty_output_dirs, scan_output_files
 
 
+def test_scan_output_files_inventories_only_explicit_sibling_output(tmp_path: Path) -> None:
+    plugin_dir = tmp_path / "staticfile"
+    plugin_dir.mkdir()
+    response = tmp_path / "responses" / "saved.png"
+    response.parent.mkdir()
+    response.write_bytes(b"retained image bytes")
+    (response.parent / "unrelated.txt").write_text("not this hook's primary output")
+    (plugin_dir / "result.json").write_text("{}")
+
+    files = scan_output_files(plugin_dir, containment_root=tmp_path, primary_output="responses/saved.png")
+
+    assert [file.path for file in files] == ["responses/saved.png", "result.json"]
+    assert files[0].model_dump() == {
+        "path": "responses/saved.png",
+        "extension": "png",
+        "mimetype": "image/png",
+        "size": len(b"retained image bytes"),
+        "root_relative": True,
+    }
+    assert list(plugin_dir.iterdir()) == [plugin_dir / "result.json"]
+
+
+@pytest.mark.parametrize(
+    "primary_output",
+    ["../outside.txt", "/etc/hosts", "responses/escape.txt", "missing/file.txt", "No main response captured"],
+)
+def test_scan_output_files_rejects_unsafe_or_absent_primary_output(tmp_path: Path, primary_output: str) -> None:
+    snapshot = tmp_path / "snapshot"
+    plugin_dir = snapshot / "staticfile"
+    plugin_dir.mkdir(parents=True)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("private")
+    (snapshot / "responses").mkdir()
+    (snapshot / "responses/escape.txt").symlink_to(outside)
+
+    assert scan_output_files(plugin_dir, containment_root=snapshot, primary_output=primary_output) == []
+    assert outside.read_text() == "private"
+
+
 @pytest.mark.parametrize("entry", [None, ".DS_Store", "saved.txt", "capture.stderr.log"])
 def test_empty_output_cleanup_applies_to_every_catalog_plugin(tmp_path: Path, entry: str | None) -> None:
     directories = [tmp_path / plugin.name for plugin in PluginCatalog.discover().values()]
