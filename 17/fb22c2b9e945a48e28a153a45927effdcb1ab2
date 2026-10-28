@@ -1,0 +1,21 @@
+abx_dl/services/snapshot_service.py
+  s_10bc94d001be49::t_04bf7c0a4afc46 705-763
+tests/test_snapshot_cleanup.py
+  s_10bc94d001be49::t_db4a3e91f1804b 1-60
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "17fb22c2b9e945a48e28a153a45927effdcb1ab2",
+  "prompts": {},
+  "sessions": {
+    "s_10bc94d001be49": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "01a11f62-2c55-7051-a677-585a21b42fb4",
+        "model": "gpt-6-luna"
+      },
+      "human_author": "Nick Sweeting <git@sweeting.me>"
+    }
+  }
+}
