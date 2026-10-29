@@ -16,7 +16,7 @@ uv = "2026-10-23T00:00:00Z"
 
 [[package]]
 name = "abx-dl"
-version = "1.13.297"
+version = "1.13.298"
 source = { editable = "." }
 dependencies = [
     { name = "abx-plugins" },
