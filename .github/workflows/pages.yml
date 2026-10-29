@@ -9,13 +9,14 @@ on:
 permissions:
   contents: read
 
-concurrency:
-  group: pages-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
-  cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
-
 jobs:
   build:
     runs-on: ubuntu-latest
+    concurrency:
+      group: >-
+        pages-build-${{ github.event_name == 'workflow_dispatch' &&
+        github.run_id || github.ref }}
+      cancel-in-progress: ${{ github.event_name != 'workflow_dispatch' }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -31,6 +32,10 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
+    concurrency:
+      group: pages-deploy
+      # Cancel stale builds, but never interrupt a submitted Pages deployment.
+      cancel-in-progress: false
     permissions:
       pages: write
       id-token: write
