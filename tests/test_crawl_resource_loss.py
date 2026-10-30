@@ -12,6 +12,7 @@ from pytest_httpserver import HTTPServer
 from abx_dl.catalog import PluginCatalog
 from abx_dl.config import GlobalConfig, RuntimeConfig, get_explicit_user_env
 from abx_dl.events import (
+    ArchiveResultEvent,
     CrawlCompletedEvent,
     CrawlEvent,
     CrawlSetupEvent,
@@ -209,6 +210,17 @@ def test_required_crawl_browser_loss_stops_new_snapshot_admission(
             assert len(completed) == expected
             if expected:
                 assert completed[0].snapshot_id == admitted[0] and completed[0].error
+                # Losing a required browser is not a user's choice to skip the
+                # foreground hook. Its interrupted attempt must remain failed.
+                navigation = await bus.find(ProcessCompletedEvent, hook_name="on_Snapshot__30_chrome_navigate", past=True, future=False)
+                assert navigation is not None and navigation.status == "failed"
+                assert not navigation.cancelled, navigation.stderr
+                assert "Hook interrupted by user" not in navigation.stderr
+                assert "Required crawl resource" in navigation.stderr
+                results = await bus.filter(ArchiveResultEvent, snapshot_id=admitted[0], past=True, future=False)
+                navigation_results = [item for item in results if item.hook_name == navigation.hook_name]
+                assert navigation_results and navigation_results[-1].status == "failed"
+                assert "Required crawl resource" in navigation_results[-1].error
             else:
                 assert not (output_dir / "0").exists()
             assert len(crawl_completed) == 1 and crawl_completed[0].error

@@ -281,6 +281,8 @@ class ProcessService(BaseService):
         self._active_hooks: dict[str, tuple[ProcessEvent, ProcessStartedEvent]] = {}
         self._interrupt_choices: dict[str, asyncio.Future[str]] = {}
         self.abort_requested = False
+        self._abort_user_initiated = True
+        self._abort_error = ""
         self._active_process_event_tasks: dict[str, asyncio.Task[Process | None]] = {}
         self._background_completion_tasks: set[asyncio.Task[Process | None]] = set()
         self._shutdown_hook_ids: set[str] = set()
@@ -516,6 +518,8 @@ class ProcessService(BaseService):
     async def on_CrawlAbortEvent(self, event: CrawlAbortEvent) -> None:
         """Abort is sticky for this runner; starting another hook cannot reset it."""
         self.abort_requested = True
+        self._abort_user_initiated = self._abort_user_initiated and event.user_initiated
+        self._abort_error = self._abort_error or event.error
         self._abort_signal.set()
         for choice in self._interrupt_choices.values():
             if not choice.done():
@@ -997,9 +1001,17 @@ class ProcessService(BaseService):
             cancelled = cancelled or interrupted
             status = _process_status(returncode)
             if interrupted:
-                returncode = 130
                 status = "failed"
-                stderr = "Hook interrupted by user"
+                if self._abort_error:
+                    # The same stop signal handles resource loss and user abort.
+                    # Keep the former failed: cancellation projects as a skipped
+                    # result and would hide a capture stopped by a dead browser.
+                    cancelled = False
+                    returncode = returncode or 1
+                    stderr = "\n".join(filter(None, [stderr.rstrip(), f"Hook aborted: {self._abort_error}"]))
+                else:
+                    returncode = 130
+                    stderr = "Hook interrupted by user" if self._abort_user_initiated else "Hook execution cancelled"
                 # Completion records the stopped attempt, but never reads stdin or
                 # chooses crawl control. Holding completion until the answer also
                 # keeps a background-only capture from entering cleanup mid-prompt.
