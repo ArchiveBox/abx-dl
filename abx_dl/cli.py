@@ -989,6 +989,10 @@ class LiveBusUI:
         self.ui_console.print()
 
     def print_summary(self, *, output_dir: Path, archive_results: list[ArchiveResultEvent]) -> None:
+        # Reconciliation can emit a later state for the same result ID after the
+        # hook exits. Keep both lifecycle facts in the event stream, but count
+        # each result's final state once in either terminal summary.
+        archive_results = list({result.id: result for result in archive_results}.values())
         if not self.interactive_tty:
             self.ui_console.print(
                 Text(

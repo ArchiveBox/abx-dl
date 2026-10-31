@@ -7,6 +7,7 @@ import pty
 import re
 import select
 import signal
+import socket
 import termios
 import shutil
 import subprocess
@@ -1498,6 +1499,24 @@ def test_readme_install_command_runs_real_install_pipeline(tmp_path: Path) -> No
         timeout=30,
     )
     assert version_result.stdout.startswith("GNU Wget")
+
+
+def test_cli_summary_counts_reconciled_result_once(tmp_path: Path) -> None:
+    output_dir = tmp_path / "capture"
+    # A real refused Git connection reports a failed result before its nonzero
+    # exit is reconciled. Both facts must remain in JSONL, but describe one result.
+    with socket.socket() as closed_service:
+        closed_service.bind(("127.0.0.1", 0))
+        port = closed_service.getsockname()[1]
+        captured = _run_cli(tmp_path, "dl", "--plugins=git", f"--dir={output_dir}", f"http://127.0.0.1:{port}/repository.git")
+    assert captured.returncode == 0, captured.stdout + captured.stderr
+    records = [json.loads(line) for line in (output_dir / "index.jsonl").read_text().splitlines() if line.startswith("{")]
+    results = [record for record in records if record["type"] == "ArchiveResult"]
+    assert len(results) == 2, results
+    assert len({record["id"] for record in results}) == 1, results
+    assert all(record["status"] == "failed" for record in results), results
+    assert any(record["type"] == "Process" and record.get("exit_code") == 1 for record in records), records
+    assert "[COMPLETED] 0 succeeded, 0 noresult, 1 failed, 0 skipped" in captured.stderr
 
 
 def test_capture_isolates_missing_plugin_binary_but_install_remains_strict(tmp_path: Path, httpserver) -> None:
