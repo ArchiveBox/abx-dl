@@ -138,6 +138,11 @@ jobs:
     if: inputs.platform == 'linux'
     name: All plugins
     runs-on: ubuntu-24.04
+    services:
+      wayback:
+        image: nginx:alpine
+        ports:
+          - 80/tcp
     permissions:
       actions: read
       contents: read
@@ -268,6 +273,14 @@ jobs:
                   output.write(f"{enabled_key}=True\n")
           print(f"Enabled {len(enabled_keys)} Snapshot plugins: {enabled_keys}")
           PY
+
+      - name: Configure local Wayback submission service
+        run: |
+          set -Eeuo pipefail
+          docker cp .github/fixtures/wayback.conf '${{ job.services.wayback.id }}:/etc/nginx/conf.d/default.conf'
+          docker exec '${{ job.services.wayback.id }}' nginx -t
+          docker restart '${{ job.services.wayback.id }}'
+          echo "ARCHIVEDOTORG_SAVE_URL=http://127.0.0.1:${{ job.services.wayback.ports['80'] }}/save/" >> "$GITHUB_ENV"
 
       - name: Test all plugins
         run: |

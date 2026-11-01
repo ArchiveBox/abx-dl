@@ -455,6 +455,8 @@ def _cli_env(tmp_path: Path) -> dict[str, str]:
     env = os.environ.copy()
     for key in ABX_ENV_KEYS:
         env.pop(key, None)
+    # Preserve the local test service even when isolating all plugin config.
+    env["ARCHIVEDOTORG_SAVE_URL"] = os.environ["ARCHIVEDOTORG_SAVE_URL"]
     config_dir = tmp_path / "config"
     pythonpath_entries = [str(REPO_ROOT)]
     for sibling in ("abx-plugins", "abxpkg"):

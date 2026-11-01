@@ -33,6 +33,11 @@ jobs:
   build:
     name: build and test ${{ matrix.platform }}
     runs-on: ${{ matrix.runner }}
+    services:
+      wayback:
+        image: ${{ inputs.full_tests && 'nginx:alpine' || '' }}
+        ports:
+          - 80/tcp
     strategy:
       fail-fast: false
       matrix:
@@ -278,6 +283,14 @@ jobs:
           "${DOCKER_BINARY}" pull --platform '${{ matrix.platform }}' "$IMAGE"
           "${DOCKER_BINARY}" tag "$IMAGE" '${{ matrix.local_tag }}'
 
+      - name: Configure local Wayback submission service
+        if: inputs.full_tests
+        run: |
+          set -Eeuo pipefail
+          docker cp .github/fixtures/wayback.conf '${{ job.services.wayback.id }}:/etc/nginx/conf.d/default.conf'
+          docker exec '${{ job.services.wayback.id }}' nginx -t
+          docker restart '${{ job.services.wayback.id }}'
+
       - name: Validate real crawl inside Docker image
         id: real_crawl
         if: inputs.full_tests
@@ -328,7 +341,7 @@ jobs:
           fi
 
           "$SCRIPT_BINARY" -q -e -c \
-            "\"${DOCKER_BINARY}\" run --rm -it --platform '${{ matrix.platform }}' --env ANTHROPIC_API_KEY --env CLAUDE_CODE_OAUTH_TOKEN --env TWOCAPTCHA_API_KEY --volume '$OUT_DIR:/out' --volume '$PERSONAS_DIR:/data/personas' '${{ matrix.local_tag }}' https://sweeting.me" \
+            "\"${DOCKER_BINARY}\" run --rm -it --platform '${{ matrix.platform }}' --add-host=host.docker.internal:host-gateway --env ARCHIVEDOTORG_SAVE_URL='http://host.docker.internal:${{ job.services.wayback.ports['80'] }}/save/' --env ANTHROPIC_API_KEY --env CLAUDE_CODE_OAUTH_TOKEN --env TWOCAPTCHA_API_KEY --volume '$OUT_DIR:/out' --volume '$PERSONAS_DIR:/data/personas' '${{ matrix.local_tag }}' https://sweeting.me" \
             /dev/null 2>&1 | "$TEE_BINARY" "$OUT_DIR/crawl.log"
 
           "$SCRIPT_BINARY" -q -e -c \

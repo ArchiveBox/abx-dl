@@ -96,6 +96,9 @@
   ],
   "crawl_validation": {
     "required_plugin_outputs": {
+      "archivedotorg": [
+        "archivedotorg/archive.org.txt"
+      ],
       "dom": [
         "dom/output.html"
       ],
