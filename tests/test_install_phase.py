@@ -306,8 +306,8 @@ def test_install_event_preserves_binary_overrides_and_plugin_context(tmp_path: P
     abxbus_request = next(event for event in request_events if event.name == "abxbus")
     assert abxbus_request.no_cache is None
     opendataloader_request = next(event for event in request_events if event.name == "opendataloader-pdf")
-    assert opendataloader_request.min_version == "2.5.15"
-    assert opendataloader_request.max_version == "2.5.15"
+    assert opendataloader_request.min_version == "2.5.17"
+    assert opendataloader_request.max_version == "2.5.17"
     assert abxbus_request.binproviders == "pnpm"
     abxbus_version = importlib.metadata.version("abxbus")
     assert abxbus_request.min_version == abxbus_version
