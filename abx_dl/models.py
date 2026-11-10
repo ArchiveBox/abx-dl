@@ -37,7 +37,9 @@ def runtime_personas_dir(output_dir: Path, tmp_dir: Path) -> Path:
     # Hosts may already provide a prepared persona through a local-runtime link.
     existing = output_dir / ".persona"
     if existing.is_symlink():
-        return existing
+        # Keep the host's compatibility link, but avoid traversing an archive
+        # FUSE mount on every browser database/cache operation.
+        return existing.resolve()
     key = hashlib.sha256(str(output_dir.resolve()).encode()).hexdigest()
     return tmp_dir / "personas" / key / ".persona"
 

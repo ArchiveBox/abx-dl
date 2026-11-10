@@ -26,8 +26,11 @@ def test_runtime_preserves_host_persona_symlink(tmp_path):
     local_personas.mkdir(parents=True)
     output.mkdir(parents=True)
     (output / ".persona").symlink_to(local_personas, target_is_directory=True)
+    (local_personas / "cookies.txt").write_text("# Netscape HTTP Cookie File\n")
     env = assemble_env(run_output_dir=output)
-    assert Path(env["PERSONAS_DIR"]).resolve() == local_personas
+    assert Path(env["PERSONAS_DIR"]) == local_personas.resolve()
+    assert (output / ".persona").is_symlink()
+    assert (output / ".persona" / "cookies.txt").read_text() == "# Netscape HTTP Cookie File\n"
 
 
 @pytest.mark.parametrize("isolation", ["crawl", "snapshot"])
