@@ -18,7 +18,7 @@ from abx_dl.orchestrator import create_bus
 from abx_dl.services.process_service import ProcessService
 
 
-def test_host_memory_guard_includes_uncapped_chrome(tmp_path: Path, httpserver: HTTPServer) -> None:
+def test_memory_guard_includes_uncapped_chrome(tmp_path: Path, httpserver: HTTPServer) -> None:
     httpserver.expect_request("/favicon.ico").respond_with_data("", status=204)
     httpserver.expect_request("/article").respond_with_data(
         "<!doctype html><title>Memory guard article</title><p>Preserved article</p>",
@@ -27,13 +27,19 @@ def test_host_memory_guard_includes_uncapped_chrome(tmp_path: Path, httpserver: 
     # Exercise the real monitor against real Chrome without exhausting the test
     # host: an intentionally oversized reserve makes real available RAM fail
     # the configured threshold. No memory readings or processes are replaced.
+    reserve = psutil.virtual_memory().total * 2
+    container_limit = Path("/sys/fs/cgroup/memory.max")
+    if container_limit.is_file() and container_limit.read_text().strip() != "max":
+        # A real Docker memory limit is invisible to psutil's host reading.
+        # Exceed that limit rather than host RAM to exercise this boundary too.
+        reserve = min(reserve, int(container_limit.read_text()) + 64 * 1024**2)
     environment = {
         **os.environ,
         "CHROME_HEADLESS": "true",
         "CHROME_ISOLATION": "crawl",
         "CHROME_DELAY_AFTER_LOAD": "5",
         "CHROME_MEMORY_LIMIT": "0",
-        "MEMORY_MIN_FREE": str(psutil.virtual_memory().total * 2),
+        "MEMORY_MIN_FREE": str(reserve),
     }
     sibling = subprocess.Popen(["sleep", "120"])
     try:
@@ -49,7 +55,9 @@ def test_host_memory_guard_includes_uncapped_chrome(tmp_path: Path, httpserver: 
         )
         assert limited.returncode != 0, limited.stdout + limited.stderr
         diagnostics = "\n".join(path.read_text() for path in limited_dir.rglob("*.stderr.log"))
-        assert "Host memory headroom" in diagnostics, limited.stdout + limited.stderr + diagnostics
+        assert "memory headroom" in diagnostics, limited.stdout + limited.stderr + diagnostics
+        if reserve < psutil.virtual_memory().available:
+            assert "Container memory headroom" in diagnostics
         assert "chrome_launch" in diagnostics
         assert sibling.poll() is None
 

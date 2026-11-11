@@ -115,6 +115,44 @@ class _OutputStreamState:
     memory_error: str = ""
 
 
+def _available_memory() -> tuple[int, str]:
+    """Return RAM headroom under both host and visible cgroup v2 limits."""
+    available, scope = psutil.virtual_memory().available, "Host"
+    root = Path("/sys/fs/cgroup")
+    paths = [root]
+    try:
+        for line in Path("/proc/self/cgroup").read_text().splitlines():
+            if line.startswith("0::"):
+                current = root / line[3:].lstrip("/")
+                if current.is_dir() and current.is_relative_to(root):
+                    paths = [current, *[parent for parent in current.parents if parent.is_relative_to(root)]]
+                break
+    except OSError:
+        pass
+    for path in paths:
+        try:
+            limit = (path / "memory.max").read_text().strip()
+            if limit == "max":
+                continue
+            used = int((path / "memory.current").read_text())
+            stats = dict(line.split() for line in (path / "memory.stat").read_text().splitlines())
+            # Clean file cache is reclaimable; dirty/writeback pages still
+            # need I/O before that space can protect a growing hook process.
+            cache = max(
+                0,
+                int(stats.get("active_file", 0))
+                + int(stats.get("inactive_file", 0))
+                - int(stats.get("file_dirty", 0))
+                - int(stats.get("file_writeback", 0)),
+            )
+            headroom = max(0, int(limit) - max(0, used - cache))
+            if headroom < available:
+                available, scope = headroom, "Container"
+        except (OSError, ValueError):
+            continue
+    return available, scope
+
+
 def _enforce_memory_limit(event: ProcessStartedEvent, limit: int, minimum_free: int = 0) -> str:
     """Best-effort bound for an owned hook tree, not an OS allocation limit."""
     if not event.pid or event.subprocess.returncode is not None:
@@ -137,13 +175,13 @@ def _enforce_memory_limit(event: ProcessStartedEvent, limit: int, minimum_free: 
             reason = f"Hook memory limit exceeded: {event.hook_name} used {used} RSS bytes (limit {limit})"
         elif minimum_free > 0 and used >= 256 * 1024**2:
             # Shared Chrome legitimately needs multiple GB, so its fixed cap is
-            # optional. It must still yield before exhausting the host alongside
-            # services outside our container (e.g. rclone). Only stop substantial
+            # optional. It must still yield before exhausting the container or
+            # the host alongside other services. Only stop substantial
             # owned trees: killing tiny monitors would recover little memory and
             # needlessly lose independent outputs. Reuse normal failure cleanup.
-            available = psutil.virtual_memory().available
+            available, scope = _available_memory()
             if available < minimum_free:
-                reason = f"Host memory headroom {available} bytes below reserve {minimum_free}: {event.hook_name} used {used} RSS bytes"
+                reason = f"{scope} memory headroom {available} bytes below reserve {minimum_free}: {event.hook_name} used {used} RSS bytes"
         if not reason:
             return ""
         # Recheck identity after enumeration. Kill the owned group immediately;
