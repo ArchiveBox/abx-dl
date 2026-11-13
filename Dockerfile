@@ -217,6 +217,20 @@ RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=
     && abx-dl install chrome \
     # Explicit names install every downloader plugin, including disabled opt-ins.
     && abx-dl install $ABX_DOCKER_PLUGINS \
+    # Wheels may ship full compiler debug data (curl-cffi alone adds 32 MiB).
+    # Remove only non-runtime debug sections before fingerprints and OCI export.
+    && strip_lib=/tmp/abx-dl-strip \
+    && ABXPKG_NO_CACHE=True abxpkg env --install --binproviders=env,apt --lib="$strip_lib" --overrides='{"apt":{"install_args":["binutils"]}}' strip >/dev/null \
+    && find "$ABXPKG_LIB_DIR/uv" -type f -name '*.so*' -print0 > /tmp/abx-dl-native-libraries \
+    && while IFS= read -r -d '' native_library; do \
+        magic=''; \
+        if IFS= read -r -N 4 magic < "$native_library" && [[ "$magic" == $'\x7fELF' ]]; then \
+            "$strip_lib/env/bin/strip" --strip-debug "$native_library" || exit $?; \
+        fi; \
+    done < /tmp/abx-dl-native-libraries \
+    && abxpkg run --binproviders=env --lib="$strip_lib" apt-get purge -y binutils \
+    && abxpkg run --binproviders=env --lib="$strip_lib" apt-get autoremove -y \
+    && rm -rf "$strip_lib" /tmp/abx-dl-native-libraries \
     # pnpm installs both libc variants; Debian can only execute the glibc one.
     # Keep Claude and all plugins installed, removing only the unusable variant.
     && find "$ABXPKG_LIB_DIR/pnpm/packages/claudecode/node_modules" -type l -name 'claude-code-linux-*-musl' -delete \
