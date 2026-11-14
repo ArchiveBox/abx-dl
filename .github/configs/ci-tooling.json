@@ -97,6 +97,8 @@
   "crawl_validation": {
     "browser_preparation_plugins": ["browserharness", "playwright", "puppeteer", "stagehand"],
     "required_plugin_outputs": {
+      "autotag": ["autotag/analysis.json"],
+      "autosummary": ["autosummary/summary.md", "autosummary/analysis.json"],
       "browserharness": ["browserharness/result.log"],
       "playwright": ["playwright/result.log"],
       "puppeteer": ["puppeteer/result.log"],

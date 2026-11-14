@@ -150,6 +150,8 @@ jobs:
       id-token: write
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      AUTOTAG_MODEL: anthropic/claude-haiku-4-5-20251001
+      AUTOSUMMARY_MODEL: anthropic/claude-haiku-4-5-20251001
       CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.ANTHROPIC_API_KEY == '' && secrets.CLAUDE_CODE_OAUTH_TOKEN || '' }}
       TWOCAPTCHA_API_KEY: ${{ secrets.TWOCAPTCHA_API_KEY }}
       # Each crawl owns its prover; unrelated public sessions must not decide
