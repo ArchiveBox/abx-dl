@@ -33,6 +33,12 @@ jobs:
   build:
     name: build and test ${{ matrix.platform }}
     runs-on: ${{ matrix.runner }}
+    env:
+      AUTOTAG_ENABLED: "True"
+      AUTOSUMMARY_ENABLED: "True"
+      CLAUDECHROME_ENABLED: "True"
+      AUTOTAG_MODEL: anthropic/claude-haiku-4-5-20251001
+      AUTOSUMMARY_MODEL: anthropic/claude-haiku-4-5-20251001
     services:
       wayback:
         image: ${{ inputs.full_tests && 'nginx:alpine' || '' }}
@@ -282,6 +288,12 @@ jobs:
           "${DOCKER_BINARY}" pull --platform '${{ matrix.platform }}' "$IMAGE"
           "${DOCKER_BINARY}" tag "$IMAGE" '${{ matrix.local_tag }}'
 
+      - name: Check paid analysis credentials
+        if: inputs.full_tests
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: '"${UV_BINARY}" run --no-cache --no-sync --no-sources python bin/check_ai_credentials.py'
+
       - name: Configure local Wayback submission service
         if: inputs.full_tests
         run: |
@@ -344,7 +356,7 @@ jobs:
           fi
 
           "$SCRIPT_BINARY" -q -e -c \
-            "\"${DOCKER_BINARY}\" run --rm -it --platform '${{ matrix.platform }}' --add-host=host.docker.internal:host-gateway --env ARCHIVEDOTORG_SAVE_URL='http://host.docker.internal:${WAYBACK_PORT}/save/' --env ANTHROPIC_API_KEY --env CLAUDE_CODE_OAUTH_TOKEN --env TWOCAPTCHA_API_KEY --env-file '${{ github.workspace }}/.github/fixtures/browser-preparation.env' --volume '$OUT_DIR:/out' --volume '$PERSONAS_DIR:/data/personas' '${{ matrix.local_tag }}' https://example.com" \
+            "\"${DOCKER_BINARY}\" run --rm -it --platform '${{ matrix.platform }}' --add-host=host.docker.internal:host-gateway --env ARCHIVEDOTORG_SAVE_URL='http://host.docker.internal:${WAYBACK_PORT}/save/' --env ANTHROPIC_API_KEY --env CLAUDE_CODE_OAUTH_TOKEN --env TWOCAPTCHA_API_KEY --env AUTOTAG_ENABLED --env AUTOSUMMARY_ENABLED --env CLAUDECHROME_ENABLED --env AUTOTAG_MODEL --env AUTOSUMMARY_MODEL --env-file '${{ github.workspace }}/.github/fixtures/browser-preparation.env' --volume '$OUT_DIR:/out' --volume '$PERSONAS_DIR:/data/personas' '${{ matrix.local_tag }}' https://example.com" \
             /dev/null 2>&1 | "$TEE_BINARY" "$OUT_DIR/crawl.log"
 
           "$SCRIPT_BINARY" -q -e -c \
