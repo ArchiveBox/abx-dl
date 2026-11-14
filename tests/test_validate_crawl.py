@@ -81,3 +81,30 @@ def test_crawl_isolation_rejects_ublock_noop_without_successful_crawl_setup():
     records = [record for record in _isolation_records() if record.get("hook_name") != "on_CrawlSetup__95_ublock_config"]
     with pytest.raises(SystemExit, match="uBlock process"):
         validate_crawl.validate_crawl_isolation(records, snapshot_count=1)
+
+
+@pytest.mark.parametrize("plugin", ["autotag", "autosummary"])
+def test_unavailable_paid_analysis_does_not_require_an_artifact(tmp_path, plugin):
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    validate_crawl.validate_required_outputs(
+        [],
+        output_dir,
+        {plugin: [f"{plugin}/analysis.json"]},
+        {plugin},
+        "Anthropic rejected the API credentials",
+    )
+    assert list(output_dir.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("plugin", "disabled", "reason"),
+    [
+        ("autotag", set(), "Anthropic rejected the API credentials"),
+        ("autosummary", {"autosummary"}, ""),
+        ("singlefile", {"singlefile"}, "Anthropic rejected the API credentials"),
+    ],
+)
+def test_required_outputs_stay_required_without_paid_unavailability(tmp_path, plugin, disabled, reason):
+    with pytest.raises(SystemExit, match="Required plugin did not succeed"):
+        validate_crawl.validate_required_outputs([], tmp_path, {plugin: [f"{plugin}/output"]}, disabled, reason)

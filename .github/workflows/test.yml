@@ -277,6 +277,9 @@ jobs:
           PY
           cat .github/fixtures/browser-preparation.env >> "$GITHUB_ENV"
 
+      - name: Check paid analysis credentials
+        run: '"${UV_BINARY}" run --no-cache --no-sync --no-sources python bin/check_ai_credentials.py'
+
       - name: Configure local Wayback submission service
         run: |
           set -Eeuo pipefail

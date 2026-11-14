@@ -110,6 +110,26 @@ def validate_crawl_isolation(
     require_process("ublock", UBLOCK_CRAWL_SETUP_HOOK, "uBlock")
 
 
+def validate_required_outputs(
+    results: list[dict[str, object]],
+    output_dir: Path,
+    required_plugin_outputs: dict[str, list[str]],
+    disabled_plugins: set[str],
+    credential_unavailability: str,
+) -> None:
+    for plugin_name, relative_paths in required_plugin_outputs.items():
+        if plugin_name in {"autotag", "autosummary"} and plugin_name in disabled_plugins and credential_unavailability:
+            print(f"Paid analysis not run: {plugin_name}: {credential_unavailability}")
+            continue
+        plugin_results = [record for record in results if record.get("plugin") == plugin_name and record.get("status") == "succeeded"]
+        if not plugin_results:
+            raise SystemExit(f"Required plugin did not succeed: {plugin_name}")
+        for relative_path in relative_paths:
+            output_paths = list(output_dir.glob(relative_path))
+            if not output_paths or any(not path.is_file() or path.stat().st_size == 0 for path in output_paths):
+                raise SystemExit(f"Required non-empty output is missing: {output_dir / relative_path}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("index", type=Path)
@@ -167,14 +187,13 @@ def main() -> None:
             if f'data-abx-prepared-{plugin_name}="true"' not in dom:
                 raise SystemExit(f"Browser preparation did not reach saved DOM: {plugin_name}")
 
-    for plugin_name, relative_paths in required_plugin_outputs.items():
-        plugin_results = [record for record in results if record.get("plugin") == plugin_name and record.get("status") == "succeeded"]
-        if not plugin_results:
-            raise SystemExit(f"Required plugin did not succeed: {plugin_name}")
-        for relative_path in relative_paths:
-            output_paths = list(output_dir.glob(relative_path))
-            if not output_paths or any(not path.is_file() or path.stat().st_size == 0 for path in output_paths):
-                raise SystemExit(f"Required non-empty output is missing: {output_dir / relative_path}")
+    validate_required_outputs(
+        results,
+        output_dir,
+        required_plugin_outputs,
+        disabled_plugins,
+        os.environ.get("CI_ANTHROPIC_UNAVAILABLE", ""),
+    )
 
     print(
         json.dumps(
