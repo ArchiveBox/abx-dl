@@ -220,7 +220,7 @@ RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=
     && abx-dl install chrome \
     # Explicit names install every downloader plugin, including disabled opt-ins.
     # Keep package caches on this layer's filesystem until installs finish.
-    && abx-dl install $ABX_DOCKER_PLUGINS \
+    && abx-dl install --debug $ABX_DOCKER_PLUGINS \
     # Wheels and native addons may ship compiler debug data (curl-cffi adds 32 MiB).
     # Remove debug data and addon-local symbols before fingerprints and OCI export.
     && strip_lib=/tmp/abx-dl-strip \
