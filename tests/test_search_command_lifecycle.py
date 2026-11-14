@@ -18,9 +18,9 @@ from abx_dl.models import PluginCommand
 from abx_plugins.plugins.search_backend_ripgrep import search as ripgrep
 
 
-@pytest.mark.parametrize("finish", ["close", "cancel", "timeout"])
+@pytest.mark.parametrize("finish, timeout", [("close", 2), ("cancel", 2), ("timeout", 2), ("close", None), ("cancel", None)])
 @pytest.mark.parametrize("termination_grace", [0, 0.2])
-def test_search_streams_and_reaps_ripgrep(tmp_path, finish, termination_grace):
+def test_search_streams_and_reaps_ripgrep(tmp_path, finish, timeout, termination_grace):
     rg = shutil.which("rg")
     assert rg, "Install the real ripgrep binary before running this test"
     snapshot_id = str(uuid4())
@@ -53,7 +53,7 @@ def test_search_streams_and_reaps_ripgrep(tmp_path, finish, termination_grace):
         command,
         arguments={"query": query},
         env=env,
-        timeout=2,
+        timeout=timeout,
         stop_event=stop if finish == "cancel" else None,
         termination_grace=termination_grace,
     )

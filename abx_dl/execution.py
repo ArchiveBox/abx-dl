@@ -48,7 +48,7 @@ def iter_plugin_command(
     stdin: Iterable[str] = (),
     env: Mapping[str, str] | None = None,
     cwd: Path | None = None,
-    timeout: float = 60,
+    timeout: float | None = 60,
     stop_event: threading.Event | None = None,
     termination_grace: float = 0,
 ) -> Generator[str]:
@@ -74,7 +74,7 @@ def iter_plugin_command(
             stderr=errors,
             start_new_session=True,
         )
-        deadline = time.monotonic() + timeout
+        deadline = time.monotonic() + timeout if timeout is not None else float("inf")
         decoder = codecs.getincrementaldecoder("utf-8")()
         pending = ""
         try:
@@ -85,7 +85,7 @@ def iter_plugin_command(
                     if stop_event is not None and stop_event.is_set():
                         return
                     remaining = deadline - time.monotonic()
-                    if remaining <= 0:
+                    if remaining <= 0 and timeout is not None:
                         raise subprocess.TimeoutExpired(argv, timeout)
                     if not selector.select(min(0.1, remaining)):
                         continue
@@ -105,7 +105,7 @@ def iter_plugin_command(
                 if stop_event is not None and stop_event.is_set():
                     return
                 remaining = deadline - time.monotonic()
-                if remaining <= 0:
+                if remaining <= 0 and timeout is not None:
                     raise subprocess.TimeoutExpired(argv, timeout)
                 try:
                     proc.wait(timeout=min(0.1, remaining))
