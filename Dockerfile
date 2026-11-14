@@ -321,14 +321,13 @@ RUN --network=none export ABX_DOCKER_PLUGINS="$(/venv/bin/python3 -c 'from abx_d
         && abxpkg run --binproviders=uv opendataloader-pdf --help \
         && abxpkg run --binproviders=uv papers-dl --help \
         && "$ABXPKG_LIB_DIR/pnpm/packages/claudecode/node_modules/.bin/claude" --version \
+        && "$ABXPKG_LIB_DIR/pnpm/packages/opencode/node_modules/.bin/opencode" --version \
         && ! command -v gcc \
         && ! command -v g++ \
         && ! command -v make \
         && ! command -v cargo \
         && ! command -v sonic \
         && ! command -v supervisord \
-        && ! command -v opencode \
-        && test ! -e "$ABXPKG_LIB_DIR/pnpm/packages/opencode" \
         && abx-dl install $ABX_DOCKER_PLUGINS \
         && /usr/bin/uv run --no-project python -c "import abx_dl, abxpkg" \
         && (find "$ABXPKG_LIB_DIR" -name derived.env -type f -exec sha256sum {} +; find "$XDG_CACHE_HOME" -type f -exec sha256sum {} +) | sort > /tmp/cache-before \
