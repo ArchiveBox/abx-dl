@@ -45,6 +45,28 @@ from werkzeug.wrappers import Response
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_cli_modal_delay_is_not_the_process_deadline(tmp_path: Path, httpserver: HTTPServer) -> None:
+    httpserver.expect_request("/dialog").respond_with_data(
+        "<html><body><script>alert('Dismiss before capture'); document.body.textContent="
+        "'Dialog dismissed. This saved document confirms the real browser continued navigation and captured the page after accepting its native dialog.';"
+        "</script></body></html>",
+        content_type="text/html",
+    )
+    configured = _run_cli(tmp_path, "config", "--set", "TIMEOUT=60")
+    assert configured.returncode == 0, configured.stdout + configured.stderr
+    output_dir = tmp_path / "capture"
+    result = _run_cli(tmp_path, "dl", "--plugins=modalcloser,dom", "--dir", str(output_dir), httpserver.url_for("/dialog"))
+    assert result.returncode == 0, result.stdout + result.stderr
+    records = [json.loads(line) for line in (output_dir / "index.jsonl").read_text().splitlines()]
+    modal_process = next(record for record in records if record.get("type") == "Process" and record.get("plugin") == "modalcloser")
+    assert modal_process["timeout"] == 60
+    assert modal_process["exit_code"] == 0
+    modal_result = next(record for record in records if record.get("type") == "ArchiveResult" and record.get("plugin") == "modalcloser")
+    assert modal_result["status"] == "succeeded"
+    assert modal_result["output_str"] == "1 modals closed"
+    assert "Dialog dismissed" in (output_dir / "dom" / "output.html").read_text()
+
+
 def test_cli_staticfile_manifest_includes_reused_response(tmp_path: Path, httpserver: HTTPServer) -> None:
     expected = b'<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="blue"/></svg>'
     httpserver.expect_request("/image.svg").respond_with_data(expected, content_type="image/svg+xml")
