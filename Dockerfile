@@ -46,9 +46,7 @@ FROM --platform=$TARGETPLATFORM node:${NODE_VERSION}-trixie-slim AS node-runtime
 # Dynamic symbols required by native addons remain; binutils stays in this stage.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends binutils \
-    && strip --strip-unneeded /usr/local/bin/node \
-    # OCI exports round timestamps to seconds; fingerprint the exported value.
-    && touch -h -d '@946684800' /usr/local/bin/node
+    && strip --strip-unneeded /usr/local/bin/node
 
 FROM --platform=$TARGETPLATFORM debian:trixie-slim AS abx-dl-runtime-base
 
@@ -143,12 +141,9 @@ RUN export PATH="/opt/node/bin:$PATH" \
 
 RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | env UV_INSTALL_DIR=/bin sh
 
-# Normalize the managed interpreter in its creation layer so cache fingerprints
-# survive OCI layer materialization without copying the Python tree up later.
 RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
     echo "[+] UV Creating /venv using python ${PYTHON_VERSION} for ${TARGETPLATFORM}..." \
     && uv venv /venv --python "${PYTHON_VERSION}" \
-    && touch -h -d "@$(date +%s)" "$(readlink -f /venv/bin/python)" \
     && (which python3 && which uv && uv python find) | tee -a /VERSION.txt
 
 ########################################################################################################
@@ -200,11 +195,9 @@ RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_ARCHIVEBOX_UID}..."
     && install -d -o "$DEFAULT_ARCHIVEBOX_UID" -g "$DEFAULT_ARCHIVEBOX_GID" "$DATA_DIR" "$CONFIG_DIR" "$ABXPKG_LIB_DIR" \
     && echo "ARCHIVEBOX_USER=$ARCHIVEBOX_USER ARCHIVEBOX_UID=$(id -u "$ARCHIVEBOX_USER") ARCHIVEBOX_GID=$(id -g "$ARCHIVEBOX_USER")" | tee -a /VERSION.txt
 
-# abxpkg fingerprints installed files by size, mode, owner, and nanosecond
-# mtime. Install and compile everything first, then canonicalize mtimes to a
-# fixed epoch because OCI layer materialization cannot preserve arbitrary
-# installer mtimes consistently. checked-hash pycs remain valid after the
-# normalization. This one scratch mount intentionally backs HOME,
+# abxpkg fingerprints use the timestamp precision preserved by OCI exports;
+# leave installed file timestamps intact to avoid unnecessary layer copy-up.
+# This one scratch mount intentionally backs HOME,
 # XDG_CACHE_HOME, and ABXPKG_TMP_CACHE_DIR: package managers disagree about
 # cache locations, and leaving XDG pointed at /opt would silently bake their
 # downloads into the runtime image despite the BuildKit mount. Installed tools
@@ -215,14 +208,10 @@ RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_ARCHIVEBOX_UID}..."
 RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=abxpkg-tmp-$TARGETARCH$TARGETVARIANT \
     echo "[+] Installing Chrome, then the complete downloader plugin catalog..." \
     && export HOME=/var/tmp/abxpkg-cache XDG_CACHE_HOME=/var/tmp/abxpkg-cache ABXPKG_TMP_CACHE_DIR=/var/tmp/abxpkg-cache \
-    # npm postinstall subprocesses ignore XDG_CACHE_HOME and use the resolved
-    # user home. Keep their downloaded tarballs on the build cache mount too.
-    && export npm_config_cache=/var/tmp/abxpkg-cache/npm \
     # Let uv compile each tool with its own interpreter during installation.
     # Wheels can include source for other Python versions that is never imported;
     # compileall's all-files success requirement rejects otherwise valid tools.
-    # SOURCE_DATE_EPOCH selects checked-hash caches, preserving their validity
-    # when installed file mtimes are normalized below. Runtime writes stay off.
+    # SOURCE_DATE_EPOCH selects checked-hash caches. Runtime writes stay off.
     && export UV_COMPILE_BYTECODE=true SOURCE_DATE_EPOCH=946684800 \
     && export ABX_DOCKER_PLUGINS="$(/venv/bin/python3 -c 'from abx_dl.catalog import PluginCatalog; print(" ".join(PluginCatalog.discover(runtime="abx-dl")))')" \
     && abx-dl install chrome \
@@ -282,7 +271,6 @@ RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=
     # otherwise child images copy it into another layer just to fix ownership.
     && find "$ABXPKG_LIB_DIR" \( ! -user "$DEFAULT_ARCHIVEBOX_UID" -o ! -group "$DEFAULT_ARCHIVEBOX_GID" \) -exec chown -h "$DEFAULT_ARCHIVEBOX_UID:$DEFAULT_ARCHIVEBOX_GID" {} + \
     && env HOME=/home/archivebox XDG_CACHE_HOME=/var/tmp/abxpkg-cache setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups abx-dl install $ABX_DOCKER_PLUGINS \
-    && find /venv "$ABXPKG_LIB_DIR" -exec touch -h -d '@946684800' {} + \
     # Execution plans from root provisioning cannot serve the runtime user.
     # Discard only those plans; keep valid runtime plans and binary provenance.
     && setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups \
