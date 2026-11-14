@@ -214,12 +214,13 @@ RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=
     # SOURCE_DATE_EPOCH selects checked-hash caches. Runtime writes stay off.
     && export UV_COMPILE_BYTECODE=true SOURCE_DATE_EPOCH=946684800 \
     && export ABX_DOCKER_PLUGINS="$(/venv/bin/python3 -c 'from abx_dl.catalog import PluginCatalog; print(" ".join(PluginCatalog.discover(runtime="abx-dl")))')" \
+    # Apply native sharing before the first install, including Chrome's Node
+    # dependencies. Later installs cannot deduplicate an existing copied tree.
+    && export UV_LINK_MODE=hardlink npm_config_package_import_method=hardlink \
     && abx-dl install chrome \
     # Explicit names install every downloader plugin, including disabled opt-ins.
-    # Native hardlinks share identical Python/Node dependencies across tools.
-    # Keep their package caches on this layer's filesystem during installation.
-    # The existing cache cleanup removes downloads after all installs finish.
-    && UV_LINK_MODE=hardlink npm_config_package_import_method=hardlink abx-dl install $ABX_DOCKER_PLUGINS \
+    # Keep package caches on this layer's filesystem until installs finish.
+    && abx-dl install $ABX_DOCKER_PLUGINS \
     # Wheels and native addons may ship compiler debug data (curl-cffi adds 32 MiB).
     # Remove debug data and addon-local symbols before fingerprints and OCI export.
     && strip_lib=/tmp/abx-dl-strip \
