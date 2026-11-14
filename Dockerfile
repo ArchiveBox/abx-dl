@@ -38,13 +38,14 @@
 #       --build-context abx-plugins=./abx-plugins \
 #       -t archivebox/abx-dl:dev
 
-ARG NODE_VERSION=24.22.1
+ARG NODE_VERSION=24.22.2
 ARG UV_VERSION=0.13.5
 
 FROM --platform=$TARGETPLATFORM node:${NODE_VERSION}-trixie-slim AS node-runtime
 FROM --platform=$TARGETPLATFORM debian:trixie-slim AS abx-dl-runtime-base
 
 ARG UV_VERSION
+ARG NODE_VERSION
 
 LABEL name="abx-dl" \
     maintainer="Nick Sweeting <dockerfile@archivebox.io>" \
@@ -76,7 +77,7 @@ ENV TZ=UTC \
     npm_config_loglevel=error
 
 ENV PYTHON_VERSION=3.13.17 \
-    NODE_VERSION=24.22.1
+    NODE_VERSION=${NODE_VERSION}
 
 ENV ARCHIVEBOX_USER=archivebox \
     DEFAULT_ARCHIVEBOX_UID=911 \
@@ -207,6 +208,9 @@ RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_ARCHIVEBOX_UID}..."
 RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=abxpkg-tmp-$TARGETARCH$TARGETVARIANT \
     echo "[+] Installing Chrome, then the complete downloader plugin catalog..." \
     && export HOME=/var/tmp/abxpkg-cache XDG_CACHE_HOME=/var/tmp/abxpkg-cache ABXPKG_TMP_CACHE_DIR=/var/tmp/abxpkg-cache \
+    # npm postinstall subprocesses ignore XDG_CACHE_HOME and use the resolved
+    # user home. Keep their downloaded tarballs on the build cache mount too.
+    && export npm_config_cache=/var/tmp/abxpkg-cache/npm \
     # Let uv compile each tool with its own interpreter during installation.
     # Wheels can include source for other Python versions that is never imported;
     # compileall's all-files success requirement rejects otherwise valid tools.
