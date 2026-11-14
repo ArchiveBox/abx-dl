@@ -42,6 +42,12 @@ ARG NODE_VERSION=24.22.2
 ARG UV_VERSION=0.13.5
 
 FROM --platform=$TARGETPLATFORM node:${NODE_VERSION}-trixie-slim AS node-runtime
+# Drop non-runtime ELF symbols before copying Node into the runtime base.
+# Dynamic symbols required by native addons remain; binutils stays in this stage.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends binutils \
+    && strip --strip-unneeded /usr/local/bin/node
+
 FROM --platform=$TARGETPLATFORM debian:trixie-slim AS abx-dl-runtime-base
 
 ARG UV_VERSION
@@ -219,11 +225,32 @@ RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=
     && export ABX_DOCKER_PLUGINS="$(/venv/bin/python3 -c 'from abx_dl.catalog import PluginCatalog; print(" ".join(PluginCatalog.discover(runtime="abx-dl")))')" \
     && abx-dl install chrome \
     # Explicit names install every downloader plugin, including disabled opt-ins.
-    && abx-dl install $ABX_DOCKER_PLUGINS \
-    # Wheels may ship full compiler debug data (curl-cffi alone adds 32 MiB).
-    # Remove only non-runtime debug sections before fingerprints and OCI export.
+    # Native hardlinks share identical Python/Node dependencies across tools.
+    # Keep their package caches on this layer's filesystem during installation.
+    # The existing cache cleanup removes downloads after all installs finish.
+    && UV_LINK_MODE=hardlink npm_config_package_import_method=hardlink abx-dl install $ABX_DOCKER_PLUGINS \
+    # Wheels and native addons may ship compiler debug data (curl-cffi adds 32 MiB).
+    # Remove debug data and addon-local symbols before fingerprints and OCI export.
     && strip_lib=/tmp/abx-dl-strip \
     && ABXPKG_NO_CACHE=True abxpkg env --install --binproviders=env,apt --lib="$strip_lib" --overrides='{"apt":{"install_args":["binutils"]}}' strip >/dev/null \
+    # Some npm archives bundle native addons for a different CPU alongside
+    # their platform-specific optional dependencies. Those ELF files cannot
+    # load in this image's Node runtime; retain every matching native addon.
+    && node_machine="$(readelf -h /opt/node/bin/node | sed -n 's/.*Machine: *//p')" \
+    && test -n "$node_machine" \
+    && find "$ABXPKG_LIB_DIR/pnpm" "$ABXPKG_LIB_DIR/npm" -type f -name '*.node' -print0 > /tmp/abx-dl-node-addons \
+    && while IFS= read -r -d '' native_addon; do \
+        magic=''; \
+        if IFS= read -r -N 4 magic < "$native_addon" && [[ "$magic" == $'\x7fELF' ]]; then \
+            addon_machine="$(readelf -h "$native_addon" | sed -n 's/.*Machine: *//p')"; \
+            test -n "$addon_machine" || exit 1; \
+            if [[ "$addon_machine" != "$node_machine" ]]; then \
+                rm "$native_addon"; \
+            else \
+                "$strip_lib/env/bin/strip" --strip-unneeded "$native_addon" || exit $?; \
+            fi; \
+        fi; \
+    done < /tmp/abx-dl-node-addons \
     && find "$ABXPKG_LIB_DIR/uv" -type f -name '*.so*' -print0 > /tmp/abx-dl-native-libraries \
     && while IFS= read -r -d '' native_library; do \
         magic=''; \
@@ -233,11 +260,10 @@ RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=
     done < /tmp/abx-dl-native-libraries \
     && abxpkg run --binproviders=env --lib="$strip_lib" apt-get purge -y binutils \
     && abxpkg run --binproviders=env --lib="$strip_lib" apt-get autoremove -y \
-    && rm -rf "$strip_lib" /tmp/abx-dl-native-libraries \
-    # pnpm installs both libc variants; Debian can only execute the glibc one.
-    # Keep Claude and all plugins installed, removing only the unusable variant.
-    && find "$ABXPKG_LIB_DIR/pnpm/packages/claudecode/node_modules" -type l -name 'claude-code-linux-*-musl' -delete \
-    && find "$ABXPKG_LIB_DIR/pnpm/packages/claudecode/node_modules/.pnpm" -maxdepth 1 -type d -name '@anthropic-ai+claude-code-linux-*-musl@*' -exec rm -rf {} + \
+    && rm -rf "$strip_lib" /tmp/abx-dl-native-libraries /tmp/abx-dl-node-addons \
+    # Some upstream distributions include identical compiled assets at multiple
+    # paths. Retain every path and byte, sharing their immutable file contents.
+    && hardlink --ignore-time --respect-xattrs --include '\.(so(\.[0-9]+)*|wasm)$' "$ABXPKG_LIB_DIR" \
     && rm -rf /usr/lib/*-linux-gnu/dri /usr/lib/*-linux-gnu/libLLVM*.so* /usr/lib/*-linux-gnu/libz3.so.* \
     && rm -rf /usr/share/icons /usr/share/doc /usr/share/man /usr/share/bash-completion /usr/share/zsh /usr/share/info /usr/share/lintian /usr/share/bug \
     && install -d -m 755 /usr/share/man/man1 \

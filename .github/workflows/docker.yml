@@ -246,12 +246,11 @@ jobs:
           # level 10 selects SpeedBestCompression. Use it for new layers:
           # the complete plugin layer shrinks ~55 MiB without removing files.
           # Keep the existing image size gates.
-          # Do not force recompression: :main contains only
-          # zstd layers plus inline metadata, so BuildKit can reuse those exact
-          # compressed blobs. force-compression would discard that reuse and
-          # recompress ~700 MiB on every no-op release.
+          # Convert inherited gzip layers too (the Debian base saves ~7 MiB).
+          # BuildKit reuses existing zstd blobs, including converted variants;
+          # force-compression does not recompress layers already in this format.
           outputs: |
-            ${{ inputs.push_digests && format('type=image,"name={0},{1}",push-by-digest=true,name-canonical=true,push=true,compression=zstd,compression-level=10', env.DOCKERHUB_IMAGE, env.GHCR_IMAGE) || '' }}
+            ${{ inputs.push_digests && format('type=image,"name={0},{1}",push-by-digest=true,name-canonical=true,push=true,compression=zstd,compression-level=10,force-compression=true', env.DOCKERHUB_IMAGE, env.GHCR_IMAGE) || '' }}
           # Keep one cache authority. A separate GHA cache can retain gzip
           # variants of these same layers; BuildKit may then choose those over
           # :main's zstd blobs, making an otherwise identical image larger and
