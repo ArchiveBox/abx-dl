@@ -261,6 +261,10 @@ RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=
     && abxpkg run --binproviders=env --lib="$strip_lib" apt-get purge -y binutils \
     && abxpkg run --binproviders=env --lib="$strip_lib" apt-get autoremove -y \
     && rm -rf "$strip_lib" /tmp/abx-dl-native-libraries /tmp/abx-dl-node-addons \
+    # The locked provider still predates abxpkg's libc-selection fix. Retain
+    # this cleanup until the normal dependency cascade reaches 1.13.89.
+    && find "$ABXPKG_LIB_DIR/pnpm/packages/claudecode/node_modules" -type l -name 'claude-code-linux-*-musl' -delete \
+    && find "$ABXPKG_LIB_DIR/pnpm/packages/claudecode/node_modules/.pnpm" -maxdepth 1 -type d -name '@anthropic-ai+claude-code-linux-*-musl@*' -exec rm -rf {} + \
     # Some upstream distributions include identical compiled assets at multiple
     # paths. Retain every path and byte, sharing their immutable file contents.
     && hardlink --ignore-time --respect-xattrs --include '\.(so(\.[0-9]+)*|wasm)$' "$ABXPKG_LIB_DIR" \
