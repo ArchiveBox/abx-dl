@@ -161,6 +161,12 @@ def main() -> None:
 
     validate_crawl_isolation(records, snapshot_count=len(snapshots))
 
+    for dom_path in output_dir.glob("dom/output.html"):
+        dom = dom_path.read_text()
+        for plugin_name in validation["browser_preparation_plugins"]:
+            if f'data-abx-prepared-{plugin_name}="true"' not in dom:
+                raise SystemExit(f"Browser preparation did not reach saved DOM: {plugin_name}")
+
     for plugin_name, relative_paths in required_plugin_outputs.items():
         plugin_results = [record for record in results if record.get("plugin") == plugin_name and record.get("status") == "succeeded"]
         if not plugin_results:

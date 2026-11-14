@@ -273,6 +273,7 @@ jobs:
                   output.write(f"{enabled_key}=True\n")
           print(f"Enabled {len(enabled_keys)} Snapshot plugins: {enabled_keys}")
           PY
+          cat .github/fixtures/browser-preparation.env >> "$GITHUB_ENV"
 
       - name: Configure local Wayback submission service
         run: |

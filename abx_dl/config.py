@@ -16,7 +16,7 @@ from typing import Any, Self, cast
 from collections.abc import Mapping
 
 from abxbus import EventBus
-from abxpkg.config import default_abxpkg_lib_dir
+from abxpkg.config import default_abxpkg_lib_dir, load_dotenv_values
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from platformdirs import user_config_path
@@ -158,27 +158,14 @@ def ensure_default_persona_dir() -> Path:
 
 def _load_env_file(path: Path) -> dict[str, str]:
     """Load key=value records from an env-style file."""
-    config = {}
-    if path.exists():
-        for line in path.read_text().splitlines():
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            # Parse KEY="value" or KEY=value format
-            match = re.match(r"^([A-Z_][A-Z0-9_]*)=(.*)$", line, re.IGNORECASE)
-            if match:
-                key = match.group(1)
-                value = match.group(2)
-                # Strip quotes if present
-                if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
-                    value = value[1:-1]
-                config[key] = value
-    return config
+    return load_dotenv_values(path)
 
 
 def _write_env_file(path: Path, config: dict[str, str]) -> None:
     """Write env-style config back to disk in stable key order."""
-    lines = [f"{k}={v}" for k, v in sorted(config.items())]
+    lines = [
+        f"{k}={v if re.fullmatch(r'[A-Za-z0-9_./:@+-]+', v) else json.dumps(v, ensure_ascii=False)}" for k, v in sorted(config.items())
+    ]
     contents = ("\n".join(lines) + "\n") if lines else ""
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as tmp:
@@ -438,7 +425,7 @@ def set_user_config(resolver: PluginConfigResolver | None = None, **kwargs: Any)
             if not plugin_value_found:
                 raise KeyError(f"Unknown config key: {canonical_key}")
 
-        config[canonical_key] = json.dumps(validated_value)
+        config[canonical_key] = validated_value if isinstance(validated_value, str) else json.dumps(validated_value)
         saved[canonical_key] = validated_value
 
     _write_env_file(config_file, config)

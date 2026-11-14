@@ -95,7 +95,12 @@
     }
   ],
   "crawl_validation": {
+    "browser_preparation_plugins": ["browserharness", "playwright", "puppeteer", "stagehand"],
     "required_plugin_outputs": {
+      "browserharness": ["browserharness/result.log"],
+      "playwright": ["playwright/result.log"],
+      "puppeteer": ["puppeteer/result.log"],
+      "stagehand": ["stagehand/result.log"],
       "archivedotorg": [
         "archivedotorg/archive.org.txt"
       ],

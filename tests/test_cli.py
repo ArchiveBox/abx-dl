@@ -45,6 +45,34 @@ from werkzeug.wrappers import Response
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_cli_browser_preparation_reaches_saved_dom(tmp_path: Path, httpserver: HTTPServer) -> None:
+    httpserver.expect_request("/").respond_with_data(
+        "<html><head><title>Prepared capture</title></head><body>"
+        "This document is prepared through four native browser clients before capture. "
+        "Their independent changes must survive into the saved DOM after the clients disconnect.</body></html>",
+        content_type="text/html",
+    )
+    for setting in (REPO_ROOT / ".github/fixtures/browser-preparation.env").read_text().splitlines():
+        configured = _run_cli(tmp_path, "config", "--set", setting)
+        assert configured.returncode == 0, configured.stdout + configured.stderr
+    for setting in (REPO_ROOT / ".github/fixtures/browser-preparation.env").read_text().splitlines():
+        key, expected = setting.split("=", 1)
+        configured = _run_cli(tmp_path, "config", "--get", key)
+        assert configured.returncode == 0, configured.stdout + configured.stderr
+        assert json.loads(configured.stdout.split("=", 1)[1]) == expected
+    plugins = json.loads((REPO_ROOT / ".github/configs/ci-tooling.json").read_text())["crawl_validation"]["browser_preparation_plugins"]
+    output_dir = tmp_path / "capture"
+    result = _run_cli(tmp_path, "dl", "--plugins=" + ",".join([*plugins, "dom"]), "--dir", str(output_dir), httpserver.url_for("/"))
+    assert result.returncode == 0, result.stdout + result.stderr
+    records = [json.loads(line) for line in (output_dir / "index.jsonl").read_text().splitlines()]
+    dom = (output_dir / "dom/output.html").read_text()
+    for plugin in plugins:
+        saved = [record for record in records if record.get("type") == "ArchiveResult" and record.get("plugin") == plugin]
+        assert saved and all(record["status"] == "succeeded" for record in saved), saved
+        assert json.loads((output_dir / plugin / "result.log").read_text())["title"] == "Prepared capture"
+        assert f'data-abx-prepared-{plugin}="true"' in dom
+
+
 def test_cli_modal_delay_is_not_the_process_deadline(tmp_path: Path, httpserver: HTTPServer) -> None:
     httpserver.expect_request("/dialog").respond_with_data(
         "<html><body><script>alert('Dismiss before capture'); document.body.textContent="
