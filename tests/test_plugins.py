@@ -13,9 +13,9 @@ from abx_dl.models import parse_hook_filename
 def test_runtime_catalogs_include_disabled_plugins_and_separate_server_tools() -> None:
     downloader = PluginCatalog.discover(runtime="abx-dl")
     archivebox = PluginCatalog.discover(runtime="archivebox")
-    assert {"opendataloader", "opentimestamps", "tlsnotary", "claudechrome", "claudecode"} <= set(downloader)
-    assert {"opencode", "search_backend_sonic"}.isdisjoint(downloader)
-    assert set(downloader) | {"opencode", "search_backend_sonic"} <= set(archivebox)
+    assert {"opendataloader", "opentimestamps", "tlsnotary", "claudechrome", "claudecode", "opencode"} <= set(downloader)
+    assert "search_backend_sonic" not in downloader
+    assert set(downloader) | {"search_backend_sonic"} <= set(archivebox)
 
 
 def test_parse_hook_filename_marks_bg_hooks() -> None:
@@ -100,6 +100,18 @@ def test_plugin_catalog_exposes_manifest_declared_commands() -> None:
     assert search.args == ["search"]
     assert flush.path == search.path
     assert flush.args == ["flush"]
+
+
+def test_plugin_command_discovery_requires_unambiguous_provider() -> None:
+    import pytest
+
+    catalog = PluginCatalog.discover(runtime="archivebox")
+    with pytest.raises(ValueError, match="No plugin provides"):
+        catalog.find_command("not-a-command")
+    with pytest.raises(ValueError, match="Multiple plugins provide"):
+        catalog.find_command("search")
+    search_only = PluginCatalog({"search_backend_ripgrep": catalog["search_backend_ripgrep"]})
+    assert search_only.find_command("search") == catalog.command("search_backend_ripgrep", "search")
 
 
 def test_plugin_catalog_rejects_command_paths_outside_plugin(tmp_path: Path) -> None:

@@ -19,6 +19,7 @@ from ..events import (
     SnapshotEvent,
 )
 from ..models import ArchiveResult, write_jsonl
+from ..catalog import PluginCatalog
 from ..output_files import scan_output_files
 from .base import BaseService
 
@@ -61,8 +62,9 @@ class ArchiveResultService(BaseService):
     ]
     EMITS: ClassVar[list[type[BaseEvent]]] = [ArchiveResultEvent]
 
-    def __init__(self, bus: EventBus, *, emit_jsonl: bool):
+    def __init__(self, bus: EventBus, *, emit_jsonl: bool, catalog: PluginCatalog | None = None):
         self.emit_jsonl = emit_jsonl
+        self.catalog = catalog if catalog is not None else PluginCatalog.discover()
         super().__init__(bus)
         self.bus.on(ProcessStdoutEvent, self.on_ProcessStdoutEvent)
         self.bus.on(ProcessCompletedEvent, self.on_ProcessCompletedEvent)
@@ -109,11 +111,13 @@ class ArchiveResultService(BaseService):
         # readiness/exiting, or delay the cleanup that lets the snapshot seal.
         # Recaptures can reuse unchanged files (for example an unchanged Git
         # checkout). Result inventories describe retained output, not writes.
+        plugin = self.catalog.get(event.plugin_name)
+        primary_output = "" if plugin and plugin.config.output_str_type == "text" else str(archive_result_payload.get("output_str") or "")
         output_files = await asyncio.to_thread(
             scan_output_files,
             output_dir,
             containment_root=output_dir.parent,
-            primary_output=str(archive_result_payload.get("output_str") or ""),
+            primary_output=primary_output,
         )
         archive_result_payload["snapshot_id"] = snapshot_event.snapshot_id
         archive_result_payload["plugin"] = event.plugin_name

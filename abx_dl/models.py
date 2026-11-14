@@ -125,6 +125,7 @@ class PluginConfig(BaseModel):
     x_auto_run: bool = Field(default=True, alias="x-auto-run")
     x_accepts_internal_input: bool = Field(default=False, alias="x-accepts-internal-input")
     output_mimetypes: list[str] = Field(default_factory=list)  # e.g. ['text/html', 'video/']
+    output_str_type: Literal["path", "text"] = "path"
     properties: dict[str, dict[str, Any]] = Field(default_factory=dict)  # JSONSchema format describing plugin config
     required_binaries: list[RequiredBinary] = Field(default_factory=list)  # e.g. [{'name': 'wget', 'binproviders': 'env,brew,apt'}]
     required_plugins: list[str] = Field(default_factory=list)  # e.g. ['chrome', 'pdf']
@@ -133,6 +134,11 @@ class PluginConfig(BaseModel):
     display_order: int = 1000
     hidden: bool = False
     commands: dict[str, list[str]] = Field(default_factory=dict)
+    app_module: str = ""
+    search_order: int = 1000
+    search_fallback: bool = False
+    search_scan: bool = False
+    snapshot_live_preview_route: str = ""
 
 
 class Plugin(BaseModel):

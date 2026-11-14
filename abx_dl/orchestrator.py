@@ -291,7 +291,7 @@ async def parse_input(
         snapshot=snapshot,
     )
     ProcessService(bus, emit_jsonl=emit_jsonl, interactive_tty=False, env_filter=env_filter)
-    ArchiveResultService(bus, emit_jsonl=emit_jsonl)
+    ArchiveResultService(bus, emit_jsonl=emit_jsonl, catalog=parser_catalog)
     TagService(bus)
     SnapshotService(
         bus,
@@ -555,7 +555,7 @@ async def download(
         # for a confirmed-abort force exit. Publishing it here avoids walking
         # unrelated processes or trying to inspect a busy event bus in SIGINT.
         on_process_service_created(process_service)
-    ArchiveResultService(bus, emit_jsonl=emit_jsonl)
+    ArchiveResultService(bus, emit_jsonl=emit_jsonl, catalog=catalog)
     TagService(bus)
     CrawlService(bus, url=url, snapshot=snapshot, output_dir=output_dir, catalog=catalog)
     SnapshotService(

@@ -287,6 +287,16 @@ class PluginCatalog(Mapping[str, Plugin]):
             args=list(command[1:]),
         )
 
+    def find_command(self, command_name: str) -> PluginCommand:
+        """Resolve a shared capability only when exactly one plugin provides it."""
+        commands = [command for name in self if (command := self.command(name, command_name)) is not None]
+        if not commands:
+            raise ValueError(f"No plugin provides command {command_name!r}")
+        if len(commands) != 1:
+            names = ", ".join(command.plugin_name for command in commands)
+            raise ValueError(f"Multiple plugins provide command {command_name!r}: {names}")
+        return commands[0]
+
 
 @dataclass(frozen=True)
 class PluginConfigResolver:
