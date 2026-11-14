@@ -368,7 +368,10 @@ jobs:
           downloaded_html = (output_dir / "wget" / "example.com" / "index.html").read_text()
           if title.strip() != "Example Domain":
               raise SystemExit(f"Unexpected title output: {title!r}")
-          for expected in ("Example Domain", "documentation", "Learn more"):
+          for expected in (
+              "<title>Example Domain</title>",
+              "This domain is for use in documentation examples without needing permission.",
+          ):
               if expected not in downloaded_html:
                   raise SystemExit(f"Downloaded HTML is missing {expected!r}")
           PY
