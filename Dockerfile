@@ -46,7 +46,9 @@ FROM --platform=$TARGETPLATFORM node:${NODE_VERSION}-trixie-slim AS node-runtime
 # Dynamic symbols required by native addons remain; binutils stays in this stage.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends binutils \
-    && strip --strip-unneeded /usr/local/bin/node
+    && strip --strip-unneeded /usr/local/bin/node \
+    # OCI exports round timestamps to seconds; fingerprint the exported value.
+    && touch -h -d '@946684800' /usr/local/bin/node
 
 FROM --platform=$TARGETPLATFORM debian:trixie-slim AS abx-dl-runtime-base
 
