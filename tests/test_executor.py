@@ -3407,3 +3407,58 @@ def test_git_recapture_keeps_unchanged_checkout_files_in_result(tmp_path: Path) 
         files = {output_file.path: output_file for output_file in result.output_files}
         assert "README.md" in files
         assert files["README.md"].size == readme.stat().st_size
+
+
+def test_offline_article_parsers_release_browser_before_parsing_saved_html(tmp_path: Path) -> None:
+    """Saved-HTML parsing must not compete with a live renderer for memory."""
+    parsers = ("defuddle", "mercury", "htmltotext", "trafilatura")
+    output_dir = tmp_path / "capture"
+    bus = create_bus(total_timeout=120.0, name=f"offline_article_cleanup_{tmp_path.name}")
+    lifecycle: list[tuple[str, str, str]] = []
+    source_hashes: list[str] = []
+
+    async def on_ProcessStartedEvent(event: ProcessStartedEvent) -> None:
+        lifecycle.append(("started", event.plugin_name, event.hook_name))
+        if event.plugin_name in parsers:
+            source_hashes.append(hashlib.sha256((output_dir / "dom/output.html").read_bytes()).hexdigest())
+
+    async def on_ProcessCompletedEvent(event: ProcessCompletedEvent) -> None:
+        lifecycle.append(("completed", event.plugin_name, event.hook_name))
+
+    bus.on(ProcessStartedEvent, on_ProcessStartedEvent)
+    bus.on(ProcessCompletedEvent, on_ProcessCompletedEvent)
+    text = "Saved article consumers retain every paragraph after the browser releases its live document."
+    with HTTPServer(threaded=True) as server:
+        server.expect_request("/").respond_with_data(
+            "<!doctype html><title>Offline article memory lifecycle</title><article>"
+            "<h1>Offline article memory lifecycle</h1>" + f"<p>{text}</p>" * 12 + '<a href="/related">Related article</a></article>',
+            content_type="text/html",
+        )
+        results = _run_download(
+            server.url_for("/"),
+            PluginCatalog.discover(),
+            output_dir,
+            selected_plugins=["dom", "screenshot", "parse_dom_outlinks", *parsers],
+            config_overrides={"TIMEOUT": 30},
+            bus=bus,
+            emit_jsonl=False,
+            interactive_tty=False,
+        )
+    for plugin in ("dom", "screenshot", "parse_dom_outlinks", *parsers):
+        assert next(result for result in results if result.plugin == plugin).status == "succeeded"
+    assert (output_dir / "screenshot/screenshot.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
+    assert "/related" in (output_dir / "parse_dom_outlinks/urls.jsonl").read_text()
+    source_hash = hashlib.sha256((output_dir / "dom/output.html").read_bytes()).hexdigest()
+    assert source_hashes == [source_hash] * len(parsers)
+    tab_completed = next(i for i, row in enumerate(lifecycle) if row[0] == "completed" and row[2].startswith("on_Snapshot__01_chrome_tab"))
+    outlinks_completed = next(i for i, row in enumerate(lifecycle) if row[:2] == ("completed", "parse_dom_outlinks"))
+    for plugin in parsers:
+        content = (
+            output_dir
+            / plugin
+            / ("htmltotext.txt" if plugin == "htmltotext" else "content.html" if plugin in {"defuddle", "mercury"} else "content.txt")
+        )
+        assert text in content.read_text()
+        started = next(i for i, row in enumerate(lifecycle) if row[:2] == ("started", plugin))
+        assert outlinks_completed < started
+        assert tab_completed < started
