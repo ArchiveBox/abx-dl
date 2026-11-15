@@ -700,68 +700,62 @@ class SnapshotService(BaseService):
             for dependency in plugin.config.required_plugins:
                 shutdown_order.add(dependency.lower(), plugin.name.lower())
         shutdown_order.prepare()
-        while shutdown_order.is_active():
-            ready = shutdown_order.get_ready()
-            # Hooks within one plugin acquire resources in startup order too:
-            # e.g. Chrome's tab uses its earlier browser hook. Unwind that stack
-            # before stopping its owner, while independent plugins still flush
-            # concurrently. Otherwise browser shutdown can strand tab cleanup.
-            pending_by_plugin = {
-                # bus.filter returns newest first; pop() must take that end.
-                name: [(process, started) for process, started in reversed(started_processes) if process.plugin_name.lower() == name]
-                for name in ready
-            }
-            while any(pending_by_plugin.values()):
-                stopping = [pending.pop() for pending in pending_by_plugin.values() if pending]
-                pending_kills = [
-                    event.emit(
+
+        async def stop_plugin(processes: list[tuple[ProcessEvent, ProcessStartedEvent]]) -> None:
+            # bus.filter returns newest first: unwind each plugin's acquisition
+            # stack before releasing the resources that plugin depends on.
+            for process_event, started_process in processes:
+                grace = grace_by_hook[(process_event.plugin_name, process_event.hook_name)]
+                try:
+                    pending_kill = event.emit(
                         ProcessKillEvent(
                             plugin_name=started_process.plugin_name,
                             hook_name=started_process.hook_name,
                             pid=started_process.pid,
-                            grace_period=grace_by_hook[(started_process.plugin_name, started_process.hook_name)],
-                            event_timeout=grace_by_hook[(started_process.plugin_name, started_process.hook_name)] + 10.0,
+                            grace_period=grace,
+                            event_timeout=grace + 10.0,
                         ),
                     )
-                    for _, started_process in stopping
-                ]
-                if pending_kills:
-                    kill_results = await asyncio.gather(
-                        *(_run_event_now(pending_kill, pending_kill.event_timeout) for pending_kill in pending_kills),
-                        return_exceptions=True,
+                    await _run_event_now(pending_kill, pending_kill.event_timeout)
+                except Exception as error:
+                    cleanup_errors.append(error)
+                try:
+                    completed = await self.bus.find(
+                        ProcessCompletedEvent,
+                        child_of=process_event,
+                        past=True,
+                        future=grace + 10.0,
                     )
-                    for result in kill_results:
-                        if isinstance(result, Exception):
-                            cleanup_errors.append(result)
-                        elif isinstance(result, BaseException):
-                            raise result
-                if stopping:
-                    completion_waiters = []
-                    for process_event, _ in stopping:
-                        try:
-                            completed = await self.bus.find(
-                                ProcessCompletedEvent,
-                                child_of=process_event,
-                                past=True,
-                                future=grace_by_hook[(process_event.plugin_name, process_event.hook_name)] + 10.0,
-                            )
-                            if completed is None:
-                                raise RuntimeError(f"Background hook {process_event.hook_name} did not complete")
-                            completion_waiters.append(
-                                _wait_for_process_completed(
-                                    completed,
-                                    grace_by_hook[(process_event.plugin_name, process_event.hook_name)] + 10.0,
-                                ),
-                            )
-                        except Exception as error:
-                            cleanup_errors.append(error)
-                    completion_results = await asyncio.gather(*completion_waiters, return_exceptions=True)
-                    for result in completion_results:
-                        if isinstance(result, Exception):
-                            cleanup_errors.append(result)
-                        elif isinstance(result, BaseException):
-                            raise result
-            shutdown_order.done(*ready)
+                    if completed is None:
+                        raise RuntimeError(f"Background hook {process_event.hook_name} did not complete")
+                    await _wait_for_process_completed(completed, grace + 10.0)
+                except Exception as error:
+                    cleanup_errors.append(error)
+
+        pending_tasks: dict[asyncio.Task[None], str] = {}
+        try:
+            while shutdown_order.is_active():
+                # Empty nodes preserve transitive edges, but must release them
+                # immediately instead of waiting for unrelated finite downloads.
+                while ready := shutdown_order.get_ready():
+                    for name in ready:
+                        processes = [(process, started) for process, started in started_processes if process.plugin_name.lower() == name]
+                        if processes:
+                            pending_tasks[asyncio.create_task(stop_plugin(processes))] = name
+                        else:
+                            shutdown_order.done(name)
+                if pending_tasks:
+                    finished, _ = await asyncio.wait(pending_tasks, return_when=asyncio.FIRST_COMPLETED)
+                    for task in finished:
+                        name = pending_tasks.pop(task)
+                        task.result()
+                        shutdown_order.done(name)
+        finally:
+            # Cancellation/takeover must not leave detached cleanup coroutines
+            # delivering late process facts after this owner has been drained.
+            for task in pending_tasks:
+                task.cancel()
+            await asyncio.gather(*pending_tasks, return_exceptions=True)
         if event.finalize_snapshot:
             # Even a failed result consumer must not leave unused plugin dirs.
             try:
@@ -769,7 +763,7 @@ class SnapshotService(BaseService):
             except Exception as error:
                 cleanup_errors.append(error)
         if cleanup_errors:
-            # Report failure only after every dependency wave has had its
+            # Report failure only after every plugin has had its
             # chance to flush and stop. The snapshot owner then distinguishes
             # a settled failed attempt from an interrupted, still-live writer.
             error = cleanup_errors[0]
