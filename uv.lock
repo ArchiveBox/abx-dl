@@ -53,7 +53,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "abx-plugins", specifier = "==1.13.776" },
+    { name = "abx-plugins", specifier = "==1.13.788" },
     { name = "abxbus", specifier = "==2.5.91" },
     { name = "abxpkg", specifier = "==1.13.101" },
     { name = "platformdirs", specifier = ">=4.0.0" },
@@ -87,7 +87,7 @@ dev = [
 
 [[package]]
 name = "abx-plugins"
-version = "1.13.776"
+version = "1.13.788"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "abxbus" },
@@ -97,10 +97,11 @@ dependencies = [
     { name = "psutil" },
     { name = "rich-click" },
     { name = "uv" },
+    { name = "warcio" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f0/4d/cdba7f254a2d7bbfdea513622cd6d8454830bcc7fc290e1fa7d8ef82729e/abx_plugins-1.13.776.tar.gz", hash = "sha256:448ae63ae9001ddac2421d94543b1d602df9f004d6f82a6579ada3669bbdc0cd", size = 1660591, upload-time = "2026-11-19T05:07:34.858Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ce/17/14b454177753ad5d177759c69d02cd06408386403e6f2cc3182816477170/abx_plugins-1.13.788.tar.gz", hash = "sha256:1b61cf6917b3eec898c92799b2dcd489c8468613d41b15352f0f322ad2dac215", size = 1664811, upload-time = "2026-11-19T21:12:43.186Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a9/0a/9ca576a4cec261a5db3f4eba96fc192f75fc8cd5ab90e9fcc7170acf21cd/abx_plugins-1.13.776-py3-none-any.whl", hash = "sha256:56cae29d7df215287777a4292e19d73fac371e9f5152e01834bfcd0862c6dc32", size = 1977464, upload-time = "2026-11-19T05:07:33.331Z" },
+    { url = "https://files.pythonhosted.org/packages/06/29/fe7ac16ac6d866ec4c0676585fd08d9ddc8714d3e1d62a8c7020a235dbb9/abx_plugins-1.13.788-py3-none-any.whl", hash = "sha256:13d0f6f3b23d3bd03a6d9c6b329f12a6288c771506a3a9d79b9db00f9638fe0f", size = 1981203, upload-time = "2026-11-19T21:12:41.16Z" },
 ]
 
 [[package]]
@@ -1076,6 +1077,15 @@ wheels = [
 ]
 
 [[package]]
+name = "six"
+version = "1.17.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload-time = "2024-12-04T17:35:28.174Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
+]
+
+[[package]]
 name = "termcolor"
 version = "3.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1172,6 +1182,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/00/7c/e38b312abaae1bd59ff5886126f48e9e223fbb9a8edf9e236ede976f67cb/uv-0.13.5-py3-none-win32.whl", hash = "sha256:f4e55a6e2a1089fe74ed50fbdf2df0f6f336ee148ad232b05932db5deee8007e", size = 16240919, upload-time = "2026-10-22T01:32:25.329Z" },
     { url = "https://files.pythonhosted.org/packages/32/ea/771744a784b16aa21d195cb5d5d5a2878d72fa00fc26f11ea3f9646994fe/uv-0.13.5-py3-none-win_amd64.whl", hash = "sha256:1fb29fc46ba12033e2ef95a95ac79d649e71bbb1358419bbbcbd19d86026ef2f", size = 15358650, upload-time = "2026-10-22T01:32:28.22Z" },
     { url = "https://files.pythonhosted.org/packages/52/67/1f31243f75ece410f2db1afdfc9a9f9722fdee2385e4a347c3ca1dee6d13/uv-0.13.5-py3-none-win_arm64.whl", hash = "sha256:0548460d46c8667488b1f089e936f29f0edfb1cc753f9152ffbd8bc84a46aa20", size = 15533668, upload-time = "2026-10-22T01:32:31.335Z" },
+]
+
+[[package]]
+name = "warcio"
+version = "1.8.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "six" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/92/ba/15db78cf7c722376f1e8007a4f3d7b13ca0328576e0b94b2c80f05ff7cff/warcio-1.8.2.tar.gz", hash = "sha256:03e2b024c9d08523dbed7363e97abe8d56918626c00a1b94c2864b919c1927c8", size = 66566, upload-time = "2026-10-28T19:07:07.442Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d3/14/0dcbcc0080bc83304fc0c923965afda562fc6bcbd152d65f31b1872826e8/warcio-1.8.2-py2.py3-none-any.whl", hash = "sha256:4fc9c12ed7e846dcb51103074d0aa964ea52a739fb95dd9f6f8a7db8388b0f01", size = 41940, upload-time = "2026-10-28T19:07:06.238Z" },
 ]
 
 [[package]]
