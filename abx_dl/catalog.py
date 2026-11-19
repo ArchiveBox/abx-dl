@@ -132,7 +132,11 @@ class PluginCatalog(Mapping[str, Plugin]):
         *,
         disabled_names: Iterable[str] | None = None,
     ) -> PluginCatalog:
-        """Select plugins and their transitive ``required_plugins`` dependencies."""
+        """Select plugins and their transitive ``required_plugins`` dependencies.
+
+        An explicitly disabled dependency can be replaced only by a declared
+        fallback already requested by the caller.
+        """
         disabled = {name.lower() for name in disabled_names or ()}
         requested = (
             [name for name, plugin in self.plugins.items() if plugin.config.x_auto_run and name.lower() not in disabled]
@@ -144,6 +148,8 @@ class PluginCatalog(Mapping[str, Plugin]):
 
         plugins_by_lower = {name.lower(): plugin for name, plugin in self.plugins.items()}
         names_by_lower = {name.lower(): name for name in self.plugins}
+        requested_roots = {name.lower() for name in requested if name.lower() in plugins_by_lower} if names is not None else set()
+        requirements: dict[str, list[str]] = {}
         resolved: set[str] = set()
         blocked: set[str] = set()
         queue = [name.lower() for name in requested]
@@ -156,6 +162,13 @@ class PluginCatalog(Mapping[str, Plugin]):
                 continue
             plugin = plugins_by_lower.get(name)
             required = [dependency.lower() for dependency in plugin.config.required_plugins] if plugin else []
+            if plugin is not None and requested_roots and disabled:
+                fallbacks = {key.lower(): fallback.lower() for key, fallback in plugin.config.required_plugin_fallbacks.items()}
+                required = [
+                    fallbacks[dependency] if dependency in disabled and fallbacks.get(dependency) in requested_roots else dependency
+                    for dependency in required
+                ]
+            requirements[name] = required
             if set(required).intersection(disabled | blocked):
                 blocked.add(name)
                 continue
@@ -164,9 +177,9 @@ class PluginCatalog(Mapping[str, Plugin]):
 
         while True:
             newly_blocked = {
-                name.lower()
-                for name, plugin in self.plugins.items()
-                if name.lower() in resolved and any(dependency.lower() in blocked for dependency in plugin.config.required_plugins)
+                name
+                for name, required in requirements.items()
+                if name in resolved and any(dependency in blocked for dependency in required)
             }
             if not newly_blocked:
                 break
@@ -189,10 +202,16 @@ class PluginCatalog(Mapping[str, Plugin]):
             if plugin is None:
                 return
             visiting.append(lower_name)
-            for dependency in plugin.config.required_plugins:
+            required = requirements[lower_name]
+            for dependency in required:
                 add_with_dependencies(dependency)
             visiting.pop()
             visited.add(lower_name)
+            # Runtime consumers (including background cleanup) must use the
+            # same dependency edges as selection. Do not mutate the inventory
+            # or the original manifest used to derive other capture plans.
+            if required != [dependency.lower() for dependency in plugin.config.required_plugins]:
+                plugin = plugin.model_copy(update={"config": plugin.config.model_copy(update={"required_plugins": required})})
             ordered[names_by_lower[lower_name]] = plugin
 
         for name in self.plugins:

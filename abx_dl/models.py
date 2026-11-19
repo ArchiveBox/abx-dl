@@ -129,6 +129,7 @@ class PluginConfig(BaseModel):
     properties: dict[str, dict[str, Any]] = Field(default_factory=dict)  # JSONSchema format describing plugin config
     required_binaries: list[RequiredBinary] = Field(default_factory=list)  # e.g. [{'name': 'wget', 'binproviders': 'env,brew,apt'}]
     required_plugins: list[str] = Field(default_factory=list)  # e.g. ['chrome', 'pdf']
+    required_plugin_fallbacks: dict[str, str] = Field(default_factory=dict)
     wait_for_background_cleanup: bool = False
     category: str = ""
     display_order: int = 1000
