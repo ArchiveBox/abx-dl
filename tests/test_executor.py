@@ -7,6 +7,7 @@ import signal
 import shutil
 import sys
 import threading
+from time import time
 from pathlib import Path
 from uuid import uuid4
 
@@ -38,6 +39,7 @@ from abx_dl.catalog import PluginCatalog, PluginConfigResolver
 from abx_dl.models import Hook, PluginCommand, Snapshot
 from abx_dl.orchestrator import create_bus, download as execute_download, install_plugins, parse_input
 from abx_dl.process_utils import validate_pid_file
+from abx_dl.services import process_service
 from abx_dl.services.archive_result_service import ArchiveResultService
 from abx_dl.services.binary_service import PluginBinaryEnvService
 from abx_dl.services.base import wait_for_process_ready
@@ -141,13 +143,32 @@ def test_index_append_never_blocks_the_event_loop(tmp_path):
     assert [record["url"] for record in records] == ["https://example.com/discovered"]
 
 
-def test_silent_hook_completion_is_not_delayed_by_output_polling(tmp_path, httpserver: HTTPServer):
+def test_silent_hook_completion_is_not_delayed_by_output_polling(tmp_path, httpserver: HTTPServer, monkeypatch: pytest.MonkeyPatch):
     """Real parsers wait for HTTP bodies long enough to enter idle backoff.
 
     Staggered response completion covers the polling interval. The parser writes
     urls.jsonl immediately before its final stdout record and exit, so that real
     artifact's mtime measures how promptly the runner records completion.
     """
+    waited_at: dict[int, float] = {}
+    scanned_at: dict[Path, float] = {}
+    wait = asyncio.subprocess.Process.wait
+    scan = process_service.scan_output_files
+
+    async def observe_wait(process: asyncio.subprocess.Process) -> int:
+        result = await wait(process)
+        waited_at.setdefault(process.pid, time())
+        return result
+
+    def observe_scan(output_dir: Path, **kwargs):
+        result = scan(output_dir, **kwargs)
+        scanned_at[output_dir] = time()
+        return result
+
+    # Observe the existing await and worker call without adding scheduler work.
+    monkeypatch.setattr(asyncio.subprocess.Process, "wait", observe_wait)
+    monkeypatch.setattr(process_service, "scan_output_files", observe_scan)
+
     hook = PluginCatalog.discover()["parse_txt_urls"].filter_hooks("Snapshot")[0]
     responses = [
         _streaming_http_response(httpserver, f"/slow-{index}.txt", payload=b"https://example.com/discovered\n") for index in range(5)
@@ -178,14 +199,27 @@ def test_silent_hook_completion_is_not_delayed_by_output_polling(tmp_path, https
         return await asyncio.gather(*tasks)
 
     delays = []
+    timing_points = []
     for completed in asyncio.run(run()):
         assert completed.exit_code == 0, completed.stderr
         output = Path(completed.output_dir) / "urls.jsonl"
         records = [json.loads(line) for line in output.read_text().splitlines()]
         assert [record["url"] for record in records] == ["https://example.com/discovered"]
         assert any(json.loads(line).get("status") == "succeeded" for line in completed.stdout.splitlines() if line.startswith("{"))
-        delays.append(datetime.fromisoformat(completed.end_ts).timestamp() - output.stat().st_mtime)
-    assert max(delays) < 0.2, delays
+        ended_at = datetime.fromisoformat(completed.end_ts).timestamp()
+        written_at = output.stat().st_mtime
+        delays.append(ended_at - written_at)
+        timing_points.append((written_at, waited_at.get(completed.pid), scanned_at.get(output.parent), ended_at))
+
+    def milliseconds(start: float | None, end: float | None) -> float | None:
+        return round(1000 * (end - start), 1) if start is not None and end is not None else None
+
+    assert max(delays) < 0.2, {
+        "total_ms": [round(1000 * delay, 1) for delay in delays],
+        "artifact_to_wait_ms": [milliseconds(written, waited) for written, waited, _, _ in timing_points],
+        "wait_to_scan_end_ms": [milliseconds(waited, scanned) for _, waited, scanned, _ in timing_points],
+        "scan_end_to_record_ms": [milliseconds(scanned, ended) for _, _, scanned, ended in timing_points],
+    }
 
 
 def test_execute_hook_reuses_one_process_service_per_bus(tmp_path):
