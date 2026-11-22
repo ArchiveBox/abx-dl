@@ -53,7 +53,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "abx-plugins", specifier = "==1.13.813" },
+    { name = "abx-plugins", specifier = "==1.13.816" },
     { name = "abxbus", specifier = "==2.5.93" },
     { name = "abxpkg", specifier = "==1.13.102" },
     { name = "platformdirs", specifier = ">=4.0.0" },
@@ -87,7 +87,7 @@ dev = [
 
 [[package]]
 name = "abx-plugins"
-version = "1.13.813"
+version = "1.13.816"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "abxbus" },
@@ -99,9 +99,9 @@ dependencies = [
     { name = "uv" },
     { name = "warcio" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ad/88/68a486a1de3279e71e1ed3d8f88c3313e86c523e7abfbdc5c360602cc0ad/abx_plugins-1.13.813.tar.gz", hash = "sha256:8699a5cc8c8f9a1eec4c69e4dfc67a2a0905397029c837548b211dabc3463c43", size = 1684097, upload-time = "2026-11-22T07:17:48.167Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/be/13/8402eb7434a42aab44a21279ae4f3037a71b2910d264e3f472fd70f521c2/abx_plugins-1.13.816.tar.gz", hash = "sha256:b5eb92337c0bd9b464b99d40789f80d58705a9b2ec0a725161f9887a0cd2c39c", size = 1684151, upload-time = "2026-11-22T11:09:27.575Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/74/84/3c6cd42e4686ccbff3663e54d1347c40126e387e03c9fd52d0727a52aab4/abx_plugins-1.13.813-py3-none-any.whl", hash = "sha256:a35cc8aea34a99d2aced3332fb278c8661c15a3e25b770edae31af483e1de846", size = 2007668, upload-time = "2026-11-22T07:17:46.663Z" },
+    { url = "https://files.pythonhosted.org/packages/e2/03/83afd77e9e908e809787bbe2e397f476ef7565f2ba6e68c431fe8630cf47/abx_plugins-1.13.816-py3-none-any.whl", hash = "sha256:2afc5713ffc26479be929570e759d667b54de54e29e8f271e81770d767b959b1", size = 2007761, upload-time = "2026-11-22T11:09:25.484Z" },
 ]
 
 [[package]]
