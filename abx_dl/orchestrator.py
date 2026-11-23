@@ -196,7 +196,7 @@ async def install_plugins(
     with temp_dir_ctx as temp_dir:
         install_output_dir = install_output_dir or Path(temp_dir)
         install_output_dir.mkdir(parents=True, exist_ok=True)
-        bus = bus or create_bus(total_timeout=install_timeout)
+        bus = bus or create_bus(total_timeout=install_timeout, config=user_config)
         _claim_fresh_bus(bus, "install_plugins")
         snapshot = Snapshot(url="")
         PluginBinaryEnvService(bus, catalog=catalog)
@@ -277,7 +277,7 @@ async def parse_input(
     snapshot_hooks = get_phase_hooks(parser_catalog, "Snapshot")
     snapshot_timeout = compute_phase_timeout(snapshot_hooks, user_config)
     owns_bus = bus is None
-    bus = bus or create_bus(total_timeout=install_timeout + (snapshot_timeout * 2), name=f"AbxDlInput_{snapshot.id}")
+    bus = bus or create_bus(total_timeout=install_timeout + (snapshot_timeout * 2), name=f"AbxDlInput_{snapshot.id}", config=user_config)
     _claim_fresh_bus(bus, "parse_input")
 
     PluginBinaryEnvService(bus, catalog=parser_catalog)
@@ -407,6 +407,8 @@ def create_bus(
     warn_on_duplicate_handler_names: bool = False,
     max_handler_recursion_depth: int = 6,
     middlewares: Sequence[EventBusMiddleware | type[EventBusMiddleware]] | None = None,
+    config: dict[str, Any] | None = None,
+    catalog: PluginCatalog | None = None,
     id: str | None = None,
 ) -> EventBus:
     """Create a configured EventBus for a download run.
@@ -417,8 +419,12 @@ def create_bus(
         total_timeout: Total timeout for the entire run (sum of all phase
             timeouts). Computed by ``compute_phase_timeout`` in download().
         name: Optional EventBus instance name.
-        middlewares: Optional EventBus middlewares.
+        middlewares: Optional EventBus middlewares, in addition to enabled plugin integrations.
+        config: Process configuration for plugin integrations.
+        catalog: Full plugin inventory, independent of capture-plugin selection.
     """
+    config = config if config is not None else GlobalConfig().model_dump(mode="json")
+    catalog = catalog if catalog is not None else PluginCatalog.discover(runtime=config.get("ABX_RUNTIME"))
     bus = EventBus(
         name=name,
         # parallel event concurrency lets bg ProcessEvents (fire-and-forget
@@ -441,7 +447,7 @@ def create_bus(
         # Normal abx-dl processing legitimately nests several queue-jumped
         # handler chains (stdout -> typed event -> follow-up process/event work).
         max_handler_recursion_depth=max_handler_recursion_depth,
-        middlewares=middlewares,
+        middlewares=[*(middlewares or ()), *catalog.eventbus_middlewares(config)],
         id=id,
     )
     return bus
@@ -526,7 +532,7 @@ async def download(
 
     owns_bus = bus is None
     if bus is None:
-        bus = create_bus(total_timeout=total_timeout)
+        bus = create_bus(total_timeout=total_timeout, config=user_config)
     assert bus is not None
     _claim_fresh_bus(bus, "download")
 

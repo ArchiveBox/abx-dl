@@ -1554,7 +1554,11 @@ def dl(
     selected_catalog = catalog.select(selected, disabled_names=disabled)
     user_config = {**get_explicit_user_env(), **config_overrides, "ABX_RUNTIME": "abx-dl"}
     for plugin in catalog.values():
-        if plugin.name not in selected_catalog and plugin.enabled_key in plugin.config.properties:
+        if (
+            plugin.name not in selected_catalog
+            and plugin.enabled_key in plugin.config.properties
+            and (not plugin.config.eventbus_module or plugin.name in disabled)
+        ):
             user_config[plugin.enabled_key] = False
     install_timeout = compute_install_phase_timeout(get_install_plugins(selected_catalog), user_config)
     crawl_setup_hooks = get_phase_hooks(selected_catalog, "CrawlSetup")
@@ -1564,7 +1568,7 @@ def dl(
     selected = list(selected_catalog)
     total_timeout = install_timeout + crawl_setup_timeout + snapshot_timeout
     total_hooks = _count_install_requests(selected_catalog) + len(crawl_setup_hooks) + len(snapshot_hooks)
-    bus = create_bus(total_timeout=total_timeout)
+    bus = create_bus(total_timeout=total_timeout, config=user_config, catalog=catalog)
     live_ui = LiveBusUI(
         bus,
         total_hooks=total_hooks,
@@ -1808,7 +1812,7 @@ def _run_plugin_install(
         selected_plugin_config["DRY_RUN"] = True
     user_config = {**get_explicit_user_env(), **selected_plugin_config, "ABX_RUNTIME": os.environ.get("ABX_RUNTIME", "abx-dl")}
     install_timeout = compute_install_phase_timeout(get_install_plugins(selected), user_config)
-    bus = create_bus(total_timeout=install_timeout)
+    bus = create_bus(total_timeout=install_timeout, config=get_explicit_user_env())
     live = None
 
     async def on_BinaryRequestEvent(event: BinaryRequestEvent) -> None:
@@ -1982,7 +1986,7 @@ def plugins(ctx, plugin_names: tuple[str, ...], do_install: bool, dry_run: bool,
                 binary_signature = json.dumps(hydrated_spec, sort_keys=True, default=str)
                 declared_binary_specs.setdefault(binary_signature, hydrated_spec)
 
-        binary_bus = create_bus(name="AbxDlPluginBinaryCheck")
+        binary_bus = create_bus(name="AbxDlPluginBinaryCheck", config=initial_user_env, catalog=catalog)
         configured_lib_dir = initial_user_env.get("ABXPKG_LIB_DIR")
         BinaryService(
             binary_bus,
