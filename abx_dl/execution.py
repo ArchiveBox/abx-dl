@@ -114,6 +114,10 @@ def iter_plugin_command(
             if proc.returncode:
                 errors.seek(0)
                 raise subprocess.CalledProcessError(proc.returncode, argv, stderr=errors.read().decode(errors="replace"))
+        except subprocess.TimeoutExpired as error:
+            errors.seek(0)
+            error.stderr = errors.read()
+            raise
         finally:
             if termination_grace > 0 and proc.poll() is None:
                 try:

@@ -39,7 +39,7 @@ def test_search_streams_and_reaps_ripgrep(tmp_path, finish, timeout, termination
         name="search",
         plugin_name="search_backend_ripgrep",
         path=Path(sys.executable),
-        args=[str(Path(ripgrep.__file__)), "search"],
+        args=[*(["-v"] if finish == "timeout" else []), str(Path(ripgrep.__file__)), "search"],
     )
     env = {
         **os.environ,
@@ -78,8 +78,11 @@ def test_search_streams_and_reaps_ripgrep(tmp_path, finish, timeout, termination
             finally:
                 timer.cancel()
         else:
-            with pytest.raises(subprocess.TimeoutExpired):
+            with pytest.raises(subprocess.TimeoutExpired) as error:
                 list(iterator)
+            assert str(Path(ripgrep.__file__)) in error.value.cmd
+            assert error.value.stderr is not None
+            assert b"import 'abx_plugins.plugins.base.utils'" in error.value.stderr
         assert time.monotonic() - started < 3
         _, alive = psutil.wait_procs(children, timeout=2)
         assert not alive, [(p.pid, p.status()) for p in alive]
