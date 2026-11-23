@@ -136,7 +136,6 @@ class PluginConfig(BaseModel):
     hidden: bool = False
     commands: dict[str, list[str]] = Field(default_factory=dict)
     app_module: str = ""
-    eventbus_module: str = ""
     search_order: int = 1000
     search_fallback: bool = False
     search_scan: bool = False
