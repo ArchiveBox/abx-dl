@@ -382,6 +382,46 @@ class SnapshotService(BaseService):
                 )
                 self._output_sizes[path.as_posix()] = output_file.size
 
+        if (
+            self.abort_requested
+            or not event.is_background
+            or not event.hook_name.endswith(".daemon.bg")
+            or event.status != "failed"
+            or event.cancelled
+            or not event.stdout
+            or Path(event.output_dir) != self.output_dir / event.plugin_name
+            or not any(event.plugin_name in plugin.config.required_plugins for plugin, _hook in self.hooks)
+        ):
+            return
+        owner = await self.bus.find(
+            SnapshotEvent,
+            snapshot_id=self.snapshot.id,
+            output_dir=str(self.output_dir),
+            past=True,
+            future=False,
+            where=lambda candidate: candidate.event_id in self._active_snapshot_event_ids and self.bus.event_is_child_of(event, candidate),
+        )
+        if owner is None:
+            return
+        # Cleanup can escalate its own stop to SIGKILL, which still records a
+        # real failed Process. Do not mistake that for an unexpected loss.
+        stopped = await self.bus.find(
+            ProcessKillEvent,
+            child_of=owner,
+            plugin_name=event.plugin_name,
+            hook_name=event.hook_name,
+            pid=event.pid,
+            past=True,
+            future=False,
+        )
+        if stopped is not None or self.abort_requested:
+            return
+        # The real process crossed the readiness barrier and then failed. Stop
+        # admitting this snapshot's hooks, not its siblings or the owning crawl.
+        # Cleanup and completion already carry abort_error to the normal notes.
+        self.abort_requested = True
+        self.abort_error = f"Required snapshot resource {event.plugin_name}:{event.hook_name} failed (exit {event.exit_code})"
+
     async def on_ProcessStdoutEvent(self, event: ProcessStdoutEvent) -> None:
         """Route type=Snapshot records to SnapshotDiscoveredEvent facts.
 

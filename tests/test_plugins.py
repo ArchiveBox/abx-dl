@@ -244,6 +244,48 @@ def test_filter_plugins_prunes_plugins_with_disabled_required_plugins() -> None:
     assert "ublock" not in selected
 
 
+def test_filter_plugins_uses_only_selected_fallback_for_disabled_dependency(tmp_path: Path) -> None:
+    plugins = PluginCatalog.discover(runtime="archivebox")
+    consumers = ["defuddle", "mercury", "readability"]
+    # Exercise the next plugin release's additive metadata on the actual
+    # currently pinned manifests and hooks, without requiring a bumped pin.
+    for name in consumers:
+        destination = tmp_path / name
+        shutil.copytree(plugins[name].path, destination)
+        config_path = destination / "config.json"
+        manifest = json.loads(config_path.read_text())
+        assert manifest["required_plugins"] == ["dom"]
+        manifest["required_plugin_fallbacks"] = {"dom": "archivewebpage"}
+        config_path.write_text(json.dumps(manifest))
+    plugins = PluginCatalog.discover(extra_plugin_dirs=[tmp_path], runtime="archivebox")
+
+    with_dom = plugins.select([*consumers, "archivewebpage"])
+    assert "dom" in with_dom
+    assert all(with_dom[name].config.required_plugins == ["dom"] for name in consumers)
+    assert "archivewebpage" not in plugins.select(consumers)
+    assert not plugins.select(consumers, disabled_names=["dom"])
+    assert not plugins.select([*consumers, "archivewebpage"], disabled_names=["dom", "archivewebpage"])
+    assert not plugins.select([*consumers, "archivewebpage"], disabled_names=["dom", "chrome"])
+
+    with_wacz = plugins.select([*consumers, "ARCHIVEWEBPAGE"], disabled_names=["DOM"])
+    assert list(with_wacz) == ["chrome", "archivewebpage", *consumers]
+    assert all(with_wacz[name].config.required_plugins == ["archivewebpage"] for name in consumers)
+    assert all(plugins[name].config.required_plugins == ["dom"] for name in consumers)
+    hooks = with_wacz.hooks("Snapshot")
+    stop = next(hook for plugin, hook in hooks if plugin.name == "archivewebpage" and "stop" in hook.name)
+    assert not stop.is_background
+    for name in consumers:
+        extractor = next(hook for plugin, hook in hooks if plugin.name == name)
+        assert stop.order < extractor.order
+        assert with_wacz[name].config.wait_for_background_cleanup
+
+    enabled = PluginConfigResolver(plugins).enabled_plugin_names_from_flat({"DOM_ENABLED": False})
+    assert "dom" not in enabled
+    assert {"archivewebpage", *consumers} <= set(enabled)
+    no_producer = PluginConfigResolver(plugins).enabled_plugin_names_from_flat({"DOM_ENABLED": False, "ARCHIVEWEBPAGE_ENABLED": False})
+    assert not ({"archivewebpage", *consumers} & set(no_producer))
+
+
 def test_required_binary_requests_preserve_user_binary_overrides_and_ignore_stale_derived_paths() -> None:
     plugins = PluginCatalog.discover()
     plugin = plugins["ytdlp"]
