@@ -14,6 +14,7 @@ import os
 from collections import defaultdict
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
+from importlib import import_module
 from pathlib import Path
 from typing import Any
 
@@ -296,6 +297,24 @@ class PluginCatalog(Mapping[str, Plugin]):
             names = ", ".join(command.plugin_name for command in commands)
             raise ValueError(f"Multiple plugins provide command {command_name!r}: {names}")
         return commands[0]
+
+    def eventbus_middlewares(self, config: Mapping[str, Any]) -> list[Any]:
+        """Load process integrations only after their own enable flag is true."""
+        middlewares = []
+        for plugin in self.values():
+            if not plugin.config.eventbus_module:
+                continue
+            resolved = plugin_utils.load_config(
+                plugin.path / "config.json",
+                global_config={key: str(value) if isinstance(value, Path) else value for key, value in config.items()},
+                hydrate_binaries=False,
+                hydrate_user_agent=False,
+            )
+            if not getattr(resolved, plugin.enabled_key, False):
+                continue
+            module = import_module(plugin.config.eventbus_module)
+            middlewares.extend(module.get_eventbus_middlewares(resolved))
+        return middlewares
 
 
 @dataclass(frozen=True)
