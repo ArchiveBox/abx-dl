@@ -390,6 +390,7 @@ jobs:
               --env CURL_CA_BUNDLE=/run/squid/ca-bundle.crt \
               --env REQUESTS_CA_BUNDLE=/run/squid/ca-bundle.crt \
               --env NODE_EXTRA_CA_CERTS=/run/squid/ca.crt --env NODE_USE_ENV_PROXY=1 \
+              --env 'YTDLP_ARGS_EXTRA=["--compat-options=no-certifi"]' \
               --env WGETRC=/run/squid/wgetrc --env CHROME_ARGS_EXTRA \
               --volume "$squid_files:/run/squid:ro" \
               --volume "$squid_files/nssdb:/home/archivebox/.pki/nssdb"

@@ -323,6 +323,10 @@ jobs:
       - name: Test all plugins
         run: |
           set -Eeuo pipefail
+          if [[ -n "${SQUID_CA_CERT:-}" ]]; then
+            # yt-dlp defaults to certifi and needs the runner CA bundle for Squid.
+            export YTDLP_ARGS_EXTRA='["--compat-options=no-certifi"]'
+          fi
           "${UV_BINARY}" run --no-cache --no-sync --no-sources abx-dl dl 'https://example.com' --dir=./test-output
           "${UV_BINARY}" run --no-cache --no-sync --no-sources python bin/validate_crawl.py \
             ./test-output/index.jsonl \
