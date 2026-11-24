@@ -62,7 +62,7 @@ jobs:
         if: >-
           inputs.full_tests && github.repository == 'ArchiveBox/abx-dl' && github.ref == 'refs/heads/main' &&
           (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-        uses: ArchiveBox/monorepo/.github/actions/setup-squid@90ef22361eab668171542c109378a138a3ba24c4
+        uses: ArchiveBox/monorepo/.github/actions/setup-squid@9dabfac1097d945bcf94281b7756cc215a460e44
         with:
           proxy: ${{ vars.SQUID_TAILNET_URL }}
           ca: ${{ vars.SQUID_CA }}
