@@ -62,7 +62,7 @@ jobs:
         if: >-
           inputs.full_tests && github.repository == 'ArchiveBox/abx-dl' && github.ref == 'refs/heads/main' &&
           (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
-        uses: ArchiveBox/monorepo/.github/actions/setup-squid@9dabfac1097d945bcf94281b7756cc215a460e44
+        uses: ArchiveBox/monorepo/.github/actions/setup-squid@20721aa85ba01c3d6713c4c9a3dfee9854c4b42c
         with:
           proxy: ${{ vars.SQUID_TAILNET_URL }}
           ca: ${{ vars.SQUID_CA }}
@@ -384,7 +384,7 @@ jobs:
             # Use the runner network for its authenticated proxy route.
             wayback_host=127.0.0.1
             printf -v squid_options '%q ' \
-              --network host --env HTTP_PROXY --env HTTPS_PROXY --env http_proxy --env https_proxy \
+              --network host --env CI --env HTTP_PROXY --env HTTPS_PROXY --env http_proxy --env https_proxy \
               --env "NO_PROXY=$NO_PROXY,host.docker.internal" --env "no_proxy=$no_proxy,host.docker.internal" \
               --env SSL_CERT_FILE=/run/squid/ca-bundle.crt \
               --env CURL_CA_BUNDLE=/run/squid/ca-bundle.crt \
