@@ -34,10 +34,12 @@ def test_search_streams_and_reaps_ripgrep(tmp_path, finish, timeout, termination
             large.write(b"\n")
     # Exercise a real process tree without depending on an ArchiveBox search
     # provider. xargs owns the rg process that searches the two real files.
+    xargs = shutil.which("xargs")
+    assert xargs, "Install xargs to exercise cancellation of a process tree"
     command = PluginCommand(
         name="search",
         plugin_name="test",
-        path=Path(shutil.which("xargs")),
+        path=Path(xargs),
         args=[rg, "--line-buffered", "--no-mmap", "--text", "--files-with-matches", "-e", query],
     )
     stop = threading.Event()
