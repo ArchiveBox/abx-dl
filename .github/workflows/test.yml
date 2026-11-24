@@ -59,6 +59,10 @@ jobs:
         run: $UV_BINARY run --no-cache --no-sync --no-sources prek run --all-files
 
   unit-tests:
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
     name: ${{ matrix.file }} (${{ matrix.os }}, Python ${{ matrix.python }})
     runs-on: ${{ matrix.ugnas && fromJSON(inputs.runner) || matrix.os }}
     strategy:
@@ -67,6 +71,18 @@ jobs:
         include: ${{ fromJson(inputs.tests) }}
 
     steps:
+      - name: Set up Squid
+        if: >-
+          github.repository == 'ArchiveBox/abx-dl' && github.ref == 'refs/heads/main' &&
+          (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        uses: ArchiveBox/monorepo/.github/actions/setup-squid@db5cad0e622fce387c927f5e9c8c6b2580ef003e
+        with:
+          proxy: ${{ vars[runner.environment == 'self-hosted' && 'SQUID_LAN_URL' || 'SQUID_TAILNET_URL'] }}
+          ca: ${{ vars.SQUID_CA }}
+          tailscale-client-id: ${{ vars.SQUID_TAILSCALE_CLIENT_ID }}
+          tailscale-audience: ${{ vars.SQUID_TAILSCALE_AUDIENCE }}
+          browser: 'true'
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 1
@@ -162,6 +178,18 @@ jobs:
       COMPOSE_PROFILES: ""
 
     steps:
+      - name: Set up Squid
+        if: >-
+          github.repository == 'ArchiveBox/abx-dl' && github.ref == 'refs/heads/main' &&
+          (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        uses: ArchiveBox/monorepo/.github/actions/setup-squid@db5cad0e622fce387c927f5e9c8c6b2580ef003e
+        with:
+          proxy: ${{ vars[runner.environment == 'self-hosted' && 'SQUID_LAN_URL' || 'SQUID_TAILNET_URL'] }}
+          ca: ${{ vars.SQUID_CA }}
+          tailscale-client-id: ${{ vars.SQUID_TAILSCALE_CLIENT_ID }}
+          tailscale-audience: ${{ vars.SQUID_TAILSCALE_AUDIENCE }}
+          browser: 'true'
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 1
@@ -390,6 +418,10 @@ jobs:
           retention-days: 90
 
   package-artifact-smoke:
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
     name: Test release artifacts (Python ${{ matrix.python }})
     needs: package-artifacts
     runs-on: ubuntu-24.04
@@ -399,6 +431,17 @@ jobs:
         python: ["3.12", "3.13", "3.14"]
 
     steps:
+      - name: Set up Squid
+        if: >-
+          github.repository == 'ArchiveBox/abx-dl' && github.ref == 'refs/heads/main' &&
+          (github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+        uses: ArchiveBox/monorepo/.github/actions/setup-squid@db5cad0e622fce387c927f5e9c8c6b2580ef003e
+        with:
+          proxy: ${{ vars[runner.environment == 'self-hosted' && 'SQUID_LAN_URL' || 'SQUID_TAILNET_URL'] }}
+          ca: ${{ vars.SQUID_CA }}
+          tailscale-client-id: ${{ vars.SQUID_TAILSCALE_CLIENT_ID }}
+          tailscale-audience: ${{ vars.SQUID_TAILSCALE_AUDIENCE }}
+
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 1
