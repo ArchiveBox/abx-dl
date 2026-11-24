@@ -1,10 +1,8 @@
 """Exercise the installed ripgrep CLI and its real child-process lifecycle."""
 
-import os
 import shutil
 import signal
 import subprocess
-import sys
 import threading
 import time
 from pathlib import Path
@@ -15,7 +13,6 @@ import pytest
 
 from abx_dl.execution import iter_plugin_command
 from abx_dl.models import PluginCommand
-from abx_plugins.plugins.search_backend_ripgrep import search as ripgrep
 
 
 @pytest.mark.parametrize("finish, timeout", [("close", 2), ("cancel", 2), ("timeout", 2), ("close", None), ("cancel", None)])
@@ -35,33 +32,27 @@ def test_search_streams_and_reaps_ripgrep(tmp_path, finish, timeout, termination
         for offset in range(0, 8 * 1024**3, 1024**2):
             large.seek(offset)
             large.write(b"\n")
+    # Exercise a real process tree without depending on an ArchiveBox search
+    # provider. xargs owns the rg process that searches the two real files.
     command = PluginCommand(
         name="search",
-        plugin_name="search_backend_ripgrep",
-        path=Path(sys.executable),
-        args=[*(["-v"] if finish == "timeout" else []), str(Path(ripgrep.__file__)), "search"],
+        plugin_name="test",
+        path=Path(shutil.which("xargs")),
+        args=[rg, "--line-buffered", "--no-mmap", "--text", "--files-with-matches", "-e", query],
     )
-    env = {
-        **os.environ,
-        "SNAP_DIR": str(tmp_path / "snapshots"),
-        "RIPGREP_BINARY": rg,
-        "RIPGREP_ARGS_EXTRA": '["--no-mmap", "--text", "--sort", "path"]',
-        "RIPGREP_TIMEOUT": "30",
-    }
     stop = threading.Event()
     iterator = iter_plugin_command(
         command,
-        arguments={"query": query},
-        env=env,
+        stdin=[f'"{root / "a.txt"}" "{root / "z.txt"}"'],
         timeout=timeout,
         stop_event=stop if finish == "cancel" else None,
         termination_grace=termination_grace,
     )
     children = []
     try:
-        assert next(iterator) == snapshot_id
+        assert next(iterator) == str(root / "a.txt")
         children = [child for child in psutil.Process().children(recursive=True) if query in " ".join(child.cmdline())]
-        assert len(children) == 2, "Expected the real Python search CLI and its rg child"
+        assert len(children) == 2, "Expected xargs and its rg child"
         # Suspend the real engine to make a silent, still-running search deterministic.
         # The executor must cancel/timeout it, including while no stdout arrives.
         for child in children:
@@ -80,9 +71,8 @@ def test_search_streams_and_reaps_ripgrep(tmp_path, finish, timeout, termination
         else:
             with pytest.raises(subprocess.TimeoutExpired) as error:
                 list(iterator)
-            assert str(Path(ripgrep.__file__)) in error.value.cmd
+            assert str(command.path) in error.value.cmd
             assert error.value.stderr is not None
-            assert b"import 'abx_plugins.plugins.base.utils'" in error.value.stderr
         assert time.monotonic() - started < 3
         _, alive = psutil.wait_procs(children, timeout=2)
         assert not alive, [(p.pid, p.status()) for p in alive]
