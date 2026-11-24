@@ -58,6 +58,18 @@ jobs:
             local_tag: archivebox/abx-dl:test-arm64
 
     steps:
+      - name: Set up Squid
+        if: >-
+          inputs.full_tests && github.repository == 'ArchiveBox/abx-dl' && github.ref == 'refs/heads/main' &&
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+        uses: ArchiveBox/monorepo/.github/actions/setup-squid@90ef22361eab668171542c109378a138a3ba24c4
+        with:
+          proxy: ${{ vars.SQUID_TAILNET_URL }}
+          ca: ${{ vars.SQUID_CA }}
+          tailscale-client-id: ${{ vars.SQUID_TAILSCALE_CLIENT_ID }}
+          tailscale-audience: ${{ vars.SQUID_TAILSCALE_AUDIENCE }}
+          browser: 'true'
+
       - name: Checkout abx-dl
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -355,8 +367,36 @@ jobs:
             exit 1
           fi
 
+          squid_options="--add-host=host.docker.internal:host-gateway "
+          wayback_host=host.docker.internal
+          if [[ -n "${SQUID_CA_CERT:-}" ]]; then
+            # The release image has its own trust stores. Mount temporary CI
+            # certificates for this smoke test without baking them into the image.
+            squid_files="$(mktemp -d "$RUNNER_TEMP/squid-container.XXXXXX")"
+            chmod 0755 "$squid_files"
+            install -m 0644 "$SQUID_CA_CERT" "$squid_files/ca.crt"
+            install -m 0644 "$SSL_CERT_FILE" "$squid_files/ca-bundle.crt"
+            printf 'ca_certificate = /run/squid/ca-bundle.crt\n' > "$squid_files/wgetrc"
+            mkdir -m 0755 "$squid_files/nssdb"
+            certutil -N --empty-password -d "sql:$squid_files/nssdb"
+            certutil -A -d "sql:$squid_files/nssdb" -n 'ugNAS Squid CA' -t 'C,,' -i "$squid_files/ca.crt"
+            sudo chown -R 911:911 "$squid_files/nssdb"
+            # Use the runner network for its authenticated proxy route.
+            wayback_host=127.0.0.1
+            printf -v squid_options '%q ' \
+              --network host --env HTTP_PROXY --env HTTPS_PROXY --env http_proxy --env https_proxy \
+              --env "NO_PROXY=$NO_PROXY,host.docker.internal" --env "no_proxy=$no_proxy,host.docker.internal" \
+              --env SSL_CERT_FILE=/run/squid/ca-bundle.crt \
+              --env CURL_CA_BUNDLE=/run/squid/ca-bundle.crt \
+              --env REQUESTS_CA_BUNDLE=/run/squid/ca-bundle.crt \
+              --env NODE_EXTRA_CA_CERTS=/run/squid/ca.crt --env NODE_USE_ENV_PROXY=1 \
+              --env WGETRC=/run/squid/wgetrc --env CHROME_ARGS_EXTRA \
+              --volume "$squid_files:/run/squid:ro" \
+              --volume "$squid_files/nssdb:/home/archivebox/.pki/nssdb"
+          fi
+
           "$SCRIPT_BINARY" -q -e -c \
-            "\"${DOCKER_BINARY}\" run --rm -it --platform '${{ matrix.platform }}' --add-host=host.docker.internal:host-gateway --env ARCHIVEDOTORG_SAVE_URL='http://host.docker.internal:${WAYBACK_PORT}/save/' --env ANTHROPIC_API_KEY --env CLAUDE_CODE_OAUTH_TOKEN --env TWOCAPTCHA_API_KEY --env AUTOTAG_ENABLED --env AUTOSUMMARY_ENABLED --env CLAUDECHROME_ENABLED --env AUTOTAG_MODEL --env AUTOSUMMARY_MODEL --env-file '${{ github.workspace }}/.github/fixtures/browser-preparation.env' --volume '$OUT_DIR:/out' --volume '$PERSONAS_DIR:/data/personas' '${{ matrix.local_tag }}' https://example.com" \
+            "\"${DOCKER_BINARY}\" run --rm -it --platform '${{ matrix.platform }}' ${squid_options}--env ARCHIVEDOTORG_SAVE_URL='http://$wayback_host:${WAYBACK_PORT}/save/' --env ANTHROPIC_API_KEY --env CLAUDE_CODE_OAUTH_TOKEN --env TWOCAPTCHA_API_KEY --env AUTOTAG_ENABLED --env AUTOSUMMARY_ENABLED --env CLAUDECHROME_ENABLED --env AUTOTAG_MODEL --env AUTOSUMMARY_MODEL --env-file '${{ github.workspace }}/.github/fixtures/browser-preparation.env' --volume '$OUT_DIR:/out' --volume '$PERSONAS_DIR:/data/personas' '${{ matrix.local_tag }}' https://example.com" \
             /dev/null 2>&1 | "$TEE_BINARY" "$OUT_DIR/crawl.log"
 
           "$SCRIPT_BINARY" -q -e -c \
