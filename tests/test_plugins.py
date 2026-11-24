@@ -91,8 +91,8 @@ def test_plugin_catalog_exposes_complete_metadata_and_sorted_hooks() -> None:
 def test_plugin_catalog_exposes_manifest_declared_commands() -> None:
     catalog = PluginCatalog.discover(runtime="archivebox")
 
-    search = catalog.command("search_backend_ripgrep", "search")
-    flush = catalog.command("search_backend_ripgrep", "flush")
+    search = catalog.command("search_backend_sqlite", "search")
+    flush = catalog.command("search_backend_sqlite", "flush")
 
     assert search is not None
     assert flush is not None
@@ -110,8 +110,8 @@ def test_plugin_command_discovery_requires_unambiguous_provider() -> None:
         catalog.find_command("not-a-command")
     with pytest.raises(ValueError, match="Multiple plugins provide"):
         catalog.find_command("search")
-    search_only = PluginCatalog({"search_backend_ripgrep": catalog["search_backend_ripgrep"]})
-    assert search_only.find_command("search") == catalog.command("search_backend_ripgrep", "search")
+    search_only = PluginCatalog({"search_backend_sqlite": catalog["search_backend_sqlite"]})
+    assert search_only.find_command("search") == catalog.command("search_backend_sqlite", "search")
 
 
 def test_plugin_catalog_rejects_command_paths_outside_plugin(tmp_path: Path) -> None:
