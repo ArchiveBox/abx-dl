@@ -61,14 +61,20 @@ def test_hook_control_files_use_local_tmp_and_preserve_failed_logs(tmp_path: Pat
 
 
 def test_silent_skip_does_not_keep_process_logs(tmp_path: Path):
-    hook = PluginCatalog.discover()["ublock"].filter_hooks("Snapshot")[0]
+    # Exercise a silent skip without pulling Node or browser dependencies into the test.
+    plugin_dir = tmp_path / "plugins" / "silent_skip"
+    plugin_dir.mkdir(parents=True)
+    script = plugin_dir / "on_Snapshot__10_silent_skip.sh"
+    script.write_text(f"#!/bin/sh\nexit {PROCESS_EXIT_SKIPPED}\n")
+    script.chmod(0o755)
+    hook = PluginCatalog.discover(plugins_dir=plugin_dir.parent)["silent_skip"].filter_hooks("Snapshot")[0]
     output = tmp_path / "archive" / hook.plugin_name
     runtime = tmp_path / "local-tmp"
     completed = asyncio.run(
         execute_hook(
             hook,
             output_dir=output,
-            env={**os.environ, "TMP_DIR": str(runtime), "SNAP_DIR": str(output.parent), "UBLOCK_ENABLED": "false"},
+            env={**os.environ, "TMP_DIR": str(runtime), "SNAP_DIR": str(output.parent)},
         ),
     )
     assert completed.exit_code == PROCESS_EXIT_SKIPPED, completed.stderr
