@@ -234,7 +234,11 @@ def test_cli_interrupts_active_hook(tmp_path: Path, choice: str) -> None:
         # WHY: running hook controls live locally; only failed logs are archived
         # at completion. Waiting in the archive never reaches the interrupt.
         for pid_file in runtime_dir.glob("on_Snapshot__30_chrome_navigate.*.pid"):
-            pid_text = pid_file.read_text().strip()
+            try:
+                pid_text = pid_file.read_text().strip()
+            except FileNotFoundError:
+                # Cleanup can remove the previous attempt between glob and read.
+                continue
             if pid_text and psutil.pid_exists(int(pid_text)):
                 return int(pid_text)
         return None
@@ -389,7 +393,11 @@ def test_cli_abort_stops_long_running_background_hook(tmp_path: Path) -> None:
 
     def active_hook():
         for pid_file in runtime_dir.glob("on_Snapshot__45_infiniscroll.*.pid"):
-            pid_text = pid_file.read_text().strip()
+            try:
+                pid_text = pid_file.read_text().strip()
+            except FileNotFoundError:
+                # Cleanup can remove a finished hook between glob and read.
+                continue
             if pid_text and psutil.pid_exists(int(pid_text)):
                 return int(pid_text)
         return None
