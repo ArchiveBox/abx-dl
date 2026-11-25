@@ -199,26 +199,23 @@ jobs:
 
           echo "[+] Building ${{ matrix.platform }} for abx-dl ${VERSION} branch=${BRANCH_TAG} sha=${SHORT_SHA}"
 
-      # BuildKit keys downstream layers from COPY inputs, not merely from the
-      # resulting files. Normalize release-only versions before it sees the
-      # contexts; the Dockerfile restores these exact values after installing
-      # tools, so source changes still rebuild while an autobump does not. This
-      # mutates only the disposable per-job checkout and cloned build contexts.
-      - name: Canonicalize release-only Docker metadata
+      # Preserve exact source metadata for the final installed distributions.
+      # The Dockerfile normalizes only its temporary installer inputs; these
+      # values assert that the finished image still has the requested versions.
+      - name: Record exact Docker package versions
         shell: bash
         run: |
           set -Eeuo pipefail
-          normalize_version() {
+          record_version() {
             local env_name="$1" package_file="$2" version
             version="$(sed -nE 's/^version = "([^"]+)".*/\1/p' "$package_file" | head -n 1)"
             test -n "$version"
             echo "$env_name=$version" >> "$GITHUB_ENV"
-            sed -i -E 's/^version = "[^"]+"/version = "0.0.0"/' "$package_file"
           }
-          normalize_version ABXBUS_VERSION "$RUNNER_TEMP/abxbus/pyproject.toml"
-          normalize_version ABXPKG_VERSION "$RUNNER_TEMP/abxpkg/pyproject.toml"
-          normalize_version ABX_PLUGINS_VERSION "$RUNNER_TEMP/abx-plugins/pyproject.toml"
-          normalize_version ABX_DL_VERSION pyproject.toml
+          record_version ABXBUS_VERSION "$RUNNER_TEMP/abxbus/pyproject.toml"
+          record_version ABXPKG_VERSION "$RUNNER_TEMP/abxpkg/pyproject.toml"
+          record_version ABX_PLUGINS_VERSION "$RUNNER_TEMP/abx-plugins/pyproject.toml"
+          record_version ABX_DL_VERSION pyproject.toml
 
       - name: Login to Docker Hub
         uses: docker/login-action@06fb636fac595d6fb4b28a5dfcb21a6f5091859c # v4.5.0
@@ -273,11 +270,13 @@ jobs:
             ${{ inputs.push_digests && format('type=image,"name={0},{1}",push-by-digest=true,name-canonical=true,push=true,compression=zstd,compression-level=10,force-compression=true', env.DOCKERHUB_IMAGE, env.GHCR_IMAGE) || '' }}
           # Keep one cache authority. A separate GHA cache can retain gzip
           # variants of these same layers; BuildKit may then choose those over
-          # :main's zstd blobs, making an otherwise identical image larger and
+          # the published zstd blobs, making an otherwise identical image larger and
           # forcing downstream ArchiveBox over its compressed-size limit.
-          # :main only advances after both architectures pass release checks,
-          # so it is both the fastest and the last known-good cache source.
-          cache-from: type=registry,ref=${{ env.DOCKERHUB_IMAGE }}:main
+          # Reuse the newest tested Docker layers even while the rest of CI
+          # is running; :main remains the fully released fallback.
+          cache-from: |
+            type=registry,ref=${{ env.DOCKERHUB_IMAGE }}:main-unstable
+            type=registry,ref=${{ env.DOCKERHUB_IMAGE }}:main
           # Inline metadata makes the published compressed blobs reusable
           # without uploading a second copy to a hidden cache backend.
           # Compression is part of blob identity, not exporter-only formatting.

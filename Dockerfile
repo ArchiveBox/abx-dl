@@ -141,51 +141,89 @@ RUN export PATH="/opt/node/bin:$PATH" \
 
 RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | env UV_INSTALL_DIR=/bin sh
 
-RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
+# uv uses XDG_CACHE_HOME/uv here. Mount its actual cache directory so
+# Python downloads and wheel/build caches survive without entering image layers.
+RUN --mount=type=cache,target=/opt/archivebox/lib/cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
     echo "[+] UV Creating /venv using python ${PYTHON_VERSION} for ${TARGETPLATFORM}..." \
     && uv venv /venv --python "${PYTHON_VERSION}" \
     && (which python3 && which uv && uv python find) | tee -a /VERSION.txt
 
 ########################################################################################################
+FROM abx-dl-runtime-base AS abx-dl-install-context
+
+# Installation reads manifests and shared base utilities, not capture hooks.
+# Derive this package tree in a separate stage: BuildKit compares its output
+# files, so editing an excluded hook does not invalidate the tool installation.
+# Keep all abx-dl, abxpkg and abxbus code: any installer/provider change must
+# invalidate installation. Only temporary package metadata is canonicalized;
+# the finished image installs the original source and exact metadata below.
+RUN --mount=type=bind,from=abxbus,source=.,target=/input/abxbus \
+    --mount=type=bind,from=abxpkg,source=.,target=/input/abxpkg \
+    --mount=type=bind,from=abx-plugins,source=.,target=/input/abx-plugins \
+    --mount=type=bind,source=.,target=/input/abx-dl \
+    /venv/bin/python3 - <<'PYTHON'
+from pathlib import Path
+import re
+import shutil
+
+packages = {"abxbus": "abxbus", "abxpkg": "abxpkg", "abx-plugins": "abx_plugins", "abx-dl": "abx_dl"}
+for name, module in packages.items():
+    source = Path("/input") / name
+    target = Path("/src") / name
+    target.mkdir(parents=True)
+    metadata = (source / "pyproject.toml").read_text()
+    metadata = re.sub(r'(?m)^version = "[^"\n]+"', 'version = "0.0.0"', metadata, count=1)
+    metadata = re.sub(r'(?m)^current_version = "[^"\n]+"', 'current_version = "0.0.0"', metadata)
+    metadata = re.sub(r'"(abxbus|abxpkg|abx-plugins|abx-dl)==[^"\n]+"', r'"\1==0.0.0"', metadata)
+    (target / "pyproject.toml").write_text(metadata)
+    # Package descriptions do not influence dependency installation.
+    (target / "README.md").write_text("")
+    shutil.copy2(source / "LICENSE", target / "LICENSE")
+    if name != "abx-plugins":
+        shutil.copytree(source / module, target / module, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        continue
+    (target / module / "plugins").mkdir(parents=True)
+    for relative in ("__init__.py", "plugins/__init__.py"):
+        shutil.copy2(source / module / relative, target / module / relative)
+    shutil.copytree(source / module / "plugins/base", target / module / "plugins/base", ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    for manifest in sorted((source / module / "plugins").glob("*/config.json")):
+        destination = target / module / manifest.relative_to(source / module)
+        destination.parent.mkdir(exist_ok=True)
+        shutil.copy2(manifest, destination)
+PYTHON
+
 FROM abx-dl-runtime-base AS abx-dl-builder
 
-WORKDIR "$CODE_DIR"
-COPY --from=abxbus --chown=root:root --chmod=755 pyproject.toml README.md LICENSE /src/abxbus/
-COPY --from=abxpkg --chown=root:root --chmod=755 pyproject.toml README.md LICENSE /src/abxpkg/
-COPY --from=abx-plugins --chown=root:root --chmod=755 pyproject.toml README.md LICENSE /src/abx-plugins/
-COPY --chown=root:root --chmod=755 pyproject.toml README.md LICENSE "$CODE_DIR/"
-# Release automation changes only these version fields on its follow-up commit.
-# Install a canonical version while building the expensive browser/tool layer so
-# that metadata-only bumps do not invalidate it; the real versions are overlaid
-# from the original contexts after every binary has been installed and checked.
-RUN sed -i -E 's/^version = "[^"]+"/version = "0.0.0"/' \
-        /src/abxbus/pyproject.toml \
-        /src/abxpkg/pyproject.toml \
-        /src/abx-plugins/pyproject.toml \
-        "$CODE_DIR/pyproject.toml"
-RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
+WORKDIR /src/abx-dl
+COPY --from=abx-dl-install-context /src /src
+RUN --mount=type=cache,target=/opt/archivebox/lib/cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
     echo "[+] UV Installing external Python dependencies from local package metadata..." \
-    && /venv/bin/python3 -c 'import re, tomllib; paths = ["/src/abxbus/pyproject.toml", "/src/abxpkg/pyproject.toml", "/src/abx-plugins/pyproject.toml", "/app/pyproject.toml"]; skip = {"abxbus", "abxpkg", "abx-plugins", "abx-dl"}; deps = []; [deps.extend(tomllib.load(open(path, "rb"))["project"].get("dependencies", [])) for path in paths]; seen = set(); print("\n".join(dep for dep in deps if (name := re.split(r"[<>=!~;\\[]", dep, 1)[0].strip().lower()) not in skip and not (dep in seen or seen.add(dep))))' > /tmp/abx-dl-requirements.txt \
+    && /venv/bin/python3 -c 'import re, tomllib; paths = ["/src/abxbus/pyproject.toml", "/src/abxpkg/pyproject.toml", "/src/abx-plugins/pyproject.toml", "/src/abx-dl/pyproject.toml"]; skip = {"abxbus", "abxpkg", "abx-plugins", "abx-dl"}; deps = []; [deps.extend(tomllib.load(open(path, "rb"))["project"].get("dependencies", [])) for path in paths]; seen = set(); print("\n".join(dep for dep in deps if (name := re.split(r"[<>=!~;\\[]", dep, 1)[0].strip().lower()) not in skip and not (dep in seen or seen.add(dep))))' > /tmp/abx-dl-requirements.txt \
     && uv pip install --refresh -r /tmp/abx-dl-requirements.txt
 
-COPY --from=abxbus --chown=root:root --chmod=755 abxbus /src/abxbus/abxbus
-COPY --from=abxpkg --chown=root:root --chmod=755 abxpkg /src/abxpkg/abxpkg
-COPY --from=abx-plugins --chown=root:root --chmod=755 abx_plugins /src/abx-plugins/abx_plugins
-COPY --chown=root:root --chmod=755 abx_dl "$CODE_DIR/abx_dl"
-RUN --mount=type=cache,target=/root/.cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
+RUN --mount=type=cache,target=/opt/archivebox/lib/cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
     echo "[*] Installing local abxbus/abxpkg/abx-plugins/abx-dl Python source code..." \
-    && uv pip install --no-deps /src/abxbus /src/abxpkg /src/abx-plugins "$CODE_DIR" \
+    && uv pip install --no-deps /src/abxbus /src/abxpkg /src/abx-plugins /src/abx-dl \
     && /usr/bin/uv pip show abx-dl | tee -a /VERSION.txt \
     && rm -f /venv/bin/uv /venv/bin/uvx \
     && rm -rf /venv/lib/python3.*/site-packages/pip* /venv/lib/python3.*/site-packages/setuptools* /venv/lib/python3.*/site-packages/wheel* /venv/bin/pip /venv/bin/pip3 /venv/bin/pip3.* /venv/bin/wheel \
     && (which abx-dl && abx-dl --version) | tee -a /VERSION.txt
 
+# Install complete packages with their original versions, requirements, hooks,
+# and wheel RECORDs. This stage shares installed external Python dependencies,
+# but its source changes cannot invalidate the temporary installer above.
+FROM abx-dl-builder AS abx-dl-packages
+RUN --mount=type=cache,target=/opt/archivebox/lib/cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
+    --mount=type=bind,from=abxbus,source=.,target=/input/abxbus,rw \
+    --mount=type=bind,from=abxpkg,source=.,target=/input/abxpkg,rw \
+    --mount=type=bind,from=abx-plugins,source=.,target=/input/abx-plugins,rw \
+    --mount=type=bind,source=.,target=/input/abx-dl,rw \
+    uv pip install --no-deps --reinstall /input/abxbus /input/abxpkg /input/abx-plugins /input/abx-dl \
+    && rm -f /venv/bin/uv /venv/bin/uvx \
+    && rm -rf /venv/lib/python3.*/site-packages/pip* /venv/lib/python3.*/site-packages/setuptools* /venv/lib/python3.*/site-packages/wheel* /venv/bin/pip /venv/bin/pip3 /venv/bin/pip3.* /venv/bin/wheel
+
 ########################################################################################################
 FROM abx-dl-runtime-base
-
-COPY --from=abx-dl-builder /venv /venv
-COPY --from=abx-dl-builder /VERSION.txt /VERSION.txt
-COPY --chown=root:root --chmod=755 bin/docker_entrypoint.sh /usr/local/bin/abx-dl-docker-entrypoint
 
 RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_ARCHIVEBOX_UID}..." \
     && groupadd --system "$ARCHIVEBOX_USER" \
@@ -205,7 +243,10 @@ RUN echo "[*] Setting up $ARCHIVEBOX_USER user uid=${DEFAULT_ARCHIVEBOX_UID}..."
 # download state goes into this mount. After cleanup, the last in-layer install
 # uses the real runtime cache path once so uv may seed its tiny interpreter
 # index; a strict size cap prevents package payloads from slipping back in.
-RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=abxpkg-tmp-$TARGETARCH$TARGETVARIANT \
+# The installer venv is a build input, not a permanent image layer. Tool
+# providers persist installations under ABXPKG_LIB_DIR or system package paths.
+RUN --mount=type=bind,from=abx-dl-builder,source=/venv,target=/venv,rw \
+    --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=abxpkg-tmp-$TARGETARCH$TARGETVARIANT \
     echo "[+] Installing Chrome, then the complete downloader plugin catalog..." \
     && export HOME=/var/tmp/abxpkg-cache XDG_CACHE_HOME=/var/tmp/abxpkg-cache ABXPKG_TMP_CACHE_DIR=/var/tmp/abxpkg-cache \
     # Let uv compile each tool with its own interpreter during installation.
@@ -264,12 +305,6 @@ RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=
     && rm -rf /usr/share/icons /usr/share/doc /usr/share/man /usr/share/bash-completion /usr/share/zsh /usr/share/info /usr/share/lintian /usr/share/bug \
     && install -d -m 755 /usr/share/man/man1 \
     && rm -f /usr/lib/jvm/java-*-openjdk-*/lib/server/classes*.jsa \
-    && rm -f /venv/bin/uv /venv/bin/uvx \
-    && STDLIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("stdlib"))')" \
-    && PURELIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
-    && /venv/bin/python -m compileall --invalidation-mode checked-hash -q "$STDLIB_DIR" "$PURELIB_DIR" \
-    # Include newly compiled bytecode before runtime installs fingerprint it;
-    # otherwise child images copy it into another layer just to fix ownership.
     && find "$ABXPKG_LIB_DIR" \( ! -user "$DEFAULT_ARCHIVEBOX_UID" -o ! -group "$DEFAULT_ARCHIVEBOX_GID" \) -exec chown -h "$DEFAULT_ARCHIVEBOX_UID:$DEFAULT_ARCHIVEBOX_GID" {} + \
     && env HOME=/home/archivebox XDG_CACHE_HOME=/var/tmp/abxpkg-cache setpriv --reuid="$ARCHIVEBOX_USER" --regid="$ARCHIVEBOX_USER" --init-groups abx-dl install $ABX_DOCKER_PLUGINS \
     # Execution plans from root provisioning cannot serve the runtime user.
@@ -282,41 +317,29 @@ RUN --mount=type=cache,target=/var/tmp/abxpkg-cache,sharing=locked,mode=1777,id=
     && (( CACHE_BYTES < 1048576 )) \
     && rm -rf /var/lib/apt/lists/* /tmp/*
 
-# These values are deliberately declared after the expensive tool layer. CI
-# canonicalizes version-only metadata before BuildKit hashes its contexts, then
-# supplies the exact released values here so autobumps invalidate only the
-# package overlay and provenance, never the installed browser/toolchain.
+# Copy the full venv only once, after the tool layer. Capture source and its
+# bytecode can now change without rebuilding or redownloading installed tools.
+COPY --from=abx-dl-packages /venv /venv
+COPY --chown=root:root --chmod=755 bin/docker_entrypoint.sh /usr/local/bin/abx-dl-docker-entrypoint
+RUN STDLIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("stdlib"))')" \
+    && PURELIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
+    && /venv/bin/python -m compileall --invalidation-mode checked-hash -q "$STDLIB_DIR" "$PURELIB_DIR"
+
+# Existing callers may pass exact source versions. Validate rather than rewrite
+# installed metadata: wheels retain their real Requires-Dist and RECORD fields.
 ARG ABXBUS_VERSION
 ARG DIST_ABXPKG_VERSION
 ARG ABX_PLUGINS_VERSION
 ARG ABX_DL_VERSION
-ARG ABX_DL_COMMIT_HASH
-
-# The canonical build already installed and compiled these exact source trees;
-# reinstalling them here just to change four version strings would duplicate
-# every package in a new OCI layer and make the ArchiveBox child image repeat
-# those bytes again when repairing ownership. Metadata readers disagree here:
-# importlib reads METADATA, while uv also trusts the dist-info directory name.
-# Therefore copy/rename only that tiny directory and adjust RECORD; package
-# code remains untouched. PEP 376 explicitly allows an empty hash/size for an
-# installed RECORD entry, so blank only the METADATA checksum we intentionally
-# mutate instead of adding checksum-recalculation machinery. overlayfs cannot
-# rename a directory out of a lower OCI layer, hence the small copy + whiteout.
-RUN PURELIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
-    && for package_version in \
-        "abxbus|$ABXBUS_VERSION" \
-        "abxpkg|$DIST_ABXPKG_VERSION" \
-        "abx_plugins|$ABX_PLUGINS_VERSION" \
-        "abx_dl|$ABX_DL_VERSION"; do \
-        IFS='|' read -r package version <<< "$package_version"; \
-        [[ -n "$version" ]] || continue; \
-        old_name="${package}-0.0.0.dist-info"; \
-        new_name="${package}-${version}.dist-info"; \
-        cp -a "$PURELIB_DIR/$old_name" "$PURELIB_DIR/$new_name"; \
-        sed -i -E "s/^Version: .*/Version: $version/; s|^$old_name/|$new_name/|" "$PURELIB_DIR/$new_name/METADATA" "$PURELIB_DIR/$new_name/RECORD"; \
-        sed -i -E "s|^($new_name/METADATA),.*$|\1,,|" "$PURELIB_DIR/$new_name/RECORD"; \
-        rm -rf "$PURELIB_DIR/$old_name"; \
-    done
+ARG ABX_DL_COMMIT_HASH=""
+RUN /venv/bin/python - <<'PYTHON'
+import os
+from importlib.metadata import version
+for name, key in (("abxbus", "ABXBUS_VERSION"), ("abxpkg", "DIST_ABXPKG_VERSION"), ("abx-plugins", "ABX_PLUGINS_VERSION"), ("abx-dl", "ABX_DL_VERSION")):
+    expected = os.environ.get(key)
+    if expected and version(name) != expected:
+        raise SystemExit(f"{name}: expected {expected}, installed {version(name)}")
+PYTHON
 # Metadata inspection runs as root after runtime ownership is finalized. Do not
 # let uv create a root-owned cache that the runtime user cannot open for writes.
 RUN /usr/bin/uv --no-cache pip show abx-dl | tee -a /VERSION.txt \
