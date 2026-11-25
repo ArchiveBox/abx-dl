@@ -1062,7 +1062,11 @@ class ProcessService(BaseService):
             proc.ended_at = now_iso()
 
             index_path = plugin_output_dir.parent / "index.jsonl"
-            keep_logs = returncode != 0 or cancelled
+            # A silent skip has no diagnostics to retain. Leaving empty logs
+            # here also prevents normal snapshot cleanup from removing the dir.
+            keep_logs = (
+                cancelled or returncode not in (0, PROCESS_EXIT_SKIPPED) or (returncode == PROCESS_EXIT_SKIPPED and bool(stdout or stderr))
+            )
 
             def record_completion() -> None:
                 write_jsonl(index_path, proc, also_print=self.emit_jsonl)

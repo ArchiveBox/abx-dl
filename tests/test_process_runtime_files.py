@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from abx_dl.catalog import PluginCatalog
-from abx_dl.events import ProcessStartedEvent
+from abx_dl.events import PROCESS_EXIT_SKIPPED, ProcessStartedEvent
 from abx_dl.execution import execute_hook
 from abx_dl.orchestrator import create_bus
 
@@ -58,3 +58,20 @@ def test_hook_control_files_use_local_tmp_and_preserve_failed_logs(tmp_path: Pat
         urls = [json.loads(line)["url"] for line in (output / "urls.jsonl").read_text().splitlines()]
         assert urls == ["https://archivebox.io/tests/"]
         assert not list(output.glob("*.log"))
+
+
+def test_silent_skip_does_not_keep_process_logs(tmp_path: Path):
+    hook = PluginCatalog.discover()["ublock"].filter_hooks("Snapshot")[0]
+    output = tmp_path / "archive" / hook.plugin_name
+    runtime = tmp_path / "local-tmp"
+    completed = asyncio.run(
+        execute_hook(
+            hook,
+            output_dir=output,
+            env={**os.environ, "TMP_DIR": str(runtime), "SNAP_DIR": str(output.parent), "UBLOCK_ENABLED": "false"},
+        ),
+    )
+    assert completed.exit_code == PROCESS_EXIT_SKIPPED, completed.stderr
+    assert completed.stdout == completed.stderr == ""
+    assert not list(output.iterdir())
+    assert not list((runtime / "process").iterdir())
