@@ -34,6 +34,8 @@ jobs:
     name: build and test ${{ matrix.platform }}
     runs-on: ${{ matrix.runner }}
     env:
+      # Registry read-back must see the freshly published manifest.
+      NO_PROXY: docker.io,.docker.io,docker.com,.docker.com,ghcr.io
       AUTOTAG_ENABLED: "True"
       AUTOSUMMARY_ENABLED: "True"
       CLAUDECHROME_ENABLED: "True"
