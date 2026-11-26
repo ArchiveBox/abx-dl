@@ -220,7 +220,10 @@ RUN --mount=type=cache,target=/opt/archivebox/lib/cache/uv,sharing=locked,id=uv-
     --mount=type=bind,source=.,target=/input/abx-dl,rw \
     uv pip install --no-deps --reinstall /input/abxbus /input/abxpkg /input/abx-plugins /input/abx-dl \
     && rm -f /venv/bin/uv /venv/bin/uvx \
-    && rm -rf /venv/lib/python3.*/site-packages/pip* /venv/lib/python3.*/site-packages/setuptools* /venv/lib/python3.*/site-packages/wheel* /venv/bin/pip /venv/bin/pip3 /venv/bin/pip3.* /venv/bin/wheel
+    && rm -rf /venv/lib/python3.*/site-packages/pip* /venv/lib/python3.*/site-packages/setuptools* /venv/lib/python3.*/site-packages/wheel* /venv/bin/pip /venv/bin/pip3 /venv/bin/pip3.* /venv/bin/wheel \
+    # Put package source and checked-hash bytecode in the same compressed layer.
+    && PURELIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
+    && /venv/bin/python -m compileall --invalidation-mode checked-hash -q "$PURELIB_DIR"
 
 ########################################################################################################
 FROM abx-dl-runtime-base
@@ -322,8 +325,7 @@ RUN --mount=type=bind,from=abx-dl-builder,source=/venv,target=/venv,rw \
 COPY --from=abx-dl-packages /venv /venv
 COPY --chown=root:root --chmod=755 bin/docker_entrypoint.sh /usr/local/bin/abx-dl-docker-entrypoint
 RUN STDLIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("stdlib"))')" \
-    && PURELIB_DIR="$(/venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')" \
-    && /venv/bin/python -m compileall --invalidation-mode checked-hash -q "$STDLIB_DIR" "$PURELIB_DIR"
+    && /venv/bin/python -m compileall --invalidation-mode checked-hash -q "$STDLIB_DIR"
 
 # Existing callers may pass exact source versions. Validate rather than rewrite
 # installed metadata: wheels retain their real Requires-Dist and RECORD fields.
