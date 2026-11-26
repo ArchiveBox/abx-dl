@@ -2,6 +2,7 @@ import asyncio
 from datetime import datetime
 import hashlib
 import json
+import logging
 import os
 import signal
 import shutil
@@ -11,6 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+from abxbus import BaseEvent
 
 from abx_dl.config import GlobalConfig, RuntimeConfig, get_explicit_user_env, get_initial_env, get_required_binary_requests
 from abx_dl.events import (
@@ -58,7 +60,8 @@ def test_build_hook_args_uses_standalone_cli_contract():
     ]
 
 
-def test_execute_hook_runs_without_application_framework(tmp_path):
+@pytest.mark.parametrize("capture_bus", [False, True])
+def test_execute_hook_runs_without_application_framework(tmp_path, caplog, capture_bus):
     script = tmp_path / "on_Snapshot__10_example.py"
     script.write_text('#!/bin/sh\nprintf \'{"type":"ArchiveResult","status":"succeeded"}\\n\'\n')
     script.chmod(0o755)
@@ -71,17 +74,26 @@ def test_execute_hook_runs_without_application_framework(tmp_path):
         is_background=False,
     )
 
+    bus = None
+    if capture_bus:
+        bus = create_bus(total_timeout=60.0, name=f"standalone_hook_{tmp_path.name}")
+        ArchiveResultService(bus, emit_jsonl=False, catalog=PluginCatalog({}))
+
     completed = asyncio.run(
         execute_hook(
             hook,
             output_dir=tmp_path / "output",
             env={"PATH": os.environ["PATH"]},
             arguments={"url": "https://example.com"},
+            bus=bus,
         ),
     )
 
     assert completed.exit_code == 0
     assert '"status":"succeeded"' in completed.stdout
+    records = [json.loads(line) for line in (tmp_path / "index.jsonl").read_text().splitlines()]
+    assert [record["type"] for record in records] == ["Process"]
+    assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
 
 
 def test_index_append_never_blocks_the_event_loop(tmp_path):
@@ -2445,25 +2457,23 @@ def test_crawl_abort_cleans_real_chrome_process_tree_and_foreground_hook(
         assert isinstance(crawl, CrawlEvent)
         if history_pressure:
             bus.event_history.max_history_size = 32
-            hook = PluginCatalog.discover()["parse_txt_urls"].hooks[0]
-            parsed_events = []
-            for index in range(16):
-                parsed = await execute_hook(
-                    hook,
-                    output_dir=tmp_path / "parsed" / str(index),
-                    env=os.environ.copy(),
-                    arguments={"url": "https://example.com"},
-                    bus=bus,
-                )
-                assert parsed.exit_code == 0
-                parsed_events.append(parsed)
-            assert parsed_events[0].event_id not in bus.event_history
+            # Fill the real history without letting unrelated subprocess
+            # startup spend the blocked navigation's capture deadline.
+            history = []
+            for _ in range(64):
+                event = bus.emit(BaseEvent())
+                await event.now()
+                history.append(event)
+            assert history[0].event_id not in bus.event_history
             assert launch_started.event_id in bus.event_history
             assert tab_started.event_id in bus.event_history
         assert not list(output_dir.rglob("on_*.sh"))
         assert (output_dir / plugin.name / "cmd.sh").is_file()
         for started in (launch_started, tab_started, navigate_started):
-            assert validate_pid_file(started.pid_file, [started.hook_path, *started.hook_args])
+            assert validate_pid_file(started.pid_file, [started.hook_path, *started.hook_args]), (
+                f"{started.hook_name}: expected PID {started.pid} to own {started.pid_file} "
+                f"(file exists: {started.pid_file.exists()}, process alive: {_pid_is_alive(started.pid)})"
+            )
         await bus.emit(CrawlAbortEvent(event_parent_id=crawl.event_id)).now()
         await download_task
         await bus.wait_until_idle()

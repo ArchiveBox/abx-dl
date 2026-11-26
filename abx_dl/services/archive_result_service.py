@@ -97,6 +97,10 @@ class ArchiveResultService(BaseService):
             where=lambda candidate: self.bus.event_is_parent_of(candidate, started_process),
         )
         assert isinstance(process_event, ProcessEvent)
+        # Standalone execute_hook() can share the capture bus without owning
+        # a SnapshotEvent. Its output belongs only to its process completion.
+        if process_event.event_parent_id is None:
+            return
         snapshot_event = await self.bus.find(
             SnapshotEvent,
             past=True,
@@ -158,6 +162,10 @@ class ArchiveResultService(BaseService):
             where=lambda candidate: self.bus.event_is_parent_of(candidate, event),
         )
         assert isinstance(process_event, ProcessEvent)
+        # Standalone execute_hook() can share the capture bus without owning
+        # a SnapshotEvent. Its output belongs only to its process completion.
+        if process_event.event_parent_id is None:
+            return
         started_process = await self.bus.find(
             ProcessStartedEvent,
             child_of=process_event,
