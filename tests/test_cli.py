@@ -1815,3 +1815,37 @@ def test_dl_snapshot_size_budget_is_fresh_on_retry(tmp_path: Path) -> None:
         assert urls == ["https://example.com/one", "https://example.com/two"]
         assert not (output_dir / "hashes").exists()
         assert not (output_dir / ".abx-dl").exists()
+
+
+def test_capture_survives_closed_progress_pipe(tmp_path: Path, httpserver: HTTPServer) -> None:
+    """A detached progress reader must not abort a real capture or redirect JSONL."""
+    body = b"Saved after the progress consumer disconnected.\n"
+    httpserver.expect_request("/article.txt").respond_with_data(body, content_type="text/plain")
+    output_dir = tmp_path / "capture"
+    with (tmp_path / "stdout.jsonl").open("w") as records:
+        process = subprocess.Popen(
+            [sys.executable, "-m", "abx_dl", "dl", "--plugins=wget", "--dir", str(output_dir), httpserver.url_for("/article.txt")],
+            cwd=tmp_path,
+            env=_cli_env(tmp_path),
+            stdout=records,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        assert process.stderr is not None
+        try:
+            first_line = process.stderr.readline()
+            assert "[STARTED]" in first_line, first_line
+            process.stderr.close()
+            assert process.wait(timeout=90) == 0
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=15)
+    saved = list((output_dir / "wget").rglob("article.txt"))
+    assert len(saved) == 1
+    assert saved[0].read_bytes() == body
+    outputs = [json.loads(line) for line in (tmp_path / "stdout.jsonl").read_text().splitlines()]
+    assert any(
+        record.get("type") == "ArchiveResult" and record.get("plugin") == "wget" and record.get("status") == "succeeded"
+        for record in outputs
+    )

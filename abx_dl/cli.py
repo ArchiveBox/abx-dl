@@ -76,8 +76,21 @@ from .orchestrator import (
 from .output_files import OutputFile
 from .tables import binary_dependency_status, binary_dependency_table
 
-console = Console()
-stderr_console = Console(stderr=True)
+
+class ProgressConsole(Console):
+    """Progress output is optional; losing its reader must not stop captures."""
+
+    def on_broken_pipe(self) -> None:
+        # Rich's default exits the application and redirects global stdout even
+        # when stderr failed. That cancels hook completion and loses JSONL. Only
+        # retire this dead destination; durable records and other log sinks stay.
+        self.quiet = True
+        with open(os.devnull, "w") as sink:
+            os.dup2(sink.fileno(), self.file.fileno())
+
+
+console = ProgressConsole()
+stderr_console = ProgressConsole(stderr=True)
 
 click.rich_click.USE_RICH_MARKUP = True
 click.rich_click.USE_MARKDOWN = True

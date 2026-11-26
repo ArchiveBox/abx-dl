@@ -2,6 +2,7 @@
 
 import asyncio
 import contextvars
+import logging
 import os
 import re
 import signal
@@ -847,8 +848,12 @@ class ProcessService(BaseService):
                     self._background_completion_tasks.discard(task)
                     try:
                         task.result()
-                    except (RuntimeError, OSError, ValueError, asyncio.CancelledError) as err:
-                        click.echo(f"Background hook completion failed: {err}", err=True)
+                    except asyncio.CancelledError:
+                        pass  # Task cancellation is part of cooperative shutdown.
+                    except (RuntimeError, OSError, ValueError):
+                        # Use the host's log handlers, not the progress pipe that
+                        # may already be closed while background hooks unwind.
+                        logging.getLogger(__name__).exception("Background hook completion failed")
 
                 completion_task.add_done_callback(forget_background_completion)
                 completion_owns_process = True
