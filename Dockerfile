@@ -174,7 +174,7 @@ for name, module in packages.items():
     metadata = (source / "pyproject.toml").read_text()
     metadata = re.sub(r'(?m)^version = "[^"\n]+"', 'version = "0.0.0"', metadata, count=1)
     metadata = re.sub(r'(?m)^current_version = "[^"\n]+"', 'current_version = "0.0.0"', metadata)
-    metadata = re.sub(r'"(abxbus|abxpkg|abx-plugins|abx-dl)==[^"\n]+"', r'"\1==0.0.0"', metadata)
+    metadata = re.sub(r'"(abxbus|abxpkg|abx-plugins|abx-dl)(?:==| @ )[^"\n]+"', r'"\1==0.0.0"', metadata)
     (target / "pyproject.toml").write_text(metadata)
     # Package descriptions do not influence dependency installation.
     (target / "README.md").write_text("")
@@ -198,7 +198,7 @@ WORKDIR /src/abx-dl
 COPY --from=abx-dl-install-context /src /src
 RUN --mount=type=cache,target=/opt/archivebox/lib/cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
     echo "[+] UV Installing external Python dependencies from local package metadata..." \
-    && /venv/bin/python3 -c 'import re, tomllib; paths = ["/src/abxbus/pyproject.toml", "/src/abxpkg/pyproject.toml", "/src/abx-plugins/pyproject.toml", "/src/abx-dl/pyproject.toml"]; skip = {"abxbus", "abxpkg", "abx-plugins", "abx-dl"}; deps = []; [deps.extend(tomllib.load(open(path, "rb"))["project"].get("dependencies", [])) for path in paths]; seen = set(); print("\n".join(dep for dep in deps if (name := re.split(r"[<>=!~;\\[]", dep, 1)[0].strip().lower()) not in skip and not (dep in seen or seen.add(dep))))' > /tmp/abx-dl-requirements.txt \
+    && /venv/bin/python3 -c 'import re, tomllib; paths = ["/src/abxbus/pyproject.toml", "/src/abxpkg/pyproject.toml", "/src/abx-plugins/pyproject.toml", "/src/abx-dl/pyproject.toml"]; skip = {"abxbus", "abxpkg", "abx-plugins", "abx-dl"}; deps = []; [deps.extend(tomllib.load(open(path, "rb"))["project"].get("dependencies", [])) for path in paths]; seen = set(); print("\n".join(dep for dep in deps if (name := re.split(r"[<>=!~@;\\[]", dep, 1)[0].strip().lower()) not in skip and not (dep in seen or seen.add(dep))))' > /tmp/abx-dl-requirements.txt \
     && uv pip install --refresh -r /tmp/abx-dl-requirements.txt
 
 RUN --mount=type=cache,target=/opt/archivebox/lib/cache/uv,sharing=locked,id=uv-$TARGETARCH$TARGETVARIANT \
